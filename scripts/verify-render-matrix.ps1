@@ -63,6 +63,10 @@ $rotatedLevel = Join-Path $Fixtures 'rotated_level.json'
 $moreBets = Join-Path $Fixtures 'morebets.json'
 $speedChange = Join-Path $Fixtures 'speed_change.json'
 $speedConstant = Join-Path $Fixtures 'speed_constant.json'
+$fade = Join-Path $Fixtures 'fade.json'
+$fadeConstant = Join-Path $Fixtures 'fade_constant.json'
+$sideAbove = Join-Path $Fixtures 'side_above.json'
+$sideBelow = Join-Path $Fixtures 'side_below.json'
 
 # Each case names the base and changed chart explicitly, so a case can compare two
 # different packs as well as two settings on one chart.
@@ -88,6 +92,12 @@ $cases = @(
      Base = @('--time', '1.2');
      Changed = @('--time', '1.2', '--skin', $holdSkin); Minimum = 2.0;
      Description = 'the hold sheet slicing and body behaviour follow the pack' }
+  @{ Id = 'line-fade'; BaseChart = $fadeConstant; ChangedChart = $fade;
+     Base = @('--time', '2.4'); Changed = @('--time', '2.4'); Minimum = 0.2;
+     Description = 'a disappear event fades the judge line' }
+  @{ Id = 'note-side'; BaseChart = $sideAbove; ChangedChart = $sideBelow;
+     Base = @('--time', '1.2'); Changed = @('--time', '1.2'); Minimum = 0.2;
+     Description = 'a note under the line is drawn flipped' }
   @{ Id = 'speed-change'; BaseChart = $speedConstant; ChangedChart = $speedChange;
      Base = @('--time', '2.2'); Changed = @('--time', '2.2'); Minimum = 0.3;
      Description = 'a second speed segment moves the notes further' }
