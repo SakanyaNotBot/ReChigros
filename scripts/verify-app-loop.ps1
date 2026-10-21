@@ -69,6 +69,11 @@ Invoke-Run 'mode-challenge' @('--frames', '900', '--challenge') `
   'mode: practice=0 challenge=1 mirror=0 autoplay=0'
 Invoke-Run 'mode-practice' @('--frames', '900', '--practice') `
   'mode: practice=1 challenge=0 mirror=0 autoplay=0'
+# The practice window must reach the judgement engine, not just the menu.
+Invoke-Run 'practice-window' @('--frames', '900', '--practice', '--practice-perfect', '40') 
+  'practice: enabled=1 perfectMs=40 active=1'
+# A harness that presses late must produce a different judgement than one that does not.
+Invoke-Run 'mistimed-press' @('--frames', '900', '--mistime', '170') 'good=[1-9]'
 # Mirroring only reflects input, so it must not change the rendered picture; the run has
 # to complete with the mode applied and without a visual error.
 Invoke-Run 'mode-mirror' @('--frames', '900', '--mirror') `

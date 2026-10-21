@@ -54,6 +54,18 @@ Application::Application(int argc, char** argv) {
       mirrorOverride_ = true;
     } else if (argument == "--autoplay") {
       autoplayOverride_ = true;
+    } else if (argument == "--mistime") {
+      if (index + 1 < argc && argv[index + 1] != nullptr) {
+        batchMistimeMs_ = std::atof(argv[++index]);
+      }
+    } else if (argument == "--practice-perfect") {
+      if (index + 1 < argc && argv[index + 1] != nullptr) {
+        practicePerfectMs_ = std::atof(argv[++index]);
+      }
+    } else if (argument == "--practice-good") {
+      if (index + 1 < argc && argv[index + 1] != nullptr) {
+        practiceGoodMs_ = std::atof(argv[++index]);
+      }
     } else if (argument == "--replay-playback") {
       if (index + 1 < argc && argv[index + 1] != nullptr) {
         replayPlaybackPath_ = pathFromUtf8(argv[++index]);
@@ -403,12 +415,23 @@ void Application::updateBatchMode() {
   // The play field centre is the judge line centre for the synthetic test chart.
   const float centerX = static_cast<float>(app_->windowWidth) * 0.5F;
   const float centerY = static_cast<float>(app_->windowHeight) * 0.5F + 6.0F;
+  // A practice run may change the window before the notes are pressed. The value is
+  // clamped by the window rules, so it can only narrow the perfect window.
+  if (game.practice) {
+    // The perfect window is narrowed first: the good window is clamped to stay above it.
+    if (practicePerfectMs_ > 0.0) {
+      game.practiceWindows.setPerfectMs(static_cast<float>(practicePerfectMs_));
+    }
+    if (practiceGoodMs_ > 0.0) game.practiceWindows.setGoodMs(static_cast<float>(practiceGoodMs_));
+  }
   while (batchNoteIndex_ < game.chart->allNotesSorted.size()
       && game.chart->allNotesSorted[batchNoteIndex_]->judgeResult >= 0) {
     ++batchNoteIndex_;
   }
   if (batchNoteIndex_ >= game.chart->allNotesSorted.size() || batchNoteIndex_ >= 4) return;
-  const double hitTime = game.chart->allNotesSorted[batchNoteIndex_]->sect;
+  // A positive mistime presses late by that many milliseconds.
+  const double hitTime = game.chart->allNotesSorted[batchNoteIndex_]->sect
+      + batchMistimeMs_ / 1000.0;
   if (batchInputStage_ == 0 && game.chartTimeSec >= hitTime - 0.05) {
     pushButton(SDL_MOUSEBUTTONDOWN, centerX, centerY, true);
     batchInputStage_ = 1;
@@ -475,6 +498,9 @@ void Application::printBatchSummary() {
   }
   if (!initialPath_.empty()) {
     std::cout << "chart: " << app_->play.songName << " / " << app_->play.difficulty << '\n';
+    std::cout << "practice: enabled=" << (app_->game.practice ? 1 : 0)
+              << " perfectMs=" << app_->game.practiceWindows.perfectMs()
+              << " active=" << (app_->game.practiceWindows.active(app_->game.practice, app_->game.challenge) ? 1 : 0) << '\n';
     // The mode a run actually used, so a verification run can assert it was applied.
     std::cout << "mode: practice=" << (app_->play.practice ? 1 : 0)
               << " challenge=" << (app_->play.challenge ? 1 : 0)

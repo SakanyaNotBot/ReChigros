@@ -65,6 +65,13 @@ private:
   bool batchMode_{};
   bool batchOk_{};
   int screenFrameCounts_[7]{};
+  // Synthetic input timing for the verification runs: a positive value presses the notes
+  // late by that many milliseconds, which is how a mistimed judgement is produced.
+  double batchMistimeMs_{};
+  // Widens the practice judgement window before the run, so the window can be verified
+  // end to end rather than only through the engine.
+  double practicePerfectMs_{};
+  double practiceGoodMs_{};
   std::size_t batchNoteIndex_{};
   int batchInputStage_{};
   bool expectResult_{};

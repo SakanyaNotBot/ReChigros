@@ -57,7 +57,8 @@ endif()
 # bug. Making each object depend on every public header removes that failure mode at the
 # cost of recompiling the project when a header changes, which is seconds on this codebase.
 file(GLOB_RECURSE RECHIGROS_PUBLIC_HEADERS CONFIGURE_DEPENDS
-  "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp")
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp")
 function(rechigros_track_headers target)
   if(NOT TARGET ${target})
     return()
