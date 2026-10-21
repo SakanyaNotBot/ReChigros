@@ -576,6 +576,42 @@ int main() {
         "a chart without block areas has none");
   }
 
+  // --- hold length under a speed change ---------------------------------------
+  {
+    // A hold length in the official format is the hold duration scaled by the note speed,
+    // so a later speed event must leave it alone. The other format measures the hold by
+    // the distance between two floor positions instead, which a speed change does affect.
+    const std::string flat = R"({
+      "formatVersion": 3, "offset": 0,
+      "judgeLineList": [{ "bpm": 120.0,
+        "notesAbove": [{ "type": 3, "time": 32, "holdTime": 192, "positionX": 0, "speed": 1 }],
+        "notesBelow": [],
+        "speedEvents": [{ "startTime": 0, "endTime": 100000.0, "value": 1.0, "endValue": 1.0 }],
+        "judgeLineMoveEvents": [{ "startTime": 0, "endTime": 100000.0, "start": 0.5, "end": 0.5, "start2": 0.5, "end2": 0.5 }],
+        "judgeLineRotateEvents": [{ "startTime": 0, "endTime": 100000.0, "start": 0.0, "end": 0.0 }],
+        "judgeLineDisappearEvents": [{ "startTime": 0, "endTime": 100000.0, "start": 1.0, "end": 1.0 }] }] })";
+    const std::string variable = R"({
+      "formatVersion": 3, "offset": 0,
+      "judgeLineList": [{ "bpm": 120.0,
+        "notesAbove": [{ "type": 3, "time": 32, "holdTime": 192, "positionX": 0, "speed": 1 }],
+        "notesBelow": [],
+        "speedEvents": [
+          { "startTime": 0, "endTime": 96, "value": 1.0, "endValue": 1.0 },
+          { "startTime": 96, "endTime": 100000.0, "value": 3.0, "endValue": 3.0 }],
+        "judgeLineMoveEvents": [{ "startTime": 0, "endTime": 100000.0, "start": 0.5, "end": 0.5, "start2": 0.5, "end2": 0.5 }],
+        "judgeLineRotateEvents": [{ "startTime": 0, "endTime": 100000.0, "start": 0.0, "end": 0.0 }],
+        "judgeLineDisappearEvents": [{ "startTime": 0, "endTime": 100000.0, "start": 1.0, "end": 1.0 }] }] })";
+    const auto flatChart = rechigros::chart::OfficialChartParser::parse(std::string_view(flat));
+    const auto variableChart = rechigros::chart::OfficialChartParser::parse(std::string_view(variable));
+    require(flatChart.allNotesSorted.size() == 1 && variableChart.allNotesSorted.size() == 1,
+        "the speed fixtures each carry one hold");
+    const auto flatLength = flatChart.allNotesSorted.front()->holdLength;
+    const auto variableLength = variableChart.allNotesSorted.front()->holdLength;
+    require(flatLength > 0.0, "a hold has a positive length");
+    require(close(flatLength, variableLength),
+        "in the official format a speed change does not change a hold length");
+  }
+
   std::cout << "All ReChigros chart parser tests passed\n";
   return 0;
 }
