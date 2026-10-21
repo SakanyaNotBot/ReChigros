@@ -116,9 +116,20 @@ to the reference, so this is a wiring job rather than a derivation:
   `matColors` and `matExtra` uniform arrays whose values are already captured in
   `fx::BlockOverlay`.
 
-What is needed: two mask render targets accumulated per frame (active and subtract zones),
-the pre-pass chain over them at reduced resolution, then one composite draw of the finished
-scene. `RenderFrameInput` already carries everything else the pass needs.
+`fx::BlockCompositePass` owns the reduced targets, the five-ring glow chain and the composite
+draw, and its coverage gate and ring weights are asserted in `TransitionTests`. The mask
+rasterisation for the six zone classes is written and understood: the shipped material packs
+active normal, active subtract and warning normal into the channels of the first mask, and
+warning subtract, ready normal and ready subtract into the second, with overlap accumulating
+additively and a `0.09`/`0.12` gate turning a doubly written hole into a cancellation.
+
+**This is where it stops.** Driving the composite from `drawScene` renders the play field
+white, including when the composite shader is replaced with a trivial `texture(scene, uv)`
+passthrough, so the problem is in the frame plumbing rather than in either shipped shader.
+These have been ruled out by measurement and are not the cause: the off-screen route itself
+(with a plain blit back), the mask pass, shader compilation, missing samplers, a missing
+fullscreen vertex array, and a render target left bound by allocation. Whoever picks this up
+should build the pass in isolation against a known scene texture before touching `drawScene`.
 
 ## Deliberate exclusions
 
