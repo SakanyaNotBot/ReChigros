@@ -58,6 +58,9 @@ $singleNote = Join-Path $Fixtures 'single_note.json'
 $hold = Join-Path $Fixtures 'hold.json'
 $holdSkin = (Resolve-Path (Join-Path $Fixtures 'hold_skin')).Path
 $skin = (Resolve-Path (Join-Path $Fixtures 'skin')).Path
+$rotated = Join-Path $Fixtures 'rotated.json'
+$rotatedLevel = Join-Path $Fixtures 'rotated_level.json'
+$moreBets = Join-Path $Fixtures 'morebets.json'
 
 # Each case names the base and changed chart explicitly, so a case can compare two
 # different packs as well as two settings on one chart.
@@ -83,6 +86,12 @@ $cases = @(
      Base = @('--time', '1.2');
      Changed = @('--time', '1.2', '--skin', $holdSkin); Minimum = 2.0;
      Description = 'the hold sheet slicing and body behaviour follow the pack' }
+  @{ Id = 'line-rotation'; BaseChart = $rotatedLevel; ChangedChart = $rotated;
+     Base = @('--time', '1.2'); Changed = @('--time', '1.2'); Minimum = 1.5;
+     Description = 'a rotated play field draws differently from a level one' }
+  @{ Id = 'note-highlight'; BaseChart = $plain; ChangedChart = $moreBets;
+     Base = @('--time', '0.9'); Changed = @('--time', '0.9'); Minimum = 0.2;
+     Description = 'the highlight note variant draws with its own sheet' }
   @{ Id = 'skin-overrides'; BaseChart = $plain; ChangedChart = $plain;
      Base = @('--time', '1.0'); Changed = @('--time', '1.0', '--skin', $skin); Minimum = 0.5;
      Description = 'a skin overrides the built-in materials' }
