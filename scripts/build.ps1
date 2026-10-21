@@ -557,6 +557,10 @@ function Build-Android {
     $arguments += '-Dorg.gradle.jvmargs=-Xmx4g'
     $arguments += '--console=plain'
     $arguments += "--stacktrace"
+    # The wrapper runs from wherever the caller launched the script, so the project
+    # directory has to be named explicitly.
+    $arguments += '-p'
+    $arguments += $projectDirectory
     $arguments += ":app:assemble$Configuration"
 
     $logDirectory = Get-BuildDirectory 'android-logs'
