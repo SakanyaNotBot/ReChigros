@@ -61,6 +61,8 @@ $skin = (Resolve-Path (Join-Path $Fixtures 'skin')).Path
 $rotated = Join-Path $Fixtures 'rotated.json'
 $rotatedLevel = Join-Path $Fixtures 'rotated_level.json'
 $moreBets = Join-Path $Fixtures 'morebets.json'
+$speedChange = Join-Path $Fixtures 'speed_change.json'
+$speedConstant = Join-Path $Fixtures 'speed_constant.json'
 
 # Each case names the base and changed chart explicitly, so a case can compare two
 # different packs as well as two settings on one chart.
@@ -86,6 +88,9 @@ $cases = @(
      Base = @('--time', '1.2');
      Changed = @('--time', '1.2', '--skin', $holdSkin); Minimum = 2.0;
      Description = 'the hold sheet slicing and body behaviour follow the pack' }
+  @{ Id = 'speed-change'; BaseChart = $speedConstant; ChangedChart = $speedChange;
+     Base = @('--time', '2.2'); Changed = @('--time', '2.2'); Minimum = 0.3;
+     Description = 'a second speed segment moves the notes further' }
   @{ Id = 'line-rotation'; BaseChart = $rotatedLevel; ChangedChart = $rotated;
      Base = @('--time', '1.2'); Changed = @('--time', '1.2'); Minimum = 1.5;
      Description = 'a rotated play field draws differently from a level one' }
