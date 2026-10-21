@@ -73,7 +73,7 @@ Every gate below was executed on this machine and passed.
 | Level-effect grid object | done | authored square through a scaled viewport, additive blend, animated opacity and freeze |
 | Level-effect backdrops | done | pulsing grid square, full-screen black mask, kaleidoscope layer over the stage, and the timed backdrop hide |
 | Message particle field | done | two emitters, constant force, band-limited external field with drag, size curve and band clip; asserted in `LevelEffectTests` |
-| Chapter-9 remaining objects (block screen-space composite) | pending | the pass chains, backdrops, red zones and particles run; the torn-scene composite inside a red zone is not ported |
+| Chapter-9 remaining objects (block screen-space composite) | pending | the pass chains, backdrops, red zones and particles run. The screen-space composite inside a red zone is not ported; see the note below for what it needs. |
 | Android APK | done | debug APK verified |
 | iOS Xcode app | packaging verified | compilation needs macOS |
 | Assets | done | 103 files, byte-identical to the reference tree |
@@ -103,6 +103,22 @@ string at its final on-screen pixel size and draws it one-to-one, so it needs no
   `RECHIGROS_STORE_PASSWORD`, `RECHIGROS_KEY_ALIAS` and `RECHIGROS_KEY_PASSWORD` are set.
 - Comments in this repository reference no other project, and carry no attribution or
   provenance notes.
+
+## Remaining work: the block screen-space composite
+
+The red zones are drawn as silhouettes today. The reference also replaces the scene inside an
+active zone with a displaced, hue-shifted, spark-overlaid resample, so the picture looks
+torn. Both shaders for it already ship in `assets/official_shaders/` and are byte-identical
+to the reference, so this is a wiring job rather than a derivation:
+
+- `block_prepass.glsl` builds the compose and edge/glow intermediate targets.
+- `block_composite.glsl` is the final stage. It samples eight textures and reads `matParams`,
+  `matColors` and `matExtra` uniform arrays whose values are already captured in
+  `fx::BlockOverlay`.
+
+What is needed: two mask render targets accumulated per frame (active and subtract zones),
+the pre-pass chain over them at reduced resolution, then one composite draw of the finished
+scene. `RenderFrameInput` already carries everything else the pass needs.
 
 ## Deliberate exclusions
 
