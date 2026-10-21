@@ -79,13 +79,17 @@ float BlockCompositePass::gate(float value) noexcept {
 }
 
 bool BlockCompositePass::prepare(
-    const std::filesystem::path& assetRoot, gl::Texture* displace, gl::Texture* spark) noexcept {
+    const std::filesystem::path& assetRoot, gl::Texture* displace, gl::Texture* spark,
+    gl::Texture* noise) noexcept {
   release();
   displaceMap_ = displace;
   sparkMap_ = spark;
+  noiseMap_ = noise;
   const std::string prepass = readShader(assetRoot, kPrepassShader);
   const std::string composite = readShader(assetRoot, kCompositeShader);
   if (prepass.empty() || composite.empty()) return false;
+  const int previousWidth = width_;
+  const int previousHeight = height_;
   // The sources are already written against the legacy ES spelling; the program rewrites
   // them for the active context.
   if (!prepass_.build(prepass.c_str())) return false;
@@ -107,6 +111,10 @@ void BlockCompositePass::release() noexcept {
 }
 
 void BlockCompositePass::resize(int width, int height) noexcept {
+  // Allocating a target leaves it bound and the caller is usually mid-frame, so the
+  // previous binding is restored before returning.
+  GLint previousFbo = 0;
+  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFbo);
   width_ = std::max(1, width);
   height_ = std::max(1, height);
   for (auto& target : maskFbo_) {
@@ -121,6 +129,7 @@ void BlockCompositePass::resize(int width, int height) noexcept {
   }
   effect_.resize(std::max(1, width_ / EFFECT_DIVISOR), std::max(1, height_ / EFFECT_DIVISOR));
   effect_.color().setFilter(true);
+  glBindFramebuffer(GL_FRAMEBUFFER, static_cast<unsigned int>(previousFbo));
 }
 
 void BlockCompositePass::clearMasks() noexcept {
@@ -199,6 +208,7 @@ void BlockCompositePass::runPrepasses(float chartTimeSec) {
 void BlockCompositePass::draw(gl::Texture& scene, float chartTimeSec) {
   if (!ready_ || !composite_.valid() || !scene.valid()) return;
   if (!compose_.valid() || !effect_.valid()) return;
+  if (!FullscreenQuad::instance().ensure()) return;
   runPrepasses(chartTimeSec);
 
   auto& program = composite_.program();
@@ -220,6 +230,7 @@ void BlockCompositePass::draw(gl::Texture& scene, float chartTimeSec) {
   bindTexture(4, "effectRT", &effect_.color(), program);
   bindTexture(5, "maskA", &maskFbo_[0].color(), program);
   bindTexture(6, "maskB", &maskFbo_[1].color(), program);
+  bindTexture(7, "noiseMap", noiseMap_, program);
   FullscreenQuad::instance().draw();
 }
 

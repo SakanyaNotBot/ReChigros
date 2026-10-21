@@ -41,7 +41,8 @@ public:
 
   // Loads both shaders. The two noise textures are owned by the caller's texture cache.
   [[nodiscard]] bool prepare(
-      const std::filesystem::path& assetRoot, gl::Texture* displace, gl::Texture* spark) noexcept;
+      const std::filesystem::path& assetRoot, gl::Texture* displace, gl::Texture* spark,
+      gl::Texture* noise) noexcept;
   void release() noexcept;
   [[nodiscard]] bool ready() const noexcept { return ready_; }
 
@@ -69,6 +70,7 @@ private:
   gl::Framebuffer effect_;
   gl::Texture* displaceMap_{};
   gl::Texture* sparkMap_{};
+  gl::Texture* noiseMap_{};
   int width_{};
   int height_{};
   bool ready_{};
