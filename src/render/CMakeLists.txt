@@ -11,6 +11,7 @@ add_library(rechigros_render STATIC
   fx/BloomPass.cpp
   fx/FullscreenPass.cpp
   fx/BadEffectField.cpp
+  fx/BlockCompositePass.cpp
   fx/BlockOverlay.cpp
   fx/DsGridPass.cpp
   fx/HitEffect.cpp

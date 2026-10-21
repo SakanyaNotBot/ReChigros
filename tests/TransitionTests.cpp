@@ -1,4 +1,5 @@
 #include "rechigros/render/fx/BadEffectField.hpp"
+#include "rechigros/render/fx/BlockCompositePass.hpp"
 #include "rechigros/render/fx/DsGridPass.hpp"
 #include "rechigros/render/scene/NoteBatch.hpp"
 #include "rechigros/render/fx/PrprChain.hpp"
@@ -252,6 +253,46 @@ int main() {
       previous = value;
     }
     require(monotone, "the bad effect fade never brightens");
+  }
+
+  // --- block composite coverage and glow --------------------------------------
+  {
+    using rechigros::render::fx::BlockCompositePass;
+    // The material blanks the zone above the high threshold, fills it above the low one
+    // and leaves the band between untouched.
+    require(close(BlockCompositePass::gate(0.0F), 0.0F), "an empty mask is not covered");
+    require(close(BlockCompositePass::gate(0.05F), 0.0F), "a faint mask is not covered");
+    require(close(BlockCompositePass::gate(0.1F), 1.0F), "one sprite covers the zone");
+    require(close(BlockCompositePass::gate(0.12F), -1.0F),
+        "two overlapping sprites cancel the zone instead of covering it");
+    require(close(BlockCompositePass::gate(0.5F), -1.0F), "a saturated mask cancels the zone");
+    require(BlockCompositePass::gate(BlockCompositePass::GATE_LOW) > 0.0F,
+        "the low threshold is the first covered value");
+    require(BlockCompositePass::gate(BlockCompositePass::GATE_HIGH) < 0.0F,
+        "the high threshold is the first cancelled value");
+
+    // The glow rings fade outwards and the weights form a partition.
+    require(close(BlockCompositePass::glowRingWeight(0), 5.0F / 15.0F),
+        "the outermost glow ring carries its remaining reach over the total");
+    require(close(BlockCompositePass::glowRingWeight(4), 1.0F / 15.0F),
+        "the innermost glow ring carries the least weight");
+    require(close(BlockCompositePass::glowRingWeight(-1), 0.0F),
+        "a ring outside the chain carries no weight");
+    require(close(BlockCompositePass::glowRingWeight(BlockCompositePass::GLOW_PASSES), 0.0F),
+        "a ring past the chain carries no weight");
+    float total = 0.0F;
+    for (int pass = 0; pass < BlockCompositePass::GLOW_PASSES; ++pass) {
+      total += BlockCompositePass::glowRingWeight(pass);
+    }
+    require(close(total, 1.0F), "the glow ring weights sum to one");
+    bool decreasing = true;
+    for (int pass = 1; pass < BlockCompositePass::GLOW_PASSES; ++pass) {
+      if (BlockCompositePass::glowRingWeight(pass) >=
+          BlockCompositePass::glowRingWeight(pass - 1)) {
+        decreasing = false;
+      }
+    }
+    require(decreasing, "each glow ring is lighter than the one outside it");
   }
 
   if (g_failures != 0) {
