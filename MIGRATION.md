@@ -78,7 +78,24 @@ Every gate below was executed on this machine and passed.
 | iOS Xcode app | packaging verified | compilation needs macOS |
 | Assets | done | 103 files, byte-identical to the reference tree |
 
-'## Notes'
+## Build correctness
+
+Every object depends on every public header. The compiler records which headers it read so
+the build tool can recompile the right objects, but that record is parsed from a localised
+compiler diagnostic: on a non-English toolchain it can come out empty, and an object built
+against an older class layout then gets linked in and corrupts memory at run time. Making
+each object depend on the whole header set removes that failure mode at the cost of
+recompiling the project when a header changes.
+
+## Interface sharpness
+
+The interface font atlas is rasterised at the interface scale rather than at a fixed base
+size, so text the layout draws at about 1.7x is rendered from glyphs built for that size
+instead of magnified ones. Horizontal oversampling is reduced to one, which keeps the denser
+glyphs inside half the atlas memory the old settings needed. The in-game HUD rasterises each
+string at its final on-screen pixel size and draws it one-to-one, so it needs no correction.
+
+## Notes
 
 - `nvidia`/driver specifics and absolute luminance comparison are out of scope: this port
   compares animation shapes, monotonicity and endpoints instead.
