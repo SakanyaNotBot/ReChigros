@@ -612,6 +612,25 @@ int main() {
         "in the official format a speed change does not change a hold length");
   }
 
+  // --- format version normalisation -------------------------------------------
+  {
+    // Only versions 1 and 3 are accepted; anything else takes the newest layout.
+    const auto versionOf = [](const std::string& text) {
+      return rechigros::chart::OfficialChartParser::parse(std::string_view(text)).formatVersion;
+    };
+    const auto withVersion = [](int version) {
+      return std::string(R"({ "formatVersion": )") + std::to_string(version) +
+          R"(, "judgeLineList": [] })";
+    };
+    require(versionOf(withVersion(1)) == 1, "version 1 is kept");
+    require(versionOf(withVersion(3)) == 3, "version 3 is kept");
+    require(versionOf(withVersion(0)) == 3, "version 0 is treated as version 3");
+    require(versionOf(withVersion(2)) == 3, "version 2 is treated as version 3");
+    require(versionOf(withVersion(7)) == 3, "an unknown version is treated as version 3");
+    const std::string unversioned = R"({ "judgeLineList": [] })";
+    require(versionOf(unversioned) == 3, "a chart without a version is treated as version 3");
+  }
+
   std::cout << "All ReChigros chart parser tests passed\n";
   return 0;
 }
