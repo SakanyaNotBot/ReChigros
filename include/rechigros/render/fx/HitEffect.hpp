@@ -15,8 +15,9 @@ namespace rechigros::render::fx {
 // Atlas geometry for the hit-effect spritesheet: a row-major grid of equally sized
 // frames. The column and row counts come from the resource pack.
 struct HitEffectAtlas {
-  int columns{5};
-  int rows{6};
+  // Defaults used when the resource pack does not specify a grid.
+  int columns{4};
+  int rows{4};
   [[nodiscard]] int frames() const noexcept { return columns * rows; }
 };
 
