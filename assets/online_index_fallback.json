@@ -1,0 +1,454 @@
+{
+  "charts": [
+    {
+      "id": "1",
+      "title": "我有两颗高玩",
+      "difficulty": "AT Lv.00",
+      "size": 872017,
+      "md5": "904c7815df1c92b1bf449e834e08a51f",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/8299072733710106.jpg",
+      "lanzouId": "iOTNk3rjz1hi"
+    },
+    {
+      "id": "2",
+      "title": "星界ちゃんと可不ちゃんのおつかい合騒曲",
+      "difficulty": "AT Lv.16+",
+      "size": 3473069,
+      "md5": "4e7a8f469ae7e66e3d854df3450fb763",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/5430979218361460.jpg",
+      "lanzouId": "iTKxS3rjz1qh"
+    },
+    {
+      "id": "3",
+      "title": "悬溺",
+      "difficulty": "IN Lv.12",
+      "size": 3465163,
+      "md5": "b30e097f5d832c76a050f856c94b5878",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/88437365.jpg",
+      "lanzouId": "izLFg3rjz1yf"
+    },
+    {
+      "id": "4",
+      "title": "我的好兄弟（EBIMAYO Remix feat.高进 vs. 小沈阳）（Live）",
+      "difficulty": "IN Lv.15",
+      "size": 4816947,
+      "md5": "a1918d03c78e7e0ab98a838ce162baaa",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/0022881111390224.jpg",
+      "lanzouId": "izjY43rjz29g"
+    },
+    {
+      "id": "5",
+      "title": "オーバーライド",
+      "difficulty": "AT Lv.16",
+      "size": 3021423,
+      "md5": "3ca1c895a83c3799d8bebde69988b0bd",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/5976880632756228.png",
+      "lanzouId": "iKwvS3rjz2he"
+    },
+    {
+      "id": "6",
+      "title": "YA - DA - YO",
+      "difficulty": "Re:AT Lv.14",
+      "size": 2287641,
+      "md5": "90043db056d7504c64489b00245d08ba",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/9330423001318924.jpg",
+      "lanzouId": "iFOPU3rjz2li"
+    },
+    {
+      "id": "7",
+      "title": "Xaleid◆scopiX",
+      "difficulty": "Re:AT Lv.19",
+      "size": 11095823,
+      "md5": "76ca7d821ad704444342297d143c30a2",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/7439413902621333.jpg",
+      "lanzouId": "imJKc3rjz3jc"
+    },
+    {
+      "id": "8",
+      "title": "雪distance(Minecraft ver.)",
+      "difficulty": "IN Lv.14",
+      "size": 3635782,
+      "md5": "40062ad4983fb60ffe9ec75a34c94433",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/42570799.png",
+      "lanzouId": "i767l3rjz3ud"
+    },
+    {
+      "id": "9",
+      "title": "The Next Arcady",
+      "difficulty": "IN Lv.14",
+      "size": 5872342,
+      "md5": "3553eb2370b504897d95312dd965b822",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/3501123.jpg",
+      "lanzouId": "izs273rjz4ba"
+    },
+    {
+      "id": "10",
+      "title": "The 89's Momentum",
+      "difficulty": "IN Lv.15",
+      "size": 2848407,
+      "md5": "abd3235212abbea83649dad32c12f39e",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/14054215.jpg",
+      "lanzouId": "iS4zM3rjz4ih"
+    },
+    {
+      "id": "11",
+      "title": "Super Universe(Knighthood Remix)",
+      "difficulty": "IN Lv.15",
+      "size": 7953666,
+      "md5": "623b35e01f61da3dfdb1702cfb3994f1",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/12593511.jpg",
+      "lanzouId": "iRXvI3rjz56b"
+    },
+    {
+      "id": "12",
+      "title": "Spider Dance(Dubstep Remix)",
+      "difficulty": "IN Lv.14",
+      "size": 3697272,
+      "md5": "714ffccf2a4a00c0714115e7f3f46e22",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/46547836.jpg",
+      "lanzouId": "iJpO43rjz5fa"
+    },
+    {
+      "id": "13",
+      "title": "Forever Young",
+      "difficulty": "AT Lv.16",
+      "size": 5997585,
+      "md5": "3a2a941c94d879c8f129d46cf8599112",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/80239140.jpg",
+      "lanzouId": "iJLhE3rjz5za"
+    },
+    {
+      "id": "14",
+      "title": "Faded",
+      "difficulty": "IN Lv.14",
+      "size": 3648752,
+      "md5": "40e80875e927953bdc76d2c7c4d01826",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/23903625.jpg",
+      "lanzouId": "iqqM73rjz6ab"
+    },
+    {
+      "id": "15",
+      "title": "Cupid(sped up remix)",
+      "difficulty": "IN Lv.13",
+      "size": 2599785,
+      "md5": "02be774d81b3c28bf43b52e3589f3c43",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/81274174.jpg",
+      "lanzouId": "iyCMA3rjz6ja"
+    },
+    {
+      "id": "16",
+      "title": "C. C. T. T. C. T. T.",
+      "difficulty": "0",
+      "size": 2127191,
+      "md5": "0c0ad7340c9ac062020de05d0fd2244a",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/73405476.jpg",
+      "lanzouId": "i3bRs3rjz6of"
+    },
+    {
+      "id": "17",
+      "title": "PANDORA PARADOXXX",
+      "difficulty": "AT Lv.16",
+      "size": 5256221,
+      "md5": "9482a5c2b4775dd0648faeff797b7779",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/4869496029210243.jpg",
+      "lanzouId": "igyEd3rjz75c"
+    },
+    {
+      "id": "18",
+      "title": "PANDORA PARADOXXX",
+      "difficulty": "AT Lv.18",
+      "size": 2519323,
+      "md5": "e2351f1c5b504738c0c2d2e6233cc278",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/4869496029210243.jpg",
+      "lanzouId": "iCz8y3rjz7da"
+    },
+    {
+      "id": "19",
+      "title": "Midnight",
+      "difficulty": "IN Lv.14",
+      "size": 23377253,
+      "md5": "f87655e30e684605640d9116aa3675ac",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/43410810.jpg",
+      "lanzouId": "iqu4d3rjz8zi"
+    },
+    {
+      "id": "20",
+      "title": "7 Wonders",
+      "difficulty": "AT Lv.17",
+      "size": 2660277,
+      "md5": "64bccc6703321bd2942b827a46e97c5e",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/5883707375401151.jpg",
+      "lanzouId": "iMF2n3rjz99i"
+    },
+    {
+      "id": "21",
+      "title": "Metamorphosism",
+      "difficulty": "IN Lv.16",
+      "size": 2708405,
+      "md5": "34d7869a2c4de4941cd1b218f91d2c54",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/1132917683367895.jpg",
+      "lanzouId": "iQ2f93rjz9gf"
+    },
+    {
+      "id": "22",
+      "title": "Journey To The Rainbow",
+      "difficulty": "IN Lv.14",
+      "size": 6277994,
+      "md5": "df1c19863a1eccdfa8dfcd997c0889b3",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/75875191.jpg",
+      "lanzouId": "iNBoJ3rjz9wb"
+    },
+    {
+      "id": "23",
+      "title": "Journey To The Rainbow",
+      "difficulty": "IN Lv.14",
+      "size": 3720494,
+      "md5": "b48b7c9b0af4f32d7d1118cf16496f4f",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/39564193.jpg",
+      "lanzouId": "ihMms3rjza4j"
+    },
+    {
+      "id": "24",
+      "title": "Dragonlady",
+      "difficulty": "AT Lv.14",
+      "size": 2435174,
+      "md5": "345b6c737ffe3e4236413a5d0167b580",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/5803782538335252.jpg",
+      "lanzouId": "iXqsr3rjzadi"
+    },
+    {
+      "id": "25",
+      "title": "1000年生きてる",
+      "difficulty": "IN Lv.14",
+      "size": 3300656,
+      "md5": "8ecf8580d901a3d048c366e647f2d296",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/8897988812700735.jpg",
+      "lanzouId": "iJiLs3rjzani"
+    },
+    {
+      "id": "26",
+      "title": "♿️+ERABY+E CONNEC+10N♿️",
+      "difficulty": "AT Lv.16",
+      "size": 33786457,
+      "md5": "64c240bc13150a28fb340159f2b5abc7",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/84865665.jpg",
+      "lanzouId": "idgYV3rkzgmj"
+    },
+    {
+      "id": "27",
+      "title": "♿️a truth seeker -Communication with Utopia will be lost-♿️",
+      "difficulty": "AT Lv.16",
+      "size": 11575232,
+      "md5": "d02ab25a6c6aacf5cc006433c3d584de",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/92788526.jpg",
+      "lanzouId": "irI3X3rkzgsf"
+    },
+    {
+      "id": "28",
+      "title": "♿Crush BETA♿",
+      "difficulty": "IN Lv.13",
+      "size": 4678042,
+      "md5": "3baa37c49f0fdba39d8b5548d7f37be4",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/8905781.jpg",
+      "lanzouId": "iLQaW3rkzgxa"
+    },
+    {
+      "id": "29",
+      "title": "♿Fractured Angel♿",
+      "difficulty": "AT Lv.17",
+      "size": 36786542,
+      "md5": "5b54aee87d09af2d1b00e1a309ac7695",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/1945548.jpg",
+      "lanzouId": "iFKBR3rkzhsb"
+    },
+    {
+      "id": "30",
+      "title": "♿INTERNET YAMERO♿",
+      "difficulty": "AT Lv.17",
+      "size": 8303661,
+      "md5": "51b10d79c7ad68ac4bf1f965ad58dff9",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/9348594878795483.jpg",
+      "lanzouId": "irbE93rkzi3c"
+    },
+    {
+      "id": "31",
+      "title": "♿K.Moe (VIP)♿",
+      "difficulty": "0",
+      "size": 5113767,
+      "md5": "65c24761579ab4306dee9f749b38f73d",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/99410492.jpg",
+      "lanzouId": "iqHZK3rkziaj"
+    },
+    {
+      "id": "32",
+      "title": "♿︎Nuclear-Star♿︎",
+      "difficulty": "AT Lv.16",
+      "size": 6681212,
+      "md5": "ec53c221893a6afe848843217f704d40",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/7708117931451141.jpg",
+      "lanzouId": "i1LR33rkzila"
+    },
+    {
+      "id": "33",
+      "title": "♿️Oshama Scramble！♿️",
+      "difficulty": "IN Lv.11+",
+      "size": 10941234,
+      "md5": "d193f4847a8b90a5ed66106bea1bd425",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/4826469136109406.png",
+      "lanzouId": "iBOjP3rkzj3i"
+    },
+    {
+      "id": "34",
+      "title": "♿️QZKago Requiem♿️",
+      "difficulty": "HD Lv.10+",
+      "size": 8369791,
+      "md5": "f0e8e92f009eb57de9b569e1c33313cd",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/0434647222804281.jpg",
+      "lanzouId": "iLJNL3rkzjdi"
+    },
+    {
+      "id": "35",
+      "title": "♿sølips♿",
+      "difficulty": "AT Lv.17",
+      "size": 29604576,
+      "md5": "f36d8cdef2caf9201bf71fb82ac911ed",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/2361775085930829.png",
+      "lanzouId": "iav3V3rkzkfg"
+    },
+    {
+      "id": "36",
+      "title": "♿Stardust RAY♿",
+      "difficulty": "AT Lv.18",
+      "size": 13925360,
+      "md5": "bc99d341086a4e5f1669ad147ed80009",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/8142423240634974.jpg",
+      "lanzouId": "iGuzt3rkzkpg"
+    },
+    {
+      "id": "37",
+      "title": "♿️Vengeance of the “V”♿️",
+      "difficulty": "AT Lv.17",
+      "size": 23952386,
+      "md5": "2621135ac7c8c523613b154416b55d11",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/2219561786354773.jpg",
+      "lanzouId": "iMbWB3rkzl3a"
+    },
+    {
+      "id": "38",
+      "title": "♿电棍笑传之踩踩背♿",
+      "difficulty": "EZ Lv.2",
+      "size": 7276681,
+      "md5": "0f2d2e3f46e74dc9e34c9d06cd1f3249",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/3524238968040907.jpg",
+      "lanzouId": "iskDh3rkzlcj"
+    },
+    {
+      "id": "39",
+      "title": "♿恭喜发财♿",
+      "difficulty": "IN Lv.12",
+      "size": 4371290,
+      "md5": "c0e677cba747172a7ce75435ef696000",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/22230782.jpg",
+      "lanzouId": "icICd3rkzljg"
+    },
+    {
+      "id": "40",
+      "title": "♿EMOMOMO♿",
+      "difficulty": "IN Lv.14",
+      "size": 5185253,
+      "md5": "78a56b3d548fb1841251bea8dffd4e76",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/38746779.jpg",
+      "lanzouId": "iMDBK3rkzluh"
+    },
+    {
+      "id": "41",
+      "title": "♿Latent Kingdom♿",
+      "difficulty": "AT Lv.16",
+      "size": 6535364,
+      "md5": "eacf831e8a42bdeeccf9c9b10177ee54",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/81150646.jpg",
+      "lanzouId": "i45pQ3rkzm7a"
+    },
+    {
+      "id": "42",
+      "title": "♿Rush-Hour♿",
+      "difficulty": "IN Lv.15",
+      "size": 3989357,
+      "md5": "9e49dd01091f5afa7bc8fe2d278125c5",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/79398729.jpg",
+      "lanzouId": "iuYWv3rkzmfi"
+    },
+    {
+      "id": "43",
+      "title": "♿The EmpErroR♿",
+      "difficulty": "AT Lv.16",
+      "size": 5289906,
+      "md5": "73c1e78a823314a21d3bd8f15de00b78",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/45919082.jpg",
+      "lanzouId": "iq7EG3rkzmoh"
+    },
+    {
+      "id": "44",
+      "title": "♿This Future (we didn't expect)♿",
+      "difficulty": "IN Lv.15",
+      "size": 12084252,
+      "md5": "d605ddd142e92d25b60e39bef49de646",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/76907663.jpg",
+      "lanzouId": "ioMKy3rkznla"
+    },
+    {
+      "id": "45",
+      "title": "♿鸡跌げこげになっちゃった♿",
+      "difficulty": "IN Lv.11",
+      "size": 2635616,
+      "md5": "8e4333a689f2885fa36932be6f85d09e",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/68433053.jpg",
+      "lanzouId": "iju2N3rkznuj"
+    },
+    {
+      "id": "46",
+      "title": "♿️野花香（Haocore mix feat.otto）♿️",
+      "difficulty": "AT Lv.16",
+      "size": 13119649,
+      "md5": "4ebbdf1716801338fb196893c35f8119",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/25895246.png",
+      "lanzouId": "i69Kl3rkzooj"
+    },
+    {
+      "id": "47",
+      "title": "♿️祈 -我ら神祖と共に歩む者なり-♿️",
+      "difficulty": "AT Lv.16",
+      "size": 6179748,
+      "md5": "60a3480ab93fd30ca2852beb041efff0",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/42890035.jpg",
+      "lanzouId": "i4g173rkzp1c"
+    },
+    {
+      "id": "48",
+      "title": "♿望影の方舟Six♿",
+      "difficulty": "AT Lv.17",
+      "size": 14232476,
+      "md5": "796241aab98e5b821b6358bdd3c0c1db",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/7855778679890821.jpg",
+      "lanzouId": "iWZuh3rkzpne"
+    },
+    {
+      "id": "49",
+      "title": "Le Porteur d'Ombre",
+      "difficulty": "AT16.5",
+      "size": 8848958,
+      "md5": "3cbae026d932003311e6c19e7fea89a5",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/3013755051469720.jpg",
+      "lanzouId": "ivBMp3rkzpzg"
+    },
+    {
+      "id": "50",
+      "title": "Eviternity⭐",
+      "difficulty": "AT.19",
+      "size": 12368680,
+      "md5": "491c2e2eb1abaf91e41ff09cad45a268",
+      "pic": "https://cdn.jsdelivr.net/gh/SakanyaNotBot/Chigros-Illustrations@main/img/2707034688091435.jpg",
+      "lanzouId": "io07A3rkzqcj"
+    }
+  ]
+}

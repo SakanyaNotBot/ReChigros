@@ -1,0 +1,19 @@
+{
+  "bpm": [ { "startTime": 0, "bpm": 120 } ],
+  "effects": [
+    {
+      "shader": "official_bloom",
+      "start": 0,
+      "end": 1000,
+      "global": true,
+      "vars": {
+        "bloomBrightness": 3.5,
+        "bloomThreshold": 0.308,
+        "bloomRadius": 1.1,
+        "bloomIntensity": 1.85,
+        "bloomSampleRate": 0.45,
+        "bloomIteration": 3
+      }
+    }
+  ]
+}

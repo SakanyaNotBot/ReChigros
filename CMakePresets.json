@@ -1,0 +1,53 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 20, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "cacheVariables": {
+        "RECHIGROS_BUILD_TESTS": "ON",
+        "RECHIGROS_SDL_SOURCE": "${sourceDir}/third_party/SDL"
+      }
+    },
+    {
+      "name": "desktop-debug",
+      "displayName": "Desktop Debug",
+      "inherits": "base",
+      "binaryDir": "${sourceDir}/build/desktop-debug",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "desktop-release",
+      "displayName": "Desktop Release",
+      "inherits": "base",
+      "binaryDir": "${sourceDir}/build/desktop-release",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "desktop-relwithdebinfo",
+      "displayName": "Desktop Release with Debug Info",
+      "inherits": "base",
+      "binaryDir": "${sourceDir}/build/desktop-relwithdebinfo",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "desktop-debug", "configurePreset": "desktop-debug" },
+    { "name": "desktop-release", "configurePreset": "desktop-release" },
+    { "name": "desktop-relwithdebinfo", "configurePreset": "desktop-relwithdebinfo" }
+  ],
+  "testPresets": [
+    {
+      "name": "desktop-debug",
+      "configurePreset": "desktop-debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "desktop-release",
+      "configurePreset": "desktop-release",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

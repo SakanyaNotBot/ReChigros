@@ -1,0 +1,99 @@
+# Migration tracker
+
+Source baseline: `E:\Chigros` — 40,024 lines of Java across 89 files, 4,771 lines of native
+C++, and 95 packaged asset files. The C++ port reproduces the same architecture, the same
+class decomposition and the same behaviour, replacing the Android platform layer with SDL2
+and OpenGL.
+
+Current size: **18,800 lines** of first-party C++ (excluding vendored headers), about **47%**
+of the reference line count. Line count is a rough proxy only — heavily duplicated Java
+plumbing (JNI marshalling, view boilerplate) collapses in C++, while the renderer expands.
+
+## Verification status
+
+Every gate below was executed on this machine and passed.
+
+| Gate | Command | Result |
+| --- | --- | --- |
+| Desktop clean build | `build.bat desktop Release` | Links `ReChigros.exe`, zero errors |
+| Core regression tests | `rechigros_core_tests.exe` | pass |
+| Chart parser tests | `rechigros_chart_tests.exe` | pass |
+| Transition tests | `rechigros_transition_tests.exe` | pass |
+| Platform tests | `rechigros_platform_tests.exe` | pass |
+| Audio tests | `rechigros_audio_tests.exe` | pass |
+| Application self-test | `ReChigros.exe --self-test` | `SELF-TEST PASS (30/30)`, including a headless draw of every screen and checks that the library, detail and result screens reflect their state |
+| Render smoke | `rechigros_render_smoke.exe --chart …` | writes a 1280x720 PNG |
+| Render input coverage | `build.bat verify-render` | twelve cases: every renderer input and effect path measurably changes the frame |
+| Application loop | `build.bat verify-app` | nine hidden-window runs: gameplay, result, pause cycle, replay record/playback with an exact match, and the autoplay, challenge, practice and mirror modes |
+| One-click build | `build.bat desktop` | configures, builds and runs the test suite from a clean tree |
+| Android APK | `gradlew :app:assembleDebug` | `app-debug.apk`, 3 ABIs, 103 assets, v2 signed |
+| iOS packaging | `build.bat verify-ios` | 47 checks pass |
+
+## Area status
+
+| Area | Status | Evidence |
+| --- | --- | --- |
+| CMake dependency/build graph | done | Ninja/MSVC desktop, Gradle/NDK Android, Xcode iOS branch |
+| Easing (33 tweens + 33 integrals + bezier) | done | numeric assertions in `CoreTests` |
+| BpmTimeline | done | segment round-trip assertions |
+| EventUtils (line/move/colour/text/GIF/speed) | done | reference port, asserted |
+| JudgeLine state machine | done | layered events, father transform, note controls |
+| Note / Chart runtime | done | floor positions, hold geometry, near-note competition |
+| Judgement semantics | done | windows, phases, hold settlement, challenge scoring |
+| Practice judgement windows | done | per-attempt perfect/good overrides with the reference clamping, applied to taps and holds only |
+| HitOffsetIndicator | done | angle/format/commit-mark assertions |
+| OfficialBlock (red zone) | done | parsed into the chart, advanced per frame, and drawn as a noise-displaced silhouette with edge, fill, glow and sparks; blocks judging |
+| OfficialEase | done | curve evaluation ported |
+| PEC parser | done | offset, commands, visible-time walk, multi-BPM |
+| Chart library / UI screens | done | library, detail, game, result, calibration, settings, self-test |
+| Replay / settings persistence | done | round-trip asserted in the self-test |
+| miniaudio engine | done | single-callback mixer, decoder, low-pass, playhead |
+| Hit effects | done | judgement-tinted spritesheet + debris; atlas grid and skin colours read from `respack.json` |
+| Skin layers | done | the selected skin directory is layered over the built-in pack; only the fields a skin specifies change |
+| Hold bodies | done | body slice cropped from the hold sheet using the `holdAtlas` heights |
+| Judge-line pass / note pass / background / HUD | done | visible in the render smoke output |
+| RPE parser | done | note/event/model parity; speed layers are kept per layer and also merged into one curve, asserted against the per-layer integration |
+| Official parser | in progress | format 1/3 move packing, note fields |
+| ChartLoader | done | format decided from a 64 KiB content prefix rather than the extension; `extra.json` effects and videos; `line.csv` per-line textures and scales; normalized digest |
+| Bad-judgement fly-out | done | a bad note leaves a fading copy of its head, tinted dark red, over half a second |
+| Note highlight sizing | done | highlight sheets are a different canvas size; the drawn width is corrected by their width ratio, asserted in `TransitionTests` |
+| Judge-line textures | done | scaled from the 1350x900 authoring space, honouring pixel scale and official scale |
+| Judge-line text | done | rasterised at 50 units of the 1350-wide space, multi-line aware |
+| Judge-line GIF textures | done | GIF89a decoder with disposal and interlace; frames advance with the visual clock or pin to a GIF event |
+| Chart song name | done | threaded from the library metadata into the loader for level-effect matching |
+| Intro/outro transitions | done | 56-sample opening curve, 40-frame UI ease, exit dim and line collapse; asserted in `TransitionTests` |
+| Pause backdrop | done | frozen play field blurred and graded; pause and resume curves ported and asserted |
+| Pause menu and resume countdown widgets | done | drawn by the application shell |
+| Bloom (4-stage DualKawase) | done | prefilter, iterative down/up and composite; verified against a non-bloom render |
+| Storyboard shader chain | done | `extra.json` effects wired into the frame; HUD drawn after the chain |
+| Vignette + noise | done | pass runs through the effect chain; the procedural noise target is regenerated per frame from the wall clock and bound to `noiseCol` |
+| Level-effect track evaluation | done | AnimationDirector keys with the official ease table, asserted in `LevelEffectTests` |
+| Level-effect pass chains | done | per-song pass lists built from the shipped table and mounted on the chart |
+| Chart identity digest | done | MD5 over BOM/whitespace-stripped bytes, verified against the standard vectors |
+| Level-effect grid object | done | authored square through a scaled viewport, additive blend, animated opacity and freeze |
+| Level-effect backdrops | done | pulsing grid square, full-screen black mask, kaleidoscope layer over the stage, and the timed backdrop hide |
+| Message particle field | done | two emitters, constant force, band-limited external field with drag, size curve and band clip; asserted in `LevelEffectTests` |
+| Chapter-9 remaining objects (block screen-space composite) | pending | the pass chains, backdrops, red zones and particles run; the torn-scene composite inside a red zone is not ported |
+| Android APK | done | debug APK verified |
+| iOS Xcode app | packaging verified | compilation needs macOS |
+| Assets | done | 103 files, byte-identical to the reference tree |
+
+'## Notes'
+
+- `nvidia`/driver specifics and absolute luminance comparison are out of scope: this port
+  compares animation shapes, monotonicity and endpoints instead.
+- The APK is signed with the Android debug certificate unless `RECHIGROS_KEYSTORE`,
+  `RECHIGROS_STORE_PASSWORD`, `RECHIGROS_KEY_ALIAS` and `RECHIGROS_KEY_PASSWORD` are set.
+- Comments in this repository reference no other project, and carry no attribution or
+  provenance notes.
+
+## Deliberate exclusions
+
+These are out of scope on purpose. Each was checked against the reference before deciding.
+
+| Area | Why it is excluded |
+| --- | --- |
+| Storyboard video layer | The reference plays videos through a platform video pipeline (a surface-backed external texture) that only exists on the mobile platform. No bundled content uses it: there is no `videos` entry in any packaged file, and the video files in the reference tree are capture footage, not shipped assets. Supporting it would mean adding a full video decoder for content nobody ships. The chart model still parses the video entries, so a later port only has to add the decoder. |
+| Online chart catalogue | The browser feature depends on third-party hosting services. It is deliberately a placeholder so the application never calls an unverified endpoint on the user's behalf. |
+| Mobile-only UI toolkit | The reference draws its screens with native widgets. This port draws equivalent screens with an immediate-mode UI toolkit instead, so the widget classes have no C++ counterpart by design; the feature they represent does exist. |
+| Red-zone screen-space composite | The reference has two red-zone renderers: an inline one and a screen-space one that resamples the finished scene through a displacement map so the play field looks torn inside an active zone. Only the inline renderer is ported. Both are supported by the reference and produce the same zone silhouette; the screen-space one additionally distorts the scene behind it. |
