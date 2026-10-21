@@ -55,7 +55,9 @@ $bloom = Join-Path $Fixtures 'bloom_pack\chart.json'
 $vignette = Join-Path $Fixtures 'vignette_pack\chart.json'
 $gif = Join-Path $Fixtures 'gif_pack\chart.json'
 $singleNote = Join-Path $Fixtures 'single_note.json'
-$skin = Join-Path $Fixtures 'skin'
+$hold = Join-Path $Fixtures 'hold.json'
+$holdSkin = (Resolve-Path (Join-Path $Fixtures 'hold_skin')).Path
+$skin = (Resolve-Path (Join-Path $Fixtures 'skin')).Path
 
 # Each case names the base and changed chart explicitly, so a case can compare two
 # different packs as well as two settings on one chart.
@@ -77,6 +79,10 @@ $cases = @(
      Base = @('--time', '0.55');
      Changed = @('--time', '0.55', '--force-bad'); Minimum = 1.0;
      Description = 'a bad judgement leaves a fading copy of the note' }
+  @{ Id = 'hold-sheet'; BaseChart = $hold; ChangedChart = $hold;
+     Base = @('--time', '1.2');
+     Changed = @('--time', '1.2', '--skin', $holdSkin); Minimum = 2.0;
+     Description = 'the hold sheet slicing and body behaviour follow the pack' }
   @{ Id = 'skin-overrides'; BaseChart = $plain; ChangedChart = $plain;
      Base = @('--time', '1.0'); Changed = @('--time', '1.0', '--skin', $skin); Minimum = 0.5;
      Description = 'a skin overrides the built-in materials' }

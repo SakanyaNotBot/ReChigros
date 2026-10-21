@@ -123,6 +123,12 @@ struct GameRenderer::Impl {
   double messageParticleLastSec{-1.0};
   // Material settings resolved from the built-in pack and then the selected skin layer.
   fx::HitEffectAtlas hitAtlas;
+  // Hold sheet slicing and body behaviour, overridable by the resource pack and a skin.
+  int holdTailSlice[2]{50, 50};
+  int holdHeadSlice[2]{52, 95};
+  bool holdRepeat{};
+  bool holdKeepHead{};
+  bool holdCompact{};
   fx::HitEffectStyle hitStyle;
   fx::HitEffectSkin hitSkin;
   std::filesystem::path skinDirectory;
@@ -162,6 +168,9 @@ struct GameRenderer::Impl {
   // Layers one JSON material table over the current settings. Only present fields change.
   void applyResPackLayer(const nlohmann::json& root);
   gl::Texture* cropHoldBody(const char* sheetPath, int tailSlice, int headSlice);
+  // Re-slices the hold sheet from the current material settings. The pack and a skin may
+  // change the slice sizes, so this runs again whenever those settings change.
+  void refreshHoldSheet();
   void prepareForChart(game::Chart* chart);
   void drawBackgroundPass(const scene::StageLayout& layout, float artworkAlpha, float dimAlpha);
   void drawLinePass(const RenderFrameInput& input, game::Chart* chart,
@@ -208,7 +217,6 @@ void GameRenderer::Impl::loadGameplayTextures() {
           scene::highlightWidthScale(normal->width(), highlight->width());
     }
   }
-  applyResPackSettings();
   pauseBackdrop.prepare(assets);
   dsGrid.prepare(assets);
   kaleido.prepare(assets);
@@ -229,20 +237,13 @@ void GameRenderer::Impl::loadGameplayTextures() {
   if (effectDisplaceMap != nullptr) effectDisplaceMap->setFilter(true);
   if (effectWireNoise != nullptr) effectWireNoise->setWrapRepeat(true, true);
 
+  // Resolve the material settings before slicing the hold sheet: the pack and a skin may
+  // change the slice sizes.
+  applyResPackSettings();
+
   // The hold sheet is a vertical stack of tail, body and head. The body is not a
   // separate asset: it is the middle slice of the same sheet, cropped here.
-  for (int highlight = 0; highlight < 2; ++highlight) {
-    // `holdAtlas` is [tailSlice, headSlice] in pixels; the highlighted sheet has its
-    // own pair. `buildHoldUv` and the body crop must agree on the same two numbers.
-    const int tailSlice = 50;
-    const int headSlice = highlight == 1 ? 95 : 52;
-    const char* sheetPath = highlight == 1 ? "res/hold_mh.png" : "res/hold.png";
-    holdBodies[highlight] = cropHoldBody(sheetPath, tailSlice, headSlice);
-    if (holdTextures[highlight] != nullptr) {
-      holdUv[highlight] = scene::buildHoldUv(holdTextures[highlight]->height(), tailSlice,
-          headSlice);
-    }
-  }
+  refreshHoldSheet();
 
   headTextureList.clear();
   for (const int type : kHeadDrawOrder) {
@@ -254,6 +255,21 @@ void GameRenderer::Impl::loadGameplayTextures() {
         continue;
       }
       headTextureList.push_back(texture);
+    }
+  }
+}
+
+void GameRenderer::Impl::refreshHoldSheet() {
+  for (int highlight = 0; highlight < 2; ++highlight) {
+    // The atlas pair is [tail slice, head slice] in pixels; the highlighted sheet has its
+    // own pair. `buildHoldUv` and the body crop must agree on the same two numbers.
+    const int tailSlice = holdTailSlice[highlight];
+    const int headSlice = holdHeadSlice[highlight];
+    const char* sheetPath = highlight == 1 ? "res/hold_mh.png" : "res/hold.png";
+    holdBodies[highlight] = cropHoldBody(sheetPath, tailSlice, headSlice);
+    if (holdTextures[highlight] != nullptr) {
+      holdUv[highlight] =
+          scene::buildHoldUv(holdTextures[highlight]->height(), tailSlice, headSlice);
     }
   }
 }
@@ -328,6 +344,32 @@ void GameRenderer::Impl::applyResPackLayer(const nlohmann::json& root) {
   }
   if (const auto it = root.find("hitFxTinted"); it != root.end() && it->is_boolean()) {
     hitStyle.tinted = it->get<bool>();
+  }
+
+  // Hold slicing and body behaviour. Each array is one sheet's pair of slice sizes, in the
+  // order the sheet stacks them: tail first, then head. The plain sheet feeds variant 0 and
+  // the highlight sheet feeds variant 1.
+  const auto readSlices = [&root](
+                              const char* key, int& tailSlice, int& headSlice) {
+    const auto it = root.find(key);
+    if (it == root.end() || !it->is_array() || it->size() < 2) return;
+    if ((*it)[0].is_number()) {
+      tailSlice = std::max(0, static_cast<int>((*it)[0].get<double>()));
+    }
+    if ((*it)[1].is_number()) {
+      headSlice = std::max(0, static_cast<int>((*it)[1].get<double>()));
+    }
+  };
+  readSlices("holdAtlas", holdTailSlice[0], holdHeadSlice[0]);
+  readSlices("holdAtlasMH", holdTailSlice[1], holdHeadSlice[1]);
+  if (const auto it = root.find("holdRepeat"); it != root.end() && it->is_boolean()) {
+    holdRepeat = it->get<bool>();
+  }
+  if (const auto it = root.find("holdKeepHead"); it != root.end() && it->is_boolean()) {
+    holdKeepHead = it->get<bool>();
+  }
+  if (const auto it = root.find("holdCompact"); it != root.end() && it->is_boolean()) {
+    holdCompact = it->get<bool>();
   }
 
   // Colours may be a three-component array plus a separate alpha, or four components.
@@ -613,7 +655,7 @@ void GameRenderer::Impl::drawNotePasses(const scene::StageLayout& layout,
     batch.begin();
     scene::buildHoldBatch(batch, lineFrames, lineDrawOrder, *chart, highlight == 1,
         static_cast<float>(holdTexture->width()), static_cast<float>(holdTexture->height()),
-        holdUv[highlight], false, false, false,
+        holdUv[highlight], holdRepeat, holdKeepHead, holdCompact,
         static_cast<float>(holdBodies[highlight] != nullptr ? holdBodies[highlight]->width() : 0),
         static_cast<float>(holdBodies[highlight] != nullptr ? holdBodies[highlight]->height() : 0),
         params);
@@ -963,8 +1005,17 @@ void GameRenderer::setSkinDirectory(const std::filesystem::path& skinDirectory) 
   impl_->hitAtlas = fx::HitEffectAtlas{};
   impl_->hitStyle = fx::HitEffectStyle{};
   impl_->hitSkin = fx::HitEffectSkin{};
+  impl_->holdTailSlice[0] = 50;
+  impl_->holdTailSlice[1] = 50;
+  impl_->holdHeadSlice[0] = 52;
+  impl_->holdHeadSlice[1] = 95;
+  impl_->holdRepeat = false;
+  impl_->holdKeepHead = false;
+  impl_->holdCompact = false;
   impl_->skinDirectory = skinDirectory;
   impl_->applyResPackSettings();
+  // The slice sizes may have changed, so the hold sheet has to be cut again.
+  impl_->refreshHoldSheet();
 }
 
 void GameRenderer::render(const RenderFrameInput& input, game::Chart* chart,

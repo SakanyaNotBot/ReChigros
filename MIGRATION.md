@@ -23,7 +23,7 @@ Every gate below was executed on this machine and passed.
 | Audio tests | `rechigros_audio_tests.exe` | pass |
 | Application self-test | `ReChigros.exe --self-test` | `SELF-TEST PASS (30/30)`, including a headless draw of every screen and checks that the library, detail and result screens reflect their state |
 | Render smoke | `rechigros_render_smoke.exe --chart …` | writes a 1280x720 PNG |
-| Render input coverage | `build.bat verify-render` | twelve cases: every renderer input and effect path measurably changes the frame |
+| Render input coverage | `build.bat verify-render` | thirteen cases: every renderer input and effect path measurably changes the frame |
 | Application loop | `build.bat verify-app` | nine hidden-window runs: gameplay, result, pause cycle, replay record/playback with an exact match, and the autoplay, challenge, practice and mirror modes |
 | One-click build | `build.bat desktop` | configures, builds and runs the test suite from a clean tree |
 | Android APK | `gradlew :app:assembleDebug` | `app-debug.apk`, 3 ABIs, 103 assets, v2 signed |
