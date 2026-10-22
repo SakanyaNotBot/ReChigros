@@ -1,6 +1,8 @@
 #include "rechigros/app/ScreenCommon.hpp"
 #include "rechigros/app/Screens.hpp"
+#include "rechigros/app/UiLayout.hpp"
 #include "rechigros/app/UiStyle.hpp"
+#include "rechigros/app/UiText.hpp"
 
 #include "rechigros/audio/AudioEngine.hpp"
 #include "rechigros/chart/ChartLoader.hpp"
@@ -25,6 +27,15 @@ using game::GameplaySession;
 constexpr double kIntroAudioStartSec = 0.35;
 constexpr double kIntroEndSec = 0.45;
 constexpr double kOutroDurationSec = 1.7;
+// The HUD start and exit tweens are 40 frames long, like the play field's.
+constexpr double kHudIntroDurationSec = 40.0 / 60.0;
+constexpr double kHudOutroDurationSec = 40.0 / 60.0;
+
+// Screen-local feedback state for the pause button's tap ring and double-tap gesture.
+double gPauseRingStartSec{-1.0};
+double gLastPauseTapMs{0.0};
+float gLastPauseTapX{};
+float gLastPauseTapY{};
 
 std::int64_t nowMilliseconds() {
   using namespace std::chrono;
@@ -239,114 +250,1051 @@ void drawDebugOverlay(AppContext& context, ImDrawList* drawList) {
   }
 }
 
-void drawPauseMenu(AppContext& context) {
-  auto& game = context.game;
-  const auto size = viewportSize();
-  const float scale = layoutScale();
-  ui::beginFullscreenWindow("##game_overlay");
-  ImDrawList* drawList = ImGui::GetWindowDrawList();
-  drawList->AddRectFilled(ImVec2(0.0F, 0.0F), ImVec2(size.width, size.height),
-      IM_COL32(0, 0, 0, 150));
+// ---------------------------------------------------------------------------
+// Pause menu, resume countdown and practice overlay.
+//
+// The play field belongs to the renderer; these controls are layered above it the same
+// way the reference screen places its pause views over the frozen scene. Geometry is in
+// screen pixels and mirrors the reference's density metrics and stage fractions.
+// ---------------------------------------------------------------------------
 
-  const ImVec2 panelSize(360.0F * scale, 0.0F);
-  const float panelLeft = (size.width - panelSize.x) * 0.5F;
-  float cursorY = size.height * 0.24F;
-  ui::drawTextCentered(drawList, ImVec2(size.width * 0.5F, cursorY), 34.0F * scale,
-      ui::rgba(ui::kTextPrimary), "暂停");
-  cursorY += 56.0F * scale;
+struct GameStagePixels {
+  float left{};
+  float top{};
+  float width{};
+  float height{};
+};
 
-  const auto button = [&](const char* id, const char* label, float height) {
-    const bool pressed = ui::skewButton(id, label, ImVec2(panelLeft, cursorY),
-        ImVec2(panelSize.x, height * scale), 22.0F * scale, -1.0F, ui::rgba(ui::kPanelFill),
-        IM_COL32(255, 255, 255, 140), true, false);
-    cursorY += (height + 12.0F) * scale;
-    return pressed;
+GameStagePixels gameStagePixels(const AppContext& context) {
+  const StageRect stage = touchStage(context);
+  GameStagePixels pixels;
+  pixels.left = stage.left;
+  pixels.top = stage.top;
+  pixels.width = stage.width;
+  pixels.height = stage.height;
+  return pixels;
+}
+
+// Reference density: one dp is 1.75 px at the 1080-tall capture resolution.
+constexpr float kReferenceDensity = 1.75F;
+
+float gameDp(const GameStagePixels& stage) {
+  return kReferenceDensity * std::max(0.2F, stage.height / 1080.0F);
+}
+
+// Scale of the practice panels: both shrink together on short stages so nothing runs
+// past the play field edge.
+float practicePanelScale(const GameStagePixels& stage) {
+  const float dp = gameDp(stage);
+  const float byHeight = stage.height / (500.0F * dp);
+  const float byWidth = stage.width / (720.0F * dp);
+  return std::clamp(std::min(byHeight, byWidth), 0.5F, 1.0F);
+}
+
+void drawRoundedRect(ImDrawList* drawList, float x, float y, float width, float height,
+    float radius, ImU32 color) {
+  if (width <= 0.0F || height <= 0.0F) return;
+  drawList->AddRectFilled(ImVec2(x, y), ImVec2(x + width, y + height), color, radius);
+}
+
+void drawCard(ImDrawList* drawList, float x, float y, float width, float height, float dp) {
+  const float radius = dp * 16.0F;
+  drawRoundedRect(drawList, x, y, width, height, radius, IM_COL32(255, 255, 255, 23));
+  drawRoundedRect(drawList, x + dp, y + dp, width - dp * 2.0F, height - dp * 2.0F,
+      std::max(dp * 2.0F, radius - dp), IM_COL32(11, 13, 17, 224));
+}
+
+// One rasterised line measured on the pixel grid. Glyph offsets are relative to the
+// baseline as reported by the interface font cache.
+struct TextRun {
+  struct Glyph {
+    std::uint32_t codepoint{};
+    const ui::UiFontCache::Glyph* glyph{};
   };
+  std::vector<Glyph> glyphs;
+  float inkLeft{};
+  float inkTop{};
+  float inkRight{};
+  float inkBottom{};
+  float sizePx{};
+  bool bold{};
+  bool valid{};
+};
 
-  if (button("##pause_resume", "继续", 48.0F)) {
-    game.pause = GameRuntime::Pause::Countdown;
-    game.countdown = 3;
-    game.countdownElapsedSec = 0.0;
-    game.pauseElapsedSec = 0.0;
+TextRun measureTextRun(std::string_view text, float pixelSize, bool bold) {
+  TextRun run;
+  auto& cache = ui::fontCache();
+  run.sizePx = pixelSize;
+  run.bold = bold;
+  float penX = 0.0F;
+  float minX = 0.0F;
+  float maxX = 0.0F;
+  float minY = 0.0F;
+  float maxY = 0.0F;
+  bool first = true;
+  std::uint32_t previous = 0;
+  for (std::size_t index = 0; index < text.size();) {
+    std::size_t length = 0;
+    const std::uint32_t codepoint = ui::UiFontCache::decode(text, index, length);
+    if (length == 0) break;
+    index += length;
+    const auto* glyph = cache.glyph(codepoint, pixelSize, bold);
+    if (glyph == nullptr) continue;
+    if (previous != 0) penX += cache.kerning(previous, codepoint, pixelSize, bold);
+    if (glyph->width > 0.0F && glyph->height > 0.0F) {
+      const float glyphLeft = penX + glyph->offsetX;
+      const float glyphRight = glyphLeft + glyph->width;
+      const float glyphTop = glyph->offsetY;
+      const float glyphBottom = glyphTop + glyph->height;
+      if (first) {
+        minX = glyphLeft;
+        maxX = glyphRight;
+        minY = glyphTop;
+        maxY = glyphBottom;
+        first = false;
+      } else {
+        minX = std::min(minX, glyphLeft);
+        maxX = std::max(maxX, glyphRight);
+        minY = std::min(minY, glyphTop);
+        maxY = std::max(maxY, glyphBottom);
+      }
+    }
+    run.glyphs.push_back({codepoint, glyph});
+    penX += glyph->advance;
+    previous = codepoint;
   }
-  if (button("##pause_restart", "重新开始", 48.0F)) {
-    gameRestart(context);
-    ui::endFullscreenWindow();
+  if (run.glyphs.empty()) return run;
+  run.inkLeft = minX;
+  run.inkTop = minY;
+  run.inkRight = maxX;
+  run.inkBottom = maxY;
+  run.valid = true;
+  return run;
+}
+
+// Draws a measured run with its ink top-left at (inkX, inkY), scaled by `scale`.
+void drawTextRun(ImDrawList* drawList, const TextRun& run, float inkX, float inkY, float scale,
+    ImU32 color) {
+  if (!run.valid || scale <= 0.0F) return;
+  auto& cache = ui::fontCache();
+  const auto texture = static_cast<ImTextureID>(cache.textureId());
+  float penX = 0.0F;
+  std::uint32_t previous = 0;
+  for (const auto& item : run.glyphs) {
+    const auto* glyph = item.glyph;
+    if (glyph == nullptr) continue;
+    if (previous != 0) penX += cache.kerning(previous, item.codepoint, run.sizePx, run.bold);
+    if (glyph->width > 0.0F && glyph->height > 0.0F) {
+      const float x = inkX + (penX + glyph->offsetX - run.inkLeft) * scale;
+      const float y = inkY + (glyph->offsetY - run.inkTop) * scale;
+      drawList->AddImage(texture, ImVec2(x, y),
+          ImVec2(x + glyph->width * scale, y + glyph->height * scale), ImVec2(glyph->u0, glyph->v0),
+          ImVec2(glyph->u1, glyph->v1), color);
+    }
+    penX += glyph->advance;
+    previous = item.codepoint;
+  }
+}
+
+// Reference panel text: rasterised at a stage-relative base size with 25% padding, then
+// scaled so the whole texture is exactly `heightPx` tall.
+void drawPanelText(ImDrawList* drawList, std::string_view text, const GameStagePixels& stage,
+    float heightPx, int align, float x, float centerY, ImU32 color) {
+  if (heightPx <= 0.0F || text.empty()) return;
+  const float baseSize = std::max(16.0F, std::round(stage.width * (50.0F / 1350.0F)));
+  const float pad = std::max(4.0F, std::round(baseSize * 0.25F));
+  const TextRun run = measureTextRun(text, baseSize, false);
+  if (!run.valid) return;
+  const float inkWidth = std::ceil(run.inkRight) - std::floor(run.inkLeft);
+  const float inkHeight = std::ceil(run.inkBottom) - std::floor(run.inkTop);
+  const float textureWidth = inkWidth + pad * 2.0F;
+  const float textureHeight = inkHeight + pad * 2.0F;
+  const float scale = heightPx / std::max(1.0F, textureHeight);
+  float left = x;
+  if (align == 1) left = x - textureWidth * scale * 0.5F;
+  if (align == 2) left = x - textureWidth * scale;
+  const float top = centerY - heightPx * 0.5F;
+  drawTextRun(drawList, run, left + pad * scale + std::floor(run.inkLeft) * scale,
+      top + pad * scale + std::floor(run.inkTop) * scale, scale, color);
+}
+
+// Countdown digit: drawn at its natural pixel size, centred on the given point.
+void drawCountdownDigit(ImDrawList* drawList, std::string_view text, float textPx, float centerX,
+    float centerY, float alpha) {
+  if (alpha <= 0.001F || text.empty()) return;
+  const TextRun run = measureTextRun(text, textPx, true);
+  if (!run.valid) return;
+  const float inkWidth = run.inkRight - run.inkLeft;
+  const float inkHeight = run.inkBottom - run.inkTop;
+  const float inkX = centerX - inkWidth * 0.5F;
+  const float inkY = centerY - inkHeight * 0.5F;
+  const int baseAlpha = static_cast<int>(std::clamp(alpha, 0.0F, 1.0F) * 255.0F);
+  // Soft drop shadow, approximated with two translucent copies because the overlay draw
+  // list has no blur pass.
+  const float shadowRadius = std::max(1.0F, textPx * 0.12F);
+  const float shadowY = std::max(1.0F, textPx * 0.06F);
+  drawTextRun(drawList, run, inkX, inkY + shadowY + shadowRadius * 0.5F, 1.0F,
+      IM_COL32(0, 0, 0, static_cast<int>(baseAlpha * 0.26F)));
+  drawTextRun(drawList, run, inkX, inkY + shadowY, 1.0F,
+      IM_COL32(0, 0, 0, static_cast<int>(baseAlpha * 0.4F)));
+  drawTextRun(drawList, run, inkX, inkY, 1.0F, IM_COL32(255, 255, 255, baseAlpha));
+}
+
+// Pause button icon plate: the reference draws its 200x200 icon artwork stretched to the
+// button rect. A missing texture falls back to a plain geometric glyph.
+void drawPauseIcon(AppContext& context, ImDrawList* drawList, const char* asset,
+    float x, float y, float width, float height, float alpha, int fallbackKind) {
+  const ImU32 tint = IM_COL32(255, 255, 255,
+      static_cast<int>(std::clamp(alpha, 0.0F, 1.0F) * 255.0F));
+  const std::uint64_t texture = assetTexture(context, asset);
+  if (texture != 0) {
+    ui::drawImage(drawList, ui::PxRect{ImVec2(x, y), ImVec2(x + width, y + height)}, texture,
+        context.textures.width(texture), context.textures.height(texture), ui::ImageFit::Fill, tint);
     return;
   }
-  if (button("##pause_quit", "退出", 48.0F)) {
-    gameQuitToMenu(context);
-    ui::endFullscreenWindow();
+  const ImU32 black = IM_COL32(0, 0, 0, static_cast<int>(std::clamp(alpha, 0.0F, 1.0F) * 120.0F));
+  const float pad = width * 0.25F;
+  const float left = x + pad;
+  const float right = x + width - pad;
+  const float top = y + pad;
+  const float bottom = y + height - pad;
+  const float centerX = x + width * 0.5F;
+  const float centerY = y + height * 0.5F;
+  const float thickness = std::max(2.0F, width * 0.075F);
+  switch (fallbackKind) {
+    case 0: {
+      drawList->AddLine(ImVec2(right, top), ImVec2(left, centerY), tint, thickness);
+      drawList->AddLine(ImVec2(left, centerY), ImVec2(right, bottom), tint, thickness);
+      break;
+    }
+    case 1: {
+      drawList->PathArcTo(ImVec2(centerX, centerY), (right - left) * 0.42F,
+          static_cast<float>(M_PI) * 0.15F, static_cast<float>(M_PI) * 1.75F, 24);
+      drawList->PathStroke(tint, 0, thickness);
+      drawList->AddTriangleFilled(ImVec2(right, centerY - (right - left) * 0.18F),
+          ImVec2(right + (right - left) * 0.10F, centerY),
+          ImVec2(right, centerY + (right - left) * 0.18F), tint);
+      break;
+    }
+    default: {
+      drawList->AddTriangleFilled(ImVec2(left, top), ImVec2(left, bottom), ImVec2(right, centerY),
+          tint);
+      break;
+    }
+  }
+  (void)black;
+}
+
+// Pause button geometry, mirroring the reference's stage-fraction layout.
+struct PauseButtonRects {
+  float size{};
+  ImVec2 exit{};
+  ImVec2 restart{};
+  ImVec2 continueButton{};
+};
+
+PauseButtonRects computePauseButtonRects(const GameStagePixels& stage) {
+  PauseButtonRects rects;
+  rects.size = stage.height * 0.1F;
+  float gap = rects.size * 1.35F;
+  const float maxGap = std::max(0.0F, (stage.width - rects.size * 3.0F) * 0.5F);
+  gap = std::min(gap, maxGap * 0.95F);
+  const float top = stage.top + stage.height * 0.5F - rects.size * 0.5F;
+  const float centerX = stage.left + stage.width * 0.5F;
+  rects.exit = ImVec2(centerX - gap - rects.size, top);
+  rects.restart = ImVec2(centerX - rects.size * 0.5F, top);
+  rects.continueButton = ImVec2(centerX + gap, top);
+  return rects;
+}
+
+// Hermite curve keys of the pause button fade-in (0.5 s, 31 samples).
+constexpr float kPauseButtonAlphaTime[] = {
+    0.0F, 0.016666668F, 0.033333335F, 0.05F, 0.06666667F, 0.083333336F, 0.1F, 0.11666667F,
+    0.13333334F, 0.15F, 0.16666667F, 0.18333334F, 0.2F, 0.21666667F, 0.23333333F, 0.25F,
+    0.26666668F, 0.28333333F, 0.3F, 0.31666666F, 0.33333334F, 0.35F, 0.36666667F, 0.38333333F,
+    0.4F, 0.41666666F, 0.43333334F, 0.45F, 0.46666667F, 0.48333332F, 0.5F};
+constexpr float kPauseButtonAlphaValue[] = {
+    0.0F, 0.037041754F, 0.0834299F, 0.14347078F, 0.22434197F, 0.33479667F, 0.46590355F,
+    0.57978284F, 0.6635525F, 0.7254899F, 0.7731407F, 0.8110696F, 0.84202385F, 0.86774313F,
+    0.8893877F, 0.9077667F, 0.92346704F, 0.9369268F, 0.94848245F, 0.958398F, 0.9668845F,
+    0.97411364F, 0.9802265F, 0.985341F, 0.9895567F, 0.99295855F, 0.9956194F, 0.9976021F,
+    0.99896187F, 0.999747F, 1.0F};
+constexpr float kPauseButtonAlphaInSlope[] = {
+    0.0F, 2.222505F, 2.7832887F, 3.6024528F, 4.852271F, 6.627284F, 7.8664136F, 6.832758F,
+    5.026179F, 3.7162437F, 2.859049F, 2.275733F, 1.8572546F, 1.5431572F, 1.2986757F, 1.1027385F,
+    0.94201964F, 0.8075853F, 0.6933397F, 0.59493256F, 0.50919014F, 0.43374938F, 0.36677212F,
+    0.30687004F, 0.25294283F, 0.20410915F, 0.1596521F, 0.118961446F, 0.08158558F, 0.047106788F,
+    0.01518129F};
+constexpr float kPauseButtonAlphaOutSlope[] = {
+    2.222505F, 2.7832887F, 3.6024528F, 4.852271F, 6.627282F, 7.8664136F, 6.832758F, 5.026179F,
+    3.7162437F, 2.859049F, 2.275733F, 1.8572546F, 1.5431572F, 1.2986757F, 1.1027385F, 0.94201964F,
+    0.8075853F, 0.6933397F, 0.59493244F, 0.50919014F, 0.43374938F, 0.36677212F, 0.30687004F,
+    0.25294283F, 0.20410915F, 0.1596521F, 0.118961446F, 0.08158558F, 0.047106788F, 0.01518129F,
+    0.0F};
+
+float evaluateHermite(const float* times, const float* values, const float* inSlopes,
+    const float* outSlopes, int count, float timeSec) {
+  if (count <= 0) return 0.0F;
+  if (timeSec <= times[0]) return values[0];
+  if (timeSec >= times[count - 1]) return values[count - 1];
+  for (int index = 0; index + 1 < count; ++index) {
+    const float t0 = times[index];
+    const float t1 = times[index + 1];
+    if (timeSec < t0 || timeSec > t1) continue;
+    const float span = t1 - t0;
+    if (std::abs(span) < 1.0e-6F) return values[index + 1];
+    const float p = std::clamp((timeSec - t0) / span, 0.0F, 1.0F);
+    const float p2 = p * p;
+    const float p3 = p2 * p;
+    const float h00 = 2.0F * p3 - 3.0F * p2 + 1.0F;
+    const float h10 = p3 - 2.0F * p2 + p;
+    const float h01 = -2.0F * p3 + 3.0F * p2;
+    const float h11 = p3 - p2;
+    return std::clamp(h00 * values[index] + h10 * span * outSlopes[index] + h01 * values[index + 1] +
+            h11 * span * inSlopes[index + 1],
+        0.0F, 1.0F);
+  }
+  return values[count - 1];
+}
+
+constexpr int kPauseButtonAlphaCount =
+    static_cast<int>(sizeof(kPauseButtonAlphaTime) / sizeof(float));
+
+float pauseButtonIntroAlpha(double elapsedSec) {
+  return evaluateHermite(kPauseButtonAlphaTime, kPauseButtonAlphaValue,
+      kPauseButtonAlphaInSlope, kPauseButtonAlphaOutSlope, kPauseButtonAlphaCount,
+      static_cast<float>(elapsedSec));
+}
+
+// The three pause plates fade out over the first tenth of a second of the resume.
+float continueButtonAlpha(double elapsedSec) {
+  if (elapsedSec <= 0.0) return 1.0F;
+  constexpr double fadeOutSec = 0.1;
+  if (elapsedSec >= fadeOutSec) return 0.0F;
+  const float p = static_cast<float>(elapsedSec / fadeOutSec);
+  return 1.0F - p * p * (3.0F - 2.0F * p);
+}
+
+// Practice state the reference keeps in the renderer. The port keeps the same values in
+// the screen and feeds seeks through GameRuntime::seekRequestSec.
+struct PracticeUiState {
+  double repeatFromSec{0.0};
+  double repeatToSec{-1.0};
+  bool repeatActive{false};
+  int dragMode{0}; // 1 speed, 2 scrub, 3 perfect window, 4 good window
+  bool scrubFine{false};
+  bool scrubFineBlocked{false};
+  double scrubDownSec{0.0};
+  double scrubLastMoveSec{0.0};
+  double scrubFineCenterSec{0.0};
+  float scrubDownX{0.0F};
+  float scrubLastX{0.0F};
+  float scrubMaxDrift{0.0F};
+  float scrubFineAnchorX{0.0F};
+};
+PracticeUiState gPractice;
+
+constexpr double kPracticeRepeatMinLengthSec = 1.0;
+constexpr double kPracticeJumpSec = 5.0;
+constexpr float kPracticeSpeedMin = 0.10F;
+constexpr float kPracticeSpeedMax = 2.00F;
+constexpr float kPracticeSpeedStep = 0.05F;
+constexpr double kPracticeFineSpanSec = 4.0;
+constexpr double kPracticeFineHoldSec = 0.45;
+constexpr double kPracticeFineStillSec = 0.25;
+constexpr float kPracticeFineHoldSlopDp = 8.0F;
+// The judgement zone bar spans the BAD window plus a fixed miss margin on both sides.
+constexpr double kPracticeBarSpanSec = 0.220 + 0.080;
+constexpr double kPracticePerfectMinMs = 20.0;
+constexpr double kPracticePerfectMaxMs = 80.0;
+constexpr double kPracticeGoodMinMs = 25.0;
+constexpr double kPracticeGoodMaxMs = 180.0;
+
+std::string practiceFormatTime(double seconds) {
+  if (!std::isfinite(seconds) || seconds < 0.0) seconds = 0.0;
+  const int total = static_cast<int>(std::floor(seconds + 0.5));
+  char buffer[32];
+  std::snprintf(buffer, sizeof(buffer), "%d:%02d", total / 60, total % 60);
+  return buffer;
+}
+
+std::string practiceFormatTimePrecise(double seconds) {
+  if (!std::isfinite(seconds) || seconds < 0.0) seconds = 0.0;
+  int total = static_cast<int>(std::floor(seconds));
+  int hundredths = static_cast<int>(std::floor((seconds - static_cast<double>(total)) * 100.0 + 0.5));
+  if (hundredths >= 100) {
+    hundredths -= 100;
+    ++total;
+  }
+  char buffer[40];
+  std::snprintf(buffer, sizeof(buffer), "%d:%02d.%02d", total / 60, total % 60, hundredths);
+  return buffer;
+}
+
+double practiceDurationSec(const AppContext& context) {
+  const auto& game = context.game;
+  if (game.musicDurationSec > 0.05) {
+    return std::max(0.001, game.musicDurationSec - game.chartOffsetSec - game.userOffsetSec);
+  }
+  return std::max(0.001, game.chart ? game.chart->chartEndTimeSec : 1.0);
+}
+
+double practicePlayheadSec(const AppContext& context) {
+  return std::max(0.0, context.game.chartTimeSec);
+}
+
+// Layout of both practice panels, in screen pixels.
+struct PracticeLayout {
+  float dp{};
+  float panelLeft{};
+  float panelTop{};
+  float panelWidth{};
+  float panelHeight{};
+  float pad{};
+  float timesHeight{};
+  float trackHeight{};
+  float buttonHeight{};
+  float rowGap{};
+  float timelineLeft{};
+  float timelineTop{};
+  float timelineRight{};
+  float timelineBottom{};
+  float speedLeft{};
+  float speedTop{};
+  float speedRight{};
+  float speedBottom{};
+  float speedTrackLeft{};
+  float buttonsTop{};
+  float buttonsLeft{};
+  float buttonWidth{};
+  float judgeLeft{};
+  float judgeTop{};
+  float judgeHeight{};
+  float judgeBarLeft{};
+  float judgeBarTop{};
+  float judgeBarRight{};
+  float judgeBarBottom{};
+  float judgePerfectLeft{};
+  float judgePerfectTop{};
+  float judgePerfectRight{};
+  float judgePerfectBottom{};
+  float judgeGoodTop{};
+  float judgeGoodBottom{};
+};
+
+PracticeLayout computePracticeLayout(const AppContext& context, const GameStagePixels& stage) {
+  PracticeLayout layout;
+  const float uiScale = practicePanelScale(stage);
+  const float dp = gameDp(stage) * uiScale;
+  layout.dp = dp;
+  layout.panelWidth = std::min(stage.width * 0.66F, dp * 620.0F);
+  layout.pad = dp * 20.0F;
+  layout.timesHeight = dp * 20.0F;
+  layout.trackHeight = dp * 10.0F;
+  layout.buttonHeight = dp * 42.0F;
+  layout.rowGap = dp * 16.0F;
+  layout.panelHeight = layout.pad * 2.0F + layout.timesHeight + dp * 12.0F + layout.trackHeight +
+      dp * 18.0F + layout.buttonHeight + layout.rowGap + layout.buttonHeight;
+  layout.panelLeft = stage.left + (stage.width - layout.panelWidth) * 0.5F;
+  const PauseButtonRects buttonRects = computePauseButtonRects(stage);
+  layout.panelTop = buttonRects.exit.y - layout.panelHeight - dp * 24.0F;
+
+  float x = layout.panelLeft + layout.pad;
+  const float right = layout.panelLeft + layout.panelWidth - layout.pad;
+  float y = layout.panelTop + layout.pad + layout.timesHeight + dp * 12.0F;
+  layout.timelineLeft = x;
+  layout.timelineTop = y;
+  layout.timelineRight = right;
+  layout.timelineBottom = y + layout.trackHeight;
+  y += layout.trackHeight + dp * 18.0F + layout.buttonHeight + layout.rowGap;
+  layout.speedLeft = x;
+  layout.speedTop = y;
+  layout.speedRight = right;
+  layout.speedBottom = y + layout.buttonHeight;
+  layout.speedTrackLeft = x + dp * 86.0F;
+
+  y -= layout.rowGap;
+  const float gap = dp * 10.0F;
+  layout.buttonWidth = (right - x - gap * 4.0F) / 5.0F;
+  layout.buttonsTop = y - layout.buttonHeight;
+  layout.buttonsLeft = x;
+
+  // Judgement panel, below the pause button row.
+  const float judgeTop = std::min(buttonRects.exit.y + buttonRects.size + dp * 24.0F,
+      stage.top + stage.height - dp * 210.0F);
+  const float judgePad = dp * 20.0F;
+  const float judgeBarHeight = dp * 10.0F;
+  const float judgeRowHeight = dp * 34.0F;
+  layout.judgeLeft = layout.panelLeft;
+  layout.judgeTop = judgeTop;
+  layout.judgeHeight =
+      judgePad * 2.0F + judgeBarHeight + dp * 16.0F + judgeRowHeight + dp * 10.0F + judgeRowHeight;
+  const float judgeX = layout.panelLeft + judgePad;
+  const float judgeRight = layout.panelLeft + layout.panelWidth - judgePad;
+  layout.judgeBarLeft = judgeX;
+  layout.judgeBarTop = judgeTop + judgePad;
+  layout.judgeBarRight = judgeRight;
+  layout.judgeBarBottom = layout.judgeBarTop + judgeBarHeight;
+  const float rowY = layout.judgeBarBottom + dp * 16.0F;
+  layout.judgePerfectLeft = judgeX + dp * 78.0F;
+  layout.judgePerfectRight = judgeRight - dp * 64.0F;
+  layout.judgePerfectTop = rowY;
+  layout.judgePerfectBottom = rowY + judgeRowHeight;
+  layout.judgeGoodTop = layout.judgePerfectBottom + dp * 10.0F;
+  layout.judgeGoodBottom = layout.judgeGoodTop + judgeRowHeight;
+  return layout;
+}
+
+void applyPracticeSeekRequest(AppContext& context, double targetSec) {
+  const double duration = practiceDurationSec(context);
+  context.game.seekRequestSec = std::clamp(targetSec, 0.0, std::max(0.0, duration - 0.05));
+}
+
+void setPracticeRepeatPoint(AppContext& context, bool isFrom) {
+  auto& game = context.game;
+  const double time = practicePlayheadSec(context);
+  const double duration = practiceDurationSec(context);
+  if (isFrom) {
+    gPractice.repeatFromSec = time;
+    if (!std::isfinite(gPractice.repeatToSec) || gPractice.repeatToSec <= gPractice.repeatFromSec) {
+      gPractice.repeatToSec = gPractice.repeatFromSec + kPracticeRepeatMinLengthSec;
+    }
+  } else {
+    gPractice.repeatToSec = time;
+    if (gPractice.repeatToSec <= gPractice.repeatFromSec) {
+      gPractice.repeatFromSec =
+          std::max(0.0, gPractice.repeatToSec - kPracticeRepeatMinLengthSec);
+    }
+  }
+  gPractice.repeatToSec = std::min(gPractice.repeatToSec, duration);
+  if (gPractice.repeatFromSec > gPractice.repeatToSec - kPracticeRepeatMinLengthSec) {
+    gPractice.repeatFromSec =
+        std::max(0.0, gPractice.repeatToSec - kPracticeRepeatMinLengthSec);
+  }
+  (void)game;
+}
+
+void togglePracticeRepeat(AppContext& context) {
+  gPractice.repeatActive = !gPractice.repeatActive;
+  if (gPractice.repeatActive &&
+      (!std::isfinite(gPractice.repeatToSec) ||
+          gPractice.repeatToSec <= gPractice.repeatFromSec)) {
+    setPracticeRepeatPoint(context, true);
+    setPracticeRepeatPoint(context, false);
+  }
+}
+
+void setPracticeSpeed(AppContext& context, float speed) {
+  auto& game = context.game;
+  game.musicSpeed = std::clamp(speed, kPracticeSpeedMin, kPracticeSpeedMax);
+  if (context.audio != nullptr) context.audio->setPlaybackSpeed(game.musicSpeed);
+}
+
+void updatePracticeFineScrub(AppContext& context) {
+  if (gPractice.dragMode != 2 || gPractice.scrubFine || gPractice.scrubFineBlocked) return;
+  const float slop = gameDp(gameStagePixels(context)) * kPracticeFineHoldSlopDp;
+  const double now = context.nowSec;
+  if (gPractice.scrubMaxDrift > slop) {
+    gPractice.scrubFineBlocked = true;
     return;
   }
+  if (gPractice.scrubDownSec <= 0.0 || now - gPractice.scrubDownSec < kPracticeFineHoldSec) return;
+  const double lastMove = gPractice.scrubLastMoveSec > 0.0 ? gPractice.scrubLastMoveSec
+                                                           : gPractice.scrubDownSec;
+  if (now - lastMove < kPracticeFineStillSec) return;
+  gPractice.scrubFine = true;
+  gPractice.scrubFineCenterSec = practicePlayheadSec(context);
+  gPractice.scrubFineAnchorX = gPractice.scrubLastX;
+}
 
-  // Practice controls.
-  if (game.practice) {
-    cursorY += 6.0F * scale;
-    ImGui::SetCursorScreenPos(ImVec2(panelLeft + 8.0F * scale, cursorY));
-    ImGui::SetWindowFontScale(std::clamp(scale, 0.8F, 1.4F));
-    ImGui::TextUnformatted("练习模式");
-    cursorY += 28.0F * scale;
-    ImGui::SetCursorScreenPos(ImVec2(panelLeft + 8.0F * scale, cursorY));
-    ImGui::SetNextItemWidth((panelSize.x - 16.0F * scale));
-    float speed = game.musicSpeed;
-    if (ImGui::SliderFloat("##practice_speed", &speed, 0.1F, 2.0F, "速度 %.2f")) {
-      game.musicSpeed = speed;
-      context.play.musicSpeed = speed;
-      if (context.audio != nullptr) context.audio->setPlaybackSpeed(speed);
-    }
-    cursorY += 40.0F * scale;
-    const double duration = game.musicDurationSec > 0.0 ? game.musicDurationSec
-                                                        : game.chart->chartEndTimeSec;
-    ImGui::SetCursorScreenPos(ImVec2(panelLeft + 8.0F * scale, cursorY));
-    ImGui::SetNextItemWidth((panelSize.x - 16.0F * scale));
-    float position = static_cast<float>(std::max(0.0, game.chartTimeSec));
-    char positionLabel[48];
-    std::snprintf(positionLabel, sizeof(positionLabel), "跳转 %.2f / %.2f",
-        static_cast<double>(position), duration);
-    if (ImGui::SliderFloat("##practice_seek", &position, 0.0F,
-            static_cast<float>(std::max(1.0, duration)), positionLabel)) {
-      game.seekRequestSec = position;
-    }
-    cursorY += 40.0F * scale;
+void applyPracticeScrubFromTouch(AppContext& context, const PracticeLayout& layout, float rawX) {
+  const float width = std::max(1.0F, layout.timelineRight - layout.timelineLeft);
+  const float fraction = std::clamp((rawX - layout.timelineLeft) / width, 0.0F, 1.0F);
+  applyPracticeSeekRequest(context, practiceDurationSec(context) * fraction);
+}
 
-    // Per-attempt judgement windows. A tap or hold is judged with these while the
-    // override is armed; drag and flick windows always come from the chart.
-    ImGui::SetCursorScreenPos(ImVec2(panelLeft + 8.0F * scale, cursorY));
-    ImGui::SetNextItemWidth((panelSize.x - 16.0F * scale));
-    float perfectMs = static_cast<float>(game.practiceWindows.perfectMs());
-    if (ImGui::SliderFloat("##practice_perfect_window", &perfectMs,
-            static_cast<float>(game::PracticeJudgeWindows::PERFECT_MIN_MS),
-            static_cast<float>(game::PracticeJudgeWindows::PERFECT_MAX_MS),
-            "Perfect 窗口 %.1f ms")) {
-      game.practiceWindows.setPerfectMs(static_cast<double>(perfectMs));
-    }
-    cursorY += 40.0F * scale;
-    ImGui::SetCursorScreenPos(ImVec2(panelLeft + 8.0F * scale, cursorY));
-    ImGui::SetNextItemWidth((panelSize.x - 16.0F * scale));
-    float goodMs = static_cast<float>(game.practiceWindows.goodMs());
-    if (ImGui::SliderFloat("##practice_good_window", &goodMs,
-            static_cast<float>(game::PracticeJudgeWindows::GOOD_MIN_MS),
-            static_cast<float>(game::PracticeJudgeWindows::GOOD_MAX_MS),
-            "Good 窗口 %.1f ms")) {
-      game.practiceWindows.setGoodMs(static_cast<double>(goodMs));
-    }
-    cursorY += 40.0F * scale;
-    ImGui::SetCursorScreenPos(ImVec2(panelLeft + 8.0F * scale, cursorY));
-    if (ImGui::Button("恢复默认窗口")) game.practiceWindows.reset();
-    cursorY += 34.0F * scale;
+void applyPracticeSpeedFromTouch(AppContext& context, const PracticeLayout& layout, float rawX) {
+  const float width = std::max(1.0F, layout.speedRight - layout.speedTrackLeft);
+  const float fraction = std::clamp((rawX - layout.speedTrackLeft) / width, 0.0F, 1.0F);
+  float speed = kPracticeSpeedMin + (kPracticeSpeedMax - kPracticeSpeedMin) * fraction;
+  speed = std::round(speed / kPracticeSpeedStep) * kPracticeSpeedStep;
+  setPracticeSpeed(context, speed);
+}
+
+void applyPracticeJudgeWindowFromTouch(
+    AppContext& context, const PracticeLayout& layout, float rawX, bool perfect) {
+  const float left = layout.judgePerfectLeft;
+  const float width = std::max(1.0F, layout.judgePerfectRight - layout.judgePerfectLeft);
+  const float fraction = std::clamp((rawX - left) / width, 0.0F, 1.0F);
+  if (perfect) {
+    const double value = kPracticePerfectMinMs + (kPracticePerfectMaxMs - kPracticePerfectMinMs) *
+        static_cast<double>(fraction);
+    context.game.practiceWindows.setPerfectMs(value);
+  } else {
+    const double value = kPracticeGoodMinMs + (kPracticeGoodMaxMs - kPracticeGoodMinMs) *
+        static_cast<double>(fraction);
+    context.game.practiceWindows.setGoodMs(value);
+  }
+}
+
+// Draws one practice button plate.
+void drawPracticeButton(ImDrawList* drawList, const GameStagePixels& stage,
+    const PracticeLayout& layout, float x, float y, float width, float height,
+    std::string_view label, bool accent) {
+  const float dp = layout.dp;
+  const float radius = dp * 11.0F;
+  if (accent) {
+    drawRoundedRect(drawList, x, y, width, height, radius, IM_COL32(255, 199, 71, 230));
+    drawRoundedRect(drawList, x + dp, y + dp, width - dp * 2.0F, height - dp * 2.0F,
+        std::max(dp * 2.0F, radius - dp), IM_COL32(255, 199, 71, 36));
+    drawPanelText(drawList, label, stage, dp * 18.0F, 1, x + width * 0.5F, y + height * 0.5F,
+        IM_COL32(255, 219, 242, 255));
+  } else {
+    drawRoundedRect(drawList, x, y, width, height, radius, IM_COL32(255, 255, 255, 41));
+    drawRoundedRect(drawList, x + dp, y + dp, width - dp * 2.0F, height - dp * 2.0F,
+        std::max(dp * 2.0F, radius - dp), IM_COL32(255, 255, 255, 11));
+    drawPanelText(drawList, label, stage, dp * 18.0F, 1, x + width * 0.5F, y + height * 0.5F,
+        IM_COL32(224, 224, 224, 235));
+  }
+}
+
+// Drives the pointer interactions of the pause menu. Returns true when the press was
+// consumed by a control so the caller stops forwarding it.
+bool updatePracticeInteractions(AppContext& context, const PracticeLayout& layout) {
+  auto& io = ImGui::GetIO();
+  const ImVec2 mouse = io.MousePos;
+  bool consumed = false;
+
+  // Buttons are placed on a grid and hit-tested directly, matching the reference's
+  // touch-down activation instead of ImGui's press/release cycle.
+  const auto pressButton = [&](float x, float y, float width, float height) {
+    return ImGui::IsMouseClicked(ImGuiMouseButton_Left) && mouse.x >= x && mouse.x <= x + width &&
+        mouse.y >= y && mouse.y <= y + height;
+  };
+  const float gap = layout.dp * 10.0F;
+  const float buttonY = layout.buttonsTop;
+  const float buttonWidth = layout.buttonWidth;
+  const float buttonHeight = layout.buttonHeight;
+  if (pressButton(layout.buttonsLeft, buttonY, buttonWidth, buttonHeight)) {
+    setPracticeRepeatPoint(context, true);
+    return true;
+  }
+  if (pressButton(layout.buttonsLeft + (buttonWidth + gap), buttonY, buttonWidth, buttonHeight)) {
+    setPracticeRepeatPoint(context, false);
+    return true;
+  }
+  if (pressButton(layout.buttonsLeft + (buttonWidth + gap) * 2.0F, buttonY, buttonWidth,
+          buttonHeight)) {
+    togglePracticeRepeat(context);
+    return true;
+  }
+  if (pressButton(layout.buttonsLeft + (buttonWidth + gap) * 3.0F, buttonY, buttonWidth,
+          buttonHeight)) {
+    applyPracticeSeekRequest(context, practicePlayheadSec(context) -
+            kPracticeJumpSec * std::max(0.05F, context.game.musicSpeed));
+    return true;
+  }
+  if (pressButton(layout.buttonsLeft + (buttonWidth + gap) * 4.0F, buttonY, buttonWidth,
+          buttonHeight)) {
+    applyPracticeSeekRequest(context, practicePlayheadSec(context) +
+            kPracticeJumpSec * std::max(0.05F, context.game.musicSpeed));
+    return true;
   }
 
-  // Runtime toggles.
-  ImGui::SetCursorScreenPos(ImVec2(panelLeft + 8.0F * scale, cursorY));
-  bool autoplay = game.autoplay;
-  if (ImGui::Checkbox("自动演示", &autoplay)) gameToggleAutoplay(context);
-  ImGui::SameLine(panelLeft + 180.0F * scale);
-  bool debug = game.debugOverlay;
-  if (ImGui::Checkbox("调试信息", &debug)) game.debugOverlay = debug;
+  // The three sliders activate on press and keep following the pointer while held.
+  if (gPractice.dragMode == 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    if (mouse.x >= layout.speedTrackLeft && mouse.x <= layout.speedRight &&
+        mouse.y >= layout.speedTop && mouse.y <= layout.speedBottom) {
+      gPractice.dragMode = 1;
+      applyPracticeSpeedFromTouch(context, layout, mouse.x);
+      return true;
+    }
+    if (context.game.practice && !context.game.challenge) {
+      if (mouse.x >= layout.judgePerfectLeft && mouse.x <= layout.judgePerfectRight &&
+          mouse.y >= layout.judgePerfectTop && mouse.y <= layout.judgePerfectBottom) {
+        gPractice.dragMode = 3;
+        applyPracticeJudgeWindowFromTouch(context, layout, mouse.x, true);
+        return true;
+      }
+      if (mouse.x >= layout.judgePerfectLeft && mouse.x <= layout.judgePerfectRight &&
+          mouse.y >= layout.judgeGoodTop && mouse.y <= layout.judgeGoodBottom) {
+        gPractice.dragMode = 4;
+        applyPracticeJudgeWindowFromTouch(context, layout, mouse.x, false);
+        return true;
+      }
+    }
+    if (mouse.x >= layout.timelineLeft && mouse.x <= layout.timelineRight &&
+        mouse.y >= layout.timelineTop - layout.dp * 12.0F &&
+        mouse.y <= layout.timelineBottom + layout.dp * 12.0F) {
+      gPractice.dragMode = 2;
+      gPractice.scrubDownSec = context.nowSec;
+      gPractice.scrubDownX = mouse.x;
+      gPractice.scrubLastX = mouse.x;
+      gPractice.scrubFine = false;
+      gPractice.scrubFineBlocked = false;
+      gPractice.scrubMaxDrift = 0.0F;
+      gPractice.scrubLastMoveSec = context.nowSec;
+      applyPracticeScrubFromTouch(context, layout, mouse.x);
+      return true;
+    }
+  }
+
+  if (gPractice.dragMode != 0) {
+    consumed = true;
+    if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      switch (gPractice.dragMode) {
+        case 1: applyPracticeSpeedFromTouch(context, layout, mouse.x); break;
+        case 2: {
+          const float previousX = gPractice.scrubLastX;
+          gPractice.scrubLastX = mouse.x;
+          gPractice.scrubMaxDrift =
+              std::max(gPractice.scrubMaxDrift, std::abs(mouse.x - gPractice.scrubDownX));
+          if (std::abs(mouse.x - previousX) > 0.5F) gPractice.scrubLastMoveSec = context.nowSec;
+          if (gPractice.scrubFine) {
+            // Fine scrub: the whole track spans a few seconds around the press point.
+            const float width = std::max(1.0F, layout.timelineRight - layout.timelineLeft);
+            const double delta = static_cast<double>(mouse.x - gPractice.scrubFineAnchorX) /
+                static_cast<double>(width) * kPracticeFineSpanSec;
+            applyPracticeSeekRequest(context, gPractice.scrubFineCenterSec + delta);
+          } else {
+            applyPracticeScrubFromTouch(context, layout, mouse.x);
+          }
+          break;
+        }
+        case 3: applyPracticeJudgeWindowFromTouch(context, layout, mouse.x, true); break;
+        case 4: applyPracticeJudgeWindowFromTouch(context, layout, mouse.x, false); break;
+        default: break;
+      }
+    }
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      gPractice.dragMode = 0;
+      gPractice.scrubFine = false;
+      gPractice.scrubFineBlocked = false;
+      gPractice.scrubMaxDrift = 0.0F;
+      gPractice.scrubDownSec = 0.0;
+      gPractice.scrubLastMoveSec = 0.0;
+    }
+    return consumed;
+  }
+
+  updatePracticeFineScrub(context);
+  return false;
+}
+
+// Draws the practice timeline panel (reference drawPracticeMenu).
+void drawPracticePanel(AppContext& context, ImDrawList* drawList, const GameStagePixels& stage,
+    const PracticeLayout& layout) {
+  const float dp = layout.dp;
+  drawCard(drawList, layout.panelLeft, layout.panelTop, layout.panelWidth, layout.panelHeight, dp);
+
+  const double playhead = practicePlayheadSec(context);
+  const double duration = practiceDurationSec(context);
+  const float timesCenterY = layout.panelTop + layout.pad + layout.timesHeight * 0.5F;
+  const bool scrubbing = gPractice.dragMode == 2;
+  const std::string elapsedText = scrubbing ? practiceFormatTimePrecise(playhead)
+                                            : practiceFormatTime(playhead);
+  drawPanelText(drawList, elapsedText, stage, dp * 15.0F, 0, layout.panelLeft + layout.pad,
+      timesCenterY, IM_COL32(235, 235, 235, 235));
+  drawPanelText(drawList, "/  " + practiceFormatTime(duration), stage, dp * 15.0F, 2,
+      layout.panelLeft + layout.panelWidth - layout.pad, timesCenterY, IM_COL32(235, 235, 235, 115));
+
+  // Timeline track, fill, loop markers and playhead knob.
+  const float trackLeft = layout.timelineLeft;
+  const float trackRight = layout.timelineRight;
+  const float trackCenterY = (layout.timelineTop + layout.timelineBottom) * 0.5F;
+  const float trackHeight = layout.trackHeight;
+  drawRoundedRect(drawList, trackLeft, trackCenterY - trackHeight * 0.5F, trackRight - trackLeft,
+      trackHeight, trackHeight * 0.5F, IM_COL32(255, 255, 255, 36));
+  const float fraction = static_cast<float>(std::clamp(playhead / duration, 0.0, 1.0));
+  const float playX = trackLeft + (trackRight - trackLeft) * fraction;
+  if (playX > trackLeft + dp) {
+    const ImU32 fillColor = gPractice.scrubFine ? IM_COL32(255, 199, 71, 242)
+                                                : IM_COL32(255, 255, 255, 217);
+    drawRoundedRect(drawList, trackLeft, trackCenterY - trackHeight * 0.5F, playX - trackLeft,
+        trackHeight, trackHeight * 0.5F, fillColor);
+  }
+  const bool hasRange = gPractice.repeatActive && std::isfinite(gPractice.repeatFromSec) &&
+      std::isfinite(gPractice.repeatToSec);
+  float fromX = 0.0F;
+  float toX = 0.0F;
+  if (hasRange) {
+    fromX = trackLeft + (trackRight - trackLeft) *
+        static_cast<float>(std::clamp(gPractice.repeatFromSec / duration, 0.0, 1.0));
+    toX = trackLeft + (trackRight - trackLeft) *
+        static_cast<float>(std::clamp(gPractice.repeatToSec / duration, 0.0, 1.0));
+    if (toX - fromX > dp) {
+      drawRoundedRect(drawList, fromX, trackCenterY - trackHeight * 0.5F, toX - fromX, trackHeight,
+          trackHeight * 0.5F, IM_COL32(255, 204, 77, 140));
+    }
+    drawRoundedRect(drawList, fromX - dp * 1.5F, trackCenterY - (trackHeight + dp * 10.0F) * 0.5F,
+        dp * 3.0F, trackHeight + dp * 10.0F, dp * 1.5F, IM_COL32(255, 204, 77, 255));
+    drawRoundedRect(drawList, toX - dp * 1.5F, trackCenterY - (trackHeight + dp * 10.0F) * 0.5F,
+        dp * 3.0F, trackHeight + dp * 10.0F, dp * 1.5F, IM_COL32(255, 204, 77, 255));
+  }
+  const float knobRadius = (gPractice.dragMode == 2 ? dp * 9.0F : dp * 7.5F);
+  if (gPractice.scrubFine) {
+    drawList->AddCircleFilled(ImVec2(playX, trackCenterY), knobRadius + dp * 3.0F,
+        IM_COL32(255, 199, 71, 242));
+  }
+  drawList->AddCircleFilled(ImVec2(playX, trackCenterY), knobRadius + dp * 1.5F,
+      IM_COL32(15, 18, 23, 217));
+  drawList->AddCircleFilled(ImVec2(playX, trackCenterY), knobRadius, IM_COL32(255, 255, 255, 255));
+  if (hasRange) {
+    const float letterGap = dp * 22.0F;
+    float leftLetterX = fromX;
+    float rightLetterX = toX;
+    if (rightLetterX - leftLetterX < letterGap) {
+      const float middle = (leftLetterX + rightLetterX) * 0.5F;
+      leftLetterX = middle - letterGap * 0.5F;
+      rightLetterX = middle + letterGap * 0.5F;
+    }
+    const float minX = layout.panelLeft + layout.pad + dp * 8.0F;
+    const float maxX = layout.panelLeft + layout.panelWidth - layout.pad - dp * 8.0F;
+    leftLetterX = std::clamp(leftLetterX, minX, maxX);
+    rightLetterX = std::clamp(rightLetterX, minX, maxX);
+    const float letterY = layout.timelineTop - dp * 10.0F;
+    drawPanelText(drawList, "A", stage, dp * 14.0F, 1, leftLetterX, letterY,
+        IM_COL32(229, 229, 229, 229));
+    drawPanelText(drawList, "B", stage, dp * 14.0F, 1, rightLetterX, letterY,
+        IM_COL32(229, 229, 229, 229));
+  }
+
+  // Five action buttons.
+  const float gap = dp * 10.0F;
+  const float buttonY = layout.buttonsTop;
+  const float buttonWidth = layout.buttonWidth;
+  const float buttonHeight = layout.buttonHeight;
+  drawPracticeButton(drawList, stage, layout, layout.buttonsLeft, buttonY, buttonWidth, buttonHeight,
+      "A点", false);
+  drawPracticeButton(drawList, stage, layout, layout.buttonsLeft + (buttonWidth + gap), buttonY,
+      buttonWidth, buttonHeight, "B点", false);
+  drawPracticeButton(drawList, stage, layout,
+      layout.buttonsLeft + (buttonWidth + gap) * 2.0F, buttonY, buttonWidth, buttonHeight, "循环",
+      gPractice.repeatActive);
+  drawPracticeButton(drawList, stage, layout,
+      layout.buttonsLeft + (buttonWidth + gap) * 3.0F, buttonY, buttonWidth, buttonHeight, "-5s",
+      false);
+  drawPracticeButton(drawList, stage, layout,
+      layout.buttonsLeft + (buttonWidth + gap) * 4.0F, buttonY, buttonWidth, buttonHeight, "+5s",
+      false);
+
+  // Speed slider.
+  const float speedCenterY = (layout.speedTop + layout.speedBottom) * 0.5F;
+  char speedLabel[32];
+  std::snprintf(speedLabel, sizeof(speedLabel), "×%.2f",
+      static_cast<double>(context.game.musicSpeed));
+  drawPanelText(drawList, speedLabel, stage, dp * 18.0F, 2, layout.speedTrackLeft - dp * 12.0F,
+      speedCenterY, IM_COL32(235, 235, 235, 184));
+  const float speedWidth = layout.speedRight - layout.speedTrackLeft;
+  const float speedFraction = std::clamp(
+      (context.game.musicSpeed - kPracticeSpeedMin) / (kPracticeSpeedMax - kPracticeSpeedMin), 0.0F,
+      1.0F);
+  const float thumbX = layout.speedTrackLeft + speedWidth * speedFraction;
+  drawRoundedRect(drawList, layout.speedTrackLeft, speedCenterY - dp * 3.0F, speedWidth, dp * 6.0F,
+      dp * 3.0F, IM_COL32(255, 255, 255, 33));
+  if (thumbX > layout.speedTrackLeft + dp) {
+    drawRoundedRect(drawList, layout.speedTrackLeft, speedCenterY - dp * 3.0F,
+        thumbX - layout.speedTrackLeft, dp * 6.0F, dp * 3.0F, IM_COL32(255, 255, 255, 204));
+  }
+  drawList->AddCircleFilled(ImVec2(thumbX, speedCenterY), dp * 8.5F, IM_COL32(13, 14, 18, 217));
+  drawList->AddCircleFilled(ImVec2(thumbX, speedCenterY), dp * 7.0F, IM_COL32(255, 255, 255, 255));
+}
+
+// Draws the judgement-window panel (reference drawJudgeMenu).
+void drawJudgePanel(AppContext& context, ImDrawList* drawList, const GameStagePixels& stage,
+    const PracticeLayout& layout) {
+  if (!context.game.practice || context.game.challenge) return;
+  const float dp = layout.dp;
+  drawCard(drawList, layout.judgeLeft, layout.judgeTop, layout.panelWidth, layout.judgeHeight, dp);
+
+  const auto& windows = context.game.practiceWindows;
+  const double perfectSec = windows.perfectSec();
+  const double goodSec = windows.goodSec();
+  const double badSec = std::max(0.001, 0.220);
+
+  const float barLeft = layout.judgeBarLeft;
+  const float barRight = layout.judgeBarRight;
+  const float barCenterY = (layout.judgeBarTop + layout.judgeBarBottom) * 0.5F;
+  const float barHeight = layout.judgeBarBottom - layout.judgeBarTop;
+  const float barWidth = barRight - barLeft;
+  const float pixelsPerSecond = barWidth / static_cast<float>(2.0 * kPracticeBarSpanSec);
+  const float centerX = (barLeft + barRight) * 0.5F;
+  const float goldHalf = std::min(static_cast<float>(perfectSec) * pixelsPerSecond, centerX - barLeft);
+  const float blueEach = std::max(0.0F, static_cast<float>(goodSec - perfectSec) * pixelsPerSecond);
+  const float redEach = std::max(0.0F, static_cast<float>(badSec - goodSec) * pixelsPerSecond);
+  const float goldLeft = centerX - goldHalf;
+  const float goldRight = centerX + goldHalf;
+  const float zoneLeft = goldLeft - blueEach;
+  const float zoneRight = goldRight + blueEach;
+  const float redLeft = zoneLeft - redEach;
+  const float redRight = zoneRight + redEach;
+  const float cap = barHeight * 0.5F;
+  drawRoundedRect(drawList, barLeft, barCenterY - barHeight * 0.5F,
+      redLeft + cap - barLeft, barHeight, cap, IM_COL32(224, 227, 235, 140));
+  drawRoundedRect(drawList, redRight - cap, barCenterY - barHeight * 0.5F,
+      barRight - (redRight - cap), barHeight, cap, IM_COL32(224, 227, 235, 140));
+  if (zoneLeft - redLeft > 0.5F) {
+    drawList->AddRectFilled(ImVec2(redLeft, layout.judgeBarTop),
+        ImVec2(zoneLeft, layout.judgeBarBottom), IM_COL32(255, 92, 97, 242));
+  }
+  if (redRight - zoneRight > 0.5F) {
+    drawList->AddRectFilled(ImVec2(zoneRight, layout.judgeBarTop),
+        ImVec2(redRight, layout.judgeBarBottom), IM_COL32(255, 92, 97, 242));
+  }
+  if (goldLeft - zoneLeft > 0.5F) {
+    drawList->AddRectFilled(ImVec2(zoneLeft, layout.judgeBarTop),
+        ImVec2(goldLeft, layout.judgeBarBottom), IM_COL32(107, 173, 255, 242));
+  }
+  if (zoneRight - goldRight > 0.5F) {
+    drawList->AddRectFilled(ImVec2(goldRight, layout.judgeBarTop),
+        ImVec2(zoneRight, layout.judgeBarBottom), IM_COL32(107, 173, 255, 242));
+  }
+  drawList->AddRectFilled(ImVec2(goldLeft, layout.judgeBarTop),
+      ImVec2(goldRight, layout.judgeBarBottom), IM_COL32(255, 199, 71, 242));
+  drawList->AddRectFilled(ImVec2(centerX - dp, layout.judgeBarTop - dp * 3.0F),
+      ImVec2(centerX + dp, layout.judgeBarBottom + dp * 3.0F), IM_COL32(255, 255, 255, 217));
+
+  // One slider row per adjustable window.
+  const auto sliderRow = [&](float top, float bottom, const char* label, double valueMs,
+                             double minMs, double maxMs, ImU32 color, float valueX) {
+    const float centerY = (top + bottom) * 0.5F;
+    drawPanelText(drawList, label, stage, dp * 14.0F, 0, layout.judgePerfectLeft - dp * 78.0F,
+        centerY, IM_COL32(255, 255, 255, 209));
+    char value[32];
+    std::snprintf(value, sizeof(value), "±%dms", static_cast<int>(std::lround(valueMs)));
+    drawPanelText(drawList, value, stage, dp * 14.0F, 2, valueX, centerY, IM_COL32(255, 255, 255, 184));
+    const float fraction =
+        static_cast<float>(std::clamp((valueMs - minMs) / (maxMs - minMs), 0.0, 1.0));
+    const float thumb = layout.judgePerfectLeft +
+        (layout.judgePerfectRight - layout.judgePerfectLeft) * fraction;
+    drawRoundedRect(drawList, layout.judgePerfectLeft, centerY - dp * 3.0F,
+        layout.judgePerfectRight - layout.judgePerfectLeft, dp * 6.0F, dp * 3.0F,
+        IM_COL32(255, 255, 255, 33));
+    if (thumb > layout.judgePerfectLeft + dp) {
+      drawRoundedRect(drawList, layout.judgePerfectLeft, centerY - dp * 3.0F,
+          thumb - layout.judgePerfectLeft, dp * 6.0F, dp * 3.0F, color);
+    }
+    drawList->AddCircleFilled(ImVec2(thumb, centerY), dp * 8.5F, IM_COL32(13, 14, 18, 217));
+    drawList->AddCircleFilled(ImVec2(thumb, centerY), dp * 7.0F, color);
+  };
+  const float valueX = layout.judgePerfectRight + dp * 62.0F;
+  sliderRow(layout.judgePerfectTop, layout.judgePerfectBottom, "PERFECT", windows.perfectMs(),
+      kPracticePerfectMinMs, kPracticePerfectMaxMs, IM_COL32(255, 199, 71, 255), valueX);
+  sliderRow(layout.judgeGoodTop, layout.judgeGoodBottom, "GOOD", windows.goodMs(),
+      kPracticeGoodMinMs, kPracticeGoodMaxMs, IM_COL32(107, 173, 255, 255), valueX);
+}
+
+// Resume countdown: three digits slide in from the right, one per second.
+float computeContinueBarX(float elapsed);
+
+void drawCountdownDigits(AppContext& context, ImDrawList* drawList, const GameStagePixels& stage) {
+  const double elapsed = context.game.pauseElapsedSec;
+  constexpr double durationSec = 3.0;
+  if (elapsed >= durationSec) return;
+  const float uiScale = std::max(0.001F, stage.height / 1080.0F);
+  const float textPx = std::max(1.0F, 120.0F * uiScale);
+  const float centerX = stage.left + stage.width * 0.5F;
+  const float centerY = stage.top + stage.height * 0.5F;
+  constexpr float barStep = 216.0F;
+  const float barX = computeContinueBarX(static_cast<float>(elapsed)) * uiScale;
+  const auto alpha = [&](double fadeInStart, double fadeInEnd, double holdEnd, double fadeOutEnd) {
+    if (elapsed < fadeInStart || elapsed >= fadeOutEnd) return 0.0F;
+    if (elapsed < fadeInEnd) {
+      const float p = static_cast<float>((elapsed - fadeInStart) / (fadeInEnd - fadeInStart));
+      return p * p * (3.0F - 2.0F * p);
+    }
+    if (elapsed <= holdEnd) return 1.0F;
+    const float p = static_cast<float>((elapsed - holdEnd) / (fadeOutEnd - holdEnd));
+    return 1.0F - p * p * (3.0F - 2.0F * p);
+  };
+  drawCountdownDigit(drawList, "3", textPx, centerX + barX + barStep * uiScale, centerY,
+      alpha(0.0, 0.16666667, 0.96666664, 1.1666666));
+  drawCountdownDigit(drawList, "2", textPx, centerX + barX + barStep * 2.0F * uiScale, centerY,
+      alpha(0.96666664, 1.1666666, 2.0, 2.1666667));
+  drawCountdownDigit(drawList, "1", textPx, centerX + barX + barStep * 3.0F * uiScale, centerY,
+      alpha(1.9666667, 2.1666667, 2.8333333, 3.0));
+}
+
+// Horizontal offset of the sliding countdown strip (reference computeOfficialContinueBarX).
+float computeContinueBarX(float elapsed) {
+  constexpr float barStep = 216.0F;
+  constexpr float moveSec = 0.18333334F;
+  constexpr float stepSec = 1.0F;
+  if (!std::isfinite(elapsed) || elapsed <= 0.0F) return 0.0F;
+  if (elapsed >= 3.0F) return -barStep * 3.0F;
+  int step = static_cast<int>(std::floor(elapsed / stepSec));
+  step = std::clamp(step, 0, 2);
+  const float local = elapsed - static_cast<float>(step) * stepSec;
+  const float start = -barStep * static_cast<float>(step);
+  const float end = -barStep * static_cast<float>(step + 1);
+  if (local >= moveSec) return end;
+  const float p = std::clamp(local / moveSec, 0.0F, 1.0F);
+  const float t = p - 1.0F;
+  const float eased = 1.0F + t * t * (2.70158F * t + 1.70158F);
+  return start + (end - start) * eased;
+}
+
+void drawPauseOverlay(AppContext& context) {
+  auto& game = context.game;
+  const GameStagePixels stage = gameStagePixels(context);
+  const GameStagePixels viewport{0.0F, 0.0F, static_cast<float>(context.windowWidth),
+      static_cast<float>(context.windowHeight)};
+  const PauseButtonRects buttons = computePauseButtonRects(stage);
+  const bool menu = game.pause == GameRuntime::Pause::Menu;
+
+  ui::beginFullscreenWindow("##game_pause_overlay");
+  ImDrawList* drawList = ImGui::GetWindowDrawList();
+  const auto buttonLayout = [&](const char* id) {
+    ImGui::SetCursorScreenPos(ImVec2(0.0F, 0.0F));
+    ImGui::InvisibleButton(id, ImVec2(viewport.width, viewport.height));
+  };
+  buttonLayout("##pause_fullscreen");
+
+  float buttonAlpha = 0.0F;
+  if (menu) {
+    buttonAlpha = pauseButtonIntroAlpha(game.pauseElapsedSec);
+    const PracticeLayout layout = computePracticeLayout(context, stage);
+    if (game.practice) {
+      updatePracticeInteractions(context, layout);
+      drawPracticePanel(context, drawList, stage, layout);
+      drawJudgePanel(context, drawList, stage, layout);
+    }
+    // The three plates sit centred over the frozen field, below the practice panels.
+    drawPauseIcon(context, drawList, "res/exit.png", buttons.exit.x, buttons.exit.y, buttons.size,
+        buttons.size, buttonAlpha, 0);
+    drawPauseIcon(context, drawList, "res/restart.png", buttons.restart.x, buttons.restart.y,
+        buttons.size, buttons.size, buttonAlpha, 1);
+    drawPauseIcon(context, drawList, "res/continue.png", buttons.continueButton.x,
+        buttons.continueButton.y, buttons.size, buttons.size, buttonAlpha, 2);
+
+    // Pause actions activate on the press, like the reference's touch handling.
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    const bool clicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+    const auto inside = [&](const ImVec2& origin) {
+      return mouse.x >= origin.x && mouse.x <= origin.x + buttons.size && mouse.y >= origin.y &&
+          mouse.y <= origin.y + buttons.size;
+    };
+    if (clicked && inside(buttons.exit)) {
+      gameQuitToMenu(context);
+    } else if (clicked && inside(buttons.restart)) {
+      gameRestart(context);
+    } else if (clicked && inside(buttons.continueButton)) {
+      gameTogglePause(context);
+    }
+  } else if (game.pause == GameRuntime::Pause::Countdown) {
+    buttonAlpha = continueButtonAlpha(game.pauseElapsedSec);
+    drawPauseIcon(context, drawList, "res/exit.png", buttons.exit.x, buttons.exit.y, buttons.size,
+        buttons.size, buttonAlpha, 0);
+    drawPauseIcon(context, drawList, "res/restart.png", buttons.restart.x, buttons.restart.y,
+        buttons.size, buttons.size, buttonAlpha, 1);
+    drawPauseIcon(context, drawList, "res/continue.png", buttons.continueButton.x,
+        buttons.continueButton.y, buttons.size, buttons.size, buttonAlpha, 2);
+    drawCountdownDigits(context, drawList, stage);
+  }
 
   ui::endFullscreenWindow();
 }
+
 
 void drawCountdown(AppContext& context, ImDrawList* drawList) {
   auto& game = context.game;
@@ -614,11 +1562,29 @@ void gameRender(AppContext& context) {
   input.hud.good = judgement.counts()[1];
   input.hud.bad = judgement.counts()[2];
   input.hud.miss = judgement.counts()[3];
-  const double duration = game.chart->chartEndTimeSec > 0.01 ? game.chart->chartEndTimeSec : 1.0;
-  input.hud.progress = std::clamp(game.chartTimeSec / duration, 0.0, 1.0);
-  input.hud.alpha = game.inOutro
-      ? static_cast<float>(std::clamp(1.0 - game.outroElapsedSec / kOutroDurationSec, 0.0, 1.0))
-      : 1.0F;
+  input.hud.playheadSec = game.playheadSec;
+  input.hud.totalDurationSec = game.musicDurationSec > 0.05 ? game.musicDurationSec
+                                                            : game.chart->chartEndTimeSec;
+  input.hud.showAccuracy = context.settings.realtimeAccuracy;
+  input.hud.scoreJumpEffect = context.settings.scoreJumpEffect;
+  input.hud.comboLabel = game.replayPlayback ? "REPLAY"
+      : (game.practice ? "PRACTICE" : (game.autoplay ? "AUTOPLAY" : "COMBO"));
+  input.hud.visualTimeSec = game.visualTimeSec;
+  input.hud.pauseRingAgeSec =
+      gPauseRingStartSec >= 0.0 ? context.nowSec - gPauseRingStartSec : -1.0;
+  // The HUD start tween keeps running across the intro boundary: the intro ends before
+  // the 40-frame curve has finished, and the chart clock continues it.
+  if (game.inIntro) {
+    input.hud.introProgress = static_cast<float>(
+        std::clamp(game.introElapsedSec / kHudIntroDurationSec, 0.0, 1.0));
+  } else {
+    input.hud.introProgress = static_cast<float>(
+        std::clamp((kIntroEndSec + std::max(0.0, game.chartTimeSec)) / kHudIntroDurationSec,
+            0.0, 1.0));
+  }
+  input.hud.outroProgress = game.inOutro
+      ? static_cast<float>(std::clamp(game.outroElapsedSec / kHudOutroDurationSec, 0.0, 1.0))
+      : 0.0F;
   input.practice.enabled = game.practice;
   input.practice.speed = game.musicSpeed;
   input.practice.autoPlay = game.autoplay;
@@ -669,7 +1635,7 @@ void drawGameOverlay(AppContext& context) {
   }
 
   if (game.pause == GameRuntime::Pause::Menu) {
-    drawPauseMenu(context);
+    drawPauseOverlay(context);
   } else if (game.pause == GameRuntime::Pause::Countdown) {
     drawCountdown(context, drawList);
   }

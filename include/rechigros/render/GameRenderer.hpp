@@ -60,11 +60,21 @@ struct RenderFrameInput {
     int good{0};
     int bad{0};
     int miss{0};
-    // 0..1 playback progress shown by the top bar.
-    double progress{0.0};
-    float alpha{1.0F};
+    // Raw music playhead and its total length: the progress bar follows the music.
+    double playheadSec{0.0};
+    double totalDurationSec{0.0};
     // The accuracy readout follows a gameplay setting.
     bool showAccuracy{true};
+    // Combo label variant for the run's mode (COMBO/AUTOPLAY/PRACTICE/REPLAY).
+    std::string comboLabel{"COMBO"};
+    // Normalised progress of the HUD start and exit animation tweens (idle: 1 and 0).
+    float introProgress{1.0F};
+    float outroProgress{0.0F};
+    // Wall clock and the age of the last pause-button touch (negative when idle).
+    double visualTimeSec{0.0};
+    double pauseRingAgeSec{-1.0};
+    // Optional catch-up animation of the score and accuracy readouts.
+    bool scoreJumpEffect{false};
   } hud;
 
   struct PracticeState {

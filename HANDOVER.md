@@ -16,10 +16,19 @@
 | 语言/标准 | C++20 |
 | 依赖 | SDL2 2.30.11、OpenGL 3.3 Core / GLES 3.0、miniaudio、Dear ImGui、nlohmann/json、stb、miniz |
 | 构建 | CMake ≥3.15 + Ninja，`build.bat` 一键 |
-| 首方代码量 | 约 22,800 行 C++（参考 Java 约 40,000 行） |
-| Git | 有仓库，主分支 `master`，最新提交 `94f3a27` |
+| 首方代码量 | 约 30,400 行 C++（参考 Java 约 40,000 行） |
+| Git | 主分支 `master`，最近提交 `9b0bc7d` |
+| 文档 | `MIGRATION.md`（模块状态，部分过时）、`docs/COVERAGE_AUDIT.md`（**权威**功能差距审计）、`docs/UI_PORTING_GUIDE.md`（界面移植规范） |
 
-**方向**：把 Java 音游逐功能移植为跨平台 C++。要求功能、逻辑、性能不低于原项目，界面与参考视觉一致。
+**方向**：把 Java 音游逐功能移植为跨平台 C++。功能与逻辑不得低于原项目，界面与参考设备的视觉逐屏一致。
+
+**状态摘要（2026-10-22）**：
+
+- 构建、六个测试套件、应用自检、渲染矩阵、应用循环、字体覆盖：**全部通过**。
+- 安卓游玩画面不呈现的问题：**已定位并修复，模拟器上已验证**（见第四节）。
+- 第九章红区（噪域）屏幕空间合成：**已完成并通过独立探针验证**（见第四节）。
+- 界面：已建立统一移植基础设施（字形栅格化、布局/控件层、截图工具），主界面已按设备截图逐像素对齐；其余界面（本地/在线列表、设置、谱面详情、结算、游玩 HUD/暂停/练习 HUD）正在按屏幕逐个移植。
+- 功能差距：`docs/COVERAGE_AUDIT.md` 的 S1 项是最重要的待办（回放模型、无头 JSON 谱面格式判定、`useAttachUiFix` 等）。
 
 ---
 
@@ -33,6 +42,7 @@ Ninja:   D:\Studio-SDK\cmake\3.22.1\bin\ninja.exe
 MSVC:    C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat
 Android: ANDROID_SDK_ROOT=D:\Studio-SDK，NDK 27.0.12077973，JDK 17
 adb:     D:\Studio-SDK\platform-tools\adb.exe
+Python:  C:\Users\无影\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\python\python.exe（含 Pillow，用于截图比对）
 ```
 
 MSVC 需要在 `cmd /c "call vcvars64.bat && ..."` 里调用，无 vswhere。
@@ -42,28 +52,33 @@ MSVC 需要在 `cmd /c "call vcvars64.bat && ..."` 里调用，无 vswhere。
 ```powershell
 cd E:\ReChigros
 
-# 桌面构建 + 跑测试
-build.bat desktop Release
-
-# 应用端到端验证（隐藏窗口跑主循环 + 字体覆盖检查）
-build.bat verify-app
-
-# 渲染矩阵（18 个用例，验证每个渲染输入确实改变画面）
-build.bat verify-render
-
-# 安卓 APK
-build.bat android Release
-# 产物：platform\android\app\build\outputs\apk\release\app-release.apk
-
-# iOS 打包检查（不需要 macOS，只验证工程完整性）
-build.bat verify-ios
+build.bat desktop Release          # 桌面构建 + 六个测试套件
+build.bat verify-app               # 应用端到端验证（隐藏窗口主循环 + 字体覆盖）
+build.bat verify-render            # 渲染矩阵（18 用例）
+build.bat android Release          # 安卓 APK
+build.bat verify-ios               # iOS 打包检查（不需要 macOS）
 ```
+
+### 单个界面截图（界面移植的核心工具）
+
+```powershell
+build\desktop-release\src\app\ReChigros.exe `
+  --data-root E:\ReChigros\build\capture-data --screen library `
+  --window 1920x1080 --frames 60 --fixed-delta `
+  --capture-frame E:\ReChigros\build\shots\cpp_library.png
+```
+
+- `--screen` 取值：`home`、`library`、`library-online`、`library-manage`、`settings-video/audio/replay/more`、`detail`、`result`、`calibration`、`game`、`game-pause`、`game-practice`、`game-countdown`。
+- 可以带谱面选择器：`--screen detail:Message`、`--screen result:Hate`、`--screen game:Hate`（按曲名子串匹配）。
+- `--data-root build/capture-data` 已预置与参考设备完全相同的 8 个谱面包（名称/难度/封面一致），用于逐卡片对比。
+- `--fixed-delta` 让帧时钟固定为 1/60 秒，`--frames N` + `--capture-frame` 的截图可复现；`--capture-time T` 固定 GPU 背景动画时间（对比主界面时用 `--capture-time 4` 与 `build/ref/java_home.png` 对齐）。
+- 截图后与 `build/ref/java_*.png`（参考设备 1920x1080 截图，索引见 `build/ref/README.md`）比较；`build/tools/compare_screens.py` 输出总体/分区差异与对比拼图。
 
 ### 依赖下载
 
 需要代理：`$env:HTTPS_PROXY='http://127.0.0.1:7899'`（以及 `HTTP_PROXY`）。CMake 首次配置会 FetchContent 下载 SDL2。
 
-### 自建构建目录
+### 自建构建目录（并行工作时避免互相干扰）
 
 ```powershell
 $vcvars='C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
@@ -75,7 +90,14 @@ cmd /c "call `"$vcvars`" >nul 2>&1 && `"$cmake`" -S . -B build\myprobe -G Ninja 
 
 ## 三、调试工具与手段（很有用，先读这节）
 
-### 1. 渲染冒烟工具
+### 1. 界面截图与参考截图
+
+- 参考设备截图：`build/ref/java_*.png`（1920x1080，索引与拍摄条件见 `build/ref/README.md`）。
+- 本项目截图：用第二节的命令生成到 `build/shots/`。
+- 比对：`build/tools/compare_screens.py REFERENCE.png CAPTURE.png --out build/shots/cmp.png --crop x0,y0,x1,y1`。
+- 元素测量：`build/tools/measure.py`（按行/列扫描颜色段、阈值取文字墨迹包围盒）。实测坐标应与参考截图相差在 0–2px 内。
+
+### 2. 渲染冒烟工具
 
 ```powershell
 build\myprobe\src\render\rechigros_render_smoke.exe `
@@ -83,33 +105,29 @@ build\myprobe\src\render\rechigros_render_smoke.exe `
   --out build\out.png --frames 1 --time 1.0
 ```
 
-支持参数：`--chart --out --assets --frames --width --height --time --skin --song --pause --pause-elapsed --dim --mirror --scroll --key-scale --force-bad --compare`
+支持 `--chart --out --assets --frames --width --height --time --skin --song --pause --pause-elapsed --dim --mirror --scroll --key-scale --force-bad --compare`。`--compare 另一张.png` 输出差异百分比。
 
-`--compare 另一张.png` 会输出两图差异百分比，用于验证某个输入确实影响画面。
-
-### 2. 应用隐藏窗口批量运行（**最有用**）
+### 3. 红区合成独立探针（改渲染前先跑它）
 
 ```powershell
-# 跑 N 帧并退出，打印状态摘要
-build\myprobe\src\app\ReChigros.exe tests\fixtures\plain.json --frames 900
-
-# 其他开关
---expect-result              验证进入结算
---expect-pause               验证暂停/恢复状态机
---record-replay <file>       录制回放
---replay-playback <file>     回放并比对成绩
---autoplay / --practice / --challenge / --mirror
---mistime <ms>               触摸延迟，用于产生非 Perfect 判定
---practice-perfect <ms>      练习模式 perfect 窗口
---practice-good <ms>         练习模式 good 窗口
---capture-frame <png>        把当前帧存成 PNG
+build\agent-block\src\tools\rechigros_block_probe.exe --assets assets --out-dir build\probe
 ```
 
-**`--capture-frame` 是验证游玩画面最可靠的手段**。注意：游戏界面要等 140 帧后才会捕获（等 intro 结束），否则截到的是入场动画。
+它把红区合成的每个中间目标 dump 成 PNG，并断言帧状态复原、`presented == off-screen composite`。改 `fx::BlockCompositePass`/`GameRenderer` 的合成接线后必须重跑。
 
-### 3. 安卓设备调试
+### 4. 应用隐藏窗口批量运行
 
-模拟器已在跑（雷电），通过 `127.0.0.1:5555` 连接：
+```powershell
+build\myprobe\src\app\ReChigros.exe tests\fixtures\plain.json --frames 900
+# --expect-result / --expect-pause / --record-replay / --replay-playback
+# --autoplay / --practice / --challenge / --mirror
+# --mistime <ms> / --practice-perfect <ms> / --practice-good <ms>
+# --capture-frame <png> / --gl-debug
+```
+
+### 5. 安卓设备
+
+模拟器（雷电）常驻：`127.0.0.1:5555`；参考应用包名 `com.wuying.phigros`（**不要卸载/清数据**），本项目包名 `com.wuying.chigros`。
 
 ```powershell
 $adb='D:\Studio-SDK\platform-tools\adb.exe'
@@ -118,12 +136,16 @@ $adb='D:\Studio-SDK\platform-tools\adb.exe'
 & $adb -s 127.0.0.1:5555 shell am start -n com.wuying.chigros/.MainActivity
 & $adb -s 127.0.0.1:5555 shell screencap -p /sdcard/s.png
 & $adb -s 127.0.0.1:5555 pull /sdcard/s.png E:\ReChigros\build\s.png
-& $adb -s 127.0.0.1:5555 logcat -d | Select-String 'SDL/APP'
 ```
 
-**⚠️ 坐标陷阱（我踩了三次）**：截图是 1920×1080，但显示给你时会缩放（约 1067×600）。点击坐标必须按 `1920/1067 ≈ 1.8` 换算。例：截图里按钮在 (1008,492)，实际要点 **(1814,886)**。
+- 截图 1920x1080，adb 坐标直接用（不要换算）；点击用 `input swipe x y x y 150` 制造按压时长。
+- 设备端门禁：`scripts\check-android-render.ps1 -Serial 127.0.0.1:5555`（安装当前 APK、直接进游玩、拉取应用内截图与系统截图、失败即报错）。
+- GLSL ES 静态校验：`scripts\check-gles-shaders.ps1`。
+- 应用内截图：`MainActivity` 支持启动参数 `--es args "--frames 300 --autoplay --capture-frame <path> <chart.json>"`（见 `platform/android/.../MainActivity.java` 的 `getArguments` 覆盖）。
 
-**⚠️ `adb shell input tap` 缺陷**：点击太快（按下/释放同帧）会导致某些按钮无响应。用 `input swipe x y x y 150` 制造按压时长。
+### 6. 参考应用私有数据（截图对齐用）
+
+`adb exec-out run-as com.wuying.phigros tar -cf - files` 可导出参考应用的谱面库/设置。注意：`adb shell` 的 stdout 重定向在 PowerShell 会破坏二进制，必须用 `cmd /c "... > file"`；向应用私有目录写文件要用 `adb shell run-as <pkg> sh -c "cat > /data/data/<pkg>/shared_prefs/xxx.xml"` 配合 stdin 管道（SELinux 不允许 app 读 `/data/local/tmp`）。
 
 ---
 
@@ -139,9 +161,22 @@ $adb='D:\Studio-SDK\platform-tools\adb.exe'
 | 渲染矩阵 | 18 用例通过 | `build.bat verify-render` |
 | 应用循环 | 11 项通过 | `build.bat verify-app` |
 | 字体覆盖 | 233 个非 ASCII 字符全有字形 | 已接入 `verify-app` |
-| 全新克隆构建 | 验证通过 | 从 `git clone` 跑通桌面+测试+APK+iOS 检查 |
-| Android APK | 成功 | 三 ABI、v2 签名、26.9 MB |
+| 界面截图工具 | 完成 | 每个界面可在 1920x1080 下确定性截图 |
+| GLSL ES 校验 | 35/35 通过 | `scripts/check-gles-shaders.ps1` |
+| 安卓设备渲染门禁 | 通过 | `ANDROID-RENDER PASS`（应用内截图 + 系统截图） |
+| 红区合成探针 | 通过 | 帧状态复原、presented == composite |
 | iOS 打包 | 47 项检查通过 | 编译需 macOS |
+
+### 本次会话修复的关键缺陷
+
+| 缺陷 | 根因 | 修复 |
+| --- | --- | --- |
+| 安卓游玩画面完全不显示（只剩上层 ImGui 提示） | ① `TextRenderer::initialize` 用文件路径打开 `res/font.ttf`，APK 内资源不是文件 → 渲染器初始化失败、`render()` 直接返回，画面停留在上一帧；② GLSL ES 片元着色器没有默认浮点精度，凡自带 `out vec4` 的着色器全部编译失败（约 30/35 个），所有绘制静默失效 | 字体改走 `AssetManager::materialize`；着色器归一化时无条件注入 precision 块；着色器编译失败改为可诊断日志 |
+| 第九章红区只画静态剪影 | 合成的帧流程缺陷：合成绘制前未重新绑定调用方 framebuffer、GL 状态未保存/恢复、掩码按全分辨率分配且从未栅格化（着色器按 screen/8 采样）、`prepare()` 丢失已分配尺寸、stage rect 从未下发 | 重写 `BlockCompositePass` + `BlockOverlay::collectMaskQuads`，`GameRenderer` 中完成接线；独立探针验证 |
+| 界面文字模糊、尺寸与参考不一致 | 文字尺寸直接乘布局缩放（应乘显示密度）；项目字体图集固定尺寸放大 | 新增按最终像素尺寸栅格化的字形缓存（`UiText.*`）；布局/文字/面板/动画统一到 `UiLayout.*` |
+| 主界面几何与参考不符 | 面板右边缘应为斜边而非直边、标题字号偏大 1.5 倍、角色图水平偏移、缺少 GitHub 图标资源 | 逐项按参考源码与设备截图修正；主界面元素墨迹框已与参考对齐到 1px |
+| 练习模式判定窗口无效 | `JudgementEngine` 的 practice 覆盖从未被判定路径使用（会话自己用原始窗口比较） | 判定、空间衰减、检测窗口、late-miss 限制统一走 practice-aware 窗口 |
+| RPE 解析丢失 | 颜色对象写法、组合 `scaleEvents`、move 别名、纯文字事件线颜色 | 均已按参考实现补齐 |
 
 ### 功能模块
 
@@ -149,87 +184,47 @@ $adb='D:\Studio-SDK\platform-tools\adb.exe'
 
 - 谱面解析：PEC / RPE / 官方格式，格式由内容前缀判断而非扩展名
 - 判定引擎：窗口、相位、长条结算、挑战模式计分、练习模式窗口覆盖
-- 渲染器：判定线、音符、长条、打击特效、HUD、暂停背景、bloom、故事板着色器链、章节 9 特效
+- 渲染器：判定线、音符、长条、打击特效、HUD、暂停背景、bloom、故事板着色器链、章节 9 特效（含红区屏幕空间合成）
 - 音频：miniaudio 单回调混音、解码、低通、播放位置
-- UI：主界面、谱面库、详情、结算、校准、设置
+- UI 基础设施：内置字体的逐字号栅格化、731x415 设计画布 + 密度单位换算、斜切面板/标签栏/滑块等控件、逐屏截图工具
+- 主界面
 - 回放与设置持久化
-- 红区（OfficialBlock）内联渲染
 - 打空音符飞散残留
-
-### 本次会话新修的关键缺陷
-
-| 缺陷 | 根因 | 提交 |
-| --- | --- | --- |
-| 头文件改动后不重编，运行崩溃 | MSVC 中文环境 `/showIncludes` 输出被 Ninja 解析失败，头文件依赖未记录。已在 CMake 里让每个目标文件依赖全部公共头文件（`include/*.hpp` + `src/*.hpp`） | 早期 |
-| 界面文字模糊 | DPI 在字体创建后才查询；字形按 20px 栅格化后被放大 4 倍。改用 `RasterizerDensity` 按界面缩放栅格化 | 早期 |
-| 中文全显示为问号 | 打包后资源不是文件，字体读不到回退 ASCII 字体。改用 `AssetManager::materialize` | `1f99785` |
-| 立绘/图标/封面不显示 | `CoverCache` 用 `stbi_load(文件路径)`，APK 内资源不是文件。改走 `AssetManager` + `stbi_load_from_memory` | `1f99785` |
-| 少数汉字显示方块 | 字体范围缺 `轴`(U+8F74)、`频`(U+9891)。追加码点。**注意**：`AddFontFromFileTTF` 只保存指针，范围数组必须 `static` 否则悬空崩溃 | `dfbad9b` |
-| 难度标签显示方块 | `normalizeDifficultyText` 主动把空格转成排版空格 U+2002 | `5d7f01c` / `92fe1b3` |
-| 输入框无法输入 | 从未调用 `SDL_StartTextInput()`，软键盘不弹、字符事件不产生 | `aa33892` |
-| 快速点击「开始游玩」无反应 | `pressStartSec` 只在按住跨帧时赋值，点击太快则永不触发。改用 `IsItemActivated()` | `d0816eb` |
-| 音频停止时谱面冻结 | `playheadSec` 完全依赖音频位置，流停止则卡住。改为未播放时用帧时钟推进 | `c96f9a2` |
-| 游戏画面无法截图验证 | `captureFramebufferIfRequested` 被 `if (screen != Game)` 排除 | `315d77b` |
-| 场景不绑定目标/视口 | 无特效时依赖调用者状态 | `7191fb5` |
-| 安卓无法导入谱面 | `onCreate` 里在 `super.onCreate` 前处理 intent，Activity 未 attach | `cb1fd43` |
-| 打击特效偏大 18% | `respack.json` 缺 `hitFxScale: 0.85` | `d19f71b` 附近 |
-| 长条材质硬编码 | `holdRepeat/holdKeepHead/holdCompact` 恒为 false，切片写死 | `89de03b` |
-| 回放不记录成绩 | 写文件前未把最终成绩写进 meta | 早期 |
 
 ---
 
 ## 五、未完成事项
 
-### 1. 红区屏幕空间合成（已知最难，三次失败）
+### 1. 界面逐屏移植（进行中，优先级最高）
 
-**现状**：红区只绘制为静态剪影。参考项目会在红区内把画面替换成"撕裂"效果的位移重采样。
+基础设施与主界面已完成；以下界面正在按 `docs/UI_PORTING_GUIDE.md` 的规范逐个移植，目标是与 `build/ref/java_*.png` 的几何/字体/颜色/动画一致：
 
-**已有的**：
-- `fx::BlockCompositePass` 模块已实现且编译通过（`include/rechigros/render/fx/BlockCompositePass.hpp`）
-- 两个着色器随资源发布且与参考逐字节一致：`assets/official_shaders/block_composite.glsl`、`block_prepass.glsl`
-- 门限与发光环权重有单元断言（`TransitionTests`）
-- 掩码栅格化代码已写好（六类区域 → 六个通道）
+- 谱面列表（本地/上架/未上架、管理模式、搜索与翻页对话框）
+- 设置页 4 个 tab（视频/音频/回放/更多、滑块/开关/编辑行/回放行）
+- 谱面详情页（含 DetailCanvasHost 的画布缩放与安全区）
+- 结算页（含入场动画、成绩跳动、判定分布直方图、模式标签）
+- 游玩 HUD、暂停菜单/恢复倒计时、练习模式面板与判定窗口面板（渲染器绘制；暂停期间的 HUD 要参与模糊底图）
 
-**为什么没接通**：从 `drawScene` 驱动合成会让整屏变白，**即使把合成着色器换成极简 `texture(scene,uv)` 直通也一样**，说明问题在帧流程机制而非着色器。
+### 2. 功能差距（见 `docs/COVERAGE_AUDIT.md` 的 15 项 S1/S2）
 
-**已通过实测排除的原因**（不要重复）：
-- 离屏路由本身（用普通 blit 回显验证过，正常）
-- 掩码绘制
-- 着色器编译
-- 缺采样器（共 8 个，`noiseMap` 容易漏）
-- 缺全屏 VAO（`FullscreenQuad::draw()` 不自动 `ensure()`）
-- `Framebuffer::resize()` 遗留绑定（会污染后续绘制）
-- `prepare()` 开头调 `release()` 摧毁已分配目标
+最重要的几项：
 
-**建议方法**：先写独立探针程序，只创建 GL 上下文、只跑 prepass+composite、把中间目标 dump 成 PNG 逐个检查，确认 pass 本身正确后再接 `drawScene`。**不要**继续在完整帧里猜。
+- **回放模型不兼容**：参考记录"判定条目"（按音符索引，TAP/DRAG/HOLD_PRESS/HOLD_RELEASE/FLICK），且回放模式下的镜像/挑战/倍速只影响显示；当前实现记录触摸采样并在回放时强制套用记录的设置。需要整体重做并保持旧文件兼容或迁移。
+- **无头 JSON 谱面**（没有 `formatVersion` 的 JSON）应保持 `formatVersion=0`/非官方分支；当前被强制按官方格式解析，改变长条几何。
+- **`info.yml` 的 `useAttachUiFix` 未生效**。
+- 长条身体持续打击反馈（`holdFxTimerSec`）缺失。
+- 难度文本归一化（连续空格折成 U+2002）、默认舞台宽高比 16:9 与 clamp。
+- 回放 meta 缺 `goodEarly/goodLate/stdDevMs/judgementOffsetBins`。
 
-详见 `MIGRATION.md` 的「Remaining work: the block screen-space composite」。
+### 3. 平台验证
 
-### 2. 安卓端游玩画面不呈现
+- **安卓真机**：所有验证都在模拟器（雷电，宿主 GPU 直通，非 ANGLE）完成；真机的 `mediump` 回退路径与非高通驱动仍需验证。
+- **iOS**：仅做打包完整性检查（47 项），**未在 macOS 上编译**。
+- 效果着色器（章节 9/故事板）静态校验全部通过，但设备上未跑过含 `prpr` 效果的谱面。
 
-**现象**：安卓上游戏逻辑完整运行（能跑完、能进结算页、判定计数正确），但**游玩画面不显示**，而 ImGui 覆盖层（如 MISS 提示）正常显示。桌面端同一份渲染代码输出完全正常。
+### 4. 性能
 
-**观察到的线索**：
-```
-E EGL_emulation: eglSurfaceAttrib: error 0x3009 (EGL_BAD_MATCH)
-W OpenGLRenderer: Failed to set EGL_SWAP_BEHAVIOR on surface
-D HostConnection: glGetError exceeded.     ← 每帧刷屏
-V GraphicsEnvironment: angle_gl_driver_selection_pkgs=[]
-```
-
-模拟器使用 **ANGLE** 转换层，且持续 GL 错误。
-
-**判断**：大概率是模拟器图形栈问题，不是产品缺陷。但**未在真机验证**。
-
-**下一步**：用真机装 APK、点播放按钮、截图。这是最快的定论方式。若真机也异常，则需换路径排查（比如用 `renderOffscreen` 直接输出 PNG，绕开屏幕呈现）。
-
-### 3. 官方解析器完整对齐
-
-`MIGRATION.md` 标 `in progress`：格式 1/3 的移动打包、音符字段覆盖度、短谱外推。
-
-### 4. iOS 实际编译
-
-仅做了打包完整性检查（47 项），**未在 macOS 上编译**。需要 macOS 环境。
+- 目标"不低于参考"。当前没有正式的性能对比基准（桌面 fps 由批量运行打印；安卓帧率未系统测量）。建议补一个固定谱面的帧时间基准并对比参考设备。
 
 ---
 
@@ -242,35 +237,43 @@ V GraphicsEnvironment: angle_gl_driver_selection_pkgs=[]
 | 故事板视频层 | 参考用平台视频管线（仅移动端有），且无任何随包内容使用 |
 | 在线谱面目录 | 依赖第三方托管服务，故意做成占位符 |
 | 移动端原生 UI 工具包 | 本移植用 ImGui 绘制等效界面 |
-| 红区屏幕空间合成 | 见上文，唯一保留的渲染缺口 |
 
 ---
 
 ## 七、踩坑清单（务必读）
 
-### 构建类
+### 构建 / 多会话并行类
 
-1. **改头文件必须整库重建**。虽然 CMake 已做头文件依赖，但改的是成员布局时，稳妥做法是删掉构建目录重配。这个坑在本项目里造成了至少四次"莫名其妙的运行时崩溃"。
-2. **`build.bat android` 曾把 Gradle 命令发到仓库根目录**（已修，用 `-p` 指定项目目录）。若再出现 `Directory does not contain a Gradle build`，检查这个。
-3. **Android 依赖 androidx 不可用**。`MainActivity` 用的是 `startActivityForResult`，不是 `ActivityResultLauncher`。gradle 里没有 androidx 依赖。
+1. **改头文件必须整库重建**。虽然 CMake 已做头文件依赖，但改成员布局时稳妥做法是删掉构建目录重配。历史上有多次"莫名其妙运行时崩溃"由此而来。
+2. **多会话并行时共享源码树会短暂不可链接**：别的会话正在写某个 `.cpp` 时链接会报该文件的符号缺失。这通常是暂时的，等对方写入完成再构建；不要为此去改别人的文件。
+3. **每个会话用自己的构建目录**（`build/<名字>`），不要同时写 `build/desktop-release`。
+4. **`build.bat android` 曾把 Gradle 命令发到仓库根目录**（已修，用 `-p` 指定项目目录）。
+5. **Android 依赖 androidx 不可用**，`MainActivity` 用 `startActivityForResult`。
 
-### 编码类
+### 界面 / 渲染类
 
-4. **多行字符串替换会静默失败**。PowerShell 的 `.Replace()` 对多行文本常因缩进不匹配而不生效，且不报错。**改源码一律用 `edit` 工具**，改完 grep 确认。
-5. **`std::filesystem::temp_directory_path()` 在非 ASCII 用户名下抛异常**（本机用户名是 `无影`）。测试里用 `current_path()` 或带 `error_code` 的重载。
-6. **`AddFontFromFileTTF` 的 GlyphRanges 只存指针**，传入的数组必须活到图集构建完成（用 `static`）。
-7. **ImGui 字体范围**：`GetGlyphRangesChineseSimplifiedCommon()` 约 2500 字，覆盖 `0x2000-0x206F` 标点区。缺字要手动追加码点，不要用 Full（21000 字会撑爆图集）。
+6. **界面坐标有两套单位**：布局用 731x415 设计画布 × `min(w/731,h/415)`；文字与 `dp()` 用显示密度（参考设备 1920x1080/280dpi → 1.75）。在 1080p 下 `1dp = 0.67246` 设计单位。把布局轴上的数字误乘密度（或反之）会造成 1.5 倍级别的错位——主界面角色图就踩过这个坑（`14*scale` 是布局单位，不是 `dp(14)`）。
+7. **文字尺寸不能乘布局缩放后直接画**：需要按最终像素尺寸栅格化（`ui::drawLabel` 已处理）。ImGui 内建字体只用于文本输入等控件，界面正文不要用它。
+8. **参考设备实际渲染的文字常比源码数字推算的小**（主界面"开始游玩"标签实际是 28 密度单位而非源码文本对应的 38；结算/详情的 XML 字号同样偏小）。界面移植的判定标准是**参考截图上的墨迹包围盒**，不是源码数字×密度。
+9. **安卓 APK 内资源不是文件**：任何读资源的地方都必须走 `AssetManager`（`readBinary`/`materialize`），不能 `fopen`/`stbi_load` 路径。
+10. **GLSL ES 片元着色器没有默认 float 精度**：自带 `out vec4` 的片元着色器必须在 `#version 300 es` 后注入 `precision highp/mediump float;`，否则整段程序编译失败且绘制静默无效。改着色器统一走 `ShaderProgram` 的归一化，不要手写版本行。
+11. **`Framebuffer::resize()` 遗留绑定会污染后续绘制**；离屏 pass 结束要恢复调用方 framebuffer、viewport、blend、colour mask、scissor、depth。
+12. **红区掩码按 `screen/8` 点采样**，掩码目标必须按该分辨率分配，否则覆盖率恒为 0。
+13. **`AddFontFromFileTTF` 的 GlyphRanges 只存指针**，数组必须活到图集构建完成（用 `static`）。
+14. **ImGui 字体范围**：`GetGlyphRangesChineseSimplifiedCommon()` 约 2500 字；缺字手动追加码点，不要用 Full。
 
-### 平台类
+### 安卓调试类
 
-8. **打包构建的资源不是文件**。任何读资源的地方都必须走 `AssetManager::readBinary` / `materialize`，不能直接 `fopen`/`stbi_load`。
-9. **安卓 adb 点击坐标要乘 1.8**（见第三节）。
-10. **`adb shell input tap` 太快会导致按钮无响应**，用 `input swipe` 加时长。
+15. **adb 截图为 1920x1080，输入坐标直接用**；`input tap` 太快会丢按压，用 `input swipe x y x y 150`。
+16. **PowerShell 的 `>` 重定向会破坏 adb 输出的二进制**（导出 tar/截图必须 `cmd /c`）。
+17. **SELinux 不允许应用读 `/data/local/tmp`**；写应用私有文件要用 stdin 管道进 `run-as ... sh -c "cat > ..."`。
+18. 参考应用是"视觉基准"：可以改它的设置（shared_prefs）来暴露不同界面，但**不要卸载/清数据**。
 
 ### 测试类
 
-11. **渲染矩阵采样稀疏**（每 5 行、每 20 字节），只能判断"有无差异"，不能验证数值精度。精度类断言应写成单元测试。
-12. **单点采样可能撞上巧合**（如两个用例在某时刻位置正好重合）。多时间点验证。
+19. **渲染矩阵采样稀疏**（每 5 行、每 20 字节），只能判断"有无差异"，不能验证数值精度。精度类断言应写成单元测试。
+20. **单点采样可能撞上巧合**（两个用例在某时刻位置正好重合），多时间点验证。
+21. **`std::filesystem::temp_directory_path()` 在非 ASCII 用户名下抛异常**（本机用户名是 `无影`），测试里用 `current_path()` 或带 `error_code` 的重载。
 
 ---
 
@@ -280,20 +283,31 @@ V GraphicsEnvironment: angle_gl_driver_selection_pkgs=[]
 | --- | --- |
 | `CMakeLists.txt` | 顶层构建，含头文件依赖保障 |
 | `scripts/build.ps1` | 一键构建脚本主体 |
+| `scripts/check-gles-shaders.ps1` | GLSL ES 静态校验（35 个着色器） |
+| `scripts/check-android-render.ps1` | 安卓设备渲染门禁 |
 | `scripts/verify-app-loop.ps1` | 应用端到端验证 |
 | `scripts/verify-render-matrix.ps1` | 渲染矩阵 |
 | `scripts/check-font-coverage.py` | 字体覆盖检查 |
 | `cmake/Dependencies.cmake` | 依赖拉取 |
-| `src/app/Application.cpp` | 主循环、事件、ImGui 初始化、帧捕获 |
-| `src/app/GameScreen.cpp` | 游玩逻辑、时钟推进、结束判定 |
-| `src/render/GameRenderer.cpp` | 渲染总调度 `drawScene` |
-| `src/core/JudgementEngine.cpp` | 判定 |
+| `src/app/Application.cpp` | 主循环、事件、ImGui 初始化、帧捕获、`--screen` 截图入口 |
+| `src/app/CaptureHarness.cpp` | 每个界面的代表状态与参考设置 |
+| `src/app/UiText.cpp` | 逐字号字形栅格化缓存（界面文字清晰度的关键） |
+| `src/app/UiLayout.cpp` | 设计画布/密度换算、斜切面板、文字排版、标签栏、动画插值 |
+| `src/app/CommonScreens.cpp` | 主界面、toast、导航 |
+| `src/app/LibraryScreen.cpp` / `SettingsScreen.cpp` / `DetailScreen.cpp` / `ResultScreen.cpp` / `CalibrationScreen.cpp` / `GameScreen.cpp` | 各界面 |
+| `src/render/GameRenderer.cpp` | 渲染总调度 `drawScene` 与帧流程 |
+| `src/render/scene/HudPass.cpp` | 游玩 HUD 绘制 |
+| `src/render/fx/BlockCompositePass.cpp` | 红区屏幕空间合成 |
+| `src/tools/block_probe.cpp` | 红区合成独立探针 |
+| `src/core/JudgementEngine.cpp` | 判定、窗口、练习覆盖 |
 | `src/core/JudgeLine.cpp` | 判定线状态机 |
 | `src/chart/` | 三种格式解析器 |
 | `src/platform/AssetManager.cpp` | 打包资源读取 |
-| `platform/android/app/src/main/java/com/wuying/chigros/MainActivity.java` | 安卓入口、导入、选择器桥接 |
-| `MIGRATION.md` | 逐模块移植状态与论证 |
-| `README.md` | 面向使用者的说明 |
+| `platform/android/app/src/main/java/com/wuying/chigros/MainActivity.java` | 安卓入口、导入、选择器桥接、启动参数 |
+| `docs/COVERAGE_AUDIT.md` | 逐模块功能差距（权威） |
+| `docs/UI_PORTING_GUIDE.md` | 界面移植规范与截图对比流程 |
+| `build/ref/` | 参考设备界面截图与索引 |
+| `MIGRATION.md` | 逐模块移植状态与论证（部分过时，以审计为准） |
 
 ---
 
@@ -303,19 +317,22 @@ V GraphicsEnvironment: angle_gl_driver_selection_pkgs=[]
 
 ```powershell
 cd E:\ReChigros
-build.bat verify-app        # 应用循环 + 字体覆盖
-build.bat verify-render     # 渲染矩阵
-build.bat android Release   # APK
-build.bat verify-ios        # iOS 打包检查
+build.bat desktop Release       # 构建 + 六个测试套件
+build.bat verify-app            # 应用循环 + 字体覆盖
+build.bat verify-render         # 渲染矩阵
+build.bat android Release       # APK
+build.bat verify-ios            # iOS 打包检查
+scripts\check-gles-shaders.ps1  # GLES 静态校验
+build\agent-block\src\tools\rechigros_block_probe.exe --assets assets --out-dir build\probe
 ```
 
-期望结果：前两个 exit 0，APK 成功产出，iOS 47 项通过。
+期望结果：全部 exit 0，APK 产出，探针打印 PASS。设备在线时再跑 `scripts\check-android-render.ps1 -Serial 127.0.0.1:5555`。
 
 ---
 
 ## 十、给接手者的建议优先级
 
-1. **先跑验证命令**确认环境可用，再动代码
-2. **安卓呈现问题**：争取真机确认，这是投入产出比最高的一步
-3. **官方解析器对齐**：影响谱面兼容性，可独立推进且有测试支撑
-4. **红区合成**：最难，建议放在最后，且务必先用独立探针验证 pass 本身
+1. **先跑验证命令**确认环境可用，再动代码。
+2. **界面逐屏移植**：按 `docs/UI_PORTING_GUIDE.md`，先截图（`--screen`）再与 `build/ref/` 对比，元素包围盒对到 0–2px 再继续下一屏。
+3. **功能差距**：从 `docs/COVERAGE_AUDIT.md` 的 S1 项开始（回放模型 → 无头 JSON → `useAttachUiFix` → 长条身体反馈）。
+4. **平台验证**：安卓真机、iOS 实编译；补性能基准。

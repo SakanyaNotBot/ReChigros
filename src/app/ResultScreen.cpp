@@ -1,50 +1,294 @@
+#include "rechigros/app/AppContext.hpp"
 #include "rechigros/app/ScreenCommon.hpp"
 #include "rechigros/app/Screens.hpp"
+#include "rechigros/app/UiLayout.hpp"
 #include "rechigros/app/UiStyle.hpp"
 #include "rechigros/app/UiWidgets.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 namespace rechigros::app {
 namespace {
 
-// Every position below is a design unit on the 960x540 settlement canvas.
-constexpr float kCanvasWidth = 960.0F;
-constexpr float kCanvasHeight = 540.0F;
-constexpr float kIllustrationLeft = 53.0F;
-constexpr float kIllustrationTop = 114.0F;
-constexpr float kIllustrationWidth = 500.0F;
-constexpr float kIllustrationHeight = 312.0F;
-constexpr float kUpperLeft = 526.0F;
-constexpr float kUpperTop = 114.0F;
-constexpr float kUpperWidth = 389.0F;
-constexpr float kUpperHeight = 156.0F;
-constexpr float kMiddleLeft = 505.0F;
-constexpr float kMiddleTop = 292.0F;
-constexpr float kMiddleWidth = 362.0F;
-constexpr float kMiddleHeight = 64.0F;
-constexpr float kLowerLeft = 485.0F;
-constexpr float kLowerTop = 372.0F;
-constexpr float kLowerWidth = 362.0F;
-constexpr float kLowerHeight = 64.0F;
-constexpr float kModeTagsLeft = 559.0F;
-constexpr float kModeTagsTop = 34.0F;
-constexpr float kCornerWidth = 102.0F;
-constexpr float kCornerHeight = 78.0F;
-constexpr float kCornerMargin = 14.0F;
-constexpr float kSmallButtonWidth = 70.0F;
-constexpr float kSmallButtonHeight = 40.0F;
-constexpr float kHistogramWidth = 500.0F;
-constexpr float kHistogramHeight = 170.0F;
+constexpr float kSkewSlope = 0.2679492F; // tan(15 degrees)
+constexpr float kDesignWidth = 960.0F;
+constexpr float kDesignHeight = 540.0F;
 
-std::uint64_t backgroundTexture(AppContext& context, const ChartRecord* record, int maxSize) {
-  if (record != nullptr) return coverTexture(context, *record, maxSize);
+// The settlement animation follows the reference's official timing: one linear 3.5 s pass that
+// drives the panel slides and the staged reveals.
+constexpr double kSettlementSeconds = 3.5;
+constexpr float kSlideUnits = 1200.0F; // design canvas widths, as in the reference
+constexpr float kBackgroundDim = 0.4F;
+// The corner layer margins in the reference are plain density pixels while the plates scale with
+// the canvas, so the margin in design units is smaller than its density value.
+constexpr float kReferenceDensity = 1.75F;
+
+// Glyph sizes: the labels live inside the scaled 960 x 540 canvas, so their pixel size is the
+// layout value multiplied by the canvas scale. ui::TextStyle sizes are density units, hence the
+// conversion.
+constexpr float kCanvasTextScale = 1.0F / ui::kDensityRatio;
+
+// Reference layout sizes, in canvas design units.
+constexpr float kScoreTextSize = 52.0F;
+constexpr float kComboValueSize = 28.0F;
+constexpr float kComboLabelSize = 11.0F;
+constexpr float kStdValueSize = 24.0F;
+constexpr float kStdLabelSize = 11.0F;
+constexpr float kAccValueSize = 28.0F;
+constexpr float kAccLabelSize = 11.0F;
+constexpr float kCountValueSize = 24.0F;
+constexpr float kCountLabelSize = 12.0F;
+constexpr float kEarlyValueSize = 14.0F;
+constexpr float kEarlyLabelSize = 11.0F;
+constexpr float kSongTextSize = 30.0F;
+constexpr float kDifficultyTextSize = 18.0F;
+constexpr float kModeTagTextSize = 16.0F;
+
+constexpr std::uint32_t kPanelFill = 0x80000000U;
+constexpr std::uint32_t kMenuButtonFill = 0x9A222A35U;
+constexpr std::uint32_t kMenuButtonStroke = 0x96FFFFFFU;
+
+// ---------------------------------------------------------------------------
+// animation curves (the reference's settlement easings)
+// ---------------------------------------------------------------------------
+
+float allEase(float x) {
+  if (x <= 0.0F) return 0.0F;
+  if (x >= 1.0F) return 1.0F;
+  const float k = 1.0F - x;
+  return 1.0F - std::pow(k, 10.0F);
+}
+
+float delayedSquare(float x, float k) {
+  x = (x - k) * (1.0F / (1.0F - k)) * 5.0F;
+  if (x <= 0.0F) return 0.0F;
+  if (x >= 1.0F) return 1.0F;
+  return x * x;
+}
+
+float levelSizeEase(float x) {
+  const float t = 3.0F * std::max(x - 1.0F / 6.0F, 0.0F);
+  return std::max(0.5F - t * t * t * t, 0.0F) + 1.0F;
+}
+
+float buttonEase(float x) {
+  if (x <= 0.0F) return 0.0F;
+  if (x >= 1.0F) return 1.0F;
+  const float k = 1.0F - x;
+  return 1.0F - k * k * k;
+}
+
+struct Settlement {
+  float progress{1.0F};
+  float cardDx{};
+  float upperDx{};
+  float middleDx{};
+  float lowerDx{};
+  float scoreAlpha{1.0F};
+  float gradeAlpha{1.0F};
+  float gradeScale{1.0F};
+  float middleAlpha{1.0F};
+  float lowerAlpha{1.0F};
+  float tagsAlpha{1.0F};
+  float retryDx{};
+  float cornerDx{};
+};
+
+Settlement settlementAt(float p) {
+  Settlement s;
+  s.progress = p;
+  s.cardDx = kSlideUnits * (1.0F - allEase(p));
+  s.upperDx = kSlideUnits * (1.0F - allEase(p - 0.015F));
+  s.middleDx = kSlideUnits * (1.0F - allEase(p - 0.035F));
+  s.lowerDx = kSlideUnits * (1.0F - allEase(p - 0.055F));
+  s.scoreAlpha = delayedSquare(p, 0.125F);
+  s.gradeScale = levelSizeEase(p);
+  s.gradeAlpha = delayedSquare(p, 0.25F);
+  s.middleAlpha = delayedSquare(p - 0.02F, 0.25F);
+  s.lowerAlpha = delayedSquare(p - 0.04F, 0.25F);
+  s.tagsAlpha = delayedSquare(p - 0.03F, 0.1875F);
+  const float button = buttonEase(p * 4.5F - 0.95F);
+  s.retryDx = -102.0F * (1.0F - button);
+  s.cornerDx = 272.0F * (1.0F - button);
+  return s;
+}
+
+// ---------------------------------------------------------------------------
+// small drawing helpers
+// ---------------------------------------------------------------------------
+
+ImU32 whiteAlpha(float alpha) {
+  const int value = static_cast<int>(std::lround(255.0F * std::clamp(alpha, 0.0F, 1.0F)));
+  return IM_COL32(255, 255, 255, value);
+}
+
+ui::TextStyle boardText(
+    float designSize, ImU32 color, ui::HAlign align, ui::VAlign valign, bool bold, bool fitWidth) {
+  ui::TextStyle style;
+  style.sizeDp = designSize * kCanvasTextScale;
+  style.bold = bold;
+  style.color = color;
+  style.align = align;
+  style.valign = valign;
+  style.fitWidth = fitWidth;
+  return style;
+}
+
+ui::Box shifted(const ui::Box& box, float dx, float dy = 0.0F) {
+  return ui::Box{box.x0 + dx, box.y0 + dy, box.x1 + dx, box.y1 + dy};
+}
+
+// Draws an image cropped into a skewed panel. The visible region of a rectangular image clipped
+// by the panel is the panel quad itself, and the texture coordinate of every vertex is linear in
+// its horizontal position, so one quad reproduces the clip exactly.
+void drawPanelImage(ImDrawList* drawList, const ui::Canvas& canvas, const ui::Box& box,
+    std::uint64_t texture, int textureWidth, int textureHeight) {
+  if (drawList == nullptr || texture == 0 || textureWidth <= 0 || textureHeight <= 0) return;
+  const ui::PxRect rect = ui::toPixels(canvas, box);
+  const float width = rect.max.x - rect.min.x;
+  const float height = rect.max.y - rect.min.y;
+  if (width <= 0.0F || height <= 0.0F) return;
+  float u0 = 0.0F;
+  float v0 = 0.0F;
+  float u1 = 1.0F;
+  float v1 = 1.0F;
+  const float textureAspect = static_cast<float>(textureWidth) / static_cast<float>(textureHeight);
+  const float boxAspect = width / height;
+  if (textureAspect > boxAspect) {
+    const float fraction = boxAspect / textureAspect;
+    u0 = (1.0F - fraction) * 0.5F;
+    u1 = 1.0F - u0;
+  } else if (textureAspect < boxAspect) {
+    const float fraction = textureAspect / boxAspect;
+    v0 = (1.0F - fraction) * 0.5F;
+    v1 = 1.0F - v0;
+  }
+  const float skew = std::min(kSkewSlope * height, width * 0.42F);
+  const auto uAt = [&](float x) { return u0 + (x - rect.min.x) / width * (u1 - u0); };
+  const ImVec2 p0(rect.min.x + skew, rect.min.y);
+  const ImVec2 p1(rect.max.x, rect.min.y);
+  const ImVec2 p2(rect.max.x - skew, rect.max.y);
+  const ImVec2 p3(rect.min.x, rect.max.y);
+  drawList->AddImageQuad(static_cast<ImTextureID>(texture), p0, p1, p2, p3,
+      ImVec2(uAt(p0.x), v0), ImVec2(u1, v0), ImVec2(uAt(p2.x), v1), ImVec2(u0, v1));
+}
+
+// Vertical scrim of the illustration panel: clear at the top, mostly black at the bottom, where
+// the title row sits.
+void drawPanelScrim(ImDrawList* drawList, const ui::Canvas& canvas, const ui::Box& box) {
+  const ui::PxRect rect = ui::toPixels(canvas, box);
+  const float width = rect.max.x - rect.min.x;
+  const float height = rect.max.y - rect.min.y;
+  if (width <= 0.0F || height <= 0.0F) return;
+  const float skew = std::min(kSkewSlope * height, width * 0.42F);
+  // Stops: 0 at 0, 0 at 0.25, 0x40 at 0.5, 0x80 at 0.75, 0xCC at 1.
+  const float stops[5] = {0.0F, 0.0F, 0.25F, 0.5F, 0.8F};
+  const float positions[5] = {0.0F, 0.25F, 0.5F, 0.75F, 1.0F};
+  const auto alphaAt = [&](float t) {
+    for (int index = 1; index < 5; ++index) {
+      if (t <= positions[index]) {
+        const float span = positions[index] - positions[index - 1];
+        const float k = span <= 0.0F ? 0.0F : (t - positions[index - 1]) / span;
+        return stops[index - 1] + (stops[index] - stops[index - 1]) * k;
+      }
+    }
+    return stops[4];
+  };
+  constexpr int kSteps = 48;
+  for (int step = 0; step < kSteps; ++step) {
+    const float t0 = static_cast<float>(step) / static_cast<float>(kSteps);
+    const float t1 = static_cast<float>(step + 1) / static_cast<float>(kSteps);
+    const float y0 = rect.min.y + height * t0;
+    const float y1 = rect.min.y + height * t1;
+    const ImVec2 points[4] = {
+        ImVec2(rect.min.x + skew * (1.0F - t0), y0),
+        ImVec2(rect.max.x - skew * t0, y0),
+        ImVec2(rect.max.x - skew * t1, y1),
+        ImVec2(rect.min.x + skew * (1.0F - t1), y1),
+    };
+    const int alpha = static_cast<int>(std::lround(alphaAt((t0 + t1) * 0.5F) * 255.0F));
+    if (alpha <= 0) continue;
+    drawList->AddConvexPolyFilled(points, 4, IM_COL32(0, 0, 0, alpha));
+  }
+}
+
+// The bundled corner glyphs are dark masks that the reference white-tints at runtime. Immediate
+// mode blending cannot recolour a texture, so the same shapes are drawn as white vector glyphs.
+void drawTintedGlyph(ImDrawList* drawList, const ui::PxRect& rect, int shape, ImU32 color) {
+  const float width = rect.max.x - rect.min.x;
+  const float height = rect.max.y - rect.min.y;
+  if (width <= 1.0F || height <= 1.0F) return;
+  const ImVec2 center((rect.min.x + rect.max.x) * 0.5F, (rect.min.y + rect.max.y) * 0.5F);
+  const float radius = std::min(width, height) * 0.5F;
+  switch (shape) {
+    case 0: { // restart: a ring with an arrow head, opened on the right
+      const float thickness = std::max(1.0F, radius * 0.22F);
+      drawList->PathArcTo(center, radius - thickness * 0.5F, 1.05F, 5.60F, 40);
+      drawList->PathStroke(color, 0, thickness);
+      const ImVec2 tip(center.x + radius * 0.90F, center.y - radius * 0.55F);
+      drawList->AddTriangleFilled(ImVec2(tip.x - radius * 0.34F, tip.y - radius * 0.18F),
+          ImVec2(tip.x + radius * 0.20F, tip.y + radius * 0.30F),
+          ImVec2(tip.x - radius * 0.10F, tip.y + radius * 0.66F), color);
+      break;
+    }
+    case 1: { // continue: a right pointing triangle
+      drawList->AddTriangleFilled(ImVec2(center.x - radius * 0.54F, center.y - radius * 0.80F),
+          ImVec2(center.x + radius * 0.86F, center.y),
+          ImVec2(center.x - radius * 0.54F, center.y + radius * 0.80F), color);
+      break;
+    }
+    case 2: { // replay: a ring with an arrow head on the left
+      const float thickness = std::max(1.0F, radius * 0.20F);
+      drawList->PathArcTo(center, radius - thickness * 0.5F, -0.60F, 3.95F, 40);
+      drawList->PathStroke(color, 0, thickness);
+      const ImVec2 tip(center.x - radius * 0.78F, center.y + radius * 0.28F);
+      drawList->AddTriangleFilled(ImVec2(tip.x + radius * 0.10F, tip.y - radius * 0.50F),
+          ImVec2(tip.x + radius * 0.38F, tip.y + radius * 0.18F),
+          ImVec2(tip.x - radius * 0.22F, tip.y + radius * 0.24F), color);
+      break;
+    }
+    default: { // save: a tray with a downward arrow
+      const float thickness = std::max(1.0F, radius * 0.16F);
+      const float left = rect.min.x + width * 0.14F;
+      const float right = rect.max.x - width * 0.14F;
+      const float top = rect.min.y + height * 0.14F;
+      const float bottom = rect.max.y - height * 0.12F;
+      drawList->AddLine(ImVec2(left, top), ImVec2(left, bottom), color, thickness);
+      drawList->AddLine(ImVec2(right, top), ImVec2(right, bottom), color, thickness);
+      drawList->AddLine(ImVec2(left, bottom), ImVec2(right, bottom), color, thickness);
+      drawList->AddLine(ImVec2(left, top), ImVec2(left + width * 0.24F, top), color, thickness);
+      drawList->AddLine(ImVec2(right - width * 0.24F, top), ImVec2(right, top), color, thickness);
+      drawList->AddLine(ImVec2(center.x, rect.min.y + height * 0.02F),
+          ImVec2(center.x, rect.min.y + height * 0.50F), color, thickness);
+      drawList->AddTriangleFilled(ImVec2(center.x - width * 0.22F, rect.min.y + height * 0.40F),
+          ImVec2(center.x + width * 0.22F, rect.min.y + height * 0.40F),
+          ImVec2(center.x, rect.min.y + height * 0.68F), color);
+      break;
+    }
+  }
+}
+
+std::string formatMultiplier(float value) {
+  char buffer[32];
+  std::snprintf(buffer, sizeof(buffer), "%g", static_cast<double>(value));
+  return buffer;
+}
+
+std::uint64_t resultCover(AppContext& context, int maxSize) {
+  const auto record = context.library.find(context.play.chartId);
+  if (record) return coverTexture(context, *record, maxSize);
   if (!context.play.bgFile.empty()) return context.textures.textureFor(context.play.bgFile, maxSize);
   return 0;
 }
+
+// ---------------------------------------------------------------------------
+// replay actions
+// ---------------------------------------------------------------------------
 
 void saveReplay(AppContext& context) {
   if (!context.lastRunHasReplay) {
@@ -74,278 +318,477 @@ void playReplay(AppContext& context) {
   startSavedReplay(context, context.savedReplayId);
 }
 
-// Judgement distribution histogram, drawn on the same design canvas as the boards.
-void drawHistogram(AppContext& context, ImDrawList* drawList, ImVec2 topLeft, ImVec2 size,
-    float unit) {
+// ---------------------------------------------------------------------------
+// judgement distribution overlay
+// ---------------------------------------------------------------------------
+
+// Judgement histogram: bars over the illustration window, revealed from the reference's sliding
+// overlay. Only reachable when the judgement-detail setting is on.
+void drawJudgementHistogram(AppContext& context, ImDrawList* drawList, const ui::Canvas& canvas,
+    const ui::Box& box, bool challenge, float alpha, float offsetX) {
+  const ui::PxRect rect = ui::toPixels(canvas, box);
+  const float width = rect.max.x - rect.min.x;
+  const float height = rect.max.y - rect.min.y;
+  if (width <= 1.0F || height <= 1.0F || alpha <= 0.01F) return;
+  const float skew = std::min(kSkewSlope * height, width * 0.42F);
+  const float inset = std::min(skew, width * 0.4F) + offsetX;
+  const float left = rect.min.x + inset;
+  const float right = rect.max.x - inset;
+  const auto dx = [&](float value) { return (value - canvas.origin.x) / canvas.scale; };
+  const auto dy = [&](float value) { return (value - canvas.origin.y) / canvas.scale; };
+
+  // Darkened backdrop over the artwork, then a vertical gradient like the reference view.
+  ImVec2 backdrop[4] = {
+      ImVec2(rect.min.x + skew, rect.min.y),
+      ImVec2(rect.max.x, rect.min.y),
+      ImVec2(rect.max.x - skew, rect.max.y),
+      ImVec2(rect.min.x, rect.max.y),
+  };
+  const int baseAlpha = static_cast<int>(std::lround(216.0F * alpha));
+  drawList->AddConvexPolyFilled(backdrop, 4, IM_COL32(0, 0, 0, baseAlpha));
+
+  ImGui::PushClipRect(ImVec2(left, rect.min.y), ImVec2(right, rect.max.y), true);
+  const float padX = std::min(canvas.units(18.0F), (right - left) * 0.06F);
+  const float graphLeft = left + padX;
+  const float graphRight = right - padX;
+  const float titleBaseline = rect.min.y + canvas.units(31.0F);
+  ui::TextStyle title = boardText(16.0F, whiteAlpha(alpha), ui::HAlign::Left, ui::VAlign::Top,
+      false, true);
+  ui::drawLabel(drawList, canvas,
+      ui::Box{dx(graphLeft), dy(titleBaseline - canvas.units(16.0F)), dx(graphRight),
+          dy(titleBaseline + canvas.units(4.0F))},
+      "判定分布", title, context.nowSec);
+  drawList->AddRectFilled(ImVec2(graphLeft, titleBaseline + canvas.units(6.0F)),
+      ImVec2(graphLeft + std::min(canvas.units(48.0F), canvas.units(0.0F) + (graphRight - graphLeft)
+                                                                          * 0.2F),
+          titleBaseline + canvas.units(7.5F)),
+      whiteAlpha(0.5F * alpha));
+
   const auto& bins = context.lastResult.judgementOffsetBins;
-  const int rangeMs = context.lastRunWasReplay
-      ? (context.lastReplayMeta.challenge ? game::PlayResult::JUDGEMENT_DETAIL_CHALLENGE_RANGE_MS
-                                          : game::PlayResult::JUDGEMENT_DETAIL_NORMAL_RANGE_MS)
-      : (context.play.challenge ? game::PlayResult::JUDGEMENT_DETAIL_CHALLENGE_RANGE_MS
-                                : game::PlayResult::JUDGEMENT_DETAIL_NORMAL_RANGE_MS);
-  drawList->AddRectFilled(topLeft, ImVec2(topLeft.x + size.x, topLeft.y + size.y),
-      IM_COL32(8, 11, 16, 216), 6.0F * unit);
-  drawList->AddRect(topLeft, ImVec2(topLeft.x + size.x, topLeft.y + size.y),
-      IM_COL32(255, 255, 255, 60), 6.0F * unit);
-  const float graphLeft = topLeft.x + 26.0F * unit;
-  const float graphRight = topLeft.x + size.x - 26.0F * unit;
-  const float graphTop = topLeft.y + 42.0F * unit;
-  const float baseline = topLeft.y + size.y - 34.0F * unit;
-  const float labelHeight = 8.0F;
-  int maximum = 1;
-  for (const int count : bins) maximum = std::max(maximum, count);
   const int count = static_cast<int>(bins.size());
-  if (count <= 0) return;
-  const float slot = (graphRight - graphLeft) / static_cast<float>(count);
-  drawList->AddLine(ImVec2(graphLeft, baseline), ImVec2(graphRight, baseline),
-      IM_COL32(255, 255, 255, 60), 1.0F);
-  for (int index = 0; index < count; ++index) {
-    const float barWidth = slot * 0.62F;
-    const float barHeight = bins[index] == 0
-        ? labelHeight * unit
-        : (static_cast<float>(bins[index]) / static_cast<float>(maximum)) * (baseline - graphTop)
-            + labelHeight * unit;
-    const float left = graphLeft + static_cast<float>(index) * slot + (slot - barWidth) * 0.5F;
-    const ImU32 color = index == count / 2 ? IM_COL32(255, 255, 255, 255)
-                                           : IM_COL32(201, 211, 230, 230);
-    drawList->AddRectFilled(ImVec2(left, baseline - barHeight),
-        ImVec2(left + barWidth, baseline), color, 2.0F * unit);
+  const int rangeMs = challenge ? game::PlayResult::JUDGEMENT_DETAIL_CHALLENGE_RANGE_MS
+                                : game::PlayResult::JUDGEMENT_DETAIL_NORMAL_RANGE_MS;
+  float graphTop = rect.min.y + canvas.units(56.0F);
+  float baseline = rect.max.y - canvas.units(36.0F);
+  if (baseline - graphTop < canvas.units(42.0F)) {
+    graphTop = rect.min.y + canvas.units(44.0F);
+    baseline = rect.max.y - canvas.units(31.0F);
   }
+  const float graphHeight = std::max(canvas.units(20.0F), baseline - graphTop);
+  int maximum = 0;
+  int peak = -1;
+  for (int index = 0; index < count; ++index) {
+    if (bins[static_cast<std::size_t>(index)] > maximum) {
+      maximum = bins[static_cast<std::size_t>(index)];
+      peak = index;
+    }
+  }
+  const float slot = (graphRight - graphLeft) / static_cast<float>(std::max(1, count));
+  const float barWidth =
+      std::max(canvas.units(3.5F), std::min(slot * 0.58F, canvas.units(14.0F)));
+  const float minBar = std::max(canvas.units(4.0F), graphHeight * 0.04F);
+  const float maxBar =
+      graphHeight < canvas.units(86.0F) ? graphHeight : std::max(canvas.units(20.0F),
+                                                                graphHeight * 0.9F);
+  const float radius = barWidth * 0.45F;
+  for (int index = 0; index < count; ++index) {
+    const float centerX = graphLeft + slot * (static_cast<float>(index) + 0.5F);
+    const int value = bins[static_cast<std::size_t>(index)];
+    float barHeight = 0.0F;
+    int barAlpha = 0;
+    if (maximum > 0 && value > 0) {
+      barHeight = minBar + static_cast<float>(value) / static_cast<float>(maximum)
+          * (maxBar - minBar);
+      barAlpha = 224;
+    } else {
+      barHeight = std::max(canvas.units(2.5F), minBar * 0.55F);
+      barAlpha = 54;
+    }
+    const ImU32 color = index == count / 2
+        ? IM_COL32(255, 255, 255, static_cast<int>(std::lround(barAlpha * alpha)))
+        : IM_COL32(201, 211, 230, static_cast<int>(std::lround(barAlpha * alpha)));
+    drawList->AddRectFilled(ImVec2(centerX - barWidth * 0.5F, baseline - barHeight),
+        ImVec2(centerX + barWidth * 0.5F, baseline), color, radius);
+  }
+  // Peak tag above the tallest bar.
+  if (maximum > 0 && peak >= 0) {
+    const int binWidthMs = std::max(1, (rangeMs * 2) / std::max(1, count - 1));
+    const int centerMs = -rangeMs + peak * binWidthMs;
+    char tag[32];
+    std::snprintf(tag, sizeof(tag), centerMs > 0 ? "+%dms" : "%dms", centerMs);
+    const float tagWidth = ui::labelWidth(canvas, tag, 11.0F * kCanvasTextScale, true)
+            * canvas.scale
+        + canvas.units(16.0F);
+    const float tagHeight = canvas.units(23.0F);
+    const float centerX = graphLeft + slot * (static_cast<float>(peak) + 0.5F);
+    const float barHeight =
+        minBar + static_cast<float>(bins[static_cast<std::size_t>(peak)])
+            / static_cast<float>(maximum) * (maxBar - minBar);
+    const float tagLeft = std::clamp(centerX - tagWidth * 0.5F, left + canvas.units(8.0F),
+        right - canvas.units(8.0F) - tagWidth);
+    const float tagTop =
+        std::max(rect.min.y + canvas.units(9.0F), baseline - barHeight - tagHeight
+                - canvas.units(8.0F));
+    drawList->AddRectFilled(ImVec2(tagLeft, tagTop),
+        ImVec2(tagLeft + tagWidth, tagTop + tagHeight), IM_COL32(255, 255, 255,
+                                                         static_cast<int>(std::lround(242.0F * alpha))),
+        canvas.units(8.0F));
+    drawList->AddTriangleFilled(ImVec2(centerX - canvas.units(5.0F), tagTop + tagHeight),
+        ImVec2(centerX + canvas.units(5.0F), tagTop + tagHeight),
+        ImVec2(centerX, tagTop + tagHeight + canvas.units(5.0F)),
+        IM_COL32(255, 255, 255, static_cast<int>(std::lround(242.0F * alpha))));
+    ui::TextStyle tagText = boardText(11.0F, IM_COL32(16, 21, 27, static_cast<int>(
+                                                            std::lround(255.0F * alpha))),
+        ui::HAlign::Center, ui::VAlign::Middle, true, true);
+    ui::drawLabel(drawList, canvas,
+        ui::Box{dx(tagLeft), dy(tagTop), dx(tagLeft + tagWidth), dy(tagTop + tagHeight)},
+        tag, tagText, context.nowSec);
+  }
+  // Axis labels.
+  const int step = std::max(1, rangeMs / 3);
   const int binWidthMs = std::max(1, (rangeMs * 2) / std::max(1, count - 1));
-  const int peak = static_cast<int>(std::max_element(bins.begin(), bins.end()) - bins.begin());
-  const int peakMs = -rangeMs + peak * binWidthMs;
-  char title[96];
-  std::snprintf(title, sizeof(title), "判定分布  (峰值 %+d ms)", peakMs);
-  ui::drawText(drawList, ImVec2(topLeft.x + 14.0F * unit, topLeft.y + 12.0F * unit),
-      17.0F * unit, ui::rgba(ui::kTextPrimary), title);
-  ui::drawText(drawList, ImVec2(graphLeft, baseline + 8.0F * unit), 13.0F * unit,
-      ui::rgba(ui::kTextMuted), "早");
-  drawTextRight(drawList, ImVec2(graphRight, baseline + 14.0F * unit), 13.0F * unit,
-      ui::rgba(ui::kTextMuted), "晚");
+  for (int index = -3; index <= 3; ++index) {
+    const int value = index * step;
+    const int binIndex =
+        std::clamp(static_cast<int>(std::lround((value + rangeMs) / static_cast<float>(binWidthMs))),
+            0, count - 1);
+    char label[16];
+    std::snprintf(label, sizeof(label), value > 0 ? "+%d" : "%d", value);
+    const float centerX = graphLeft + slot * (static_cast<float>(binIndex) + 0.5F);
+    ui::TextStyle style = boardText(11.5F, IM_COL32(255, 255, 255,
+                                                static_cast<int>(std::lround(179.0F * alpha))),
+        ui::HAlign::Center, ui::VAlign::Top, false, true);
+    ui::drawLabel(drawList, canvas,
+        ui::Box{dx(centerX - canvas.units(24.0F)), dy(baseline + canvas.units(10.0F)),
+            dx(centerX + canvas.units(24.0F)), dy(baseline + canvas.units(26.0F))},
+        label, style, context.nowSec);
+  }
+  ImGui::PopClipRect();
+}
+
+// ---------------------------------------------------------------------------
+// mode tags
+// ---------------------------------------------------------------------------
+
+struct ModeTag {
+  std::string label;
+};
+
+std::vector<ModeTag> modeTags(const AppContext& context) {
+  std::vector<ModeTag> tags;
+  if (context.play.replayMode || context.lastRunWasReplay) tags.push_back({"回放"});
+  if (context.play.mirrorX) tags.push_back({"镜像"});
+  if (context.play.challenge) tags.push_back({"挑战"});
+  if (std::abs(context.play.musicSpeed - 1.0F) > 0.001F) {
+    tags.push_back({"倍速 " + formatMultiplier(context.play.musicSpeed) + "x"});
+  }
+  if (std::abs(context.play.scrollSpeed - 1.0F) > 0.001F) {
+    tags.push_back({"流速 " + formatMultiplier(context.play.scrollSpeed) + "x"});
+  }
+  if (context.play.autoplay) tags.push_back({"AUTOPLAY"});
+  if (context.play.practice) tags.push_back({"练习"});
+  return tags;
 }
 
 } // namespace
 
 void drawResultScreen(AppContext& context) {
-  const auto size = viewportSize();
-  const float scale = layoutScale();
+  const ImVec2 viewport = ImVec2(viewportSize().width, viewportSize().height);
+  // The settlement is authored on a 960 x 540 canvas scaled uniformly into the window and
+  // centred, so the design units below are the reference layout's own coordinates.
+  const ui::DesignCanvas design = ui::designCanvas(viewport, kDesignWidth, kDesignHeight);
+  ui::Canvas canvas;
+  canvas.scale = design.scale;
+  canvas.origin = design.origin;
+  canvas.viewport = viewport;
+  const game::PlayResult& result = context.lastResult;
+
   ui::beginFullscreenWindow("##result");
   ImDrawList* drawList = ImGui::GetWindowDrawList();
-  ui::drawBackdrop(drawList, ImVec2(size.width, size.height), context.nowSec);
 
-  const auto record = context.library.find(context.play.chartId);
-  const std::uint64_t background = backgroundTexture(context, record ? &*record : nullptr, 1024);
-  if (background != 0) {
-    drawList->AddImage(static_cast<ImTextureID>(background), ImVec2(0.0F, 0.0F),
-        ImVec2(size.width, size.height), ImVec2(0.0F, 0.0F), ImVec2(1.0F, 1.0F),
-        IM_COL32(255, 255, 255, 70));
+  // The settlement plays when the screen is entered from gameplay. A capture run opens the
+  // screen directly at application start and is expected to show the settled state.
+  static double lastDrawSec = -1.0;
+  static double animationStartSec = -1.0;
+  if (lastDrawSec < 0.0 || context.nowSec - lastDrawSec > 0.5) {
+    animationStartSec = context.nowSec <= 0.1 ? -1.0 : context.nowSec;
   }
-  drawList->AddRectFilled(ImVec2(0.0F, 0.0F), ImVec2(size.width, size.height),
-      IM_COL32(8, 10, 14, 190));
+  lastDrawSec = context.nowSec;
+  const float progress = animationStartSec > 0.0
+      ? std::clamp(static_cast<float>((context.nowSec - animationStartSec) / kSettlementSeconds),
+            0.0F, 1.0F)
+      : 1.0F;
+  const Settlement settlement = settlementAt(progress);
 
-  const ui::DesignCanvas canvas = ui::designCanvas(ImVec2(size.width, size.height),
-      kCanvasWidth, kCanvasHeight);
-  const float unit = canvas.scale;
-  const auto point = [&](float x, float y) { return ui::canvasPoint(canvas, x, y); };
-  const auto length = [&](float value) { return value * unit; };
-  const game::PlayResult& result = context.lastResult;
-  const float skew = ui::kSkewRatio;
+  // Window entrance: the reference fades the settlement in over 220 ms and slides it up by 2%
+  // of its height while the play activity fades out behind it.
+  const float enter = animationStartSec > 0.0
+      ? std::clamp(static_cast<float>((context.nowSec - animationStartSec) / 0.22), 0.0F, 1.0F)
+      : 1.0F;
+  const float enterEased = ui::interpolate(ui::Interp::DecelerateQuad, enter);
+  const float enterOffset = viewport.y * 0.02F * (1.0F - enterEased);
 
-  // Illustration parallelogram on the left, holding the song and difficulty.
+  // ---- background: the chart illustration, blurred and dimmed ----
+  drawList->AddRectFilled(ImVec2(0.0F, 0.0F), viewport, IM_COL32(0, 0, 0, 255));
+  const std::uint64_t blurred = resultCover(context, 128);
+  if (blurred != 0) {
+    const int blurredWidth = static_cast<int>(context.textures.width(blurred));
+    const int blurredHeight = static_cast<int>(context.textures.height(blurred));
+    ui::drawImage(drawList, ui::PxRect{ImVec2(0.0F, 0.0F), viewport}, blurred, blurredWidth,
+        blurredHeight, ui::ImageFit::CenterCrop);
+  }
+  // The dim overlay fades in over 360 ms.
+  const float dim = animationStartSec > 0.0
+      ? kBackgroundDim * ui::interpolate(ui::Interp::DecelerateQuad,
+            std::clamp(static_cast<float>((context.nowSec - animationStartSec) / 0.36), 0.0F, 1.0F))
+      : kBackgroundDim;
+  drawList->AddRectFilled(ImVec2(0.0F, 0.0F), viewport,
+      IM_COL32(0, 0, 0, static_cast<int>(std::lround(255.0F * dim))));
+
+  // Everything below is authored in the 960 x 540 design space; the window entrance offset is
+  // applied by moving the canvas origin.
+  ui::Canvas content = canvas;
+  content.origin.y += enterOffset;
+
+  const auto box = [](float x0, float y0, float w, float h) {
+    return ui::Box{x0, y0, x0 + w, y0 + h};
+  };
+  const auto px = [&](float x, float y) { return content.point(x, y); };
+
+  // ---- illustration panel ----
+  const ui::Box cardBox = box(53.0F, 114.0F, 500.0F, 312.0F);
+  const ui::Box cardPixels = shifted(cardBox, settlement.cardDx);
   {
-    const ImVec2 topLeft = point(kIllustrationLeft, kIllustrationTop);
-    const float width = length(kIllustrationWidth);
-    const float height = length(kIllustrationHeight);
-    ui::drawPanel(drawList, topLeft, ImVec2(topLeft.x + width, topLeft.y + height), height * skew,
-        IM_COL32(16, 20, 26, 216), IM_COL32(255, 255, 255, 90), 1.0F);
-    if (background != 0) {
-      // The dimmed backdrop already shows the artwork; a clipped copy keeps the
-      // parallelogram reading as a picture frame.
-      const ImVec2 clipMin = topLeft;
-      const ImVec2 clipMax(topLeft.x + width, topLeft.y + height);
-      drawList->PushClipRect(clipMin, clipMax, true);
-      drawList->AddImage(static_cast<ImTextureID>(background), clipMin, clipMax, ImVec2(0.0F, 0.0F),
-          ImVec2(1.0F, 1.0F), IM_COL32(255, 255, 255, 150));
-      drawList->PopClipRect();
-      drawList->AddRectFilled(clipMin, clipMax, IM_COL32(0, 0, 0, 60));
+    ui::PanelStyle style =
+        ui::glassPanel(ui::argb(0xFF101318U), ui::argb(0x00000000U));
+    style.strokeWidthDp = 0.0F;
+    style.skewDegrees = 15.0F;
+    ui::drawPanelShape(drawList, content, cardPixels, style);
+    const std::uint64_t illustration = resultCover(context, 1200);
+    if (illustration != 0) {
+      drawPanelImage(drawList, content, cardPixels, illustration,
+          static_cast<int>(context.textures.width(illustration)),
+          static_cast<int>(context.textures.height(illustration)));
     }
-    char songBuffer[160];
-    std::snprintf(songBuffer, sizeof(songBuffer), "%.48s", context.play.songName.c_str());
-    // Song name and difficulty share the caption row near the bottom of the illustration.
-    // The judgement board overlaps the lower right of the frame, so the caption row is kept
-    // in the clear band above it and both labels are clipped to that band.
-    const float captionTop = topLeft.y + height - length(54.0F);
-    const ImVec2 captionClipMin(topLeft.x, captionTop - length(2.0F));
-    const ImVec2 captionClipMax(topLeft.x + width, captionTop + length(34.0F));
-    const std::string difficulty = context.play.difficulty;
-    const float difficultyWidth = length(120.0F);
-    const float songWidth = length(310.0F) - length(26.0F + 16.0F);
-    ui::drawClippedText(drawList, ImVec2(topLeft.x + length(26.0F), captionTop), captionClipMin,
-        captionClipMax, 30.0F * unit, IM_COL32(255, 255, 255, 255),
-        ui::ellipsize(songBuffer, 30.0F * unit, songWidth));
-    // Fixed offset inside the frame: the caption band ends before the judgement board.
-    ui::drawClippedText(drawList, ImVec2(topLeft.x + length(310.0F), captionTop + length(12.0F)),
-        captionClipMin, captionClipMax, 18.0F * unit, IM_COL32(255, 255, 255, 255),
-        ui::ellipsize(difficulty, 18.0F * unit, difficultyWidth));
+    drawPanelScrim(drawList, content, cardPixels);
+    // Song name and difficulty sit in the clear band above the judgement board.
+    char nameBuffer[192];
+    std::snprintf(nameBuffer, sizeof(nameBuffer), "%.64s", context.play.songName.c_str());
+    ui::TextStyle song = boardText(kSongTextSize, IM_COL32(255, 255, 255, 255), ui::HAlign::Left,
+        ui::VAlign::Bottom, false, false);
+    song.marquee = true;
+    ui::drawLabel(drawList, content,
+        shifted(box(79.0F, 488.0F, 282.0F, 40.0F), settlement.cardDx), nameBuffer, song,
+        context.nowSec);
+    ui::TextStyle difficulty = boardText(kDifficultyTextSize, IM_COL32(255, 255, 255, 255),
+        ui::HAlign::Right, ui::VAlign::Bottom, false, true);
+    ui::drawLabel(drawList, content,
+        shifted(box(363.0F, 500.0F, 100.0F, 26.0F), settlement.cardDx), context.play.difficulty,
+        difficulty, context.nowSec);
   }
 
-  // Upper board: score and grade.
+  // ---- upper board: score, rule and grade ----
   {
-    const ImVec2 topLeft = point(kUpperLeft, kUpperTop);
-    const float width = length(kUpperWidth);
-    const float height = length(kUpperHeight);
-    ui::drawPanel(drawList, topLeft, ImVec2(topLeft.x + width, topLeft.y + height), height * skew,
-        ui::rgba(ui::kDetailTitlePanel), IM_COL32(255, 255, 255, 90), 1.0F);
-    const std::string scoreText = formatScore(result.score);
-    ui::drawText(drawList, ImVec2(topLeft.x + length(34.0F), topLeft.y + length(56.0F)),
-        52.0F * unit, IM_COL32(255, 255, 255, 255), scoreText.c_str());
-    drawList->AddRectFilled(ImVec2(topLeft.x + length(36.0F), topLeft.y + length(128.0F)),
-        ImVec2(topLeft.x + length(186.0F), topLeft.y + length(130.0F)),
-        IM_COL32(255, 255, 255, 140));
-    const int grade = gradeIndexForScore(result.score, result.isFullCombo());
-    drawGradeImage(context, drawList,
-        ImVec2(topLeft.x + length(243.0F + 54.0F), topLeft.y + length(22.0F + 54.0F)),
-        length(108.0F), grade);
+    const ui::Box board = shifted(box(526.0F, 114.0F, 389.0F, 156.0F), settlement.upperDx);
+    ui::PanelStyle style =
+        ui::glassPanel(ui::argb(kPanelFill), ui::argb(0x00000000U));
+    style.strokeWidthDp = 0.0F;
+    ui::drawPanelShape(drawList, content, board, style);
+
+    ui::TextStyle score = boardText(kScoreTextSize,
+        whiteAlpha(settlement.scoreAlpha), ui::HAlign::Left, ui::VAlign::Bottom, false, true);
+    ui::drawLabel(drawList, content, shifted(box(560.0F, 170.0F, 220.0F, 58.0F), settlement.upperDx),
+        formatScore(result.score), score, context.nowSec);
+
+    const ui::PxRect rule = ui::toPixels(content,
+        shifted(box(562.0F, 242.0F, 150.0F, 2.0F), settlement.upperDx));
+    drawList->AddRectFilled(rule.min, rule.max,
+        IM_COL32(255, 255, 255, static_cast<int>(std::lround(140.0F * settlement.scoreAlpha))));
+
+    const int gradeIndex = gradeIndexForScore(result.score, result.isFullCombo());
+    const ImVec2 gradeCenter =
+        px(769.0F + 54.0F + settlement.upperDx, 136.0F + 54.0F);
+    drawGradeImage(context, drawList, gradeCenter, content.units(108.0F * settlement.gradeScale),
+        gradeIndex, settlement.gradeAlpha);
   }
 
-  // Middle board: max combo, standard deviation, accuracy.
+  // ---- middle board: max combo, standard deviation, accuracy ----
   {
-    const ImVec2 topLeft = point(kMiddleLeft, kMiddleTop);
-    const float width = length(kMiddleWidth);
-    const float height = length(kMiddleHeight);
-    ui::drawPanel(drawList, topLeft, ImVec2(topLeft.x + width, topLeft.y + height), height * skew,
-        ui::rgba(ui::kDetailInfoPanel), IM_COL32(255, 255, 255, 90), 1.0F);
+    const ui::Box board = shifted(box(505.0F, 292.0F, 362.0F, 64.0F), settlement.middleDx);
+    ui::PanelStyle style =
+        ui::glassPanel(ui::argb(kPanelFill), ui::argb(0x00000000U));
+    style.strokeWidthDp = 0.0F;
+    ui::drawPanelShape(drawList, content, board, style);
+    const float alpha = settlement.middleAlpha;
+    const ImU32 valueColor = whiteAlpha(alpha);
+    const ImU32 labelColor = whiteAlpha(0.8F * alpha);
 
-    // Three columns across the board. Each value is clipped to its own column so a long
-    // deviation figure can never run into the accuracy beside it.
-    const float comboLeft = topLeft.x + length(26.0F);
-    const float comboWidth = length(104.0F);
-    const float stdLeft = topLeft.x + length(118.0F);
-    const float stdWidth = length(100.0F);
-    const float accLeft = topLeft.x + length(224.0F);
-    const float accWidth = length(120.0F);
+    const ImU32 comboColor = valueColor;
+    ui::TextStyle combo = boardText(kComboValueSize, comboColor, ui::HAlign::Left,
+        ui::VAlign::Bottom, false, true);
+    ui::drawLabel(drawList, content,
+        shifted(box(531.0F, 298.0F, 104.0F, 30.0F), settlement.middleDx),
+        std::to_string(result.maxCombo), combo, context.nowSec);
+    ui::TextStyle comboLabel = boardText(kComboLabelSize, labelColor, ui::HAlign::Left,
+        ui::VAlign::Middle, false, true);
+    ui::drawLabel(drawList, content,
+        shifted(box(531.0F, 334.0F, 104.0F, 15.0F), settlement.middleDx), "MAX COMBO", comboLabel,
+        context.nowSec);
 
-    char comboBuffer[32];
-    std::snprintf(comboBuffer, sizeof(comboBuffer), "%d", result.maxCombo);
-    ui::drawText(drawList, ImVec2(comboLeft, topLeft.y + length(6.0F)),
-        28.0F * unit, IM_COL32(255, 255, 255, 255),
-        ui::ellipsize(comboBuffer, 28.0F * unit, comboWidth).c_str());
-    ui::drawText(drawList, ImVec2(comboLeft, topLeft.y + length(42.0F)),
-        11.0F * unit, IM_COL32(204, 255, 255, 255), "MAX COMBO");
+    char deviation[48];
+    std::snprintf(deviation, sizeof(deviation), "%.3f ms", result.stdDevMs);
+    ui::TextStyle std = boardText(kStdValueSize, valueColor, ui::HAlign::Center,
+        ui::VAlign::Bottom, false, true);
+    ui::drawLabel(drawList, content,
+        shifted(box(627.0F, 299.0F, 124.0F, 30.0F), settlement.middleDx), deviation, std,
+        context.nowSec);
+    ui::TextStyle stdLabel = boardText(kStdLabelSize, labelColor, ui::HAlign::Center,
+        ui::VAlign::Middle, false, true);
+    ui::drawLabel(drawList, content,
+        shifted(box(627.0F, 334.0F, 124.0F, 15.0F), settlement.middleDx), "STD DEVIATION",
+        stdLabel, context.nowSec);
 
-    char deviationBuffer[48];
-    std::snprintf(deviationBuffer, sizeof(deviationBuffer), "%.3f ms", result.stdDevMs);
-    ui::drawTextCentered(drawList, ImVec2(stdLeft + stdWidth * 0.5F, topLeft.y + length(7.0F + 12.0F)),
-        24.0F * unit, IM_COL32(255, 255, 255, 255),
-        ui::ellipsize(deviationBuffer, 24.0F * unit, stdWidth).c_str());
-    ui::drawTextCentered(drawList, ImVec2(stdLeft + stdWidth * 0.5F, topLeft.y + length(42.0F + 7.0F)),
-        11.0F * unit, IM_COL32(204, 255, 255, 255), "STD DEVIATION");
-
-    const std::string accuracyText = formatAccuracy(result.accuracy);
-    const std::string shortAccuracy = ui::ellipsize(accuracyText, 28.0F * unit, accWidth);
-    const ImVec2 accExtent = ui::measureText(shortAccuracy.c_str(), 28.0F * unit);
-    ui::drawText(drawList, ImVec2(accLeft + accWidth - accExtent.x, topLeft.y + length(6.0F)),
-        28.0F * unit, IM_COL32(255, 255, 255, 255), shortAccuracy.c_str());
-    ui::drawText(drawList, ImVec2(accLeft + accWidth - length(64.0F), topLeft.y + length(42.0F)),
-        11.0F * unit, IM_COL32(204, 255, 255, 255), "ACCURACY");
+    ui::TextStyle accuracy = boardText(kAccValueSize, valueColor, ui::HAlign::Right,
+        ui::VAlign::Bottom, false, true);
+    ui::drawLabel(drawList, content,
+        shifted(box(737.0F, 298.0F, 104.0F, 30.0F), settlement.middleDx),
+        formatAccuracy(result.accuracy), accuracy, context.nowSec);
+    ui::TextStyle accuracyLabel = boardText(kAccLabelSize, labelColor, ui::HAlign::Right,
+        ui::VAlign::Middle, false, true);
+    ui::drawLabel(drawList, content,
+        shifted(box(737.0F, 334.0F, 104.0F, 15.0F), settlement.middleDx), "ACCURACY",
+        accuracyLabel, context.nowSec);
   }
 
-  // Lower board: judgement counts and early/late split.
+  // ---- lower board: judgement counts, early/late ----
   {
-    const ImVec2 topLeft = point(kLowerLeft, kLowerTop);
-    const float width = length(kLowerWidth);
-    const float height = length(kLowerHeight);
-    ui::drawPanel(drawList, topLeft, ImVec2(topLeft.x + width, topLeft.y + height), height * skew,
-        ui::rgba(ui::kDetailInfoPanel), IM_COL32(255, 255, 255, 90), 1.0F);
+    const ui::Box board = shifted(box(485.0F, 372.0F, 362.0F, 64.0F), settlement.lowerDx);
+    ui::PanelStyle style =
+        ui::glassPanel(ui::argb(kPanelFill), ui::argb(0x00000000U));
+    style.strokeWidthDp = 0.0F;
+    ui::drawPanelShape(drawList, content, board, style);
+    const float alpha = settlement.lowerAlpha;
+    const ImU32 valueColor = whiteAlpha(alpha);
+    const ImU32 labelColor = whiteAlpha(0.8F * alpha);
 
     struct CountEntry {
       const char* label;
       int value;
+      float x;
+      float w;
     };
-    const CountEntry counts[] = {
-        {"PERFECT", result.perfect},
-        {"GOOD", result.good},
-        {"BAD", result.bad},
-        {"MISS", result.miss},
+    const CountEntry entries[] = {
+        {"PERFECT", result.perfect, 495.0F, 72.0F},
+        {"GOOD", result.goodEarly + result.goodLate, 571.0F, 56.0F},
+        {"BAD", result.bad, 625.0F, 50.0F},
+        {"MISS", result.miss, 676.0F, 50.0F},
     };
-    const float centers[] = {10.0F + 36.0F, 86.0F + 28.0F, 140.0F + 25.0F, 191.0F + 25.0F};
-    for (int index = 0; index < 4; ++index) {
-      const std::string value = std::to_string(counts[index].value);
-      ui::drawTextCentered(drawList, ImVec2(topLeft.x + length(centers[index]),
-                                      topLeft.y + length(7.0F + 17.0F)),
-          24.0F * unit, IM_COL32(255, 255, 255, 255), value.c_str());
-      ui::drawTextCentered(drawList, ImVec2(topLeft.x + length(centers[index]),
-                                      topLeft.y + length(42.0F + 8.0F)),
-          12.0F * unit, IM_COL32(204, 255, 255, 255), counts[index].label);
+    for (const CountEntry& entry : entries) {
+      ui::TextStyle value = boardText(kCountValueSize, valueColor, ui::HAlign::Center,
+          ui::VAlign::Bottom, false, true);
+      ui::drawLabel(drawList, content,
+          shifted(box(entry.x, 379.0F, entry.w, 34.0F), settlement.lowerDx),
+          std::to_string(entry.value), value, context.nowSec);
+      ui::TextStyle label = boardText(kCountLabelSize, labelColor, ui::HAlign::Center,
+          ui::VAlign::Middle, false, true);
+      ui::drawLabel(drawList, content,
+          shifted(box(entry.x, 414.0F, entry.w, 16.0F), settlement.lowerDx), entry.label, label,
+          context.nowSec);
     }
-    // Divider before the early/late column.
-    drawList->AddRectFilled(ImVec2(topLeft.x + length(252.0F), topLeft.y + length(14.0F)),
-        ImVec2(topLeft.x + length(253.0F), topLeft.y + length(50.0F)),
-        IM_COL32(255, 255, 255, 90));
-    ui::drawText(drawList, ImVec2(topLeft.x + length(262.0F), topLeft.y + length(14.0F)),
-        11.0F * unit, IM_COL32(204, 255, 255, 255), "EARLY");
-    const std::string early = std::to_string(result.goodEarly);
-    const ImVec2 earlyExtent = ui::measureText(early.c_str(), 14.0F * unit);
-    ui::drawText(drawList, ImVec2(topLeft.x + length(304.0F + 36.0F) - earlyExtent.x,
-                            topLeft.y + length(13.0F)),
-        14.0F * unit, IM_COL32(255, 255, 255, 255), early.c_str());
-    ui::drawText(drawList, ImVec2(topLeft.x + length(262.0F), topLeft.y + length(33.0F)),
-        11.0F * unit, IM_COL32(204, 255, 255, 255), "LATE");
-    const std::string late = std::to_string(result.goodLate);
-    const ImVec2 lateExtent = ui::measureText(late.c_str(), 14.0F * unit);
-    ui::drawText(drawList, ImVec2(topLeft.x + length(300.0F + 36.0F) - lateExtent.x,
-                            topLeft.y + length(32.0F)),
-        14.0F * unit, IM_COL32(255, 255, 255, 255), late.c_str());
+    const ui::PxRect divider = ui::toPixels(content,
+        shifted(box(737.0F, 386.0F, 1.0F, 36.0F), settlement.lowerDx));
+    drawList->AddRectFilled(divider.min, divider.max, whiteAlpha(0.35F * alpha));
+
+    struct EarlyLate {
+      const char* label;
+      int value;
+      float labelY;
+      float valueY;
+      float valueX;
+    };
+    const EarlyLate rows[] = {
+        {"EARLY", result.goodEarly, 386.0F, 385.0F, 789.0F},
+        {"LATE", result.goodLate, 405.0F, 404.0F, 785.0F},
+    };
+    for (const EarlyLate& row : rows) {
+      ui::TextStyle label = boardText(kEarlyLabelSize, labelColor, ui::HAlign::Left,
+          ui::VAlign::Middle, false, true);
+      ui::drawLabel(drawList, content,
+          shifted(box(747.0F, row.labelY, 46.0F, 16.0F), settlement.lowerDx), row.label, label,
+          context.nowSec);
+      ui::TextStyle value = boardText(kEarlyValueSize, valueColor, ui::HAlign::Right,
+          ui::VAlign::Middle, false, true);
+      ui::drawLabel(drawList, content,
+          shifted(box(row.valueX, row.valueY, 36.0F, 17.0F), settlement.lowerDx),
+          std::to_string(row.value), value, context.nowSec);
+    }
   }
 
-  // Mode tags along the top-right.
+  // ---- mode tags along the top-right ----
   {
-    float tagLeft = kModeTagsLeft;
-    const float tagTop = kModeTagsTop;
-    const auto drawTag = [&](const char* label) {
-      const ImVec2 extent = ui::measureText(label, 13.0F * unit);
-      const ImVec2 topLeft = point(tagLeft, tagTop);
-      const float width = extent.x + length(20.0F);
-      const float height = length(26.0F);
-      ui::skewQuad(drawList, topLeft.x, topLeft.y, topLeft.x + width, topLeft.y + height,
-          height * skew, ui::rgba(ui::kChip));
-      ui::drawTextCentered(drawList, ImVec2(topLeft.x + width * 0.5F - height * skew * 0.5F,
-                                      topLeft.y + height * 0.5F),
-          13.0F * unit, ui::rgba(ui::kTextSecondary), label);
-      tagLeft += (extent.x / std::max(0.01F, unit) + 28.0F);
-    };
-    if (context.play.autoplay) drawTag("AUTOPLAY");
-    if (context.play.challenge) drawTag("挑战");
-    if (context.play.practice) drawTag("练习");
-    if (context.play.mirrorX) drawTag("镜像");
-    if (context.play.replayMode) drawTag("回放");
-    if (std::abs(context.play.musicSpeed - 1.0F) > 0.001F) {
-      char speed[32];
-      std::snprintf(speed, sizeof(speed), "倍速 %.2fx", static_cast<double>(context.play.musicSpeed));
-      drawTag(speed);
+    const std::vector<ModeTag> tags = modeTags(context);
+    if (!tags.empty()) {
+      const float containerRight = 915.0F;
+      const float containerTop = 34.0F;
+      const float height = 32.0F;
+      const float gap = 6.0F;
+      std::vector<float> widths(tags.size());
+      float rowWidth = 0.0F;
+      for (std::size_t index = 0; index < tags.size(); ++index) {
+        const float textWidth =
+            ui::labelWidth(content, tags[index].label, kModeTagTextSize * kCanvasTextScale, false);
+        widths[index] = textWidth + 26.0F + height * kSkewSlope;
+        rowWidth += widths[index];
+        if (index > 0) rowWidth += gap;
+      }
+      float x = containerRight - rowWidth;
+      for (std::size_t index = 0; index < tags.size(); ++index) {
+        const float y = containerTop;
+        const ui::Box chip = box(x, y, widths[index], height);
+        ui::PanelStyle style = ui::glassPanel(ui::argb(kPanelFill), ui::argb(0x00000000U));
+        style.strokeWidthDp = 0.0F;
+        style.accentEdge = 1;
+        style.accent = whiteAlpha(settlement.tagsAlpha);
+        style.accentWidthDp = 2.5F;
+        style.fill = ui::fade(ui::argb(kPanelFill), settlement.tagsAlpha);
+        ui::drawPanelShape(drawList, content, chip, style);
+        ui::TextStyle text = boardText(kModeTagTextSize, whiteAlpha(settlement.tagsAlpha),
+            ui::HAlign::Center, ui::VAlign::Middle, false, true);
+        ui::drawLabel(drawList, content, chip, tags[index].label, text, context.nowSec);
+        x += widths[index] + gap;
+      }
     }
   }
 
-  // Histogram toggle and overlay.
-  static bool histogramVisible = false;
-  {
-    const ImVec2 topLeft = point(kCanvasWidth - kCornerWidth - 130.0F, 20.0F);
-    const char* label = histogramVisible ? "隐藏分布" : "判定分布";
-    if (ui::cornerButton("##result_histogram", topLeft, ImVec2(126.0F * unit, 34.0F * unit), false,
-            0, label, 15.0F * unit, nullptr)) {
-      histogramVisible = !histogramVisible;
-    }
-  }
-  if (histogramVisible) {
-    drawHistogram(context, drawList, point(60.0F, 330.0F),
-        ImVec2(length(kHistogramWidth), length(kHistogramHeight)), unit);
-  }
+  // ---- corner controls ----
+  const float cornerMargin = 14.0F * kReferenceDensity / std::max(0.01F, content.scale);
+  const ui::PanelStyle cornerBase = ui::glassPanel(ui::argb(kMenuButtonFill),
+      ui::argb(kMenuButtonStroke));
+  ui::PanelStyle retryStyle = cornerBase;
+  retryStyle.strokeWidthDp = 1.0F;
+  retryStyle.straightLeft = true;
+  retryStyle.accentEdge = 2;
+  retryStyle.accent = whiteAlpha(1.0F);
+  retryStyle.accentWidthDp = 2.0F;
+  ui::PanelStyle exitStyle = cornerBase;
+  exitStyle.strokeWidthDp = 1.0F;
+  exitStyle.straightRight = true;
+  exitStyle.accentEdge = 1;
+  exitStyle.accent = whiteAlpha(1.0F);
+  exitStyle.accentWidthDp = 2.0F;
 
-  // Corner controls: retry top-left, replay/save and exit bottom-right.
-  const ImVec2 cornerSize(kCornerWidth * unit, kCornerHeight * unit);
+  const bool showRetry = !context.play.replayMode;
+  const ui::Box retryBox = box(0.0F, cornerMargin + settlement.retryDx, 102.0F, 78.0F);
+  const ui::Box exitBox = box(kDesignWidth - 102.0F + settlement.cornerDx,
+      kDesignHeight - cornerMargin - 78.0F, 102.0F, 78.0F);
   if (!context.play.replayMode) {
-    if (ui::cornerButton("##result_retry", ImVec2(0.0F, kCornerMargin * unit), cornerSize, true,
-            assetTexture(context, "res/retry.png", 96), nullptr, 18.0F * unit, "重新开始")) {
+    const ui::Interaction retry =
+        ui::panelInteraction("##result_retry", content, retryBox, retryStyle);
+    ui::drawPanelShape(drawList, content, retryBox, retryStyle);
+    const ui::PxRect iconRect = ui::toPixels(content, shifted(box(36.0F, 27.0F, 25.0F, 25.0F),
+        settlement.retryDx, cornerMargin));
+    drawTintedGlyph(drawList, iconRect, 0, whiteAlpha(1.0F));
+    if (retry.pressed) {
       const PlaySetup setup = context.play;
       if (!setup.chartId.empty()) {
         startChart(context, setup.practice);
@@ -355,33 +798,84 @@ void drawResultScreen(AppContext& context) {
       }
     }
   }
-  if (ui::cornerButton("##result_exit",
-          ImVec2(size.width - cornerSize.x, size.height - cornerSize.y - kCornerMargin * unit),
-          cornerSize, false, assetTexture(context, "res/continue.png", 96), nullptr,
-          18.0F * unit, "返回")) {
-    navigateTo(context, Screen::Library);
+  const bool exitPressed =
+      ui::panelInteraction("##result_exit", content, exitBox, exitStyle).pressed;
+  ui::drawPanelShape(drawList, content, exitBox, exitStyle);
+  {
+    const ui::PxRect iconRect = ui::toPixels(content, shifted(box(
+        kDesignWidth - 102.0F + 41.0F, kDesignHeight - cornerMargin - 78.0F + 27.0F, 25.0F, 25.0F),
+        settlement.cornerDx));
+    drawTintedGlyph(drawList, iconRect, 1, whiteAlpha(1.0F));
   }
 
-  // Replay controls sit just left of the exit button.
-  if (context.lastRunHasReplay) {
-    const ImVec2 smallSize(kSmallButtonWidth * unit, kSmallButtonHeight * unit);
-    const float rowY = size.height - smallSize.y - 26.0F * unit;
-    const float rightEdge = size.width - cornerSize.x - 12.0F * unit;
-    if (!context.play.replayMode) {
-      if (ui::cornerButton("##result_play_replay",
-              ImVec2(rightEdge - smallSize.x * 2.0F - 6.0F * unit, rowY), smallSize, false,
-              assetTexture(context, "res/replay.png", 64), nullptr, 14.0F * unit, "播放回放")) {
-        playReplay(context);
+  // Replay actions: the two small chips left of the exit plate when the run was recorded.
+  if (context.lastRunHasReplay && !context.play.replayMode) {
+    ui::PanelStyle chip = cornerBase;
+    chip.strokeWidthDp = 1.0F;
+    const float chipsRight = kDesignWidth - 106.0F;
+    const float chipsY = kDesignHeight - cornerMargin - 78.0F + 26.0F;
+    const ui::Box playBox = box(chipsRight - 146.0F + settlement.cornerDx, chipsY, 70.0F, 40.0F);
+    const ui::Box saveBox =
+        box(chipsRight - 70.0F + settlement.cornerDx, chipsY, 70.0F, 40.0F);
+    const bool playPressed =
+        ui::panelInteraction("##result_play_replay", content, playBox, chip).pressed;
+    ui::drawPanelShape(drawList, content, playBox, chip);
+    drawTintedGlyph(drawList,
+        ui::toPixels(content, box(playBox.x0 + 24.0F, playBox.y0 + 9.0F, 22.0F, 22.0F)), 2,
+        whiteAlpha(1.0F));
+    const bool savePressed =
+        ui::panelInteraction("##result_save_replay", content, saveBox, chip).pressed;
+    ui::drawPanelShape(drawList, content, saveBox, chip);
+    drawTintedGlyph(drawList,
+        ui::toPixels(content, box(saveBox.x0 + 24.0F, saveBox.y0 + 9.0F, 22.0F, 22.0F)), 3,
+        whiteAlpha(1.0F));
+    if (playPressed) playReplay(context);
+    if (savePressed) saveReplay(context);
+  }
+
+  // ---- judgement distribution overlay ----
+  if (context.settings.judgementDetailDistribution) {
+    static bool histogramVisible = false;
+    const ui::Box histogramBox = shifted(cardBox, settlement.cardDx);
+    ui::PanelStyle hitStyle = ui::glassPanel(ui::argb(0x00000000U), ui::argb(0x00000000U));
+    hitStyle.strokeWidthDp = 0.0F;
+    if (histogramVisible) {
+      ui::Canvas plain = canvas;
+      plain.origin.y += enterOffset;
+      drawJudgementHistogram(context, drawList, plain, histogramBox, context.play.challenge, 1.0F,
+          0.0F);
+      ImGui::SetCursorScreenPos(content.point(histogramBox.x0, histogramBox.y0));
+      ImGui::InvisibleButton("##result_histogram",
+          ImVec2(content.units(histogramBox.width()), content.units(histogramBox.height())));
+      if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+        histogramVisible = false;
+      }
+    } else if (settlement.progress >= 1.0F) {
+      // Tapping the illustration or any of the three boards reveals the overlay.
+      const ui::Box targets[] = {histogramBox,
+          shifted(box(526.0F, 114.0F, 389.0F, 156.0F), settlement.upperDx),
+          shifted(box(505.0F, 292.0F, 362.0F, 64.0F), settlement.middleDx),
+          shifted(box(485.0F, 372.0F, 362.0F, 64.0F), settlement.lowerDx)};
+      for (std::size_t index = 0; index < std::size(targets); ++index) {
+        const std::string id = "##result_histogram_toggle" + std::to_string(index);
+        if (ui::panelInteraction(id.c_str(), content, targets[index], hitStyle).pressed) {
+          histogramVisible = true;
+          break;
+        }
       }
     }
-    if (ui::cornerButton("##result_save_replay", ImVec2(rightEdge - smallSize.x, rowY), smallSize,
-            false, assetTexture(context, "res/save.png", 64), nullptr, 14.0F * unit,
-            "保存回放")) {
-      saveReplay(context);
-    }
+  }
+
+
+  // The window entrance fades the whole settlement in.
+  if (enter < 1.0F) {
+    drawList->AddRectFilled(ImVec2(0.0F, 0.0F), viewport,
+        IM_COL32(0, 0, 0, static_cast<int>(std::lround(255.0F * (1.0F - enterEased)))));
   }
 
   ui::endFullscreenWindow();
+
+  if (exitPressed) navigateTo(context, Screen::Library);
 }
 
 } // namespace rechigros::app

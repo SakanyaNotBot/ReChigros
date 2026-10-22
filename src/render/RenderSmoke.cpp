@@ -195,7 +195,11 @@ int main(int argc, char** argv) {
       input.hud.good = session.judgement().counts()[1];
       input.hud.bad = session.judgement().counts()[2];
       input.hud.miss = session.judgement().counts()[3];
-      input.hud.progress = 0.42;
+      // The progress bar follows the music position, so the smoke frame reports the current
+      // playhead against the chart length.
+      input.hud.playheadSec = options.chartTime;
+      input.hud.totalDurationSec = std::max(1.0, chart->chartEndTimeSec);
+      input.hud.comboLabel = "COMBO";
       input.backgroundDim = options.backgroundDim;
       input.keyScale = options.keyScale;
       input.mirrorX = options.mirrorX;

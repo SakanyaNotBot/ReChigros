@@ -759,13 +759,19 @@ PointerSnapshot pointerSnapshot() {
   return snapshot;
 }
 
+// Screen-space bounds of the scroll viewport. Controls are only interactive inside it, so a
+// row clipped away by scrolling cannot receive a press.
+float gInteractionClipTop = 0.0F;
+float gInteractionClipBottom = 1.0e9F;
+
 // Button-like control: fires once on release inside after a press inside the same shape.
 bool pressReleased(const char* key, float x0, float y0, float x1, float y1,
     bool interactionsEnabled) {
   PointerState& state = pointerState();
   if (!interactionsEnabled) return false;
   const PointerSnapshot pointer = pointerSnapshot();
-  const bool inside = pointInside(pointer.position, x0, y0, x1, y1);
+  const bool inside = pointInside(pointer.position, x0, y0, x1, y1)
+      && pointer.position.y >= gInteractionClipTop && pointer.position.y <= gInteractionClipBottom;
   if (pointer.clicked && inside && state.activeKey.empty() && !state.scrollDragging) {
     state.activeKey = key;
     state.pressX = pointer.position.x;
@@ -793,7 +799,8 @@ SliderInput sliderInput(const char* key, float x0, float y0, float x1, float y1,
   SliderInput result;
   if (!interactionsEnabled) return result;
   const PointerSnapshot pointer = pointerSnapshot();
-  const bool inside = pointInside(pointer.position, x0, y0, x1, y1);
+  const bool inside = pointInside(pointer.position, x0, y0, x1, y1)
+      && pointer.position.y >= gInteractionClipTop && pointer.position.y <= gInteractionClipBottom;
   if (pointer.clicked && inside && state.activeKey.empty() && !state.scrollDragging) {
     state.activeKey = key;
     state.pressX = pointer.position.x;
@@ -989,7 +996,7 @@ void drawEdit(const DrawContext& draw, const Block& block, float left, float top
   draw.drawList->AddRectFilled(ImVec2(editLeft, editTop), ImVec2(editLeft + editWidth,
                               editTop + editHeight), ui::argb(kEditField));
   drawTextPx(draw.drawList, m, editLeft + m.dp(12.0F), editTop + editHeight * 0.5F,
-      editWidth - m.dp(24.0F), 15.0F, true, ui::argb(0xFFFFFFFFU), block.value);
+      editWidth - m.dp(24.0F), 15.0F, false, ui::argb(0xFFFFFFFFU), block.value);
   draw.controlRects.push_back({editLeft, editTop, editLeft + editWidth, editTop + editHeight});
 }
 
@@ -1578,6 +1585,8 @@ void drawSettingsScreen(AppContext& context) {
   }
 
   // Page rows, clipped to the scroll viewport (which starts below the top padding).
+  gInteractionClipTop = contentTopPx(m);
+  gInteractionClipBottom = m.height;
   drawList->PushClipRect(ImVec2(0.0F, contentTopPx(m)), ImVec2(m.width, m.height), true);
   float contentY = m.dp(20.0F);
   for (const Block& block : blocks) {

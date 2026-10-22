@@ -62,6 +62,8 @@ private:
   std::string screenSetup_;
   // Locks the frame delta to 1/60 s, which makes frame-count-bounded runs deterministic.
   bool fixedDelta_{};
+  // Captures at an explicit frame instead of the per-screen default wait.
+  int captureAtFrame_{-1};
   double captureTimeSec_{-1.0};
   // Diagnostic mode: reports the graphics driver strings once and every pass that sets
   // a GL error. Off unless the run asks for it.

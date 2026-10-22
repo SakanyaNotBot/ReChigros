@@ -225,6 +225,14 @@ std::unique_ptr<TextTexture> FontAtlas::rasterize(const std::string& text, float
   const float descentPx = static_cast<float>(descent) * scale;
   const float extra = std::max(0.0F, descentPx - bottom);
   result->paddingBottom = static_cast<int>(std::ceil(extra));
+  // Metrics the HUD layout needs to place a string the way a text renderer with the
+  // font's real ascent/descent would: stb reports the descent as a negative value.
+  result->ascentPx = static_cast<float>(ascent) * scale;
+  result->descentPx = -descentPx;
+  result->inkLeft = minX;
+  result->inkTop = minY;
+  result->inkRight = maxX;
+  result->inkBottom = maxY;
   return result;
 }
 

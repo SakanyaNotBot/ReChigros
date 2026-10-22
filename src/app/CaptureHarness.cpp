@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -121,6 +122,56 @@ std::string firstChartId(AppContext& context) {
   return records.front().id;
 }
 
+// Finds a chart by a case-insensitive substring of its song name. Capture runs use it to
+// open the same chart the interface is being compared against.
+std::string chartIdForName(AppContext& context, const std::string& name) {
+  if (!name.empty()) {
+    std::string needle = name;
+    std::transform(needle.begin(), needle.end(), needle.begin(),
+        [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+    for (const auto& record : context.library.records(true)) {
+      std::string haystack = record.songName;
+      std::transform(haystack.begin(), haystack.end(), haystack.begin(),
+          [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+      if (haystack.find(needle) != std::string::npos) return record.id;
+    }
+  }
+  return firstChartId(context);
+}
+
+// Applies the preference values the reference screenshots were taken with, so switches,
+// sliders and lists show the same state without hand-editing the settings file.
+void applyReferenceSettings(AppContext& context) {
+  Settings& settings = context.settings;
+  settings.keyScale = 1.0F;
+  settings.backgroundDim = 1.0F;
+  settings.aspectRatio = 1.77777F;
+  settings.scrollSpeed = 1.0F;
+  settings.judgeLineWidth = 1.0F;
+  settings.musicVolume = 1.0F;
+  settings.soundEffectVolume = 1.0F;
+  settings.musicSpeed = 1.0F;
+  settings.audioOffsetMs = 0;
+  settings.hitOffsetIndicatorMode = 1;
+  settings.apfcIndicator = true;
+  settings.judgementDetailDistribution = true;
+  settings.realtimeAccuracy = false;
+  settings.scoreJumpEffect = false;
+  settings.multiPressHighlight = true;
+  settings.mirrorX = false;
+  settings.autoplay = true;
+  settings.challengeMode = false;
+  settings.practiceMode = false;
+  settings.lowResolutionMode = false;
+  settings.antialias = true;
+  settings.showFps = false;
+  settings.showDebugInfo = false;
+  settings.disableChartShader = false;
+  settings.chartReveal = false;
+  settings.storyMode = false;
+  settings.replayEnabled = true;
+}
+
 void populatePlay(AppContext& context, const std::string& chartId) {
   const auto record = context.library.find(chartId);
   if (!record) return;
@@ -136,29 +187,33 @@ void populatePlay(AppContext& context, const std::string& chartId) {
 }
 
 game::PlayResult representativeResult() {
+  // Values the settlement page is compared against: a full-perfect run of a 1397-note chart.
   game::PlayResult result;
-  result.score = 912345;
-  result.accuracy = 0.9876;
-  result.maxCombo = 421;
-  result.totalNotes = 430;
-  result.perfect = 400;
-  result.good = 22;
-  result.bad = 3;
-  result.miss = 5;
-  result.stdDevMs = 12.5;
-  result.judgementOffsetBins[8] = 40;
-  result.judgementOffsetBins[9] = 120;
-  result.judgementOffsetBins[10] = 60;
-  result.judgementOffsetBins[11] = 18;
+  result.score = 1000000;
+  result.accuracy = 1.0;
+  result.maxCombo = 1397;
+  result.totalNotes = 1397;
+  result.perfect = 1397;
+  result.good = 0;
+  result.bad = 0;
+  result.miss = 0;
+  result.stdDevMs = 3.092;
+  result.judgementOffsetBins[9] = 1397;
   return result;
 }
 
 void setupResult(AppContext& context, const std::string& chartId) {
   populatePlay(context, chartId);
+  // The settlement reference capture was taken in autoplay with challenge mode enabled, so
+  // the two mode tags are both visible.
+  context.play.autoplay = true;
+  context.play.challenge = true;
   context.lastResult = representativeResult();
   context.lastRunWasReplay = false;
-  context.lastRunHasReplay = true;
-  context.lastRunRecorded = true;
+  // The reference settlement capture shows no replay actions, so the capture state has no
+  // replay to save or play back.
+  context.lastRunHasReplay = false;
+  context.lastRunRecorded = false;
   context.lastReplayMeta = ReplayMeta{};
   context.lastReplayMeta.chartId = context.play.chartId;
   context.lastReplayMeta.songName = context.play.songName;
@@ -180,9 +235,19 @@ void startCaptureChart(AppContext& context, bool practice) {
 
 } // namespace
 
-void setupCaptureScreen(AppContext& context, const std::string& screen) {
+void setupCaptureScreen(AppContext& context, const std::string& spec) {
   ensureLibrary(context);
-  const std::string chartId = firstChartId(context);
+  // A capture name may carry a chart selector, for example "result:Hate" or "detail:Message",
+  // so a screen can be rendered with the same content as the reference capture.
+  std::string screen = spec;
+  std::string chartName;
+  const auto separator = spec.find(':');
+  if (separator != std::string::npos) {
+    screen = spec.substr(0, separator);
+    chartName = spec.substr(separator + 1);
+  }
+  applyReferenceSettings(context);
+  const std::string chartId = chartIdForName(context, chartName);
 
   if (screen == "home") {
     context.screen = Screen::Home;
@@ -236,6 +301,7 @@ void setupCaptureScreen(AppContext& context, const std::string& screen) {
   }
   if (screen == "game" || screen == "game-pause" || screen == "game-practice"
       || screen == "game-countdown") {
+    if (!chartId.empty()) context.activeChartId = chartId;
     startCaptureChart(context, screen == "game-practice");
     if (context.screen != Screen::Game) return;
     if (screen == "game-pause" || screen == "game-countdown") {

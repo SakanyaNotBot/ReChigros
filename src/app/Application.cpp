@@ -93,6 +93,12 @@ Application::Application(int argc, char** argv) {
       if (index + 1 < argc && argv[index + 1] != nullptr) {
         captureTimeSec_ = std::atof(argv[++index]);
       }
+    } else if (argument == "--capture-at-frame") {
+      // A capture usually waits for the opening animation to finish; this pins the exact
+      // frame, which is what a screen comparison of a late gameplay state needs.
+      if (index + 1 < argc && argv[index + 1] != nullptr) {
+        captureAtFrame_ = std::max(0, std::atoi(argv[++index]));
+      }
     } else if (argument == "--data-root") {
       if (index + 1 < argc && argv[index + 1] != nullptr) {
         dataRootOverride_ = pathFromUtf8(argv[++index]);
@@ -668,8 +674,10 @@ void Application::printBatchSummary() {
 
 void Application::captureFramebufferIfRequested() {
   // A capture of gameplay waits for the opening to finish, so the frame shows the play
-  // field rather than the transition into it.
-  const int minimumFrames = app_ != nullptr && app_->screen == Screen::Game ? 140 : 20;
+  // field rather than the transition into it. An explicit frame can be requested instead.
+  const int minimumFrames = captureAtFrame_ > 0
+      ? captureAtFrame_
+      : (app_ != nullptr && app_->screen == Screen::Game ? 140 : 20);
   if (capturePath_.empty() || captureDone_ || app_ == nullptr || renderedFrames_ < minimumFrames) {
     return;
   }

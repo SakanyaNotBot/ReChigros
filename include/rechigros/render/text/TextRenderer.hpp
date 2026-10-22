@@ -21,6 +21,16 @@ public:
   // Pixels of transparent padding added below the glyph baseline box.
   int paddingBottom{};
   float advanceWidth{};
+  // Font metrics at the rasterisation size, in pixels: the distance from the baseline
+  // up to the ascent line (positive) and down to the descent line (positive).
+  float ascentPx{};
+  float descentPx{};
+  // Ink extents relative to the text origin on the baseline, in pixels: x grows right,
+  // y grows down. The rasterised texture starts one pixel before the ink.
+  float inkLeft{};
+  float inkTop{};
+  float inkRight{};
+  float inkBottom{};
 };
 
 // Glyph atlas rasteriser backed by stb_truetype. Loads the bundled font once and

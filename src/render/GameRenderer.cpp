@@ -105,7 +105,7 @@ struct GameRenderer::Impl {
     holdTextures[0] = holdTextures[1] = nullptr;
     holdBodies[0] = holdBodies[1] = nullptr;
     hitFx = nullptr;
-    hudArtwork.pause = hudArtwork.timerLine = nullptr;
+    hudArtwork.pause = hudArtwork.timerLine = hudArtwork.noteRing = nullptr;
     effectGlitchMap = effectGlitchDogMap = effectWireNoise = effectDisplaceMap = nullptr;
     blockDisplaceMap = blockSparkMap = blockNoiseMap = nullptr;
     headTextureList.clear();
@@ -173,6 +173,7 @@ struct GameRenderer::Impl {
   struct HudArtwork {
     gl::Texture* pause{};
     gl::Texture* timerLine{};
+    gl::Texture* noteRing{};
   } hudArtwork;
 
   game::Chart* loadedChart{};
@@ -200,7 +201,8 @@ struct GameRenderer::Impl {
   void drawNotePasses(const scene::StageLayout& layout, const RenderFrameInput& input,
       game::Chart* chart);
   void drawHitEffects(const scene::StageLayout& layout, const RenderFrameInput& input, game::Chart* chart);
-  void drawHudPass(const RenderFrameInput& input, const scene::StageLayout& layout);
+  void drawHudPass(const RenderFrameInput& input, const scene::StageLayout& layout,
+      game::Chart* chart);
   // Draws the objects a level effect adds to the scene itself, which are separate from the
   // storyboard post-processing chain.
   void drawLevelEffectObjects(game::Chart* chart, const RenderFrameInput& input,
@@ -229,6 +231,7 @@ void GameRenderer::Impl::loadGameplayTextures() {
   // HUD artwork; a missing file makes the corresponding widget fall back to a flat quad.
   hudArtwork.pause = textures.loadAsset("res/pause.png");
   hudArtwork.timerLine = textures.loadAsset("res/timerLine.png");
+  hudArtwork.noteRing = textures.loadAsset("res/NoteRing.png");
   // A highlight sheet is a different canvas size from its normal counterpart, so the drawn
   // width is corrected by the ratio of the two sheets to keep the note the same size.
   for (int type = 0; type < 5; ++type) {
@@ -780,21 +783,62 @@ void GameRenderer::Impl::drawHitEffects(const scene::StageLayout& layout,
 }
 
 void GameRenderer::Impl::drawHudPass(const RenderFrameInput& input,
-    const scene::StageLayout& layout) {
+    const scene::StageLayout& layout, game::Chart* chart) {
   scene::HudValues values;
   values.score = input.hud.score;
   values.combo = input.hud.combo;
   values.maxCombo = input.hud.maxCombo;
   values.accuracy = input.hud.accuracy;
-  values.progress = input.hud.progress;
+  values.playheadSec = input.hud.playheadSec;
+  values.totalDurationSec = input.hud.totalDurationSec;
   values.songName = input.songName;
   values.levelName = input.levelName;
+  values.comboLabel = input.hud.comboLabel;
   values.showAccuracy = input.hud.showAccuracy;
+  values.scoreJumpEffect = input.hud.scoreJumpEffect;
+  values.introProgress = input.hud.introProgress;
+  values.outroProgress = input.hud.outroProgress;
+  values.visualTimeSec = input.hud.visualTimeSec;
+  values.pauseRingAgeSec = input.hud.pauseRingAgeSec;
+
+  // Attach-UI: a chart may animate individual HUD widgets with judge lines. The line
+  // evaluation for this frame already produced their state, so the HUD only needs to
+  // receive the seven element transforms in canvas space.
+  scene::HudTransforms transforms;
+  if (chart != nullptr) {
+    transforms.useFix = chart->useAttachUiFix;
+    for (int element = 1; element < scene::kHudElementCount; ++element) {
+      const int lineIndex = chart->attachUiLineIndex[static_cast<std::size_t>(element)];
+      if (lineIndex < 0 || static_cast<std::size_t>(lineIndex) >= lineFrames.size()) continue;
+      const scene::LineFrame& frame = lineFrames[static_cast<std::size_t>(lineIndex)];
+      if (!frame.valid) continue;
+      auto& transform = transforms.element[static_cast<std::size_t>(element)];
+      transform.valid = true;
+      transform.translateX = (frame.xNorm - 0.5F) * layout.stage.width;
+      transform.translateY = (frame.yNorm - 0.5F) * layout.stage.height;
+      transform.rotateDeg = -frame.rotateDeg;
+      transform.scaleX = frame.scaleX;
+      transform.scaleY = frame.scaleY;
+      // Negative alphas encode line visibility modes; an attached HUD widget simply
+      // stays hidden in that case.
+      const float rawAlpha = frame.alphaRaw;
+      transform.alpha = rawAlpha < 0.0F ? 0.0F
+          : std::clamp(rawAlpha > 1.5F ? rawAlpha / 255.0F : rawAlpha, 0.0F, 1.0F);
+      transform.red = std::isfinite(frame.colorR) ? frame.colorR : 1.0F;
+      transform.green = std::isfinite(frame.colorG) ? frame.colorG : 1.0F;
+      transform.blue = std::isfinite(frame.colorB) ? frame.colorB : 1.0F;
+      if (element == static_cast<int>(scene::HudElement::ComboLabel) && frame.hasTextEvents) {
+        transform.text = frame.text;
+      }
+    }
+  }
+
   scene::HudColors colors;
   scene::HudTextures textures;
   textures.pause = hudArtwork.pause;
   textures.timerLine = hudArtwork.timerLine;
-  scene::drawHud(batch, text, layout, values, colors, textures, input.hud.alpha,
+  textures.noteRing = hudArtwork.noteRing;
+  scene::drawHud(batch, text, layout, values, colors, textures, transforms, 1.0F,
       layout.projection());
 }
 
@@ -1068,7 +1112,7 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
     }
     // 2) The HUD belongs to the finished frame: the composite tears it with the rest.
     if (input.hud.visible && chart != nullptr) {
-      drawHudPass(input, layout);
+      drawHudPass(input, layout, chart);
       hudInsideScene = true;
       gl::logErrors("scene.hud");
     }
@@ -1106,7 +1150,9 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
   // The HUD is drawn after the chain, so a storyboard effect never blooms the score. On
   // the composite path it was drawn into the scene instead, because it is part of the
   // frame the zones tear.
-  if (input.hud.visible && chart != nullptr && !hudInsideScene) drawHudPass(input, layout);
+  if (input.hud.visible && chart != nullptr && !hudInsideScene) {
+    drawHudPass(input, layout, chart);
+  }
   gl::logErrors("scene.hud");
 
   // Pause and resume draw the frozen play field behind the menu. The scene is re-rendered
@@ -1127,16 +1173,14 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       alpha = scene::pauseBackdropIntroAlpha(input.pause.elapsedSec);
     }
     if (alpha > 0.001F) {
-      // Freeze the play field without the HUD and without the storyboard chain: the
-      // backdrop grades the raw scene, and re-running the chain would read and write the
-      // same target.
+      // Re-render the frozen play field into the offscreen capture target. The HUD is
+      // part of that frame, so the pause backdrop blurs and dims it exactly like the
+      // reference: no crisp HUD copy is drawn over the graded backdrop afterwards.
       if (pauseBlurA.width() != width || pauseBlurA.height() != height) {
         pauseBlurA.resize(width, height);
         pauseBlurB.resize(width, height);
       }
-      const bool hudWasVisible = input.hud.visible;
       RenderFrameInput frozen = input;
-      frozen.hud.visible = false;
       frozen.pause.mode = PauseMode::None;
       pauseBlurA.bind();
       glViewport(0, 0, width, height);
@@ -1150,7 +1194,6 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       pauseBackdrop.draw(pauseBlurA.color(), pauseBlurB, pauseBlurA, targetFbo, alpha,
           scene::PAUSE_BACKDROP_VIBRANCY, brightness, flatten);
       bindDefaultBlend();
-      if (hudWasVisible) drawHudPass(input, layout);
       gl::logErrors("scene.pauseBackdrop");
     }
   }

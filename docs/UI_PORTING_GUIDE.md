@@ -45,6 +45,12 @@ screen content; those magnify a single atlas.
 ### Text rules
 
 * `TextStyle::sizeDp` is the reference's GameTextView design size (dp).
+* **Calibrate against the reference capture, not against the source arithmetic.** The
+  deployed reference build renders several labels smaller than the Java source numbers
+  suggest (the start-panel label is 28 density units on device although the source text
+  implies 38; the detail and settlement screens show the same effect). Treat the ink
+  bounding box measured on `build/ref/java_*.png` as the target and choose the density
+  size that reproduces it; record the factor in the screen's report.
 * Default style matches `text()` in the reference: bold, colour 0xFFFFFFFF, single line,
   fit to width, vertically centred.
 * `fitWidth = true` shrinks the font until the line fits its box (reference behaviour).

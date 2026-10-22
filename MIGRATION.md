@@ -5,9 +5,15 @@ C++, and 95 packaged asset files. The C++ port reproduces the same architecture,
 class decomposition and the same behaviour, replacing the Android platform layer with SDL2
 and OpenGL.
 
-Current size: **18,800 lines** of first-party C++ (excluding vendored headers), about **47%**
-of the reference line count. Line count is a rough proxy only — heavily duplicated Java
-plumbing (JNI marshalling, view boilerplate) collapses in C++, while the renderer expands.
+Current size: about **25,000 lines** of first-party C++ (excluding vendored headers) against
+40,024 lines of Java. Line count is a rough proxy only — heavily duplicated Java plumbing
+(JNI marshalling, view boilerplate) collapses in C++, while the renderer expands.
+
+> **Status accuracy.** The tables below were written before a full source comparison was
+> run. `docs/COVERAGE_AUDIT.md` is now the authoritative account of functional parity: it
+> lists every area as matches / partial / missing / differs with file and line evidence, and
+> contradicts several rows below. Where the two disagree, the audit is correct. Interface
+> parity is tracked separately in `docs/UI_PORTING_GUIDE.md`.
 
 ## Verification status
 
@@ -28,7 +34,10 @@ Every gate below was executed on this machine and passed.
 | Interface font coverage | `build.bat verify-app` | every one of the 233 non-Latin characters the screens can draw has a glyph in the shipped font |
 | One-click build | `build.bat desktop` | configures, builds and runs the test suite from a clean tree |
 | Android APK | `gradlew :app:assemble` | `app-release.apk`, 3 ABIs, v2 signed |
-| Android on device | install on an emulator | library, chart detail, gameplay and result all reachable; the bundled example chart runs to a result |
+| Android on device | `scripts/check-android-render.ps1` | `ANDROID-RENDER PASS`: scene renderer initialises, every GLES shader compiles, in-app capture and system screenshot show the play field |
+| GLES shader validation | `scripts/check-gles-shaders.ps1` | 35/35 shaders valid for GLSL ES 3.00 |
+| Interface capture harness | `ReChigros.exe --screen <name> --window 1920x1080 --capture-frame …` | captures every screen at the reference resolution for comparison against `build/ref/` |
+| Chapter-9 red-zone composite | `rechigros_block_probe.exe` + in-app capture | all intermediate targets dumped and verified; presented frame equals the off-screen composite; desktop tests pass |
 | iOS packaging | `build.bat verify-ios` | 47 checks pass |
 
 ## Area status
@@ -42,7 +51,6 @@ Every gate below was executed on this machine and passed.
 | JudgeLine state machine | done | layered events, father transform, note controls |
 | Note / Chart runtime | done | floor positions, hold geometry, near-note competition |
 | Judgement semantics | done | windows, phases, hold settlement, challenge scoring |
-| Practice judgement windows | done | per-attempt perfect/good overrides with the reference clamping, applied to taps and holds only |
 | HitOffsetIndicator | done | angle/format/commit-mark assertions |
 | OfficialBlock (red zone) | done | parsed into the chart, advanced per frame, and drawn as a noise-displaced silhouette with edge, fill, glow and sparks; blocks judging |
 | OfficialEase | done | curve evaluation ported |
@@ -75,8 +83,12 @@ Every gate below was executed on this machine and passed.
 | Level-effect grid object | done | authored square through a scaled viewport, additive blend, animated opacity and freeze |
 | Level-effect backdrops | done | pulsing grid square, full-screen black mask, kaleidoscope layer over the stage, and the timed backdrop hide |
 | Message particle field | done | two emitters, constant force, band-limited external field with drag, size curve and band clip; asserted in `LevelEffectTests` |
-| Chapter-9 remaining objects (block screen-space composite) | pending | the pass chains, backdrops, red zones and particles run. The screen-space composite inside a red zone is not ported; see the note below for what it needs. |
-| Android APK | done | debug APK verified |
+| Chapter-9 remaining objects (block screen-space composite) | done | masks rasterised at screen/8, edge/glow chain at screen/4, composite into the caller's target, full GL state save/restore; HUD joins the frame so it tears with the scene; probe and tests cover it. |
+| Android APK | done | 3 ABIs, v2 signed, verified on the emulator with the device gate script |
+| Interface foundation | done | per-size glyph rasteriser, design-canvas/density layout layer, exact skewed-panel and tab widgets, screen capture harness |
+| Start screen | done | ported with the same geometry, typography and motion as the deployed interface |
+| Other interface screens | in progress | chart list, settings, chart detail, settlement, gameplay/pause/practice HUD are being ported screen by screen against device captures |
+| Practice judgement windows | done | the override now participates in classification, spatial falloff, per-type detection window and late-miss limit |
 | iOS Xcode app | packaging verified | compilation needs macOS |
 | Assets | done | 103 files, byte-identical to the reference tree |
 
@@ -124,32 +136,26 @@ through the document resolver, since the grant covers the tree rather than a pat
 - Comments in this repository reference no other project, and carry no attribution or
   provenance notes.
 
-## Remaining work: the block screen-space composite
+## Chapter-9 red-zone screen-space composite
 
-The red zones are drawn as silhouettes today. The reference also replaces the scene inside an
-active zone with a displaced, hue-shifted, spark-overlaid resample, so the picture looks
-torn. Both shaders for it already ship in `assets/official_shaders/` and are byte-identical
-to the reference, so this is a wiring job rather than a derivation:
+The composite is wired and verified. The defects that kept it from rendering were frame
+plumbing, not shaders:
 
-- `block_prepass.glsl` builds the compose and edge/glow intermediate targets.
-- `block_composite.glsl` is the final stage. It samples eight textures and reads `matParams`,
-  `matColors` and `matExtra` uniform arrays whose values are already captured in
-  `fx::BlockOverlay`.
+- the composite draw ran without re-binding the caller's framebuffer, so it wrote into the
+  last intermediate target instead of the presented frame;
+- no GL state survived the pass (blend, colour mask, viewport, scissor, depth);
+- masks were allocated at full resolution and never rasterised, while both shipped shaders
+  sample them as `screen / 8` point targets;
+- `prepare()` lost the allocated size when rebuilding shaders;
+- the stage rect was never handed to the pass.
 
-`fx::BlockCompositePass` owns the reduced targets, the five-ring glow chain and the composite
-draw, and its coverage gate and ring weights are asserted in `TransitionTests`. The mask
-rasterisation for the six zone classes is written and understood: the shipped material packs
-active normal, active subtract and warning normal into the channels of the first mask, and
-warning subtract, ready normal and ready subtract into the second, with overlap accumulating
-additively and a `0.09`/`0.12` gate turning a doubly written hole into a cancellation.
-
-**This is where it stops.** Driving the composite from `drawScene` renders the play field
-white, including when the composite shader is replaced with a trivial `texture(scene, uv)`
-passthrough, so the problem is in the frame plumbing rather than in either shipped shader.
-These have been ruled out by measurement and are not the cause: the off-screen route itself
-(with a plain blit back), the mask pass, shader compilation, missing samplers, a missing
-fullscreen vertex array, and a render target left bound by allocation. Whoever picks this up
-should build the pass in isolation against a known scene texture before touching `drawScene`.
+The module now rasterises the six zone classes into two additive mask targets at `screen/8`,
+builds the coverage and edge/glow chain at `screen/4`, saves and restores the full frame
+state, and writes the composite into the caller's target. Frames with a visible zone take
+the off-screen route; the storyboard chain runs first and is copied back, the HUD is drawn
+into the finished frame (so it tears with the scene), and the pause re-render also
+composites. `src/tools/block_probe.cpp` renders a synthetic scene through every stage and
+asserts the frame state is restored and the presented frame matches the off-screen result.
 
 ## Deliberate exclusions
 
@@ -160,4 +166,3 @@ These are out of scope on purpose. Each was checked against the reference before
 | Storyboard video layer | The reference plays videos through a platform video pipeline (a surface-backed external texture) that only exists on the mobile platform. No bundled content uses it: there is no `videos` entry in any packaged file, and the video files in the reference tree are capture footage, not shipped assets. Supporting it would mean adding a full video decoder for content nobody ships. The chart model still parses the video entries, so a later port only has to add the decoder. |
 | Online chart catalogue | The browser feature depends on third-party hosting services. It is deliberately a placeholder so the application never calls an unverified endpoint on the user's behalf. |
 | Mobile-only UI toolkit | The reference draws its screens with native widgets. This port draws equivalent screens with an immediate-mode UI toolkit instead, so the widget classes have no C++ counterpart by design; the feature they represent does exist. |
-| Red-zone screen-space composite | The reference has two red-zone renderers: an inline one and a screen-space one that resamples the finished scene through a displacement map so the play field looks torn inside an active zone. Only the inline renderer is ported. Both are supported by the reference and produce the same zone silhouette; the screen-space one additionally distorts the scene behind it. |

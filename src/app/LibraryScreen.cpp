@@ -14,7 +14,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -187,6 +186,7 @@ struct TabAnimation {
 struct GridState {
   int scroll{};
   bool dragging{};
+  bool armed{};
   ImVec2 dragStart{};
   int dragStartScroll{};
   float dragDistance{};
@@ -205,6 +205,8 @@ struct ListState {
   GridState grid;
   DialogState dialog;
   int onlinePage{};
+  bool pendingImportPopup{};
+  bool pendingDeletePopup{};
   double lastTabSwitchSec{-100.0};
   double lastDrawSec{-1.0};
 };
@@ -408,13 +410,13 @@ PlateMetrics sidePlateMetrics(const ScreenMap& map) {
 
 // One 78 x 48 dp corner plate with a bright leading edge and a centred icon.
 bool drawSidePlate(const ScreenMap& map, AppContext& context, const char* id, const char* asset,
-    int rightMarginDp, int bottomMarginDp, bool topAligned, int accentEdge) {
+    int rightMarginDp, int bottomMarginDp, bool topAligned, int accentEdge, bool interactive) {
   const PlateMetrics metrics = sidePlateMetrics(map);
   const int viewportWidth = static_cast<int>(std::lround(map.viewport.x));
   const int viewportHeight = static_cast<int>(std::lround(map.viewport.y));
-  int x1 = viewportWidth - map.rpx(static_cast<float>(rightMarginDp));
-  int y1 = 0;
+  const int x1 = viewportWidth - map.rpx(static_cast<float>(rightMarginDp));
   int y0 = 0;
+  int y1 = 0;
   if (topAligned) {
     y0 = map.rpx(static_cast<float>(bottomMarginDp));
     y1 = y0 + metrics.height;
@@ -432,19 +434,18 @@ bool drawSidePlate(const ScreenMap& map, AppContext& context, const char* id, co
   style.accentWidthDp = 3.2F;
   const ui::Box box = map.box(static_cast<float>(x0), static_cast<float>(y0),
       static_cast<float>(x1), static_cast<float>(y1));
-  const ui::Interaction interaction = ui::panelInteraction(id, map.canvas, box, style);
-  const std::uint64_t texture = assetTexture(context, asset, 96);
-  if (texture != 0) {
-    ui::drawIconPlate(ImGui::GetWindowDrawList(), map.canvas, box, style, texture,
-        context.textures.width(texture), context.textures.height(texture), 16.0F, 10.0F, 3.0F);
-  } else {
-    ui::drawPanelShape(ImGui::GetWindowDrawList(), map.canvas, box, style);
+  ui::Interaction interaction;
+  if (interactive) {
+    interaction = ui::panelInteraction(id, map.canvas, box, style);
   }
+  const std::uint64_t texture = assetTexture(context, asset, 96);
+  ui::drawIconPlate(ImGui::GetWindowDrawList(), map.canvas, box, style, texture,
+      context.textures.width(texture), context.textures.height(texture), 16.0F, 10.0F, 3.0F);
   return interaction.pressed;
 }
 
 // Page indicator plate used by the catalogue tabs: 88 x 34 dp above the two page buttons.
-bool drawPagePlate(const ScreenMap& map, int page, int pageCount) {
+bool drawPagePlate(const ScreenMap& map, int page, int pageCount, bool interactive) {
   const int viewportWidth = static_cast<int>(std::lround(map.viewport.x));
   const int viewportHeight = static_cast<int>(std::lround(map.viewport.y));
   const int width = map.rpx(88.0F);
@@ -458,8 +459,10 @@ bool drawPagePlate(const ScreenMap& map, int page, int pageCount) {
   style.straightRight = true;
   const ui::Box box = map.box(static_cast<float>(x0), static_cast<float>(y0),
       static_cast<float>(x1), static_cast<float>(y1));
-  const ui::Interaction interaction = ui::panelInteraction("##library_page", map.canvas, box,
-      style);
+  ui::Interaction interaction;
+  if (interactive) {
+    interaction = ui::panelInteraction("##library_page", map.canvas, box, style);
+  }
   ui::drawPanelShape(ImGui::GetWindowDrawList(), map.canvas, box, style);
   ui::TextStyle textStyle = labelStyle(16.0F, true, ui::argb(0xFFFFFFFFU), ui::HAlign::Center);
   const std::string text = std::to_string(page + 1) + "/" + std::to_string(pageCount);
@@ -467,7 +470,7 @@ bool drawPagePlate(const ScreenMap& map, int page, int pageCount) {
   return interaction.pressed;
 }
 
-bool drawBackPlate(const ScreenMap& map, AppContext& context) {
+bool drawBackPlate(const ScreenMap& map, AppContext& context, bool interactive) {
   const int x0 = 0;
   const int y0 = map.rpx(8.0F);
   const int x1 = map.rpx(78.0F);
@@ -480,39 +483,39 @@ bool drawBackPlate(const ScreenMap& map, AppContext& context) {
   style.accentWidthDp = 3.2F;
   const ui::Box box = map.box(static_cast<float>(x0), static_cast<float>(y0),
       static_cast<float>(x1), static_cast<float>(y1));
-  const ui::Interaction interaction = ui::panelInteraction("##library_back", map.canvas, box,
-      style);
-  const std::uint64_t texture = assetTexture(context, "res/return.png", 96);
-  if (texture != 0) {
-    // The visible arrow is centred on the parallelogram's centroid, not its bounding box.
-    const float widthDp = 78.0F;
-    const float heightDp = 48.0F;
-    const float skewDp = std::min(heightDp * kSlope, widthDp * 0.42F);
-    const float imageSizeDp = std::min(widthDp - 32.0F, heightDp - 20.0F);
-    const float translateXDp = -skewDp * 0.25F + imageSizeDp * (0.5F - 87.337F / 200.0F);
-    ui::drawIconPlate(ImGui::GetWindowDrawList(), map.canvas, box, style, texture,
-        context.textures.width(texture), context.textures.height(texture), 16.0F, 10.0F,
-        translateXDp);
-  } else {
-    ui::drawPanelShape(ImGui::GetWindowDrawList(), map.canvas, box, style);
+  ui::Interaction interaction;
+  if (interactive) {
+    interaction = ui::panelInteraction("##library_back", map.canvas, box, style);
   }
+  // The visible arrow is centred on the parallelogram's centroid, not its bounding box.
+  const float widthDp = 78.0F;
+  const float heightDp = 48.0F;
+  const float skewDp = std::min(heightDp * kSlope, widthDp * 0.42F);
+  const float imageSizeDp = std::min(widthDp - 32.0F, heightDp - 20.0F);
+  const float translateXDp = -skewDp * 0.25F + imageSizeDp * (0.5F - 87.337F / 200.0F);
+  const std::uint64_t texture = assetTexture(context, "res/return.png", 96);
+  ui::drawIconPlate(ImGui::GetWindowDrawList(), map.canvas, box, style, texture,
+      context.textures.width(texture), context.textures.height(texture), 16.0F, 10.0F,
+      translateXDp);
   return interaction.pressed;
 }
 
-int drawTabStrip(const ScreenMap& map, AppContext& context) {
+int drawTabStrip(const ScreenMap& map, AppContext& context, bool interactive) {
   const int x0 = map.rpx(170.0F);
   const int y0 = map.rpx(11.0F);
   const int width = map.rpx(330.0F);
   const int height = map.rpx(42.0F);
   const ui::Box box = map.box(static_cast<float>(x0), static_cast<float>(y0),
       static_cast<float>(x0 + width), static_cast<float>(y0 + height));
-  const RectInteraction interaction = rectInteraction("##library_tabs",
-      static_cast<float>(x0), static_cast<float>(y0), static_cast<float>(x0 + width),
-      static_cast<float>(y0 + height));
   int clicked = -1;
-  if (interaction.pressed) {
-    clicked = ui::hitTabBar(map.canvas, box, ImGui::GetIO().MousePos,
-        static_cast<int>(std::size(kChartTabs)));
+  if (interactive) {
+    const RectInteraction interaction = rectInteraction("##library_tabs",
+        static_cast<float>(x0), static_cast<float>(y0), static_cast<float>(x0 + width),
+        static_cast<float>(y0 + height));
+    if (interaction.pressed) {
+      clicked = ui::hitTabBar(map.canvas, box, ImGui::GetIO().MousePos,
+          static_cast<int>(std::size(kChartTabs)));
+    }
   }
   const ListState& current = state();
   ui::TabBarStyle style;
@@ -525,7 +528,7 @@ int drawTabStrip(const ScreenMap& map, AppContext& context) {
   return clicked;
 }
 
-bool drawSearchField(const ScreenMap& map, AppContext& context) {
+bool drawSearchField(const ScreenMap& map, AppContext& context, bool interactive) {
   const int viewportWidth = static_cast<int>(std::lround(map.viewport.x));
   const int x1 = viewportWidth - map.rpx(98.0F);
   const int x0 = x1 - map.rpx(172.0F);
@@ -535,9 +538,13 @@ bool drawSearchField(const ScreenMap& map, AppContext& context) {
   style.strokeWidthDp = 1.0F;
   const ui::Box box = map.box(static_cast<float>(x0), static_cast<float>(y0),
       static_cast<float>(x1), static_cast<float>(y1));
-  const RectInteraction interaction = rectInteraction("##library_search",
-      static_cast<float>(x0), static_cast<float>(y0), static_cast<float>(x1),
-      static_cast<float>(y1));
+  bool pressed = false;
+  if (interactive) {
+    const RectInteraction interaction = rectInteraction("##library_search",
+        static_cast<float>(x0), static_cast<float>(y0), static_cast<float>(x1),
+        static_cast<float>(y1));
+    pressed = interaction.pressed;
+  }
   ui::drawPanelShape(ImGui::GetWindowDrawList(), map.canvas, box, style);
   ui::TextStyle textStyle = labelStyle(18.0F, true, ui::argb(0xFFFFFFFFU));
   textStyle.paddingLeftDp = 18.0F;
@@ -545,7 +552,7 @@ bool drawSearchField(const ScreenMap& map, AppContext& context) {
   const std::string text = context.searchQuery.empty() ? std::string("搜索曲名")
                                                        : context.searchQuery;
   ui::drawLabel(ImGui::GetWindowDrawList(), map.canvas, box, text, textStyle, context.nowSec);
-  return interaction.pressed;
+  return pressed;
 }
 
 // ---------------------------------------------------------------------------
@@ -573,6 +580,7 @@ int updateGridInput(const ScreenMap& map, const GridGeometry& grid, int rows,
   }
   if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
     current.grid.dragging = true;
+    current.grid.armed = true;
     current.grid.dragStart = io.MousePos;
     current.grid.dragStartScroll = current.grid.scroll;
     current.grid.dragDistance = 0.0F;
@@ -589,7 +597,15 @@ int updateGridInput(const ScreenMap& map, const GridGeometry& grid, int rows,
     }
   }
   current.grid.scroll = std::clamp(current.grid.scroll, 0, maxScroll);
-  if (current.grid.dragging || current.grid.dragDistance > map.px(6.0F)) return -1;
+  if (current.grid.armed) {
+    if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) return -1;
+    current.grid.armed = false;
+    const bool wasDrag = current.grid.dragDistance > map.px(6.0F);
+    current.grid.dragDistance = 0.0F;
+    if (wasDrag) return -1;
+  } else {
+    return -1;
+  }
   if (!ImGui::IsMouseReleased(ImGuiMouseButton_Left)) return -1;
   if (!insideRect(static_cast<float>(grid.gridL), static_cast<float>(grid.gridT),
           static_cast<float>(grid.gridR), static_cast<float>(grid.gridB), io.MousePos)) {
@@ -774,12 +790,10 @@ void drawDialog(const ScreenMap& map, AppContext& context, int pageCount) {
   // Slanted input box with a bright underline.
   const float inputTopY = panelTop + static_cast<float>(padTop + titleBand + ruleTop + ruleHeight
       + ruleBottom + inputTop);
-  float inputShift = 0.0F;
   {
     const float shift = rowShift(static_cast<float>(padTop + titleBand + ruleTop + ruleHeight
                                     + ruleBottom + inputTop),
         static_cast<float>(inputHeight));
-    inputShift = shift;
     const float left = contentLeft + shift;
     const float right = left + contentWidth;
     const float inputSlant = static_cast<float>(inputHeight) * kSlope;
@@ -800,25 +814,26 @@ void drawDialog(const ScreenMap& map, AppContext& context, int pageCount) {
 
     // Editable text: a transparent ImGui input handles typing while the label below
     // renders the value with the interface glyph rasteriser.
-    const float textPadX = map.px(36.0F);
-    const float textPadY = map.px(18.0F);
-    const ImVec2 inputMin(centerX + (left + textPadX - centerX) * zoom,
-        centerY + (inputTopY + (static_cast<float>(inputHeight) - lineHeight
-                          - (static_cast<float>(inputHeight) - 2.0F * textPadY)) * 0.5F
-                      - centerY) * zoom);
-    ImGui::SetCursorScreenPos(inputMin);
+    const float textPadX = static_cast<float>(map.rpx(14.0F) + map.rpx(6.0F));
+    const float textPadY = static_cast<float>(map.rpx(10.0F));
+    const float innerWidth = std::max(1.0F, contentWidth - textPadX * 2.0F);
+    const float innerHeight = std::max(1.0F, static_cast<float>(inputHeight) - textPadY * 2.0F);
+    ImGui::SetCursorScreenPos(ImVec2(centerX + (left + textPadX - centerX) * zoom,
+        centerY + (inputTopY + textPadY - centerY) * zoom));
     ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.0F, 0.0F, 0.0F, 0.0F));
     ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.0F, 0.0F, 0.0F, 0.0F));
     ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.0F, 0.0F, 0.0F, 0.0F));
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0F, 0.0F, 0.0F, 0.0F));
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.0F, 0.0F, 0.0F, 0.0F));
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0F, 0.0F));
+    const float inputFramePadding = std::max(0.0F,
+        (innerHeight - ImGui::GetFontSize()) * 0.5F);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0F, inputFramePadding));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0F);
     if (dialog.focusPending) {
       ImGui::SetKeyboardFocusHere();
       dialog.focusPending = false;
     }
-    ImGui::SetNextItemWidth(static_cast<float>(contentWidth) * zoom - textPadX * 2.0F);
+    ImGui::SetNextItemWidth(innerWidth * zoom);
     const ImGuiInputTextFlags flags = dialog.kind == DialogState::Kind::PageJump
         ? ImGuiInputTextFlags_CharsDecimal
         : ImGuiInputTextFlags_None;
@@ -827,8 +842,6 @@ void drawDialog(const ScreenMap& map, AppContext& context, int pageCount) {
     ImGui::PopStyleColor(5);
 
     ui::TextStyle inputStyle = labelStyle(textSize(18.0F), true, fadeColor(0xFFFFFFFFU));
-    inputStyle.paddingLeftDp = 20.0F;
-    inputStyle.paddingRightDp = 20.0F;
     if (dialog.buffer[0] == '\0') {
       inputStyle.color = fadeColor(0x80FFFFFFU);
       ui::drawLabel(drawList, map.canvas,
@@ -949,7 +962,6 @@ void drawDialog(const ScreenMap& map, AppContext& context, int pageCount) {
     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) cancelRequested = true;
   }
   if (cancelRequested) closeDialog(dialog);
-  (void)inputShift;
 }
 
 } // namespace
@@ -967,6 +979,8 @@ void drawLibraryScreen(AppContext& context) {
     current.dialog = DialogState{};
     current.grid = GridState{};
     current.onlinePage = 0;
+    current.pendingImportPopup = false;
+    current.pendingDeletePopup = false;
   }
   current.lastDrawSec = nowSec;
 
@@ -994,17 +1008,17 @@ void drawLibraryScreen(AppContext& context) {
   const GridGeometry grid = computeGrid(map);
   const int viewportWidth = static_cast<int>(std::lround(map.viewport.x));
   const int viewportHeight = static_cast<int>(std::lround(map.viewport.y));
-  if (std::getenv("RECHIGROS_LIBRARY_DEBUG") != nullptr) {
-    static int debugFrame = 0;
-    if (++debugFrame == 2) {
-      std::fprintf(stderr,
-          "LIBDBG viewport=%.2fx%.2f origin=%.3f,%.3f scale=%.6f panelL=%d panelR=%d gridL=%d"
-          " gridR=%d borders=%d,%d,%d,%d,%d margins=%d rowH=%d rpx98=%d rpx72=%d rpx8=%d\n",
-          map.viewport.x, map.viewport.y, map.origin.x, map.origin.y, map.scale, grid.panelL,
-          grid.panelR, grid.gridL, grid.gridR, grid.borders[0], grid.borders[1], grid.borders[2],
-          grid.borders[3], grid.borders[4], grid.margins, grid.rowHeight, map.rpx(98.0F),
-          map.rpx(72.0F), map.rpx(8.0F));
-    }
+
+  // Popups are opened from the action handlers at the end of the frame; the ImGui popup
+  // stack needs a current window, so the request is serviced here at the start of the
+  // next frame.
+  if (current.pendingImportPopup) {
+    current.pendingImportPopup = false;
+    ImGui::OpenPopup("##import_popup");
+  }
+  if (current.pendingDeletePopup) {
+    current.pendingDeletePopup = false;
+    ImGui::OpenPopup("##delete_popup");
   }
 
   // List panel.
@@ -1084,70 +1098,11 @@ void drawLibraryScreen(AppContext& context) {
         text, style, nowSec);
   }
 
-  // Top bar: back plate, tab strip and search field.
-  bool backPressed = false;
-  int clickedTab = -1;
-  bool searchPressed = false;
-  if (interactive) {
-    backPressed = drawBackPlate(map, context);
-    clickedTab = drawTabStrip(map, context);
-    searchPressed = drawSearchField(map, context);
-  } else {
-    // Keep the visuals identical while a dialog covers the screen.
-    const ListState saved = current;
-    (void)saved;
-    const int backX1 = map.rpx(78.0F);
-    const int backY0 = map.rpx(8.0F);
-    ui::PanelStyle backStyle = ui::glassPanel(ui::argb(kPlateFill), 0x00FFFFFFU);
-    backStyle.strokeWidthDp = 0.0F;
-    backStyle.straightLeft = true;
-    backStyle.accentEdge = 2;
-    backStyle.accent = ui::argb(0xFFFFFFFFU);
-    backStyle.accentWidthDp = 3.2F;
-    const ui::Box backBox = map.box(0.0F, static_cast<float>(backY0),
-        static_cast<float>(backX1), static_cast<float>(backY0 + map.rpx(48.0F)));
-    const std::uint64_t backTexture = assetTexture(context, "res/return.png", 96);
-    if (backTexture != 0) {
-      const float widthDp = 78.0F;
-      const float heightDp = 48.0F;
-      const float skewDp = std::min(heightDp * kSlope, widthDp * 0.42F);
-      const float imageSizeDp = std::min(widthDp - 32.0F, heightDp - 20.0F);
-      const float translateXDp = -skewDp * 0.25F + imageSizeDp * (0.5F - 87.337F / 200.0F);
-      ui::drawIconPlate(drawList, map.canvas, backBox, backStyle, backTexture,
-          context.textures.width(backTexture), context.textures.height(backTexture), 16.0F, 10.0F,
-          translateXDp);
-    } else {
-      ui::drawPanelShape(drawList, map.canvas, backBox, backStyle);
-    }
-    ui::TabBarStyle tabs;
-    tabs.labels = kChartTabs;
-    tabs.count = 3;
-    tabs.from = current.tabs.from;
-    tabs.to = current.tabs.to;
-    tabs.startSec = current.tabs.startSec;
-    const int tabsX = map.rpx(170.0F);
-    const int tabsY = map.rpx(11.0F);
-    ui::drawTabBar(drawList, map.canvas,
-        map.box(static_cast<float>(tabsX), static_cast<float>(tabsY),
-            static_cast<float>(tabsX + map.rpx(330.0F)),
-            static_cast<float>(tabsY + map.rpx(42.0F))),
-        tabs, nowSec);
-    const int searchX1 = viewportWidth - map.rpx(98.0F);
-    const int searchX0 = searchX1 - map.rpx(172.0F);
-    const int searchY0 = map.rpx(14.0F);
-    ui::PanelStyle searchStyle = ui::rectPanel(ui::argb(kSearchFill), ui::argb(kSearchStroke));
-    searchStyle.strokeWidthDp = 1.0F;
-    const ui::Box searchBox = map.box(static_cast<float>(searchX0),
-        static_cast<float>(searchY0), static_cast<float>(searchX1),
-        static_cast<float>(searchY0 + map.rpx(36.0F)));
-    ui::drawPanelShape(drawList, map.canvas, searchBox, searchStyle);
-    ui::TextStyle searchText = labelStyle(18.0F, true, ui::argb(0xFFFFFFFFU));
-    searchText.paddingLeftDp = 18.0F;
-    searchText.paddingRightDp = 14.0F;
-    const std::string fieldText = context.searchQuery.empty() ? std::string("搜索曲名")
-                                                              : context.searchQuery;
-    ui::drawLabel(drawList, map.canvas, searchBox, fieldText, searchText, nowSec);
-  }
+  // Top bar: back plate, tab strip and search field. These stay visible but inert while a
+  // dialog covers the screen.
+  const bool backPressed = drawBackPlate(map, context, interactive);
+  const int clickedTab = drawTabStrip(map, context, interactive);
+  const bool searchPressed = drawSearchField(map, context, interactive);
 
   // Bottom-right action plates.
   bool importPressed = false;
@@ -1157,43 +1112,29 @@ void drawLibraryScreen(AppContext& context) {
   bool cancelManagePressed = false;
   bool refreshPressed = false;
   bool pagePressed = false;
-  if (interactive) {
-    if (localTab) {
-      if (!context.manageMode) {
-        managePressed = drawSidePlate(map, context, "##library_manage", "res/edit.png", 0, 58,
-            false, 1);
-        importPressed = drawSidePlate(map, context, "##library_import", "res/import.png", 0, 0,
-            false, 1);
-      } else {
-        deletePressed = drawSidePlate(map, context, "##library_delete", "res/delete.png", 0, 116,
-            false, 1);
-        selectAllPressed = drawSidePlate(map, context, "##library_select_all", "res/all.png", 0,
-            58, false, 1);
-        cancelManagePressed = drawSidePlate(map, context, "##library_cancel", "res/cancel.png", 0,
-            0, false, 1);
-      }
-    } else {
-      refreshPressed = drawSidePlate(map, context, "##library_refresh", "res/refresh.png", 0, 8,
-          true, 1);
-      // Page navigation: next above the indicator, previous below it.
-      (void)drawSidePlate(map, context, "##library_next", "res/next.png", 0, 58, false, 1);
-      pagePressed = drawPagePlate(map, current.onlinePage, onlinePageCount);
-      (void)drawSidePlate(map, context, "##library_last", "res/last.png", 0, 0, false, 1);
-    }
-  } else if (localTab) {
+  if (localTab) {
     if (!context.manageMode) {
-      drawSidePlate(map, context, "##library_manage", "res/edit.png", 0, 58, false, 1);
-      drawSidePlate(map, context, "##library_import", "res/import.png", 0, 0, false, 1);
+      managePressed = drawSidePlate(map, context, "##library_manage", "res/edit.png", 0, 58,
+          false, 1, interactive);
+      importPressed = drawSidePlate(map, context, "##library_import", "res/import.png", 0, 0,
+          false, 1, interactive);
     } else {
-      drawSidePlate(map, context, "##library_delete", "res/delete.png", 0, 116, false, 1);
-      drawSidePlate(map, context, "##library_select_all", "res/all.png", 0, 58, false, 1);
-      drawSidePlate(map, context, "##library_cancel", "res/cancel.png", 0, 0, false, 1);
+      deletePressed = drawSidePlate(map, context, "##library_delete", "res/delete.png", 0, 116,
+          false, 1, interactive);
+      selectAllPressed = drawSidePlate(map, context, "##library_select_all", "res/all.png", 0,
+          58, false, 1, interactive);
+      cancelManagePressed = drawSidePlate(map, context, "##library_cancel", "res/cancel.png", 0,
+          0, false, 1, interactive);
     }
   } else {
-    drawSidePlate(map, context, "##library_refresh", "res/refresh.png", 0, 8, true, 1);
-    drawSidePlate(map, context, "##library_next", "res/next.png", 0, 58, false, 1);
-    drawPagePlate(map, current.onlinePage, onlinePageCount);
-    drawSidePlate(map, context, "##library_last", "res/last.png", 0, 0, false, 1);
+    refreshPressed = drawSidePlate(map, context, "##library_refresh", "res/refresh.png", 0, 8,
+        true, 1, interactive);
+    // Page navigation: next above the indicator, previous below it.
+    (void)drawSidePlate(map, context, "##library_next", "res/next.png", 0, 58, false, 1,
+        interactive);
+    pagePressed = drawPagePlate(map, current.onlinePage, onlinePageCount, interactive);
+    (void)drawSidePlate(map, context, "##library_last", "res/last.png", 0, 0, false, 1,
+        interactive);
   }
 
   // Modal dialogs and the library import/delete confirmations.
@@ -1308,12 +1249,12 @@ void drawLibraryScreen(AppContext& context) {
     context.manageMode = true;
     context.selectedIds.clear();
   } else if (importPressed) {
-    ImGui::OpenPopup("##import_popup");
+    current.pendingImportPopup = true;
   } else if (deletePressed) {
     if (context.selectedIds.empty()) {
       notify(context, "未选择谱面");
     } else {
-      ImGui::OpenPopup("##delete_popup");
+      current.pendingDeletePopup = true;
     }
   } else if (selectAllPressed) {
     if (context.selectedIds.size() >= visible.size()) {
