@@ -93,7 +93,7 @@ JudgeLine::State JudgeLine::fillState(double second,float aspect){
   state.scaleY=static_cast<float>(lineValue(beat,judgeLineScaleYEvents,curScaleY_,moveValue(beat,judgeLineScaleEvents,curScale2_,1,true)));
   if(!judgeLineInclineEvents.empty())state.inclineSinr=static_cast<float>(std::sin(lineValue(beat,judgeLineInclineEvents,curIncline_,0)));
   state.colorR=PERFECT_COLOR[0];state.colorG=PERFECT_COLOR[1];state.colorB=PERFECT_COLOR[2];state.anchorX=anchorX;state.anchorY=anchorY;state.text=text;state.floorPosition=EventUtils::getFloorPosition(beat,speedEvents,speedEventLayers);
-  if(!texture.empty()||!text.empty()||attachUiElementId!=0)state.colorR=state.colorG=state.colorB=1;
+  if(!texture.empty()||!text.empty()||!judgeLineTextEvents.empty()||attachUiElementId!=0)state.colorR=state.colorG=state.colorB=1;
   std::array<float,3> eventColor{};if(colorValue(beat,judgeLineColorEvents,curColor_,eventColor)){state.colorR=eventColor[0];state.colorG=eventColor[1];state.colorB=eventColor[2];state.hasColorEvent=true;}
   state.text=textValue(beat,judgeLineTextEvents,curText_,state.text);state.gifPosition=gifValue(beat,gifEvents,curGif_);
   if(fatherLine){const auto parent=fatherLine->fillState(second,aspect);const auto radians=parent.rotateDeg*3.14159265358979323846/180.0;const auto safeAspect=aspect>1e-6F?aspect:16.0F/9.0F;const auto nx=cx*std::cos(radians)+(cy*std::sin(radians))/safeAspect+(parent.xNorm-0.5);const auto ny=cy*std::cos(radians)-(cx*std::sin(radians))*safeAspect+(0.5-parent.yNorm);state.xNorm=static_cast<float>(nx+0.5);state.yNorm=static_cast<float>(0.5-ny);if(rotateWithFather)state.rotateDeg+=parent.rotateDeg;}

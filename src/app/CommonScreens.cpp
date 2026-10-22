@@ -368,7 +368,9 @@ void drawHomeScreen(AppContext& context) {
   const ui::Box startLabelBox{labelLeft, kMenuTop + 8.0F,
       labelLeft + (kStartWidth - startSkew - 16.0F - 12.0F), kMenuTop + 8.0F + 54.0F};
   ui::TextStyle startLabelStyle;
-  startLabelStyle.sizeDp = 38.0F;
+  // The start panel label is drawn smaller than its box height: 28 density units keeps the
+  // rendered label at the same size as the running interface.
+  startLabelStyle.sizeDp = 28.0F;
   startLabelStyle.bold = true;
   startLabelStyle.align = ui::HAlign::Left;
   startLabelStyle.valign = ui::VAlign::Middle;
@@ -386,8 +388,9 @@ void drawHomeScreen(AppContext& context) {
     const float outset = std::max(1.0F, std::round(meowSize * 11.0F / 524.0F));
     const ui::PxRect menuPixels = ui::toPixels(canvas,
         ui::Box{kMenuLeft, kMenuTop, kMenuLeft + kMenuWidth, kMenuTop + kStartHeight});
+    // The horizontal offset is a layout-space value in the same space as the panel sizes.
     const float left = menuPixels.min.x
-        + std::round((canvas.units(kStartWidth) - meowSize) * 0.5F) - std::round(canvas.dp(14.0F));
+        + std::round((canvas.units(kStartWidth) - meowSize) * 0.5F) - std::round(canvas.units(14.0F));
     const float top = menuPixels.min.y + canvas.units(kStartHeight) - meowSize + outset;
     ui::drawImage(drawList,
         ui::PxRect{ImVec2(left, top), ImVec2(left + meowSize, top + meowSize)}, meowTexture,
@@ -435,19 +438,21 @@ void drawHomeScreen(AppContext& context) {
         ui::kDesignWidth - 14.0F, ui::kDesignHeight - 12.0F};
     const ui::PanelStyle markPanel = ui::rectPanel(0x00000000U, 0x00000000U);
     const ui::Interaction mark = ui::panelInteraction("##home_link", canvas, markBox, markPanel);
-    const ui::PxRect pixels = ui::toPixels(canvas, markBox);
-    const ImVec2 center((pixels.min.x + pixels.max.x) * 0.5F,
-        (pixels.min.y + pixels.max.y) * 0.5F);
-    const float radius = (pixels.max.x - pixels.min.x) * 0.46F;
-    const ImU32 tint = mark.hovered ? IM_COL32(255, 255, 255, 255) : IM_COL32(255, 255, 255, 235);
-    drawList->AddCircleFilled(center, radius, tint, 0);
-    const float notch = radius * 0.52F;
-    drawList->AddRectFilled(ImVec2(center.x - notch, center.y - notch),
-        ImVec2(center.x + notch, center.y + notch * 0.35F), IM_COL32(16, 20, 26, 255),
-        notch * 0.4F);
-    drawList->AddRectFilled(ImVec2(center.x - notch * 0.55F, center.y + notch * 0.5F),
-        ImVec2(center.x + notch * 0.55F, center.y + notch * 1.05F), IM_COL32(16, 20, 26, 255),
-        notch * 0.3F);
+    const std::uint64_t markTexture = assetTexture(context, "res/github.png", 128);
+    if (markTexture != 0) {
+      const int markWidth = context.textures.width(markTexture);
+      const int markHeight = context.textures.height(markTexture);
+      // The mark sits inside a 2 dp inset and uses a slightly translucent tint, matching
+      // the corner badge of the interface.
+      const ui::PxRect pixels = ui::toPixels(canvas, markBox);
+      const float inset = canvas.dp(2.0F);
+      ui::PxRect content;
+      content.min = ImVec2(pixels.min.x + inset, pixels.min.y + inset);
+      content.max = ImVec2(pixels.max.x - inset, pixels.max.y - inset);
+      const int alpha = mark.hovered ? 255 : 214;
+      ui::drawImage(drawList, content, markTexture, markWidth, markHeight,
+          ui::ImageFit::FitCenter, IM_COL32(255, 255, 255, alpha));
+    }
     if (mark.pressed) notify(context, "项目主页");
   }
 
@@ -473,21 +478,33 @@ void drawHomeScreen(AppContext& context) {
 
 void drawToast(AppContext& context) {
   if (context.toastText.empty() || context.nowSec > context.toastDeadlineSec) return;
-  const auto size = viewportSize();
-  const float scale = layoutScale();
-  ImGui::SetNextWindowPos(ImVec2(size.width * 0.5F, size.height - 90.0F * scale),
-      ImGuiCond_Always, ImVec2(0.5F, 1.0F));
-  ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06F, 0.08F, 0.10F, 0.94F));
-  ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0F, 1.0F, 1.0F, 0.20F));
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18.0F, 10.0F));
-  ImGui::Begin("##toast", nullptr,
-      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize
-          | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
-  ImGui::SetWindowFontScale(scale * 0.9F);
-  ImGui::TextUnformatted(context.toastText.c_str());
-  ImGui::End();
-  ImGui::PopStyleVar();
-  ImGui::PopStyleColor(2);
+  const ui::Canvas canvas = ui::canvas();
+  ImDrawList* drawList = ImGui::GetForegroundDrawList();
+  if (drawList == nullptr) return;
+  constexpr float kTextSizeDp = 16.0F;
+  const float textWidth = ui::labelWidth(canvas, context.toastText, kTextSizeDp, false);
+  const float lineHeight = ui::labelLineHeight(canvas, kTextSizeDp);
+  const float paddingX = canvas.dp(18.0F) / canvas.scale;
+  const float paddingY = canvas.dp(9.0F) / canvas.scale;
+  const float width = textWidth + paddingX * 2.0F;
+  const float height = lineHeight + paddingY * 2.0F;
+  const float bottom = ui::kDesignHeight - canvas.dp(64.0F) / canvas.scale;
+  const ui::PxRect panel = ui::toPixels(canvas,
+      ui::Box{(ui::kDesignWidth - width) * 0.5F, bottom - height,
+          (ui::kDesignWidth + width) * 0.5F, bottom});
+  const float radius = canvas.dp(8.0F);
+  drawList->AddRectFilled(panel.min, panel.max, IM_COL32(20, 24, 30, 235), radius);
+  drawList->AddRect(panel.min, panel.max, IM_COL32(255, 255, 255, 40), radius);
+  ui::TextStyle style;
+  style.sizeDp = kTextSizeDp;
+  style.bold = false;
+  style.align = ui::HAlign::Center;
+  style.valign = ui::VAlign::Middle;
+  style.fitWidth = true;
+  ui::drawLabel(drawList, canvas,
+      ui::Box{(ui::kDesignWidth - width) * 0.5F, bottom - height,
+          (ui::kDesignWidth + width) * 0.5F, bottom},
+      context.toastText, style, context.nowSec);
 }
 
 } // namespace rechigros::app

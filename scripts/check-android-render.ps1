@@ -293,6 +293,8 @@ Write-Step "Starting the chart ($Frames frames, capture requested)"
 & $script:adb -s $script:serial logcat -c 2>&1 | Out-Null
 & $script:adb -s $script:serial shell am force-stop $Package 2>&1 | Out-Null
 $arguments = "--frames $Frames --autoplay --gl-debug --capture-frame $remoteCapture $remoteChart"
+# A capture left over from an earlier run must not be mistaken for this run's output.
+& $script:adb -s $script:serial shell rm -f $remoteCapture 2>&1 | Out-Null
 # The launcher reads one space-separated argument string, so the quotes have to survive
 # the shell: the whole command is handed to the device shell as a single string.
 $launchCommand = "am start -n $Package/.MainActivity --es args `"$arguments`""

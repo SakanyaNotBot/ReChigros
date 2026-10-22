@@ -1,48 +1,171 @@
+#include "rechigros/app/AppContext.hpp"
+
 #include "rechigros/app/ScreenCommon.hpp"
-#include "rechigros/platform/FileDialog.hpp"
 #include "rechigros/app/Screens.hpp"
+#include "rechigros/app/UiLayout.hpp"
 #include "rechigros/app/UiStyle.hpp"
-#include "rechigros/app/UiWidgets.hpp"
+#include "rechigros/platform/FileDialog.hpp"
+#include "rechigros/platform/FileSystem.hpp"
+
+#include <imgui.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <string>
+#include <string_view>
 #include <vector>
 
+// Chart list screen: the local library, the two catalogue placeholder tabs and the
+// manage-mode layout. Geometry is authored in density units taken from the reference
+// layout, converted to screen pixels, then handed to the shared layout primitives in
+// design coordinates so drawing and hit testing stay consistent.
 namespace rechigros::app {
 namespace {
 
-// Layout metrics, in design units of the list canvas.
-constexpr float kBackWidth = 78.0F;
-constexpr float kBackHeight = 48.0F;
-constexpr float kBackTop = 8.0F;
-constexpr float kTabsLeft = 170.0F;
-constexpr float kTabsTop = 11.0F;
-constexpr float kTabsWidth = 330.0F;
-constexpr float kTabsHeight = 42.0F;
-constexpr float kSearchTop = 14.0F;
-constexpr float kPanelLeft = 72.0F;
-constexpr float kPanelTop = 74.0F;
-constexpr float kPanelRight = 98.0F;
-constexpr float kPanelBottom = 6.0F;
-constexpr float kGridInset = 8.0F;
-constexpr float kCardMargin = 5.0F;
+// ---------------------------------------------------------------------------
+// Palette and metrics (density units)
+// ---------------------------------------------------------------------------
+
+constexpr std::uint32_t kPanelFill = 0x7B070A10U;
+constexpr std::uint32_t kCardFill = 0xB2171A20U;
+constexpr std::uint32_t kCardStroke = 0x6FFFFFFFU;
+constexpr std::uint32_t kCoverShade = 0x85000000U;
+constexpr std::uint32_t kStateText = 0xDFFFFFFFU;
+constexpr std::uint32_t kPlateFill = 0x8610171DU;
+constexpr std::uint32_t kSearchFill = 0x9DE7EBF0U;
+constexpr std::uint32_t kSearchStroke = 0x7EFFFFFFU;
+constexpr std::uint32_t kPageFill = 0x99E2E6EBU;
+constexpr std::uint32_t kPageStroke = 0x70FFFFFFU;
+constexpr std::uint32_t kCheckFill = 0xFFFFFFFFU;
+constexpr std::uint32_t kDialogContent = 0xF0202429U;
+constexpr std::uint32_t kDialogStrip = 0xD9000000U;
+constexpr int kCoverAlpha = 184; // 0.72 * 255
 constexpr int kGridColumns = 4;
-// Card internals, as fractions of the 16:9 card so they follow its width.
-constexpr float kCardDifficultyHeight = 28.0F;
-constexpr float kCardNameHeight = 32.0F;
-constexpr float kCardNameBottomMargin = 4.0F;
-constexpr float kCardCheckWidth = 28.0F;
-constexpr float kCardCheckHeight = 20.0F;
-constexpr float kCoverAlpha = 0.72F;
-constexpr float kStateTextSize = 18.0F;
-constexpr double kTabAnimationSeconds = 0.34;
+constexpr int kOnlinePageSize = 16;
+constexpr float kSlope = 0.2679492F; // tan(15 degrees)
+constexpr double kTabSwitchIntervalSeconds = 0.26;
+constexpr double kDialogEnterSeconds = 0.2;
+constexpr double kReentryGuardSeconds = 0.25;
+
+const char* const kChartTabs[] = {"本地", "上架", "未上架"};
+
+// ---------------------------------------------------------------------------
+// Screen-space mapping
+// ---------------------------------------------------------------------------
+
+// Maps the density-unit geometry of the reference layout onto the current viewport. A
+// density value `v` becomes `v * densityPixels` screen pixels measured from the screen
+// origin; boxes are finally converted to the centred design canvas the draw helpers use.
+struct ScreenMap {
+  ui::Canvas canvas;
+  ImVec2 origin{};
+  ImVec2 viewport{};
+  float scale{1.0F};
+
+  static ScreenMap current() {
+    ScreenMap map;
+    map.canvas = ui::canvas();
+    map.origin = map.canvas.origin;
+    map.viewport = map.canvas.viewport;
+    map.scale = map.canvas.scale;
+    return map;
+  }
+
+  // Density units to pixels.
+  [[nodiscard]] float px(float value) const { return canvas.dp(value); }
+  // Density value to an integral pixel count. The epsilon compensates for the float
+  // rounding of the density ratio so exact half-pixel values round the way the reference
+  // layout rounds them.
+  [[nodiscard]] int rpx(float value) const {
+    return static_cast<int>(std::lround(static_cast<double>(canvas.dp(value)) + 1.0e-3));
+  }
+  [[nodiscard]] float designX(float pixel) const { return (pixel - origin.x) / scale; }
+  [[nodiscard]] float designY(float pixel) const { return (pixel - origin.y) / scale; }
+  // Pixel rectangle to a design-space box.
+  [[nodiscard]] ui::Box box(float x0, float y0, float x1, float y1) const {
+    return ui::Box{designX(x0), designY(y0), designX(x1), designY(y1)};
+  }
+};
+
+[[nodiscard]] ui::TextStyle labelStyle(float sizeDp, bool bold, ImU32 color,
+    ui::HAlign align = ui::HAlign::Left, ui::VAlign valign = ui::VAlign::Middle) {
+  ui::TextStyle style;
+  style.sizeDp = sizeDp;
+  style.bold = bold;
+  style.color = color;
+  style.align = align;
+  style.valign = valign;
+  style.fitWidth = true;
+  return style;
+}
+
+// Height in pixels of a one-line label at a density-unit size.
+[[nodiscard]] float lineHeightPixels(const ScreenMap& map, float sizeDp) {
+  return ui::labelLineHeight(map.canvas, sizeDp) * map.scale;
+}
+
+[[nodiscard]] bool insideRect(float x0, float y0, float x1, float y1, ImVec2 point) {
+  return point.x >= x0 && point.x < x1 && point.y >= y0 && point.y < y1;
+}
+
+// Releases the press inside the rectangle once, mirroring the panel helper for flat areas.
+struct RectInteraction {
+  bool pressed{};
+  bool hovered{};
+};
+
+[[nodiscard]] RectInteraction rectInteraction(const char* id, float x0, float y0, float x1,
+    float y1) {
+  RectInteraction result;
+  if (x1 <= x0 || y1 <= y0) return result;
+  ImGui::SetCursorScreenPos(ImVec2(x0, y0));
+  ImGui::InvisibleButton(id, ImVec2(x1 - x0, y1 - y0));
+  result.hovered = ImGui::IsItemHovered();
+  result.pressed = result.hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+  return result;
+}
 
 std::string toLower(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(),
       [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
   return value;
+}
+
+// Number of UTF-16 code units, which is what the reference marquee threshold counts.
+std::size_t textLength(std::string_view text) {
+  std::size_t length = 0;
+  for (std::size_t index = 0; index < text.size();) {
+    const auto lead = static_cast<unsigned char>(text[index]);
+    std::size_t step = 1;
+    if ((lead & 0x80U) == 0) {
+      step = 1;
+    } else if ((lead & 0xE0U) == 0xC0U) {
+      step = 2;
+    } else if ((lead & 0xF0U) == 0xE0U) {
+      step = 3;
+    } else {
+      step = 4;
+    }
+    length += step == 4 ? 2 : 1;
+    index += step;
+  }
+  return length;
+}
+
+bool shouldMarquee(std::string_view text) { return textLength(text) > 12; }
+
+std::string nonEmpty(const std::string& value) {
+  return value.empty() ? std::string("Unkown") : value;
+}
+
+std::string formatScore(int score) {
+  char buffer[16];
+  std::snprintf(buffer, sizeof(buffer), "%07d", score > 0 ? score : 0);
+  return buffer;
 }
 
 bool matchesSearch(const ChartRecord& record, const std::string& query) {
@@ -51,333 +174,1044 @@ bool matchesSearch(const ChartRecord& record, const std::string& query) {
   return haystack.find(toLower(query)) != std::string::npos;
 }
 
-// Tracks a tab change over time so the selected plate slides instead of jumping.
+// ---------------------------------------------------------------------------
+// Persistent screen state
+// ---------------------------------------------------------------------------
+
 struct TabAnimation {
   int from{};
   int to{};
-  double startSec{-1.0};
+  double startSec{};
+};
 
-  void begin(int target, double nowSec) {
-    from = to;
-    to = target;
-    startSec = nowSec;
+struct GridState {
+  int scroll{};
+  bool dragging{};
+  ImVec2 dragStart{};
+  int dragStartScroll{};
+  float dragDistance{};
+};
+
+struct DialogState {
+  enum class Kind { None, Search, PageJump };
+  Kind kind{Kind::None};
+  double openSec{-1.0};
+  char buffer[256]{};
+  bool focusPending{};
+};
+
+struct ListState {
+  TabAnimation tabs;
+  GridState grid;
+  DialogState dialog;
+  int onlinePage{};
+  double lastTabSwitchSec{-100.0};
+  double lastDrawSec{-1.0};
+};
+
+// Immediate-mode screens keep their animation and scroll state next to the draw code.
+ListState& state() {
+  static ListState instance;
+  return instance;
+}
+
+// ---------------------------------------------------------------------------
+// Grid geometry
+// ---------------------------------------------------------------------------
+
+struct GridGeometry {
+  int panelL{};
+  int panelT{};
+  int panelR{};
+  int panelB{};
+  int gridL{};
+  int gridT{};
+  int gridR{};
+  int gridB{};
+  int margins{};
+  int bottomPadding{};
+  std::array<int, kGridColumns + 1> borders{};
+  int rowHeight{};
+
+  [[nodiscard]] int cardLeft(int column) const { return gridL + borders[column] + margins; }
+  [[nodiscard]] int cardRight(int column) const {
+    return gridL + borders[column + 1] - margins;
   }
-
-  [[nodiscard]] float progress(double nowSec) const {
-    if (startSec < 0.0 || from == to) return 1.0F;
-    const float t = static_cast<float>((nowSec - startSec) / kTabAnimationSeconds);
-    if (t >= 1.0F) return 1.0F;
-    const float clamped = std::max(0.0F, t);
-    return 1.0F - std::pow(1.0F - clamped, 3.0F);
+  [[nodiscard]] int cardWidth(int column) const { return cardRight(column) - cardLeft(column); }
+  [[nodiscard]] int cardHeight(int column) const {
+    return static_cast<int>(std::lround(cardWidth(column) * 9.0 / 16.0));
+  }
+  [[nodiscard]] int cardTop(int row, int scroll) const {
+    return gridT - scroll + row * rowHeight + margins;
+  }
+  [[nodiscard]] int gridHeight() const { return gridB - gridT; }
+  [[nodiscard]] int contentHeight(int rows) const {
+    return rows * rowHeight + bottomPadding;
   }
 };
 
-TabAnimation g_chartTabAnimation;
-
-// Draws one 16:9 chart card: cover, shade, difficulty, best score, name, and the
-// selection plate used while managing the library.
-bool drawChartCard(AppContext& context, const ChartRecord& record, ImVec2 topLeft, float width,
-    float height, float scale, bool selected, bool manageMode, double nowSec) {
-  ImDrawList* drawList = ImGui::GetWindowDrawList();
-  const ImVec2 bottomRight(topLeft.x + width, topLeft.y + height);
-  const std::string id = "##card_" + record.id;
-  ImGui::SetCursorScreenPos(topLeft);
-  ImGui::InvisibleButton(id.c_str(), ImVec2(width, height));
-  const bool hovered = ImGui::IsItemHovered();
-  const bool clicked = ImGui::IsItemClicked();
-  if (clicked) {
-    if (manageMode) {
-      const auto iterator = std::find(context.selectedIds.begin(), context.selectedIds.end(),
-          record.id);
-      if (iterator == context.selectedIds.end()) {
-        context.selectedIds.push_back(record.id);
-      } else {
-        context.selectedIds.erase(iterator);
-      }
-    } else {
-      openChartDetail(context, record.id);
+// Span borders distributed the way the reference grid layout manager spreads the leftover
+// pixels: the remainder is handed out from the leading spans.
+std::array<int, kGridColumns + 1> distributeSpans(int total) {
+  std::array<int, kGridColumns + 1> borders{};
+  borders[0] = 0;
+  const int sizePerSpan = total / kGridColumns;
+  const int remainder = total % kGridColumns;
+  int consumed = 0;
+  int additional = 0;
+  for (int span = 1; span <= kGridColumns; ++span) {
+    int itemSize = sizePerSpan;
+    additional += remainder;
+    if (additional > 0 && (kGridColumns - additional) < remainder) {
+      itemSize += 1;
+      additional -= kGridColumns;
     }
+    consumed += itemSize;
+    borders[static_cast<std::size_t>(span)] = consumed;
   }
+  return borders;
+}
 
-  const ImU32 fill = hovered ? ui::rgba(0xCC1D2129U) : ui::rgba(ui::kCardFill);
-  ui::roundedRect(drawList, topLeft, bottomRight, ui::kCardRadius * scale, fill,
-      ui::rgba(ui::kCardBorder), 1.0F);
+GridGeometry computeGrid(const ScreenMap& map) {
+  GridGeometry grid;
+  const int viewportWidth = static_cast<int>(std::lround(map.viewport.x));
+  const int viewportHeight = static_cast<int>(std::lround(map.viewport.y));
+  grid.panelL = map.rpx(72.0F);
+  grid.panelT = map.rpx(74.0F);
+  grid.panelR = viewportWidth - map.rpx(98.0F);
+  grid.panelB = viewportHeight - map.rpx(6.0F);
+  grid.gridL = grid.panelL + map.rpx(8.0F);
+  grid.gridT = grid.panelT + map.rpx(10.0F);
+  grid.gridR = grid.panelR - map.rpx(8.0F);
+  grid.gridB = grid.panelB;
+  grid.margins = map.rpx(5.0F);
+  grid.bottomPadding = map.rpx(18.0F);
+  grid.borders = distributeSpans(std::max(1, grid.gridR - grid.gridL));
+  int tallest = 0;
+  for (int column = 0; column < kGridColumns; ++column) {
+    tallest = std::max(tallest, grid.cardHeight(column));
+  }
+  grid.rowHeight = tallest + grid.margins * 2;
+  return grid;
+}
 
-  // Cover artwork, dimmed so the text above it stays readable.
+// ---------------------------------------------------------------------------
+// Card drawing
+// ---------------------------------------------------------------------------
+
+void drawChartCard(const ScreenMap& map, AppContext& context, const ChartRecord& record,
+    int x0, int y0, int x1, int y1, bool manageMode, bool selected, double nowSec) {
+  ImDrawList* drawList = ImGui::GetWindowDrawList();
+  if (x1 <= x0 || y1 <= y0) return;
+  const ImVec2 topLeft(static_cast<float>(x0), static_cast<float>(y0));
+  const ImVec2 bottomRight(static_cast<float>(x1), static_cast<float>(y1));
+
+  // Plate fill, then the artwork and its shade, then the plate stroke on top.
+  drawList->AddRectFilled(topLeft, bottomRight, ui::argb(kCardFill));
   const std::uint64_t cover = coverTexture(context, record, 320);
   if (cover != 0) {
-    drawList->AddImage(static_cast<ImTextureID>(cover), topLeft, bottomRight);
-    drawList->AddRectFilled(topLeft, bottomRight, IM_COL32(0, 0, 0,
-        static_cast<int>(255.0F * (1.0F - kCoverAlpha) + 0.5F)));
-  } else {
-    drawList->AddRectFilled(topLeft, bottomRight, ui::rgba(ui::kChip), ui::kCardRadius * scale);
+    drawList->PushClipRect(topLeft, bottomRight, true);
+    ui::drawImage(drawList, ui::PxRect{topLeft, bottomRight}, cover,
+        context.textures.width(cover), context.textures.height(cover), ui::ImageFit::CenterCrop,
+        IM_COL32(255, 255, 255, kCoverAlpha));
+    drawList->PopClipRect();
   }
-  // The shade keeps labels readable over bright covers.
-  drawList->AddRectFilled(topLeft, bottomRight, ui::rgba(ui::kCoverShade), ui::kCardRadius * scale);
+  drawList->AddRectFilled(topLeft, bottomRight, ui::argb(kCoverShade));
+  ui::PanelStyle border = ui::rectPanel(0x00000000U, ui::argb(kCardStroke));
+  border.strokeWidthDp = 1.0F;
+  ui::drawPanelShape(drawList, map.canvas, map.box(static_cast<float>(x0), static_cast<float>(y0),
+      static_cast<float>(x1), static_cast<float>(y1)), border);
 
-  const float difficultyHeight = kCardDifficultyHeight * scale;
-  const float nameHeight = kCardNameHeight * scale;
-  const float padding = 9.0F * scale;
+  const ImU32 white = ui::argb(0xFFFFFFFFU);
+  const int halfWidth = (x1 - x0) / 2;
+  const int bandHeight = map.rpx(28.0F);
 
-  // Difficulty at the top-left, best score at the top-right.
-  const std::string difficulty = record.difficulty.empty() ? "SP Lv.?" : record.difficulty;
-  const float half = width * 0.5F;
-  ui::drawClippedText(drawList, ImVec2(topLeft.x + padding,
-                            topLeft.y + (difficultyHeight - 13.0F * scale) * 0.5F),
-      topLeft, ImVec2(topLeft.x + half, topLeft.y + difficultyHeight), 13.0F * scale,
-      ui::rgba(ui::kTextPrimary), ui::ellipsize(difficulty, 13.0F * scale, half - padding * 2.0F));
+  // Difficulty on the left half of the top band.
+  ui::TextStyle difficultyStyle = labelStyle(13.0F, true, white);
+  difficultyStyle.paddingLeftDp = 9.0F;
+  difficultyStyle.paddingRightDp = 8.0F;
+  ui::drawLabel(drawList, map.canvas,
+      map.box(static_cast<float>(x0), static_cast<float>(y0),
+          static_cast<float>(x0 + halfWidth), static_cast<float>(y0 + bandHeight)),
+      nonEmpty(record.difficulty), difficultyStyle, nowSec);
 
-  char scoreBuffer[16];
-  std::snprintf(scoreBuffer, sizeof(scoreBuffer), "%07d", record.bestScore > 0
-      ? record.bestScore
-      : 0);
-  const ImVec2 scoreExtent = ui::measureText(scoreBuffer, 13.0F * scale);
-  ui::drawText(drawList, ImVec2(bottomRight.x - padding - scoreExtent.x,
-                            topLeft.y + (difficultyHeight - 13.0F * scale) * 0.5F),
-      13.0F * scale, ui::rgba(ui::kTextPrimary), scoreBuffer);
+  // Best score on the right half of the top band.
+  ui::TextStyle scoreStyle = labelStyle(13.0F, false, white, ui::HAlign::Right);
+  scoreStyle.paddingRightDp = 9.0F;
+  ui::drawLabel(drawList, map.canvas,
+      map.box(static_cast<float>(x0 + halfWidth), static_cast<float>(y0),
+          static_cast<float>(x1), static_cast<float>(y0 + bandHeight)),
+      formatScore(record.bestScore), scoreStyle, nowSec);
 
-  // Chart name along the bottom edge.
-  const float nameLeft = topLeft.x + 10.0F * scale;
-  const float nameTop = bottomRight.y - nameHeight - kCardNameBottomMargin * scale;
-  const float nameWidth = width - (manageMode ? 44.0F : 22.0F) * scale;
-  ui::drawMarqueeText(drawList, ImVec2(nameLeft, nameTop + (nameHeight - 14.0F * scale) * 0.5F),
-      nameWidth, 14.0F * scale, ui::rgba(ui::kTextPrimary), record.songName, nowSec);
+  // Chart name along the bottom edge; long names scroll, manage mode reserves the check
+  // plate's corner.
+  const int nameHeight = map.rpx(32.0F);
+  const int nameBottom = y1 - map.rpx(4.0F);
+  ui::TextStyle nameStyle = labelStyle(14.0F, true, white);
+  nameStyle.fitWidth = false;
+  nameStyle.marquee = manageMode || shouldMarquee(record.songName);
+  nameStyle.paddingLeftDp = 10.0F;
+  nameStyle.paddingRightDp = manageMode ? 44.0F : 12.0F;
+  nameStyle.fadingEdgeDp = 18.0F;
+  ui::drawLabel(drawList, map.canvas,
+      map.box(static_cast<float>(x0), static_cast<float>(nameBottom - nameHeight),
+          static_cast<float>(x1), static_cast<float>(nameBottom)),
+      nonEmpty(record.songName), nameStyle, nowSec);
 
-  // Selection plate in the bottom-right corner.
+  // Selection plate shown while managing the library.
   if (manageMode) {
-    const float checkWidth = kCardCheckWidth * scale;
-    const float checkHeight = kCardCheckHeight * scale;
-    const ImVec2 checkTopLeft(bottomRight.x - checkWidth, bottomRight.y - checkHeight);
-    ui::skewQuad(drawList, checkTopLeft.x + checkHeight * ui::kSkewRatio, checkTopLeft.y,
-        checkTopLeft.x + checkWidth, checkTopLeft.y + checkHeight,
-        checkHeight * ui::kSkewRatio, ui::rgba(ui::kTabSelectedPlate));
+    const int checkWidth = map.rpx(28.0F);
+    const int checkHeight = map.rpx(20.0F);
+    const int checkX = x1 - checkWidth;
+    const int checkY = y1 - checkHeight;
+    ui::PanelStyle check = ui::glassPanel(ui::argb(kCheckFill), ui::argb(kCheckFill));
+    check.straightRight = true;
+    check.strokeWidthDp = 1.0F;
+    ui::drawPanelShape(drawList, map.canvas,
+        map.box(static_cast<float>(checkX), static_cast<float>(checkY),
+            static_cast<float>(x1), static_cast<float>(y1)),
+        check);
     if (selected) {
       const std::uint64_t checked = assetTexture(context, "res/checked.png", 64);
-      const ImVec2 inset(checkTopLeft.x + 6.0F * scale, checkTopLeft.y + 3.0F * scale);
       if (checked != 0) {
-        drawList->AddImage(static_cast<ImTextureID>(checked), inset,
-            ImVec2(checkTopLeft.x + checkWidth - 5.0F * scale,
-                checkTopLeft.y + checkHeight - 3.0F * scale));
-      } else {
-        ui::drawTextCentered(drawList, ImVec2(checkTopLeft.x + checkWidth * 0.5F,
-                                    checkTopLeft.y + checkHeight * 0.5F),
-            13.0F * scale, IM_COL32(16, 21, 27, 255), "v");
+        const int padLeft = map.rpx(6.0F);
+        const int padTop = map.rpx(3.0F);
+        const int padRight = map.rpx(5.0F);
+        const int padBottom = map.rpx(3.0F);
+        ui::drawImage(drawList,
+            ui::PxRect{ImVec2(static_cast<float>(checkX + padLeft),
+                          static_cast<float>(checkY + padTop)),
+                ImVec2(static_cast<float>(x1 - padRight),
+                    static_cast<float>(y1 - padBottom))},
+            checked, context.textures.width(checked), context.textures.height(checked),
+            ui::ImageFit::FitCenter);
       }
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Corner plates, back plate, tab strip and search field
+// ---------------------------------------------------------------------------
+
+struct PlateMetrics {
+  int width{};
+  int height{};
+};
+
+PlateMetrics sidePlateMetrics(const ScreenMap& map) {
+  PlateMetrics metrics;
+  metrics.width = map.rpx(78.0F);
+  metrics.height = map.rpx(48.0F);
+  return metrics;
+}
+
+// One 78 x 48 dp corner plate with a bright leading edge and a centred icon.
+bool drawSidePlate(const ScreenMap& map, AppContext& context, const char* id, const char* asset,
+    int rightMarginDp, int bottomMarginDp, bool topAligned, int accentEdge) {
+  const PlateMetrics metrics = sidePlateMetrics(map);
+  const int viewportWidth = static_cast<int>(std::lround(map.viewport.x));
+  const int viewportHeight = static_cast<int>(std::lround(map.viewport.y));
+  int x1 = viewportWidth - map.rpx(static_cast<float>(rightMarginDp));
+  int y1 = 0;
+  int y0 = 0;
+  if (topAligned) {
+    y0 = map.rpx(static_cast<float>(bottomMarginDp));
+    y1 = y0 + metrics.height;
+  } else {
+    y1 = viewportHeight - (map.rpx(static_cast<float>(bottomMarginDp)) + map.rpx(8.0F));
+    y0 = y1 - metrics.height;
+  }
+  const int x0 = x1 - metrics.width;
+
+  ui::PanelStyle style = ui::glassPanel(ui::argb(kPlateFill), 0x00FFFFFFU);
+  style.strokeWidthDp = 0.0F;
+  style.straightRight = true;
+  style.accentEdge = accentEdge;
+  style.accent = ui::argb(0xFFFFFFFFU);
+  style.accentWidthDp = 3.2F;
+  const ui::Box box = map.box(static_cast<float>(x0), static_cast<float>(y0),
+      static_cast<float>(x1), static_cast<float>(y1));
+  const ui::Interaction interaction = ui::panelInteraction(id, map.canvas, box, style);
+  const std::uint64_t texture = assetTexture(context, asset, 96);
+  if (texture != 0) {
+    ui::drawIconPlate(ImGui::GetWindowDrawList(), map.canvas, box, style, texture,
+        context.textures.width(texture), context.textures.height(texture), 16.0F, 10.0F, 3.0F);
+  } else {
+    ui::drawPanelShape(ImGui::GetWindowDrawList(), map.canvas, box, style);
+  }
+  return interaction.pressed;
+}
+
+// Page indicator plate used by the catalogue tabs: 88 x 34 dp above the two page buttons.
+bool drawPagePlate(const ScreenMap& map, int page, int pageCount) {
+  const int viewportWidth = static_cast<int>(std::lround(map.viewport.x));
+  const int viewportHeight = static_cast<int>(std::lround(map.viewport.y));
+  const int width = map.rpx(88.0F);
+  const int height = map.rpx(34.0F);
+  const int x1 = viewportWidth;
+  const int x0 = x1 - width;
+  const int y1 = viewportHeight - map.rpx(124.0F);
+  const int y0 = y1 - height;
+  ui::PanelStyle style = ui::glassPanel(ui::argb(kPageFill), ui::argb(kPageStroke));
+  style.strokeWidthDp = 1.0F;
+  style.straightRight = true;
+  const ui::Box box = map.box(static_cast<float>(x0), static_cast<float>(y0),
+      static_cast<float>(x1), static_cast<float>(y1));
+  const ui::Interaction interaction = ui::panelInteraction("##library_page", map.canvas, box,
+      style);
+  ui::drawPanelShape(ImGui::GetWindowDrawList(), map.canvas, box, style);
+  ui::TextStyle textStyle = labelStyle(16.0F, true, ui::argb(0xFFFFFFFFU), ui::HAlign::Center);
+  const std::string text = std::to_string(page + 1) + "/" + std::to_string(pageCount);
+  ui::drawLabel(ImGui::GetWindowDrawList(), map.canvas, box, text, textStyle, 0.0);
+  return interaction.pressed;
+}
+
+bool drawBackPlate(const ScreenMap& map, AppContext& context) {
+  const int x0 = 0;
+  const int y0 = map.rpx(8.0F);
+  const int x1 = map.rpx(78.0F);
+  const int y1 = y0 + map.rpx(48.0F);
+  ui::PanelStyle style = ui::glassPanel(ui::argb(kPlateFill), 0x00FFFFFFU);
+  style.strokeWidthDp = 0.0F;
+  style.straightLeft = true;
+  style.accentEdge = 2; // right edge
+  style.accent = ui::argb(0xFFFFFFFFU);
+  style.accentWidthDp = 3.2F;
+  const ui::Box box = map.box(static_cast<float>(x0), static_cast<float>(y0),
+      static_cast<float>(x1), static_cast<float>(y1));
+  const ui::Interaction interaction = ui::panelInteraction("##library_back", map.canvas, box,
+      style);
+  const std::uint64_t texture = assetTexture(context, "res/return.png", 96);
+  if (texture != 0) {
+    // The visible arrow is centred on the parallelogram's centroid, not its bounding box.
+    const float widthDp = 78.0F;
+    const float heightDp = 48.0F;
+    const float skewDp = std::min(heightDp * kSlope, widthDp * 0.42F);
+    const float imageSizeDp = std::min(widthDp - 32.0F, heightDp - 20.0F);
+    const float translateXDp = -skewDp * 0.25F + imageSizeDp * (0.5F - 87.337F / 200.0F);
+    ui::drawIconPlate(ImGui::GetWindowDrawList(), map.canvas, box, style, texture,
+        context.textures.width(texture), context.textures.height(texture), 16.0F, 10.0F,
+        translateXDp);
+  } else {
+    ui::drawPanelShape(ImGui::GetWindowDrawList(), map.canvas, box, style);
+  }
+  return interaction.pressed;
+}
+
+int drawTabStrip(const ScreenMap& map, AppContext& context) {
+  const int x0 = map.rpx(170.0F);
+  const int y0 = map.rpx(11.0F);
+  const int width = map.rpx(330.0F);
+  const int height = map.rpx(42.0F);
+  const ui::Box box = map.box(static_cast<float>(x0), static_cast<float>(y0),
+      static_cast<float>(x0 + width), static_cast<float>(y0 + height));
+  const RectInteraction interaction = rectInteraction("##library_tabs",
+      static_cast<float>(x0), static_cast<float>(y0), static_cast<float>(x0 + width),
+      static_cast<float>(y0 + height));
+  int clicked = -1;
+  if (interaction.pressed) {
+    clicked = ui::hitTabBar(map.canvas, box, ImGui::GetIO().MousePos,
+        static_cast<int>(std::size(kChartTabs)));
+  }
+  const ListState& current = state();
+  ui::TabBarStyle style;
+  style.labels = kChartTabs;
+  style.count = 3;
+  style.from = current.tabs.from;
+  style.to = current.tabs.to;
+  style.startSec = current.tabs.startSec;
+  ui::drawTabBar(ImGui::GetWindowDrawList(), map.canvas, box, style, context.nowSec);
   return clicked;
 }
 
-// The three chart tabs shown above the grid.
-const char* const kChartTabs[] = {"本地", "上架", "未上架"};
+bool drawSearchField(const ScreenMap& map, AppContext& context) {
+  const int viewportWidth = static_cast<int>(std::lround(map.viewport.x));
+  const int x1 = viewportWidth - map.rpx(98.0F);
+  const int x0 = x1 - map.rpx(172.0F);
+  const int y0 = map.rpx(14.0F);
+  const int y1 = y0 + map.rpx(36.0F);
+  ui::PanelStyle style = ui::rectPanel(ui::argb(kSearchFill), ui::argb(kSearchStroke));
+  style.strokeWidthDp = 1.0F;
+  const ui::Box box = map.box(static_cast<float>(x0), static_cast<float>(y0),
+      static_cast<float>(x1), static_cast<float>(y1));
+  const RectInteraction interaction = rectInteraction("##library_search",
+      static_cast<float>(x0), static_cast<float>(y0), static_cast<float>(x1),
+      static_cast<float>(y1));
+  ui::drawPanelShape(ImGui::GetWindowDrawList(), map.canvas, box, style);
+  ui::TextStyle textStyle = labelStyle(18.0F, true, ui::argb(0xFFFFFFFFU));
+  textStyle.paddingLeftDp = 18.0F;
+  textStyle.paddingRightDp = 14.0F;
+  const std::string text = context.searchQuery.empty() ? std::string("搜索曲名")
+                                                       : context.searchQuery;
+  ui::drawLabel(ImGui::GetWindowDrawList(), map.canvas, box, text, textStyle, context.nowSec);
+  return interaction.pressed;
+}
+
+// ---------------------------------------------------------------------------
+// Scrolling and card hits
+// ---------------------------------------------------------------------------
+
+void clampScroll(const GridGeometry& grid, int rows) {
+  ListState& current = state();
+  const int maxScroll = std::max(0, grid.contentHeight(rows) - grid.gridHeight());
+  current.grid.scroll = std::clamp(current.grid.scroll, 0, maxScroll);
+}
+
+// Handles wheel and drag scrolling plus the tap that selects or opens a card. Returns the
+// index of the card whose tap was released, or -1.
+int updateGridInput(const ScreenMap& map, const GridGeometry& grid, int rows,
+    const std::vector<const ChartRecord*>& visible) {
+  ListState& current = state();
+  ImGuiIO& io = ImGui::GetIO();
+  const int maxScroll = std::max(0, grid.contentHeight(rows) - grid.gridHeight());
+  const bool hovered = insideRect(static_cast<float>(grid.gridL), static_cast<float>(grid.gridT),
+      static_cast<float>(grid.gridR), static_cast<float>(grid.gridB), io.MousePos);
+
+  if (hovered && io.MouseWheel != 0.0F) {
+    current.grid.scroll -= static_cast<int>(std::lround(io.MouseWheel * map.px(80.0F)));
+  }
+  if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    current.grid.dragging = true;
+    current.grid.dragStart = io.MousePos;
+    current.grid.dragStartScroll = current.grid.scroll;
+    current.grid.dragDistance = 0.0F;
+  }
+  if (current.grid.dragging) {
+    const ImVec2 delta(io.MousePos.x - current.grid.dragStart.x,
+        io.MousePos.y - current.grid.dragStart.y);
+    current.grid.dragDistance = std::max(current.grid.dragDistance,
+        std::sqrt(delta.x * delta.x + delta.y * delta.y));
+    current.grid.scroll = current.grid.dragStartScroll
+        - static_cast<int>(std::lround(delta.y));
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      current.grid.dragging = false;
+    }
+  }
+  current.grid.scroll = std::clamp(current.grid.scroll, 0, maxScroll);
+  if (current.grid.dragging || current.grid.dragDistance > map.px(6.0F)) return -1;
+  if (!ImGui::IsMouseReleased(ImGuiMouseButton_Left)) return -1;
+  if (!insideRect(static_cast<float>(grid.gridL), static_cast<float>(grid.gridT),
+          static_cast<float>(grid.gridR), static_cast<float>(grid.gridB), io.MousePos)) {
+    return -1;
+  }
+  const int localX = static_cast<int>(std::lround(io.MousePos.x)) - grid.gridL;
+  const int localY = static_cast<int>(std::lround(io.MousePos.y)) - grid.gridT
+      + current.grid.scroll;
+  int column = -1;
+  for (int candidate = 0; candidate < kGridColumns; ++candidate) {
+    if (localX >= grid.borders[static_cast<std::size_t>(candidate)]
+        && localX < grid.borders[static_cast<std::size_t>(candidate) + 1]) {
+      column = candidate;
+      break;
+    }
+  }
+  if (column < 0) return -1;
+  const int row = localY / grid.rowHeight;
+  if (row < 0) return -1;
+  const int top = grid.cardTop(row, 0);
+  const int height = grid.cardHeight(column);
+  if (localY < top || localY >= top + height) return -1;
+  const int index = row * kGridColumns + column;
+  if (index < 0 || index >= static_cast<int>(visible.size())) return -1;
+  const int cardLeft = grid.cardLeft(column) - grid.gridL;
+  const int cardWidth = grid.cardWidth(column);
+  if (localX < cardLeft || localX >= cardLeft + cardWidth) return -1;
+  // The click was released this frame; consume the drag bookkeeping.
+  current.grid.dragDistance = 0.0F;
+  return index;
+}
+
+// ---------------------------------------------------------------------------
+// Dialogs
+// ---------------------------------------------------------------------------
+
+struct DialogButton {
+  const char* label;
+  bool primary;
+  int action; // 0 cancel, 1 neutral/clear, 2 confirm
+};
+
+void beginDialog(DialogState& dialog, DialogState::Kind kind, double nowSec) {
+  dialog.kind = kind;
+  dialog.openSec = nowSec;
+  dialog.focusPending = true;
+}
+
+void closeDialog(DialogState& dialog) {
+  dialog.kind = DialogState::Kind::None;
+  dialog.openSec = -1.0;
+  dialog.buffer[0] = '\0';
+}
+
+// Draws one of the reference dialogs: a slanted plate over a dimmed backdrop with a title,
+// a slanted input box and a black action strip along the bottom.
+void drawDialog(const ScreenMap& map, AppContext& context, int pageCount) {
+  ListState& current = state();
+  DialogState& dialog = current.dialog;
+  if (dialog.kind == DialogState::Kind::None) return;
+  ImDrawList* drawList = ImGui::GetWindowDrawList();
+  ImGuiIO& io = ImGui::GetIO();
+  const double nowSec = context.nowSec;
+  const bool justOpened = nowSec <= dialog.openSec;
+  const float eased = justOpened ? 0.0F
+                                 : ui::progress(dialog.openSec,
+                                       static_cast<float>(kDialogEnterSeconds),
+                                       ui::Interp::EaseOutCubic, nowSec);
+
+  const int viewportWidth = static_cast<int>(std::lround(map.viewport.x));
+  const int viewportHeight = static_cast<int>(std::lround(map.viewport.y));
+  // Panel width: 58% of the available width capped at 620 dp, never below 340 dp.
+  const int widthTarget = static_cast<int>(std::lround(
+      std::min(static_cast<float>(viewportWidth) * 0.58F, map.px(620.0F))));
+  const int widthMinimum = std::min(map.rpx(340.0F),
+      static_cast<int>(std::lround(static_cast<float>(viewportWidth) * 0.92F)));
+  const int panelWidth = std::max(widthMinimum, widthTarget);
+
+  const int padHorizontal = map.rpx(26.0F);
+  const int padTop = map.rpx(22.0F);
+  const int padBottom = map.rpx(16.0F);
+  const int stripHeight = map.rpx(52.0F);
+  const int accentWidth = map.rpx(3.0F);
+  const int titleBand = static_cast<int>(std::lround(lineHeightPixels(map, 22.0F)))
+      + map.rpx(2.0F);
+  const int ruleHeight = map.rpx(2.0F);
+  const int ruleTop = map.rpx(6.0F);
+  const int ruleBottom = map.rpx(12.0F);
+  const int inputHeight = std::max(map.rpx(48.0F),
+      static_cast<int>(std::lround(lineHeightPixels(map, 18.0F))) + map.rpx(10.0F) * 2);
+  const int inputTop = map.rpx(6.0F);
+  const int inputBottom = map.rpx(6.0F);
+  const int contentHeight = padTop + titleBand + ruleTop + ruleHeight + ruleBottom + inputTop
+      + inputHeight + inputBottom;
+  const int totalHeight = contentHeight + padBottom + stripHeight;
+  const float panelLeft = static_cast<float>((viewportWidth - panelWidth) / 2);
+  const float panelTop = static_cast<float>((viewportHeight - totalHeight) / 2);
+  const float centerX = panelLeft + static_cast<float>(panelWidth) * 0.5F;
+  const float centerY = panelTop + static_cast<float>(totalHeight) * 0.5F;
+  const float zoom = 0.65F + 0.35F * eased;
+  const float panelAlpha = eased;
+
+  const auto point = [&](float x, float y) {
+    return ImVec2(centerX + (x - centerX) * zoom, centerY + (y - centerY) * zoom);
+  };
+  const auto transformBox = [&](float x0, float y0, float x1, float y1) {
+    return map.box(centerX + (x0 - centerX) * zoom, centerY + (y0 - centerY) * zoom,
+        centerX + (x1 - centerX) * zoom, centerY + (y1 - centerY) * zoom);
+  };
+  const auto fadeColor = [&](std::uint32_t color) {
+    return ui::fade(ui::argb(color), panelAlpha);
+  };
+
+  // Dimmed backdrop behind the panel.
+  const int backdropAlpha = static_cast<int>(std::lround(0.5F * panelAlpha * 255.0F));
+  drawList->AddRectFilled(ImVec2(0.0F, 0.0F), ImVec2(map.viewport.x, map.viewport.y),
+      IM_COL32(0, 0, 0, std::clamp(backdropAlpha, 0, 255)));
+
+  const float slant = static_cast<float>(totalHeight) * kSlope;
+  const float stripSlant = static_cast<float>(stripHeight) * kSlope;
+  const float contentBottom = panelTop + static_cast<float>(contentHeight);
+  ImVec2 contentPoints[4];
+  contentPoints[0] = point(panelLeft + slant, panelTop);
+  contentPoints[1] = point(panelLeft + static_cast<float>(panelWidth), panelTop);
+  contentPoints[2] = point(panelLeft + static_cast<float>(panelWidth)
+          - static_cast<float>(contentHeight) * kSlope,
+      contentBottom);
+  contentPoints[3] = point(panelLeft + stripSlant, contentBottom);
+  drawList->AddConvexPolyFilled(contentPoints, 4, fadeColor(kDialogContent));
+
+  ImVec2 stripPoints[4];
+  stripPoints[0] = point(panelLeft + stripSlant, contentBottom);
+  stripPoints[1] = point(panelLeft + static_cast<float>(panelWidth)
+          - static_cast<float>(contentHeight) * kSlope,
+      contentBottom);
+  stripPoints[2] = point(panelLeft + static_cast<float>(panelWidth) - slant,
+      panelTop + static_cast<float>(totalHeight));
+  stripPoints[3] = point(panelLeft, panelTop + static_cast<float>(totalHeight));
+  drawList->AddConvexPolyFilled(stripPoints, 4, fadeColor(kDialogStrip));
+
+  ImVec2 accentPoints[4];
+  accentPoints[0] = point(panelLeft + slant, panelTop);
+  accentPoints[1] = point(panelLeft + slant + static_cast<float>(accentWidth), panelTop);
+  accentPoints[2] = point(panelLeft + stripSlant + static_cast<float>(accentWidth), contentBottom);
+  accentPoints[3] = point(panelLeft + stripSlant, contentBottom);
+  drawList->AddConvexPolyFilled(accentPoints, 4, fadeColor(0xFFFFFFFFU));
+
+  // Content rows follow the slanted left edge, shifted by their own centre height.
+  const float contentLeft = panelLeft + static_cast<float>(std::lround(stripSlant))
+      + static_cast<float>(padHorizontal);
+  const float contentWidth = std::max(1.0F, static_cast<float>(panelWidth)
+          - static_cast<float>(std::lround(slant)) - static_cast<float>(padHorizontal) * 2.0F);
+  const auto rowShift = [&](float rowTop, float rowHeight) {
+    const float center = static_cast<float>(padTop) + rowTop + rowHeight * 0.5F;
+    return static_cast<float>(std::lround((static_cast<float>(contentHeight) - center) * kSlope));
+  };
+  const auto textSize = [&](float sizeDp) { return sizeDp * zoom; };
+
+  // Title.
+  {
+    const float shift = rowShift(0.0F, static_cast<float>(titleBand));
+    const ui::Box box = transformBox(contentLeft + shift, panelTop + static_cast<float>(padTop),
+        contentLeft + shift + contentWidth,
+        panelTop + static_cast<float>(padTop + titleBand));
+    ui::TextStyle style = labelStyle(textSize(22.0F), false, fadeColor(0xFFFFFFFFU));
+    style.color = fadeColor(0xFFFFFFFFU);
+    ui::drawLabel(drawList, map.canvas, box,
+        dialog.kind == DialogState::Kind::Search ? "搜索曲名" : "跳转页号", style, nowSec);
+  }
+  // Rule under the title.
+  {
+    const float shift = rowShift(static_cast<float>(titleBand + ruleTop),
+        static_cast<float>(ruleHeight));
+    const float ruleY = panelTop + static_cast<float>(padTop + titleBand + ruleTop);
+    const ImVec2 min(centerX + (contentLeft + shift - centerX) * zoom,
+        centerY + (ruleY - centerY) * zoom);
+    const ImVec2 max(centerX + (contentLeft + shift + map.px(44.0F) - centerX) * zoom,
+        centerY + (ruleY + static_cast<float>(ruleHeight) - centerY) * zoom);
+    drawList->AddRectFilled(min, max, fadeColor(0x99FFFFFFU));
+  }
+
+  // Slanted input box with a bright underline.
+  const float inputTopY = panelTop + static_cast<float>(padTop + titleBand + ruleTop + ruleHeight
+      + ruleBottom + inputTop);
+  float inputShift = 0.0F;
+  {
+    const float shift = rowShift(static_cast<float>(padTop + titleBand + ruleTop + ruleHeight
+                                    + ruleBottom + inputTop),
+        static_cast<float>(inputHeight));
+    inputShift = shift;
+    const float left = contentLeft + shift;
+    const float right = left + contentWidth;
+    const float inputSlant = static_cast<float>(inputHeight) * kSlope;
+    ImVec2 points[4];
+    points[0] = point(left + inputSlant, inputTopY);
+    points[1] = point(right, inputTopY);
+    points[2] = point(right - inputSlant, inputTopY + static_cast<float>(inputHeight));
+    points[3] = point(left, inputTopY + static_cast<float>(inputHeight));
+    drawList->AddConvexPolyFilled(points, 4, fadeColor(0x24FFFFFFU));
+    const float lineHeight = std::max(1.0F, static_cast<float>(inputHeight) * 0.045F);
+    ImVec2 linePoints[4];
+    linePoints[0] = point(left, inputTopY + static_cast<float>(inputHeight) - lineHeight);
+    linePoints[1] = point(right - inputSlant, inputTopY + static_cast<float>(inputHeight)
+            - lineHeight);
+    linePoints[2] = point(right - inputSlant, inputTopY + static_cast<float>(inputHeight));
+    linePoints[3] = point(left, inputTopY + static_cast<float>(inputHeight));
+    drawList->AddConvexPolyFilled(linePoints, 4, fadeColor(0xCCFFFFFFU));
+
+    // Editable text: a transparent ImGui input handles typing while the label below
+    // renders the value with the interface glyph rasteriser.
+    const float textPadX = map.px(36.0F);
+    const float textPadY = map.px(18.0F);
+    const ImVec2 inputMin(centerX + (left + textPadX - centerX) * zoom,
+        centerY + (inputTopY + (static_cast<float>(inputHeight) - lineHeight
+                          - (static_cast<float>(inputHeight) - 2.0F * textPadY)) * 0.5F
+                      - centerY) * zoom);
+    ImGui::SetCursorScreenPos(inputMin);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.0F, 0.0F, 0.0F, 0.0F));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.0F, 0.0F, 0.0F, 0.0F));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.0F, 0.0F, 0.0F, 0.0F));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0F, 0.0F, 0.0F, 0.0F));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.0F, 0.0F, 0.0F, 0.0F));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0F, 0.0F));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0F);
+    if (dialog.focusPending) {
+      ImGui::SetKeyboardFocusHere();
+      dialog.focusPending = false;
+    }
+    ImGui::SetNextItemWidth(static_cast<float>(contentWidth) * zoom - textPadX * 2.0F);
+    const ImGuiInputTextFlags flags = dialog.kind == DialogState::Kind::PageJump
+        ? ImGuiInputTextFlags_CharsDecimal
+        : ImGuiInputTextFlags_None;
+    ImGui::InputText("##library_dialog_input", dialog.buffer, sizeof(dialog.buffer), flags);
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(5);
+
+    ui::TextStyle inputStyle = labelStyle(textSize(18.0F), true, fadeColor(0xFFFFFFFFU));
+    inputStyle.paddingLeftDp = 20.0F;
+    inputStyle.paddingRightDp = 20.0F;
+    if (dialog.buffer[0] == '\0') {
+      inputStyle.color = fadeColor(0x80FFFFFFU);
+      ui::drawLabel(drawList, map.canvas,
+          transformBox(left + textPadX, inputTopY + textPadY, right - textPadX,
+              inputTopY + static_cast<float>(inputHeight) - textPadY),
+          "输入曲名", inputStyle, nowSec);
+    } else {
+      ui::drawLabel(drawList, map.canvas,
+          transformBox(left + textPadX, inputTopY + textPadY, right - textPadX,
+              inputTopY + static_cast<float>(inputHeight) - textPadY),
+          dialog.buffer, inputStyle, nowSec);
+    }
+  }
+
+  // Action strip buttons.
+  std::array<DialogButton, 3> buttons{};
+  int buttonCount = 0;
+  if (dialog.kind == DialogState::Kind::Search) {
+    buttons[0] = DialogButton{"取消", false, 0};
+    buttons[1] = DialogButton{"显示全部", false, 1};
+    buttons[2] = DialogButton{"搜索", true, 2};
+    buttonCount = 3;
+  } else {
+    buttons[0] = DialogButton{"取消", false, 0};
+    buttons[1] = DialogButton{"确定", true, 2};
+    buttonCount = 2;
+  }
+  const float stripBase = static_cast<float>(panelWidth) - slant;
+  const float step = stripBase / static_cast<float>(buttonCount);
+  const float cellWidth = static_cast<float>(std::lround(stripBase / static_cast<float>(
+      buttonCount)))
+      + stripSlant + 1.0F;
+  const float labelPad = stripSlant + map.px(22.0F);
+  int pressedButton = -1;
+  const bool interactionsAllowed = !justOpened && eased > 0.0F;
+  for (int index = 0; index < buttonCount; ++index) {
+    const float cellLeft = panelLeft + static_cast<float>(std::lround(static_cast<float>(index)
+        * (stripBase / static_cast<float>(buttonCount))));
+    const float cellTop = contentBottom;
+    const float cellRight = cellLeft + cellWidth;
+    const float cellBottom = cellTop + static_cast<float>(stripHeight);
+    bool hovered = false;
+    if (interactionsAllowed) {
+      hovered = insideRect(centerX + (cellLeft - centerX) * zoom,
+          centerY + (cellTop - centerY) * zoom, centerX + (cellRight - centerX) * zoom,
+          centerY + (cellBottom - centerY) * zoom, io.MousePos);
+      if (hovered && io.MouseDown[0]) {
+        ImVec2 points[4];
+        points[0] = point(cellLeft + stripSlant, cellTop);
+        points[1] = point(cellRight, cellTop);
+        points[2] = point(cellRight - stripSlant, cellBottom);
+        points[3] = point(cellLeft, cellBottom);
+        drawList->AddConvexPolyFilled(points, 4, fadeColor(0x33FFFFFFU));
+      }
+      if (hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) pressedButton = index;
+    }
+    ui::HAlign align = ui::HAlign::Center;
+    if (buttonCount == 1) {
+      align = ui::HAlign::Center;
+    } else if (index == 0) {
+      align = ui::HAlign::Left;
+    } else if (index == buttonCount - 1) {
+      align = ui::HAlign::Right;
+    }
+    ui::TextStyle style = labelStyle(textSize(18.0F), false,
+        fadeColor(buttons[static_cast<std::size_t>(index)].primary ? 0xFFFFFFFFU
+                                                                   : 0xD9FFFFFFU),
+        align);
+    style.fitWidth = true;
+    const float textLeft = centerX
+        + (cellLeft + labelPad - centerX) * zoom;
+    const float textRight = centerX
+        + (cellRight - labelPad - centerX) * zoom;
+    const ui::Box box = map.box(textLeft, centerY + (cellTop - centerY) * zoom, textRight,
+        centerY + (cellBottom - centerY) * zoom);
+    ui::drawLabel(drawList, map.canvas, box,
+        buttons[static_cast<std::size_t>(index)].label, style, nowSec);
+  }
+
+  if (!interactionsAllowed) return;
+  bool cancelRequested = false;
+  if (pressedButton >= 0) {
+    const DialogButton& button = buttons[static_cast<std::size_t>(pressedButton)];
+    if (button.action == 0) {
+      cancelRequested = true;
+    } else if (button.action == 1) {
+      context.searchQuery.clear();
+      current.grid.scroll = 0;
+      current.onlinePage = 0;
+      cancelRequested = true;
+    } else {
+      if (dialog.kind == DialogState::Kind::Search) {
+        std::string query = dialog.buffer;
+        while (!query.empty() && std::isspace(static_cast<unsigned char>(query.front()))) {
+          query.erase(query.begin());
+        }
+        while (!query.empty() && std::isspace(static_cast<unsigned char>(query.back()))) {
+          query.pop_back();
+        }
+        context.searchQuery = query;
+        current.grid.scroll = 0;
+        current.onlinePage = 0;
+      } else {
+        const int target = std::atoi(dialog.buffer);
+        current.onlinePage = std::clamp(target - 1, 0, std::max(0, pageCount - 1));
+        current.grid.scroll = 0;
+      }
+      cancelRequested = true;
+    }
+  }
+  if (!cancelRequested) {
+    // A tap outside the panel dismisses the dialog, like the reference modal.
+    const bool outside = !insideRect(
+        centerX + (panelLeft - centerX) * zoom, centerY + (panelTop - centerY) * zoom,
+        centerX + (panelLeft + static_cast<float>(panelWidth) - centerX) * zoom,
+        centerY + (panelTop + static_cast<float>(totalHeight) - centerY) * zoom, io.MousePos);
+    if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) && outside) cancelRequested = true;
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) cancelRequested = true;
+  }
+  if (cancelRequested) closeDialog(dialog);
+  (void)inputShift;
+}
 
 } // namespace
 
+// ---------------------------------------------------------------------------
+// Screen entry point
+// ---------------------------------------------------------------------------
+
 void drawLibraryScreen(AppContext& context) {
-  const auto size = viewportSize();
-  const float scale = layoutScale();
+  const ScreenMap map = ScreenMap::current();
+  ListState& current = state();
+  const double nowSec = context.nowSec;
+  // A large gap between draws means the screen was left and re-entered; drop transient UI.
+  if (current.lastDrawSec >= 0.0 && nowSec - current.lastDrawSec > kReentryGuardSeconds) {
+    current.dialog = DialogState{};
+    current.grid = GridState{};
+    current.onlinePage = 0;
+  }
+  current.lastDrawSec = nowSec;
+
   ui::beginFullscreenWindow("##library");
   ImDrawList* drawList = ImGui::GetWindowDrawList();
-  ui::drawBackdrop(drawList, ImVec2(size.width, size.height), context.nowSec);
+  ui::drawBackdrop(drawList, ImVec2(map.viewport.x, map.viewport.y), nowSec);
 
-  // Everything is laid out on one design canvas so the proportions hold
-  // at any window size.
-  const ui::DesignCanvas canvas = ui::designCanvas(ImVec2(size.width, size.height),
-      ui::kListCanvasWidth, ui::kListCanvasHeight);
-  const float unit = canvas.scale;
-  const auto point = [&](float x, float y) { return ui::canvasPoint(canvas, x, y); };
-
-  // Back control in the top-left corner.
-  {
-    const ImVec2 topLeft = point(0.0F, kBackTop);
-    if (ui::cornerButton("##library_back", topLeft, ImVec2(kBackWidth * unit, kBackHeight * unit),
-            true, assetTexture(context, "res/return.png", 96), nullptr, 20.0F * unit, "返回")) {
-      navigateTo(context, Screen::Home);
-    }
-  }
-
-  // Tab strip: local charts first, then the two catalogue tabs.
   context.libraryTab = std::clamp(context.libraryTab, 0, 2);
-  const float tabProgress = g_chartTabAnimation.progress(context.nowSec);
-  const int previousTab = g_chartTabAnimation.from;
-  const int pressedTab = ui::tabStrip("##library_tabs", point(kTabsLeft, kTabsTop),
-      kTabsWidth * unit, kTabsHeight * unit, context.libraryTab, previousTab, tabProgress,
-      kChartTabs, 3, 18.0F * unit);
-  if (pressedTab >= 0 && pressedTab != context.libraryTab) {
-    g_chartTabAnimation.begin(pressedTab, context.nowSec);
-    context.libraryTab = pressedTab;
+  if (context.libraryTab != current.tabs.to) {
+    current.tabs.from = context.libraryTab;
+    current.tabs.to = context.libraryTab;
+    current.tabs.startSec = 0.0;
+    current.grid = GridState{};
+  }
+  const bool localTab = context.libraryTab == 0;
+  if (!localTab) {
     context.manageMode = false;
+    context.selectedIds.clear();
+  } else if (!context.manageMode) {
     context.selectedIds.clear();
   }
 
-  // Search field on the right of the tab row.
-  {
-    const ImVec2 topLeft = point(ui::kListCanvasWidth - kPanelRight - ui::kSearchWidth, kSearchTop);
-    const ImVec2 fieldSize(ui::kSearchWidth * unit, ui::kSearchHeight * unit);
-    ImGui::SetCursorScreenPos(topLeft);
-    const bool clicked = ImGui::InvisibleButton("##library_search", fieldSize);
-    const bool hovered = ImGui::IsItemHovered();
-    ui::roundedRect(drawList, topLeft,
-        ImVec2(topLeft.x + fieldSize.x, topLeft.y + fieldSize.y), ui::kCardRadius * unit,
-        hovered ? ui::rgba(0xB8E7EBF0U) : ui::rgba(0x9DE7EBF0U));
-    const std::string label = context.searchQuery.empty() ? "搜索曲名" : context.searchQuery;
-    ui::drawClippedText(drawList,
-        ImVec2(topLeft.x + 14.0F * unit, topLeft.y + (fieldSize.y - 16.0F * unit) * 0.5F),
-        topLeft, ImVec2(topLeft.x + fieldSize.x, topLeft.y + fieldSize.y), 16.0F * unit,
-        ui::rgba(ui::kTextPrimary), ui::ellipsize(label, 16.0F * unit, fieldSize.x - 24.0F * unit));
-    if (clicked) ImGui::OpenPopup("##search_popup");
+  const bool dialogOpen = current.dialog.kind != DialogState::Kind::None;
+  const bool interactive = !dialogOpen;
+  const GridGeometry grid = computeGrid(map);
+  const int viewportWidth = static_cast<int>(std::lround(map.viewport.x));
+  const int viewportHeight = static_cast<int>(std::lround(map.viewport.y));
+  if (std::getenv("RECHIGROS_LIBRARY_DEBUG") != nullptr) {
+    static int debugFrame = 0;
+    if (++debugFrame == 2) {
+      std::fprintf(stderr,
+          "LIBDBG viewport=%.2fx%.2f origin=%.3f,%.3f scale=%.6f panelL=%d panelR=%d gridL=%d"
+          " gridR=%d borders=%d,%d,%d,%d,%d margins=%d rowH=%d rpx98=%d rpx72=%d rpx8=%d\n",
+          map.viewport.x, map.viewport.y, map.origin.x, map.origin.y, map.scale, grid.panelL,
+          grid.panelR, grid.gridL, grid.gridR, grid.borders[0], grid.borders[1], grid.borders[2],
+          grid.borders[3], grid.borders[4], grid.margins, grid.rowHeight, map.rpx(98.0F),
+          map.rpx(72.0F), map.rpx(8.0F));
+    }
   }
 
-  // Scroll panel holding the card grid.
-  const ImVec2 panelTopLeft = point(kPanelLeft, kPanelTop);
-  const ImVec2 panelBottomRight = point(ui::kListCanvasWidth - kPanelRight,
-      ui::kListCanvasHeight - kPanelBottom);
-  drawList->AddRectFilled(panelTopLeft, panelBottomRight, ui::rgba(ui::kListPanel));
+  // List panel.
+  drawList->AddRectFilled(ImVec2(static_cast<float>(grid.panelL), static_cast<float>(grid.panelT)),
+      ImVec2(static_cast<float>(grid.panelR), static_cast<float>(grid.panelB)),
+      ui::argb(kPanelFill));
 
-  const float panelWidth = panelBottomRight.x - panelTopLeft.x;
-  const float panelHeight = panelBottomRight.y - panelTopLeft.y;
-  ImGui::SetCursorScreenPos(panelTopLeft);
-  ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0F, 0.0F, 0.0F, 0.0F));
-  ImGui::BeginChild("##library_grid", ImVec2(panelWidth, panelHeight), false,
-      ImGuiWindowFlags_NoBackground);
-  const ImVec2 gridOrigin = ImGui::GetCursorScreenPos();
-
-  const float gridInset = kGridInset * unit;
-  const float cardMargin = kCardMargin * unit;
-  const float columnWidth = (panelWidth - gridInset * 2.0F) / static_cast<float>(kGridColumns);
-  const float cardWidth = columnWidth - cardMargin * 2.0F;
-  const float cardHeight = ui::coverHeightFor(cardWidth);
-  const float rowHeight = cardHeight + cardMargin * 2.0F;
-
-  if (context.libraryTab == 0) {
-    std::vector<const ChartRecord*> visible;
+  // Records shown by the current tab. The catalogue tabs have no network content in this
+  // port and deliberately stay empty; their page controls still match the reference.
+  std::vector<const ChartRecord*> visible;
+  if (localTab) {
     for (const auto& record : context.library.records()) {
       if (matchesSearch(record, context.searchQuery)) visible.push_back(&record);
     }
-    const int rows = static_cast<int>((visible.size() + static_cast<std::size_t>(kGridColumns)
-        - 1) / static_cast<std::size_t>(kGridColumns));
-    const float contentHeight = static_cast<float>(std::max(0, rows)) * rowHeight;
-    ImGui::Dummy(ImVec2(panelWidth - gridInset * 2.0F, std::max(contentHeight, 1.0F)));
-    for (std::size_t index = 0; index < visible.size(); ++index) {
-      const int row = static_cast<int>(index) / kGridColumns;
-      const int column = static_cast<int>(index) % kGridColumns;
-      const ImVec2 cardTopLeft(gridOrigin.x + gridInset + static_cast<float>(column) * columnWidth
-              + cardMargin,
-          gridOrigin.y + gridInset + static_cast<float>(row) * rowHeight + cardMargin);
-      const bool selected = std::find(context.selectedIds.begin(), context.selectedIds.end(),
-                                  visible[index]->id)
-          != context.selectedIds.end();
-      drawChartCard(context, *visible[index], cardTopLeft, cardWidth, cardHeight, unit, selected,
-          context.manageMode, context.nowSec);
-    }
-    if (visible.empty()) {
-      ui::drawTextCentered(drawList, ImVec2(gridOrigin.x + panelWidth * 0.5F,
-                                  gridOrigin.y + panelHeight * 0.42F),
-          kStateTextSize * unit, ui::rgba(ui::kTextPrimary),
-          context.searchQuery.empty() ? "本地暂无谱面" : "没有匹配的谱面");
-    }
-    // Selection counter, shown only while managing.
-    if (context.manageMode && !visible.empty()) {
-      const std::string state = "已选择 " + std::to_string(context.selectedIds.size()) + " / "
-          + std::to_string(visible.size());
-      ui::drawTextCentered(drawList, ImVec2(size.width * 0.5F, point(0.0F, 64.0F).y),
-          13.0F * unit, ui::rgba(ui::kTextPrimary), state.c_str());
-    }
-  } else {
-    ui::drawTextCentered(drawList, ImVec2(gridOrigin.x + panelWidth * 0.5F,
-                                gridOrigin.y + panelHeight * 0.42F),
-        kStateTextSize * unit, ui::rgba(ui::kTextPrimary),
-        context.libraryTab == 1 ? "暂无上架谱面" : "暂无未上架谱面");
   }
-  ImGui::EndChild();
-  ImGui::PopStyleColor();
+  const int onlinePageCount = std::max(1,
+      static_cast<int>((visible.size() + static_cast<std::size_t>(kOnlinePageSize) - 1)
+          / static_cast<std::size_t>(kOnlinePageSize)));
+  current.onlinePage = std::clamp(current.onlinePage, 0, onlinePageCount - 1);
 
-  // Vertical icon column in the bottom-right corner.
-  const auto sideIcon = [&](const char* id, const char* asset, float bottomOffset,
-                            const char* tooltip) {
-    const ImVec2 topLeft = point(ui::kListCanvasWidth - kBackWidth,
-        ui::kListCanvasHeight - bottomOffset - kBackHeight - 8.0F);
-    return ui::cornerButton(id, topLeft, ImVec2(kBackWidth * unit, kBackHeight * unit), false,
-        assetTexture(context, asset, 96), nullptr, 18.0F * unit, tooltip);
-  };
+  const int rows = localTab
+      ? static_cast<int>((visible.size() + static_cast<std::size_t>(kGridColumns) - 1)
+          / static_cast<std::size_t>(kGridColumns))
+      : 0;
+  if (!interactive) {
+    // Keep the scroll inside the content while a dialog is up.
+  }
+  clampScroll(grid, rows);
+  int clickedCard = -1;
+  if (interactive) {
+    clickedCard = updateGridInput(map, grid, rows, visible);
+  }
 
-  if (context.libraryTab == 0) {
-    if (!context.manageMode) {
-      if (sideIcon("##library_manage", "res/edit.png", 58.0F, "管理")) {
-        context.manageMode = true;
-        context.selectedIds.clear();
-      }
-      if (sideIcon("##library_import", "res/import.png", 0.0F, "导入谱面包")) {
-        ImGui::OpenPopup("##import_popup");
+  // Card grid, clipped to the scroll viewport.
+  drawList->PushClipRect(ImVec2(static_cast<float>(grid.gridL), static_cast<float>(grid.gridT)),
+      ImVec2(static_cast<float>(grid.gridR), static_cast<float>(grid.gridB)), true);
+  for (std::size_t index = 0; index < visible.size(); ++index) {
+    const int column = static_cast<int>(index) % kGridColumns;
+    const int row = static_cast<int>(index) / kGridColumns;
+    const int x0 = grid.cardLeft(column);
+    const int x1 = grid.cardRight(column);
+    const int y0 = grid.cardTop(row, current.grid.scroll);
+    const int y1 = y0 + grid.cardHeight(column);
+    if (y1 < grid.gridT || y0 > grid.gridB) continue;
+    const auto selected = std::find(context.selectedIds.begin(), context.selectedIds.end(),
+                                visible[index]->id)
+        != context.selectedIds.end();
+    drawChartCard(map, context, *visible[index], x0, y0, x1, y1, context.manageMode, selected,
+        nowSec);
+  }
+  drawList->PopClipRect();
+
+  // Empty / loading state inside the panel.
+  if (!localTab || visible.empty()) {
+    const std::string stateText = localTab ? std::string("本地暂无谱面") : std::string("暂无谱面");
+    const ui::Box stateBox = map.box(static_cast<float>(grid.panelL),
+        static_cast<float>(grid.panelT + map.rpx(26.0F)),
+        static_cast<float>(grid.panelR),
+        static_cast<float>(grid.panelT + map.rpx(26.0F) + map.rpx(34.0F)));
+    ui::TextStyle stateStyle = labelStyle(18.0F, true, ui::argb(kStateText),
+        ui::HAlign::Center);
+    ui::drawLabel(drawList, map.canvas, stateBox, stateText, stateStyle, nowSec);
+  }
+
+  // Manage-mode selection counter at the top centre of the screen.
+  if (localTab && context.manageMode && !visible.empty()) {
+    const int labelWidth = map.rpx(260.0F);
+    const int labelHeight = map.rpx(22.0F);
+    const int labelX = (viewportWidth - labelWidth) / 2;
+    const int labelY = map.rpx(64.0F);
+    const std::string text = "已选择 " + std::to_string(context.selectedIds.size()) + " / "
+        + std::to_string(visible.size());
+    ui::TextStyle style = labelStyle(13.0F, true, ui::argb(kStateText), ui::HAlign::Center);
+    ui::drawLabel(drawList, map.canvas,
+        map.box(static_cast<float>(labelX), static_cast<float>(labelY),
+            static_cast<float>(labelX + labelWidth), static_cast<float>(labelY + labelHeight)),
+        text, style, nowSec);
+  }
+
+  // Top bar: back plate, tab strip and search field.
+  bool backPressed = false;
+  int clickedTab = -1;
+  bool searchPressed = false;
+  if (interactive) {
+    backPressed = drawBackPlate(map, context);
+    clickedTab = drawTabStrip(map, context);
+    searchPressed = drawSearchField(map, context);
+  } else {
+    // Keep the visuals identical while a dialog covers the screen.
+    const ListState saved = current;
+    (void)saved;
+    const int backX1 = map.rpx(78.0F);
+    const int backY0 = map.rpx(8.0F);
+    ui::PanelStyle backStyle = ui::glassPanel(ui::argb(kPlateFill), 0x00FFFFFFU);
+    backStyle.strokeWidthDp = 0.0F;
+    backStyle.straightLeft = true;
+    backStyle.accentEdge = 2;
+    backStyle.accent = ui::argb(0xFFFFFFFFU);
+    backStyle.accentWidthDp = 3.2F;
+    const ui::Box backBox = map.box(0.0F, static_cast<float>(backY0),
+        static_cast<float>(backX1), static_cast<float>(backY0 + map.rpx(48.0F)));
+    const std::uint64_t backTexture = assetTexture(context, "res/return.png", 96);
+    if (backTexture != 0) {
+      const float widthDp = 78.0F;
+      const float heightDp = 48.0F;
+      const float skewDp = std::min(heightDp * kSlope, widthDp * 0.42F);
+      const float imageSizeDp = std::min(widthDp - 32.0F, heightDp - 20.0F);
+      const float translateXDp = -skewDp * 0.25F + imageSizeDp * (0.5F - 87.337F / 200.0F);
+      ui::drawIconPlate(drawList, map.canvas, backBox, backStyle, backTexture,
+          context.textures.width(backTexture), context.textures.height(backTexture), 16.0F, 10.0F,
+          translateXDp);
+    } else {
+      ui::drawPanelShape(drawList, map.canvas, backBox, backStyle);
+    }
+    ui::TabBarStyle tabs;
+    tabs.labels = kChartTabs;
+    tabs.count = 3;
+    tabs.from = current.tabs.from;
+    tabs.to = current.tabs.to;
+    tabs.startSec = current.tabs.startSec;
+    const int tabsX = map.rpx(170.0F);
+    const int tabsY = map.rpx(11.0F);
+    ui::drawTabBar(drawList, map.canvas,
+        map.box(static_cast<float>(tabsX), static_cast<float>(tabsY),
+            static_cast<float>(tabsX + map.rpx(330.0F)),
+            static_cast<float>(tabsY + map.rpx(42.0F))),
+        tabs, nowSec);
+    const int searchX1 = viewportWidth - map.rpx(98.0F);
+    const int searchX0 = searchX1 - map.rpx(172.0F);
+    const int searchY0 = map.rpx(14.0F);
+    ui::PanelStyle searchStyle = ui::rectPanel(ui::argb(kSearchFill), ui::argb(kSearchStroke));
+    searchStyle.strokeWidthDp = 1.0F;
+    const ui::Box searchBox = map.box(static_cast<float>(searchX0),
+        static_cast<float>(searchY0), static_cast<float>(searchX1),
+        static_cast<float>(searchY0 + map.rpx(36.0F)));
+    ui::drawPanelShape(drawList, map.canvas, searchBox, searchStyle);
+    ui::TextStyle searchText = labelStyle(18.0F, true, ui::argb(0xFFFFFFFFU));
+    searchText.paddingLeftDp = 18.0F;
+    searchText.paddingRightDp = 14.0F;
+    const std::string fieldText = context.searchQuery.empty() ? std::string("搜索曲名")
+                                                              : context.searchQuery;
+    ui::drawLabel(drawList, map.canvas, searchBox, fieldText, searchText, nowSec);
+  }
+
+  // Bottom-right action plates.
+  bool importPressed = false;
+  bool managePressed = false;
+  bool deletePressed = false;
+  bool selectAllPressed = false;
+  bool cancelManagePressed = false;
+  bool refreshPressed = false;
+  bool pagePressed = false;
+  if (interactive) {
+    if (localTab) {
+      if (!context.manageMode) {
+        managePressed = drawSidePlate(map, context, "##library_manage", "res/edit.png", 0, 58,
+            false, 1);
+        importPressed = drawSidePlate(map, context, "##library_import", "res/import.png", 0, 0,
+            false, 1);
+      } else {
+        deletePressed = drawSidePlate(map, context, "##library_delete", "res/delete.png", 0, 116,
+            false, 1);
+        selectAllPressed = drawSidePlate(map, context, "##library_select_all", "res/all.png", 0,
+            58, false, 1);
+        cancelManagePressed = drawSidePlate(map, context, "##library_cancel", "res/cancel.png", 0,
+            0, false, 1);
       }
     } else {
-      if (sideIcon("##library_delete", "res/delete.png", 116.0F, "删除选中")) {
-        if (context.selectedIds.empty()) {
-          notify(context, "未选择谱面");
-        } else {
-          ImGui::OpenPopup("##delete_popup");
-        }
-      }
-      if (sideIcon("##library_select_all", "res/all.png", 58.0F, "全选")) {
-        std::vector<std::string> visibleIds;
-        for (const auto& record : context.library.records()) {
-          if (matchesSearch(record, context.searchQuery)) visibleIds.push_back(record.id);
-        }
-        if (context.selectedIds.size() >= visibleIds.size()) {
-          context.selectedIds.clear();
-        } else {
-          context.selectedIds = std::move(visibleIds);
-        }
-      }
-      if (sideIcon("##library_cancel_manage", "res/cancel.png", 0.0F, "取消")) {
-        context.manageMode = false;
-        context.selectedIds.clear();
-      }
+      refreshPressed = drawSidePlate(map, context, "##library_refresh", "res/refresh.png", 0, 8,
+          true, 1);
+      // Page navigation: next above the indicator, previous below it.
+      (void)drawSidePlate(map, context, "##library_next", "res/next.png", 0, 58, false, 1);
+      pagePressed = drawPagePlate(map, current.onlinePage, onlinePageCount);
+      (void)drawSidePlate(map, context, "##library_last", "res/last.png", 0, 0, false, 1);
     }
+  } else if (localTab) {
+    if (!context.manageMode) {
+      drawSidePlate(map, context, "##library_manage", "res/edit.png", 0, 58, false, 1);
+      drawSidePlate(map, context, "##library_import", "res/import.png", 0, 0, false, 1);
+    } else {
+      drawSidePlate(map, context, "##library_delete", "res/delete.png", 0, 116, false, 1);
+      drawSidePlate(map, context, "##library_select_all", "res/all.png", 0, 58, false, 1);
+      drawSidePlate(map, context, "##library_cancel", "res/cancel.png", 0, 0, false, 1);
+    }
+  } else {
+    drawSidePlate(map, context, "##library_refresh", "res/refresh.png", 0, 8, true, 1);
+    drawSidePlate(map, context, "##library_next", "res/next.png", 0, 58, false, 1);
+    drawPagePlate(map, current.onlinePage, onlinePageCount);
+    drawSidePlate(map, context, "##library_last", "res/last.png", 0, 0, false, 1);
   }
 
-  // Search dialog.
-  ImGui::SetNextWindowSize(ImVec2(380.0F * scale, 0.0F), ImGuiCond_Appearing);
-  ImGui::SetNextWindowPos(ImVec2(size.width * 0.5F, size.height * 0.4F), ImGuiCond_Appearing,
-      ImVec2(0.5F, 0.5F));
-  if (ImGui::BeginPopupModal("##search_popup", nullptr,
-          ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
-    ImGui::SetWindowFontScale(scale);
-    ImGui::TextUnformatted("搜索曲名");
-    static char buffer[160] = {};
-    if (ImGui::IsWindowAppearing()) {
-      std::snprintf(buffer, sizeof(buffer), "%s", context.searchQuery.c_str());
-    }
-    ImGui::SetNextItemWidth(340.0F * scale);
-    if (ImGui::InputText("##search_text", buffer, sizeof(buffer))) {
-      context.searchQuery = buffer;
-    }
-    if (ImGui::Button("确定", ImVec2(120.0F * scale, 36.0F * scale))) {
-      context.searchQuery = buffer;
-      ImGui::CloseCurrentPopup();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("清除", ImVec2(120.0F * scale, 36.0F * scale))) {
-      context.searchQuery.clear();
-      buffer[0] = '\0';
-      ImGui::CloseCurrentPopup();
-    }
-    ImGui::EndPopup();
+  // Modal dialogs and the library import/delete confirmations.
+  if (dialogOpen) {
+    drawDialog(map, context, onlinePageCount);
   }
 
-  // Import dialog: the archive path is typed or dropped onto the window.
-  ImGui::SetNextWindowSize(ImVec2(520.0F * scale, 0.0F), ImGuiCond_Appearing);
-  ImGui::SetNextWindowPos(ImVec2(size.width * 0.5F, size.height * 0.45F), ImGuiCond_Appearing,
-      ImVec2(0.5F, 0.5F));
+  // Import dialog: the archive path is typed or picked through the platform dialog.
+  ImGui::SetNextWindowSize(ImVec2(520.0F * map.scale, 0.0F), ImGuiCond_Appearing);
+  ImGui::SetNextWindowPos(ImVec2(map.viewport.x * 0.5F, map.viewport.y * 0.45F),
+      ImGuiCond_Appearing, ImVec2(0.5F, 0.5F));
   if (ImGui::BeginPopupModal("##import_popup", nullptr,
           ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
-    ImGui::SetWindowFontScale(scale);
+    ImGui::SetWindowFontScale(map.scale);
     ImGui::TextUnformatted("导入谱面包 (.zip)");
     ImGui::TextDisabled("也可以直接把 zip 文件拖入窗口");
-    // The platform picker is the way in on a packaged build: it hands back a readable copy
-    // of whatever the user chose, without the application needing broad storage access.
     if (rechigros::platform::FileDialog::available()) {
-      if (ImGui::Button("选择文件…", ImVec2(150.0F * scale, 38.0F * scale))) {
+      if (ImGui::Button("选择文件…", ImVec2(150.0F * map.scale, 38.0F * map.scale))) {
         const auto chosen = rechigros::platform::FileDialog::openChartPackage();
         if (!chosen.empty()) {
           try {
@@ -390,7 +1224,7 @@ void drawLibraryScreen(AppContext& context) {
         }
       }
       ImGui::SameLine();
-      if (ImGui::Button("选择文件夹…", ImVec2(160.0F * scale, 38.0F * scale))) {
+      if (ImGui::Button("选择文件夹…", ImVec2(160.0F * map.scale, 38.0F * map.scale))) {
         const auto chosen = rechigros::platform::FileDialog::openChartFolder();
         if (!chosen.empty()) {
           try {
@@ -405,9 +1239,9 @@ void drawLibraryScreen(AppContext& context) {
       ImGui::TextDisabled("选择后会把这个谱面复制到应用内");
     }
     static char pathBuffer[512] = {};
-    ImGui::SetNextItemWidth(480.0F * scale);
+    ImGui::SetNextItemWidth(480.0F * map.scale);
     ImGui::InputText("##import_path", pathBuffer, sizeof(pathBuffer));
-    if (ImGui::Button("导入", ImVec2(130.0F * scale, 38.0F * scale))) {
+    if (ImGui::Button("导入", ImVec2(130.0F * map.scale, 38.0F * map.scale))) {
       std::filesystem::path path = pathBuffer;
       try {
         const auto result = context.library.importZip(path);
@@ -418,33 +1252,95 @@ void drawLibraryScreen(AppContext& context) {
       }
     }
     ImGui::SameLine();
-    if (ImGui::Button("取消", ImVec2(130.0F * scale, 38.0F * scale))) {
+    if (ImGui::Button("取消", ImVec2(130.0F * map.scale, 38.0F * map.scale))) {
       ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();
   }
 
-  // Delete confirmation.
-  ImGui::SetNextWindowPos(ImVec2(size.width * 0.5F, size.height * 0.45F), ImGuiCond_Appearing,
-      ImVec2(0.5F, 0.5F));
+  // Delete confirmation for the manage-mode selection.
+  ImGui::SetNextWindowPos(ImVec2(map.viewport.x * 0.5F, map.viewport.y * 0.45F),
+      ImGuiCond_Appearing, ImVec2(0.5F, 0.5F));
   if (ImGui::BeginPopupModal("##delete_popup", nullptr,
           ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
-    ImGui::SetWindowFontScale(scale);
+    ImGui::SetWindowFontScale(map.scale);
     ImGui::Text("确定删除选中的 %d 个谱面吗？", static_cast<int>(context.selectedIds.size()));
-    if (ImGui::Button("删除", ImVec2(130.0F * scale, 38.0F * scale))) {
+    if (ImGui::Button("删除", ImVec2(130.0F * map.scale, 38.0F * map.scale))) {
       context.library.remove(context.selectedIds);
       context.selectedIds.clear();
       context.manageMode = false;
       ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
-    if (ImGui::Button("取消", ImVec2(130.0F * scale, 38.0F * scale))) {
+    if (ImGui::Button("取消", ImVec2(130.0F * map.scale, 38.0F * map.scale))) {
       ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();
   }
 
   ui::endFullscreenWindow();
+
+  // Actions are applied after the window closes so navigation does not disturb drawing.
+  if (backPressed) {
+    context.manageMode = false;
+    context.selectedIds.clear();
+    navigateTo(context, Screen::Home);
+  } else if (clickedTab >= 0 && clickedTab != context.libraryTab
+      && nowSec - current.lastTabSwitchSec >= kTabSwitchIntervalSeconds) {
+    current.lastTabSwitchSec = nowSec;
+    current.tabs.from = current.tabs.to;
+    current.tabs.to = clickedTab;
+    current.tabs.startSec = nowSec;
+    current.grid = GridState{};
+    context.libraryTab = clickedTab;
+    context.manageMode = false;
+    context.selectedIds.clear();
+    if (clickedTab != 0) current.onlinePage = 0;
+  } else if (searchPressed) {
+    beginDialog(current.dialog, DialogState::Kind::Search, nowSec);
+    std::snprintf(current.dialog.buffer, sizeof(current.dialog.buffer), "%s",
+        context.searchQuery.c_str());
+  } else if (pagePressed) {
+    beginDialog(current.dialog, DialogState::Kind::PageJump, nowSec);
+    std::snprintf(current.dialog.buffer, sizeof(current.dialog.buffer), "%d",
+        current.onlinePage + 1);
+  } else if (managePressed) {
+    context.manageMode = true;
+    context.selectedIds.clear();
+  } else if (importPressed) {
+    ImGui::OpenPopup("##import_popup");
+  } else if (deletePressed) {
+    if (context.selectedIds.empty()) {
+      notify(context, "未选择谱面");
+    } else {
+      ImGui::OpenPopup("##delete_popup");
+    }
+  } else if (selectAllPressed) {
+    if (context.selectedIds.size() >= visible.size()) {
+      context.selectedIds.clear();
+    } else {
+      context.selectedIds.clear();
+      for (const ChartRecord* record : visible) context.selectedIds.push_back(record->id);
+    }
+  } else if (cancelManagePressed) {
+    context.manageMode = false;
+    context.selectedIds.clear();
+  } else if (refreshPressed) {
+    notify(context, "在线谱面暂不可用");
+  } else if (clickedCard >= 0 && clickedCard < static_cast<int>(visible.size())) {
+    const ChartRecord& record = *visible[static_cast<std::size_t>(clickedCard)];
+    if (context.manageMode) {
+      const auto iterator = std::find(context.selectedIds.begin(), context.selectedIds.end(),
+          record.id);
+      if (iterator == context.selectedIds.end()) {
+        context.selectedIds.push_back(record.id);
+      } else {
+        context.selectedIds.erase(iterator);
+      }
+    } else {
+      openChartDetail(context, record.id);
+    }
+  }
 }
 
 } // namespace rechigros::app

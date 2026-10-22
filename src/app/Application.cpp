@@ -229,7 +229,11 @@ bool Application::initialize() {
       std::min(static_cast<float>(std::max(1, windowWidth)) / 731.0F,
           static_cast<float>(std::max(1, windowHeight)) / 415.0F),
       1.0F, 2.0F);
-  const float fontDensity = interfaceScale;
+  // Interface labels are drawn through the glyph cache below, which rasterises at the final
+  // pixel size. This atlas only serves the immediate-mode widgets (text fields, tooltips), so
+  // it is built at a fixed density instead of following the window scale; that keeps the
+  // embedded CJK range in a 2048-square atlas at every window size.
+  const float fontDensity = 1.75F;
   {
     // A packaged build keeps its assets inside the package rather than on disk, so the
     // font is materialised to a readable path first.

@@ -673,15 +673,36 @@ std::vector<JudgeLine::NoteControlPoint> parseControls(const json& line,
 
 std::array<float, 3> rgb(const json* value, bool& valid) {
   valid = false; std::array<float, 3> result{1.0F, 1.0F, 1.0F};
-  if (!value || !value->is_array() || value->size() < 3) return result;
+  if (!value || value->is_null()) return result;
+  std::array<double, 3> components{0.0, 0.0, 0.0};
+  bool parsed = false;
   try {
-    for (std::size_t i = 0; i < 3; ++i) {
-      auto component = (*value)[i].get<float>();
-      if (component > 1.0F) component /= 255.0F;
-      result[i] = std::clamp(component, 0.0F, 1.0F);
+    if (value->is_array() && value->size() >= 3) {
+      for (std::size_t i = 0; i < 3; ++i) components[i] = (*value)[i].get<double>();
+      parsed = true;
+    } else if (value->is_object()) {
+      // Colours may be written as {r,g,b} objects; each channel accepts the same aliases.
+      const json* channels[3] = {field(*value, {"r", "R", "red", "Red"}),
+          field(*value, {"g", "G", "green", "Green"}),
+          field(*value, {"b", "B", "blue", "Blue"})};
+      if (channels[0] != nullptr && channels[1] != nullptr && channels[2] != nullptr) {
+        for (std::size_t i = 0; i < 3; ++i) components[i] = channels[i]->get<double>();
+        parsed = true;
+      }
     }
-    valid = true;
-  } catch (const json::exception&) {}
+  } catch (const json::exception&) {
+    return result;
+  }
+  if (!parsed) return result;
+  // The scale decision is taken once for the whole colour: a single component above 1 means
+  // all three are byte-valued, never a per-channel mix.
+  const bool byteValued =
+      components[0] > 1.0 || components[1] > 1.0 || components[2] > 1.0;
+  for (std::size_t i = 0; i < 3; ++i) {
+    const double scaled = byteValued ? components[i] / 255.0 : components[i];
+    result[i] = std::clamp(static_cast<float>(scaled), 0.0F, 1.0F);
+  }
+  valid = true;
   return result;
 }
 
@@ -815,9 +836,9 @@ std::unique_ptr<JudgeLine> parseJudgeLine(const json& source, const BpmConverter
         {"rotateEvents", "judgeLineRotateEvents", "rotationEvents", "rotEvents"});
     layer.judgeLineDisappearEvents = parseAlphaEvents(layerSource, bpm, line->bpm);
     layer.judgeLineMoveXEvents = parseLineEvents(layerSource, bpm, line->bpm,
-        {"moveXEvents", "judgeLineMoveXEvents"});
+        {"moveXEvents", "judgeLineMoveXEvents", "xEvents", "moveX"});
     layer.judgeLineMoveYEvents = parseLineEvents(layerSource, bpm, line->bpm,
-        {"moveYEvents", "judgeLineMoveYEvents"});
+        {"moveYEvents", "judgeLineMoveYEvents", "yEvents", "moveY"});
     for (auto& event : layer.judgeLineMoveXEvents) { event.start /= RPE_WIDTH; event.end /= RPE_WIDTH; }
     for (auto& event : layer.judgeLineMoveYEvents) { event.start /= RPE_HEIGHT; event.end /= RPE_HEIGHT; }
     if (layer.judgeLineMoveXEvents.empty() && layer.judgeLineMoveYEvents.empty())
@@ -854,8 +875,26 @@ std::unique_ptr<JudgeLine> parseJudgeLine(const json& source, const BpmConverter
   if (const auto* extended = object(source, {"extended", "Extended"})) {
     line->judgeLineScaleXEvents = parseLineEvents(*extended, bpm, line->bpm, {"scaleXEvents", "sxEvents"});
     line->judgeLineScaleYEvents = parseLineEvents(*extended, bpm, line->bpm, {"scaleYEvents", "syEvents"});
-    ensureCoverage(line->judgeLineScaleXEvents, 1.0);
-    ensureCoverage(line->judgeLineScaleYEvents, 1.0);
+    if (!line->judgeLineScaleXEvents.empty() || !line->judgeLineScaleYEvents.empty()) {
+      ensureCoverage(line->judgeLineScaleXEvents, 1.0);
+      ensureCoverage(line->judgeLineScaleYEvents, 1.0);
+    } else if (const auto* scales = array(*extended, {"scaleEvents"})) {
+      // Combined 2D scale track; only used when the per-axis lists are absent.
+      for (const auto& item : *scales) if (item.is_object()) {
+        MoveEvent event;
+        event.startTime = bpm.normBeat(parseBeat(eventTime(item, true)), line->bpm);
+        event.endTime = bpm.normBeat(parseBeat(eventTime(item, false)), line->bpm);
+        const auto start = vec2(field(item, {"start", "startValue"}), {1.0, 1.0});
+        const auto end = vec2(field(item, {"end", "endValue"}), start);
+        event.start = start[0];
+        event.start2 = start[1];
+        event.end = end[0];
+        event.end2 = end[1];
+        parseEasing(event, item);
+        line->judgeLineScaleEvents.push_back(std::move(event));
+      }
+      if (!line->judgeLineScaleEvents.empty()) ensureMoveCoverage(line->judgeLineScaleEvents, 1.0, 1.0);
+    }
     line->judgeLineInclineEvents = parseLineEvents(*extended, bpm, line->bpm,
         {"inclineEvents", "tiltEvents", "skewEvents"});
     for (auto& event : line->judgeLineInclineEvents) {
