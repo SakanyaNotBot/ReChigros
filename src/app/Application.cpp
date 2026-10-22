@@ -15,10 +15,10 @@
 #include "rechigros/render/gl/Gl.hpp"
 #include "rechigros/render/gl/GlDebug.hpp"
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include <imgui.h>
 #include <backends/imgui_impl_opengl3.h>
-#include <backends/imgui_impl_sdl2.h>
+#include <backends/imgui_impl_sdl3.h>
 
 #include <algorithm>
 #include <cmath>
@@ -185,7 +185,7 @@ bool Application::initialize() {
     std::cerr << "--replay-playback needs a chart path argument\n";
     return false;
   }
-  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
+  if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
     std::cerr << "SDL_Init: " << SDL_GetError() << '\n';
     return false;
   }
@@ -205,16 +205,15 @@ bool Application::initialize() {
   SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
   SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
 
-  Uint32 windowFlags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
+  SDL_WindowFlags windowFlags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
 #if defined(__ANDROID__) || defined(__IPHONEOS__)
-  windowFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+  windowFlags |= SDL_WINDOW_FULLSCREEN;
 #else
   // Automated runs exercise the real GL context and event loop without putting a
   // window on the user's desktop.
   if (batchMode_) windowFlags |= SDL_WINDOW_HIDDEN;
 #endif
-  window_ = SDL_CreateWindow("ReChigros", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-      windowWidthOverride_, windowHeightOverride_, windowFlags);
+  window_ = SDL_CreateWindow("ReChigros", windowWidthOverride_, windowHeightOverride_, windowFlags);
   if (window_ == nullptr) {
     std::cerr << "SDL_CreateWindow: " << SDL_GetError() << '\n';
     return false;
@@ -228,10 +227,10 @@ bool Application::initialize() {
     int channels = 0;
     auto* pixels = stbi_load(iconPath.string().c_str(), &width, &height, &channels, 4);
     if (pixels != nullptr) {
-      if (auto* icon = SDL_CreateRGBSurfaceWithFormatFrom(pixels, width, height, 32, width * 4,
-              SDL_PIXELFORMAT_RGBA32)) {
+      if (auto* icon = SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_RGBA32, pixels,
+              width * 4)) {
         SDL_SetWindowIcon(window_, icon);
-        SDL_FreeSurface(icon);
+        SDL_DestroySurface(icon);
       }
       stbi_image_free(pixels);
     }
@@ -252,7 +251,11 @@ bool Application::initialize() {
   // shading features can be relied on.
   render::gl::logContextInfo();
   SDL_GL_SetSwapInterval(swapInterval_);
-  appliedSwapInterval_ = SDL_GL_GetSwapInterval();
+  {
+    int appliedInterval = swapInterval_;
+    SDL_GL_GetSwapInterval(&appliedInterval);
+    appliedSwapInterval_ = appliedInterval;
+  }
   std::cout << "present: swap interval requested=" << swapInterval_
             << " applied=" << appliedSwapInterval_ << '\n';
   initGpuTimer();
@@ -270,10 +273,12 @@ bool Application::initialize() {
   // every scale the layout uses.
   displayDpi_ = 380.0F;
   {
-    float diagonal = 0.0F;
-    if (SDL_GetDisplayDPI(SDL_GetWindowDisplayIndex(window_), &diagonal, nullptr, nullptr) == 0
-        && std::isfinite(diagonal) && diagonal > 0.0F) {
-      displayDpi_ = diagonal;
+    // SDL3 exposes the window content scale instead of a physical diagonal DPI. The
+    // layout only needs a stable density for the glyph cache, so the scale is mapped
+    // to the same range the DPI value used.
+    const float scale = SDL_GetWindowDisplayScale(window_);
+    if (std::isfinite(scale) && scale > 0.0F) {
+      displayDpi_ = 96.0F * scale;
     }
   }
   // Density is driven by the interface scale, not the raw display DPI: the layout grows
@@ -341,8 +346,8 @@ bool Application::initialize() {
     std::cout << "font: dpi=" << displayDpi_ << " density=" << fontDensity
               << " atlas=" << atlasWidth << "x" << atlasHeight << '\n';
   }
-  if (!ImGui_ImplSDL2_InitForOpenGL(window_, context_)) {
-    std::cerr << "ImGui SDL2 backend initialization failed\n";
+  if (!ImGui_ImplSDL3_InitForOpenGL(window_, context_)) {
+    std::cerr << "ImGui SDL3 backend initialization failed\n";
     return false;
   }
 #ifdef RECHIGROS_GLES
@@ -402,8 +407,8 @@ bool Application::initialize() {
     setupCaptureScreen(*app_, screenSetup_, aspectRatioOverride_);
   }
 
-  SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
-  SDL_EventState(SDL_DROPTEXT, SDL_ENABLE);
+  SDL_SetEventEnabled(SDL_EVENT_DROP_FILE, true);
+  SDL_SetEventEnabled(SDL_EVENT_DROP_TEXT, true);
   syncWindowMetrics();
 
   if (!initialPath_.empty()) {
@@ -469,7 +474,7 @@ int Application::run() {
     const bool imguiFrame = !(imguiSkipIdle_ && gameplayImGuiIdle());
     if (imguiFrame) {
       ImGui_ImplOpenGL3_NewFrame();
-      ImGui_ImplSDL2_NewFrame();
+      ImGui_ImplSDL3_NewFrame();
       ImGui::NewFrame();
     }
 
@@ -525,9 +530,9 @@ int Application::run() {
     const bool wantsText = imguiFrame && ImGui::GetIO().WantTextInput;
     if (wantsText != textInputActive_) {
       if (wantsText) {
-        SDL_StartTextInput();
+        SDL_StartTextInput(window_);
       } else {
-        SDL_StopTextInput();
+        SDL_StopTextInput(window_);
       }
       textInputActive_ = wantsText;
     }
@@ -601,16 +606,16 @@ void Application::updateBatchMode() {
   if (batchMode_ && expectPause_) {
     const auto pushEscape = [&]() {
       SDL_Event down{};
-      down.type = SDL_KEYDOWN;
+      down.type = SDL_EVENT_KEY_DOWN;
       down.key.windowID = SDL_GetWindowID(window_);
-      down.key.state = SDL_PRESSED;
-      down.key.repeat = 0;
-      down.key.keysym.sym = SDLK_ESCAPE;
-      down.key.keysym.scancode = SDL_SCANCODE_ESCAPE;
+      down.key.down = true;
+      down.key.repeat = false;
+      down.key.key = SDLK_ESCAPE;
+      down.key.scancode = SDL_SCANCODE_ESCAPE;
       SDL_PushEvent(&down);
       SDL_Event up = down;
-      up.type = SDL_KEYUP;
-      up.key.state = SDL_RELEASED;
+      up.type = SDL_EVENT_KEY_UP;
+      up.key.down = false;
       SDL_PushEvent(&up);
     };
     if (gameFrames == 200) pushEscape();
@@ -637,20 +642,20 @@ void Application::updateBatchMode() {
     event.button.windowID = SDL_GetWindowID(window_);
     event.button.which = 0;
     event.button.button = SDL_BUTTON_LEFT;
-    event.button.state = pressed ? SDL_PRESSED : SDL_RELEASED;
+    event.button.down = pressed;
     event.button.clicks = 1;
-    event.button.x = static_cast<Sint32>(x);
-    event.button.y = static_cast<Sint32>(y);
+    event.button.x = x;
+    event.button.y = y;
     SDL_PushEvent(&event);
   };
   const auto pushMotion = [&](float x, float y) {
     SDL_Event event{};
-    event.type = SDL_MOUSEMOTION;
+    event.type = SDL_EVENT_MOUSE_MOTION;
     event.motion.windowID = SDL_GetWindowID(window_);
     event.motion.which = 0;
     event.motion.state = SDL_BUTTON_LMASK;
-    event.motion.x = static_cast<Sint32>(x);
-    event.motion.y = static_cast<Sint32>(y);
+    event.motion.x = x;
+    event.motion.y = y;
     SDL_PushEvent(&event);
   };
 
@@ -675,13 +680,13 @@ void Application::updateBatchMode() {
   const double hitTime = game.chart->allNotesSorted[batchNoteIndex_]->sect
       + batchMistimeMs_ / 1000.0;
   if (batchInputStage_ == 0 && game.chartTimeSec >= hitTime - 0.05) {
-    pushButton(SDL_MOUSEBUTTONDOWN, centerX, centerY, true);
+    pushButton(SDL_EVENT_MOUSE_BUTTON_DOWN, centerX, centerY, true);
     batchInputStage_ = 1;
   } else if (batchInputStage_ == 1) {
     pushMotion(centerX + 4.0F, centerY);
     batchInputStage_ = 2;
   } else if (batchInputStage_ == 2) {
-    pushButton(SDL_MOUSEBUTTONUP, centerX, centerY, false);
+    pushButton(SDL_EVENT_MOUSE_BUTTON_UP, centerX, centerY, false);
     batchInputStage_ = 0;
     ++batchNoteIndex_;
   }
@@ -1072,7 +1077,7 @@ void Application::drawCurrentScreen() {
 void Application::processEvents(bool& running) {
   SDL_Event event{};
   while (SDL_PollEvent(&event)) {
-    const bool imguiConsumed = ImGui_ImplSDL2_ProcessEvent(&event);
+    const bool imguiConsumed = ImGui_ImplSDL3_ProcessEvent(&event);
     (void)imguiConsumed;
     handleEvent(event, running);
   }
@@ -1080,88 +1085,83 @@ void Application::processEvents(bool& running) {
 
 void Application::handleEvent(const SDL_Event& event, bool& running) {
   switch (event.type) {
-    case SDL_QUIT:
+    case SDL_EVENT_QUIT:
       running = false;
       app_->quitRequested = true;
       return;
-    case SDL_DROPFILE:
-      if (event.drop.file != nullptr) {
-        const auto path = pathFromUtf8(event.drop.file);
+    case SDL_EVENT_DROP_FILE:
+      if (event.drop.data != nullptr) {
+        const auto path = pathFromUtf8(event.drop.data);
         handleIncomingPath(*app_, path);
-        SDL_free(event.drop.file);
+        SDL_free(const_cast<char*>(event.drop.data));
       }
       return;
-    case SDL_KEYDOWN:
-      if (event.key.repeat == 0) handleKeyDown(event);
+    case SDL_EVENT_KEY_DOWN:
+      if (!event.key.repeat) handleKeyDown(event);
       return;
-    case SDL_MOUSEBUTTONDOWN:
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
       if (event.button.button == SDL_BUTTON_LEFT && event.button.which != SDL_TOUCH_MOUSEID
           && app_->screen == Screen::Game && !ImGui::GetIO().WantCaptureMouse) {
         gamePointerDown(*app_, -1, static_cast<float>(event.button.x),
             static_cast<float>(event.button.y));
       }
       return;
-    case SDL_MOUSEMOTION:
+    case SDL_EVENT_MOUSE_MOTION:
       if (app_->screen == Screen::Game && event.motion.which != SDL_TOUCH_MOUSEID
           && (event.motion.state & SDL_BUTTON_LMASK) != 0) {
         gamePointerMove(*app_, -1, static_cast<float>(event.motion.x),
             static_cast<float>(event.motion.y));
       }
       return;
-    case SDL_MOUSEBUTTONUP:
+    case SDL_EVENT_MOUSE_BUTTON_UP:
       if (event.button.button == SDL_BUTTON_LEFT && event.button.which != SDL_TOUCH_MOUSEID
           && app_->screen == Screen::Game) {
         gamePointerUp(*app_, -1);
       }
       return;
-    case SDL_FINGERDOWN:
-    case SDL_FINGERMOTION:
-    case SDL_FINGERUP: {
+    case SDL_EVENT_FINGER_DOWN:
+    case SDL_EVENT_FINGER_MOTION:
+    case SDL_EVENT_FINGER_UP: {
       int width = 0;
       int height = 0;
       SDL_GetWindowSize(window_, &width, &height);
       const float x = event.tfinger.x * static_cast<float>(width);
       const float y = event.tfinger.y * static_cast<float>(height);
       if (app_->screen == Screen::Game) {
-        if (event.type == SDL_FINGERDOWN) {
-          gamePointerDown(*app_, event.tfinger.fingerId, x, y);
-        } else if (event.type == SDL_FINGERMOTION) {
-          gamePointerMove(*app_, event.tfinger.fingerId, x, y);
+        if (event.type == SDL_EVENT_FINGER_DOWN) {
+          gamePointerDown(*app_, event.tfinger.fingerID, x, y);
+        } else if (event.type == SDL_EVENT_FINGER_MOTION) {
+          gamePointerMove(*app_, event.tfinger.fingerID, x, y);
         } else {
-          gamePointerUp(*app_, event.tfinger.fingerId);
+          gamePointerUp(*app_, event.tfinger.fingerID);
         }
       }
       return;
     }
-    case SDL_WINDOWEVENT:
-      switch (event.window.event) {
-        case SDL_WINDOWEVENT_SIZE_CHANGED:
-        case SDL_WINDOWEVENT_RESIZED:
-          syncWindowMetrics();
-          break;
-        case SDL_WINDOWEVENT_FOCUS_LOST:
-          // Automated runs keep the loop running even though the hidden window
-          // never holds keyboard focus.
-          if (!batchMode_ && app_->screen == Screen::Game) gameFocusLost(*app_);
-          break;
-        default: break;
-      }
+    case SDL_EVENT_WINDOW_RESIZED:
+    case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+      syncWindowMetrics();
       return;
-    case SDL_APP_WILLENTERBACKGROUND:
+    case SDL_EVENT_WINDOW_FOCUS_LOST:
+      // Automated runs keep the loop running even though the hidden window
+      // never holds keyboard focus.
+      if (!batchMode_ && app_->screen == Screen::Game) gameFocusLost(*app_);
+      return;
+    case SDL_EVENT_WILL_ENTER_BACKGROUND:
       if (!suspended_) {
         suspended_ = true;
         if (app_->screen == Screen::Game) gameFocusLost(*app_);
         audio_->suspend();
       }
       return;
-    case SDL_APP_DIDENTERFOREGROUND:
+    case SDL_EVENT_DID_ENTER_FOREGROUND:
       if (suspended_) {
         audio_->resume();
         suspended_ = false;
         frameClockReset_ = true;
       }
       return;
-    case SDL_APP_TERMINATING:
+    case SDL_EVENT_TERMINATING:
       if (app_->screen == Screen::Game) gameFocusLost(*app_);
       audio_->suspend();
       return;
@@ -1170,11 +1170,10 @@ void Application::handleEvent(const SDL_Event& event, bool& running) {
 }
 
 void Application::handleKeyDown(const SDL_Event& event) {
-  const SDL_Keycode key = event.key.keysym.sym;
+  const SDL_Keycode key = event.key.key;
   if (key == SDLK_F11) {
-    const Uint32 flags = SDL_GetWindowFlags(window_);
-    SDL_SetWindowFullscreen(window_,
-        (flags & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0 ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
+    const SDL_WindowFlags flags = SDL_GetWindowFlags(window_);
+    SDL_SetWindowFullscreen(window_, (flags & SDL_WINDOW_FULLSCREEN) == 0);
     return;
   }
   if (key == SDLK_F3 && app_->screen == Screen::Game) {
@@ -1212,7 +1211,7 @@ void Application::syncWindowMetrics() {
   app_->windowHeight = std::max(1, height);
   int drawableWidth = 0;
   int drawableHeight = 0;
-  SDL_GL_GetDrawableSize(window_, &drawableWidth, &drawableHeight);
+  SDL_GetWindowSizeInPixels(window_, &drawableWidth, &drawableHeight);
   app_->drawableWidth = std::max(1, drawableWidth);
   app_->drawableHeight = std::max(1, drawableHeight);
   app_->displayDpi = displayDpi_;
@@ -1259,12 +1258,12 @@ void Application::shutdown() noexcept {
   }
   if (imguiReady_) {
     ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplSDL2_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
     imguiReady_ = false;
   }
   if (context_ != nullptr) {
-    SDL_GL_DeleteContext(context_);
+    SDL_GL_DestroyContext(context_);
     context_ = nullptr;
   }
   if (window_ != nullptr) {

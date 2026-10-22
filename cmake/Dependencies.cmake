@@ -2,37 +2,37 @@ include(FetchContent)
 
 set(FETCHCONTENT_UPDATES_DISCONNECTED ON CACHE BOOL "Do not update dependencies after first download")
 
-set(RECHIGROS_SDL_SOURCE "" CACHE PATH "Optional local SDL2 source tree")
+set(RECHIGROS_SDL_SOURCE "" CACHE PATH "Optional local SDL3 source tree")
 if(NOT RECHIGROS_BUILD_APP)
   # Core and chart layers only need header-only dependencies.
   set(RECHIGROS_SDL_TARGET "")
 elseif(ANDROID)
   set(SDL_SHARED ON CACHE BOOL "" FORCE)
   set(SDL_STATIC OFF CACHE BOOL "" FORCE)
-  set(RECHIGROS_SDL_TARGET SDL2::SDL2)
+  set(RECHIGROS_SDL_TARGET SDL3::SDL3)
 else()
   set(SDL_SHARED OFF CACHE BOOL "" FORCE)
   set(SDL_STATIC ON CACHE BOOL "" FORCE)
-  set(RECHIGROS_SDL_TARGET SDL2::SDL2-static)
+  set(RECHIGROS_SDL_TARGET SDL3::SDL3-static)
 endif()
 set(SDL_TEST OFF CACHE BOOL "" FORCE)
 
 if(NOT RECHIGROS_BUILD_APP)
   # Nothing to fetch.
 elseif(RECHIGROS_SDL_SOURCE AND EXISTS "${RECHIGROS_SDL_SOURCE}/CMakeLists.txt")
-  add_subdirectory("${RECHIGROS_SDL_SOURCE}" "${CMAKE_BINARY_DIR}/third_party/SDL2")
+  add_subdirectory("${RECHIGROS_SDL_SOURCE}" "${CMAKE_BINARY_DIR}/third_party/SDL3")
 elseif(RECHIGROS_USE_SYSTEM_SDL)
-  find_package(SDL2 CONFIG REQUIRED)
-  if(NOT ANDROID AND TARGET SDL2::SDL2-static)
-    set(RECHIGROS_SDL_TARGET SDL2::SDL2-static)
+  find_package(SDL3 CONFIG REQUIRED)
+  if(NOT ANDROID AND TARGET SDL3::SDL3-static)
+    set(RECHIGROS_SDL_TARGET SDL3::SDL3-static)
   else()
-    set(RECHIGROS_SDL_TARGET SDL2::SDL2)
+    set(RECHIGROS_SDL_TARGET SDL3::SDL3)
   endif()
 else()
-  FetchContent_Declare(SDL2
-    URL https://www.libsdl.org/release/SDL2-2.30.11.tar.gz
-    URL_HASH SHA256=8B8D4AEF2038533DA814965220F88F77D60DFA0F32685F80EAD65E501337DA7F)
-  FetchContent_MakeAvailable(SDL2)
+  FetchContent_Declare(SDL3
+    URL https://github.com/libsdl-org/SDL/releases/download/release-3.4.18/SDL3-3.4.18.tar.gz
+    URL_HASH SHA256=9C75CF16330322C217DEDD2E0609F1124F1B54B8633E763467B4684D0F4334A3)
+  FetchContent_MakeAvailable(SDL3)
 endif()
 
 set(RECHIGROS_DOWNLOAD_DIR "${PROJECT_SOURCE_DIR}/third_party/cache" CACHE PATH "Shared verified dependency download cache")
@@ -87,8 +87,8 @@ rechigros_download("imgui/imgui_widgets.cpp" "${IMGUI_BASE}/imgui_widgets.cpp" "
 rechigros_download("imgui/imstb_rectpack.h" "${IMGUI_BASE}/imstb_rectpack.h" "2EFA3D5F7D003C19743B15155DAD9F46D9F9FC783A18893D703B431D3C990972")
 rechigros_download("imgui/imstb_textedit.h" "${IMGUI_BASE}/imstb_textedit.h" "77010E494CAF72C178B573569612AEC409D24380409676325A31D02DE0EC64B7")
 rechigros_download("imgui/imstb_truetype.h" "${IMGUI_BASE}/imstb_truetype.h" "87F08919AE8E7223451D0E9D06B62829075D3E920C9E6AD436DB9D7E7427FFCE")
-rechigros_download("imgui/backends/imgui_impl_sdl2.h" "${IMGUI_BASE}/backends/imgui_impl_sdl2.h" "5A1A022EE8C32E3E5F448F40AC5245033EE2A269CE9228B5FBEFDE0CC3F8DB11")
-rechigros_download("imgui/backends/imgui_impl_sdl2.cpp" "${IMGUI_BASE}/backends/imgui_impl_sdl2.cpp" "088DAB315307FB507E58B1D8485E0B2CA2AB525F5DFF45B66914AB547B83CA99")
+rechigros_download("imgui/backends/imgui_impl_sdl3.h" "${IMGUI_BASE}/backends/imgui_impl_sdl3.h" "A6866CB9F9D9EB69AD64D49075FBCC247CADB9C872FCDFB0569F4B93CCB802A6")
+rechigros_download("imgui/backends/imgui_impl_sdl3.cpp" "${IMGUI_BASE}/backends/imgui_impl_sdl3.cpp" "72EF28868E34EE88A65C9AF368E4D3E643B8B1847407E5961011758AA411AD7C")
 rechigros_download("imgui/backends/imgui_impl_opengl3.h" "${IMGUI_BASE}/backends/imgui_impl_opengl3.h" "8239B72A4325F370C275D34B655B3FCAF2660CE9D7ACFDEA494A303DD51F9E5C")
 rechigros_download("imgui/backends/imgui_impl_opengl3.cpp" "${IMGUI_BASE}/backends/imgui_impl_opengl3.cpp" "166C4FB64FA7A1D744D51CEB4DBA29AC670F76FD921EE47CE10977633DA1AE00")
 rechigros_download("imgui/backends/imgui_impl_opengl3_loader.h" "${IMGUI_BASE}/backends/imgui_impl_opengl3_loader.h" "9D17B1679DC876E0CA693631030E70656C372C808C6767644C3B545834483E24")
@@ -101,7 +101,7 @@ if(RECHIGROS_BUILD_APP)
     "${imgui_SOURCE_DIR}/imgui_draw.cpp"
     "${imgui_SOURCE_DIR}/imgui_tables.cpp"
     "${imgui_SOURCE_DIR}/imgui_widgets.cpp"
-    "${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp"
+    "${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp"
     "${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp")
   target_include_directories(imgui PUBLIC "${imgui_SOURCE_DIR}" "${imgui_SOURCE_DIR}/backends")
   target_link_libraries(imgui PUBLIC ${RECHIGROS_SDL_TARGET})

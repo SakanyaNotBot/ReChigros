@@ -9,7 +9,8 @@
 #include <cstdint>
 
 struct SDL_Window;
-using SDL_GLContext = void*;
+struct SDL_GLContextState;
+using SDL_GLContext = SDL_GLContextState*;
 union SDL_Event;
 
 namespace rechigros::audio {

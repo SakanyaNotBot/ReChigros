@@ -16,13 +16,14 @@
 #include "rechigros/render/scene/StageLayout.hpp"
 #include "rechigros/render/scene/Transition.hpp"
 
-#include <SDL_log.h>
+#include <SDL3/SDL_log.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <memory>
+#include <numbers>
 #include <string>
 #include <unordered_map>
 
@@ -552,7 +553,7 @@ void drawPauseIcon(AppContext& context, ImDrawList* drawList, const char* asset,
     }
     case 1: {
       drawList->PathArcTo(ImVec2(centerX, centerY), (right - left) * 0.42F,
-          static_cast<float>(M_PI) * 0.15F, static_cast<float>(M_PI) * 1.75F, 24);
+          std::numbers::pi_v<float> * 0.15F, std::numbers::pi_v<float> * 1.75F, 24);
       drawList->PathStroke(tint, 0, thickness);
       drawList->AddTriangleFilled(ImVec2(right, centerY - (right - left) * 0.18F),
           ImVec2(right + (right - left) * 0.10F, centerY),

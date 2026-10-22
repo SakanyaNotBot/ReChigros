@@ -2,7 +2,7 @@
 
 #include "rechigros/app/SelfTest.hpp"
 
-#include <SDL_main.h>
+#include <SDL3/SDL_main.h>
 
 #include <cstdio>
 #include <cstring>

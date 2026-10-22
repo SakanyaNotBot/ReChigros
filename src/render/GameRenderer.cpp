@@ -37,7 +37,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include <SDL_log.h>
+#include <SDL3/SDL_log.h>
 
 #include <algorithm>
 #include <chrono>

@@ -2,7 +2,7 @@
 
 #include "rechigros/render/gl/Gl.hpp"
 
-#include <SDL_log.h>
+#include <SDL3/SDL_log.h>
 
 #include <cstdio>
 #include <cstring>

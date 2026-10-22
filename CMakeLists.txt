@@ -9,7 +9,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(RECHIGROS_BUILD_APP "Build the SDL application" ON)
 option(RECHIGROS_BUILD_TESTS "Build core regression tests" ON)
-option(RECHIGROS_USE_SYSTEM_SDL "Use an installed SDL2 package" OFF)
+option(RECHIGROS_USE_SYSTEM_SDL "Use an installed SDL3 package" OFF)
 option(RECHIGROS_ENABLE_ASAN "Enable AddressSanitizer in supported toolchains" OFF)
 option(RECHIGROS_ENABLE_LTO "Enable interprocedural optimisation for release builds" ON)
 

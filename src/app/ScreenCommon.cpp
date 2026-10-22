@@ -4,7 +4,7 @@
 #include "rechigros/app/UiStyle.hpp"
 #include "rechigros/platform/FileSystem.hpp"
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
 
 #include <algorithm>
 #include <cmath>

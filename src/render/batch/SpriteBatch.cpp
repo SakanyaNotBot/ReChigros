@@ -4,7 +4,7 @@
 #include "rechigros/render/gl/Texture.hpp"
 #include "rechigros/render/math/Mat4.hpp"
 
-#include <SDL_log.h>
+#include <SDL3/SDL_log.h>
 
 #include <algorithm>
 #include <cmath>

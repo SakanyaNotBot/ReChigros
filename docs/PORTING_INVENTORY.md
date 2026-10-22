@@ -36,7 +36,7 @@ compiles and covers the common path; `todo` means it is not yet written.
 | `GameRenderer.java` judgement region | ~700 | `src/core/GameplaySession.cpp`, `src/core/JudgementEngine.cpp` | partial |
 | `GameRenderer.java` render region | ~13900 | `src/render/**` | todo |
 | `NativeRenderCommands.java` | 1245 | `src/render/batch/**` | todo |
-| `GameGLSurfaceView.java` | 162 | `src/app/Application.cpp` (SDL2 surface) | todo |
+| `GameGLSurfaceView.java` | 162 | `src/app/Application.cpp` (SDL3 surface) | todo |
 
 ## chart/
 

@@ -1,6 +1,6 @@
 #include "rechigros/platform/AssetManager.hpp"
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
 
 #include <fstream>
 #include <stdexcept>
@@ -19,13 +19,13 @@ std::vector<std::uint8_t> readFile(const std::filesystem::path& path) {
 }
 
 std::vector<std::uint8_t> readSdlAsset(const std::string& path) {
-  SDL_RWops* stream = SDL_RWFromFile(path.c_str(), "rb");
+  SDL_IOStream* stream = SDL_IOFromFile(path.c_str(), "rb");
   if (!stream) return {};
-  const auto size = SDL_RWsize(stream);
-  if (size <= 0) { SDL_RWclose(stream); return {}; }
+  const auto size = SDL_GetIOSize(stream);
+  if (size <= 0) { SDL_CloseIO(stream); return {}; }
   std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
-  const auto count = SDL_RWread(stream, bytes.data(), 1, bytes.size());
-  SDL_RWclose(stream);
+  const auto count = SDL_ReadIO(stream, bytes.data(), bytes.size());
+  SDL_CloseIO(stream);
   if (count != bytes.size()) return {};
   return bytes;
 }

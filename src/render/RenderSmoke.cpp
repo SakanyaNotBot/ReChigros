@@ -9,7 +9,7 @@
 #include "rechigros/render/GameRenderer.hpp"
 #include "rechigros/render/asset/TextureCache.hpp"
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -135,15 +135,14 @@ int main(int argc, char** argv) {
 
   // A hidden window is enough: the renderer draws into its own framebuffer and only
   // reads the result back, so no visible UI is needed.
-  if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+  if (!SDL_Init(SDL_INIT_VIDEO)) {
     std::cerr << "SDL_Init failed: " << SDL_GetError() << '\n';
     return 3;
   }
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-  SDL_Window* window = SDL_CreateWindow("render-smoke", SDL_WINDOWPOS_CENTERED,
-      SDL_WINDOWPOS_CENTERED, options.width, options.height, SDL_WINDOW_HIDDEN | SDL_WINDOW_OPENGL);
+  SDL_Window* window = SDL_CreateWindow("render-smoke", options.width, options.height, SDL_WINDOW_HIDDEN | SDL_WINDOW_OPENGL);
   if (window == nullptr) {
     // A dummy video driver has no GL; report it instead of pretending to have rendered.
     std::cerr << "No hidden GL window available: " << SDL_GetError() << '\n';
@@ -160,7 +159,7 @@ int main(int argc, char** argv) {
 #ifndef RECHIGROS_GLES
   if (gladLoadGLLoader(reinterpret_cast<GLADloadproc>(SDL_GL_GetProcAddress)) == 0) {
     std::cerr << "Failed to load OpenGL entry points\n";
-    SDL_GL_DeleteContext(context);
+    SDL_GL_DestroyContext(context);
     SDL_DestroyWindow(window);
     SDL_Quit();
     return 4;
@@ -310,7 +309,7 @@ int main(int argc, char** argv) {
     exitCode = 7;
   }
 
-  SDL_GL_DeleteContext(context);
+  SDL_GL_DestroyContext(context);
   SDL_DestroyWindow(window);
   SDL_Quit();
   return exitCode;

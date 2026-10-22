@@ -351,7 +351,7 @@ function Get-StandardConfigureArguments {
 
     $arguments = @('-S', $Root, '-B', $Directory, '-G', 'Ninja', "-DCMAKE_BUILD_TYPE=$Configuration")
     if ($script:Ninja) { $arguments += "-DCMAKE_MAKE_PROGRAM=$($script:Ninja)" }
-    $sdl = Join-Path $Root 'third_party\SDL'
+    $sdl = Join-Path $Root 'third_party\SDL3'
     if (Test-Path -LiteralPath (Join-Path $sdl 'CMakeLists.txt')) {
         $arguments += "-DRECHIGROS_SDL_SOURCE=$($sdl.Replace('\', '/'))"
     }
@@ -359,10 +359,10 @@ function Get-StandardConfigureArguments {
 }
 
 function Ensure-Sdl {
-    $path = Join-Path $Root 'third_party\SDL'
+    $path = Join-Path $Root 'third_party\SDL3'
     if (Test-Path -LiteralPath (Join-Path $path 'CMakeLists.txt')) { return $path }
 
-    Write-Step 'Fetching SDL2 source'
+    Write-Step 'Fetching SDL3 source'
     $proxyUrl = $script:ProxyUrl
     if ($proxyUrl) {
         Write-Info "Proxy: $proxyUrl"
@@ -371,12 +371,12 @@ function Ensure-Sdl {
     }
 
     $thirdParty = Split-Path -Parent $path
-    $archive = Join-Path $thirdParty 'SDL2-2.30.11.tar.gz'
-    $expanded = Join-Path $thirdParty 'SDL2-2.30.11'
+    $archive = Join-Path $thirdParty 'SDL3-3.4.18.tar.gz'
+    $expanded = Join-Path $thirdParty 'SDL3-3.4.18'
     New-Item -ItemType Directory -Force -Path $thirdParty | Out-Null
 
     $download = @{
-        Uri = 'https://www.libsdl.org/release/SDL2-2.30.11.tar.gz'
+        Uri = 'https://github.com/libsdl-org/SDL/releases/download/release-3.4.18/SDL3-3.4.18.tar.gz'
         OutFile = $archive
         UseBasicParsing = $true
     }
@@ -384,14 +384,14 @@ function Ensure-Sdl {
     Invoke-WebRequest @download
 
     $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
-    if ($hash -ne '8B8D4AEF2038533DA814965220F88F77D60DFA0F32685F80EAD65E501337DA7F') {
+    if ($hash -ne '9C75CF16330322C217DEDD2E0609F1124F1B54B8633E763467B4684D0F4334A3') {
         Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
-        throw 'The SDL2 archive checksum does not match the expected value.'
+        throw 'The SDL3 archive checksum does not match the expected value.'
     }
 
-    & tar -xzf $archive -C $thirdParty '--exclude=SDL2-2.30.11/android-project-ant'
-    if ($LASTEXITCODE -ne 0) { throw 'Failed to extract the SDL2 archive.' }
-    if (-not (Test-Path -LiteralPath (Join-Path $expanded 'CMakeLists.txt'))) { throw 'The SDL2 archive layout is unexpected.' }
+    & tar -xzf $archive -C $thirdParty
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to extract the SDL3 archive.' }
+    if (-not (Test-Path -LiteralPath (Join-Path $expanded 'CMakeLists.txt'))) { throw 'The SDL3 archive layout is unexpected.' }
 
     if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force }
     Move-Item -LiteralPath $expanded -Destination $path

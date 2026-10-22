@@ -2,7 +2,7 @@
 
 Source baseline: `E:\Chigros` — 40,024 lines of Java across 89 files, 4,771 lines of native
 C++, and 95 packaged asset files. The C++ port reproduces the same architecture, the same
-class decomposition and the same behaviour, replacing the Android platform layer with SDL2
+class decomposition and the same behaviour, replacing the Android platform layer with SDL3
 and OpenGL.
 
 Current size: about **25,000 lines** of first-party C++ (excluding vendored headers) against

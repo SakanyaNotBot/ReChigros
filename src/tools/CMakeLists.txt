@@ -4,8 +4,8 @@ add_executable(rechigros_block_probe block_probe.cpp)
 target_include_directories(rechigros_block_probe PRIVATE "${PROJECT_SOURCE_DIR}/include")
 target_link_libraries(rechigros_block_probe PRIVATE
   rechigros_render rechigros_core rechigros_platform ${RECHIGROS_SDL_TARGET})
-if(TARGET SDL2::SDL2main)
-  target_link_libraries(rechigros_block_probe PRIVATE SDL2::SDL2main)
+if(TARGET SDL3::SDL3main)
+  target_link_libraries(rechigros_block_probe PRIVATE SDL3::SDL3main)
 endif()
 
 # Frame-time profile: drives a chart through the real renderer and reports the per-frame
@@ -14,6 +14,6 @@ add_executable(rechigros_frame_profile frame_profile.cpp)
 target_include_directories(rechigros_frame_profile PRIVATE "${PROJECT_SOURCE_DIR}/include")
 target_link_libraries(rechigros_frame_profile PRIVATE
   rechigros_render rechigros_chart rechigros_core rechigros_platform ${RECHIGROS_SDL_TARGET})
-if(TARGET SDL2::SDL2main)
-  target_link_libraries(rechigros_frame_profile PRIVATE SDL2::SDL2main)
+if(TARGET SDL3::SDL3main)
+  target_link_libraries(rechigros_frame_profile PRIVATE SDL3::SDL3main)
 endif()

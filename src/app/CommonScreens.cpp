@@ -7,8 +7,8 @@
 #include "rechigros/platform/AssetManager.hpp"
 #include "rechigros/platform/FileSystem.hpp"
 
-#include <SDL.h>
-#include <SDL_log.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_log.h>
 
 #include <algorithm>
 #include <cmath>

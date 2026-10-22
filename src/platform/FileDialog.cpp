@@ -139,16 +139,16 @@ bool FileDialog::available() noexcept { return true; }
 // The packaged build asks its own activity for the platform document picker. The answer
 // travels back through the drop-file path, so these calls only raise the request and report
 // that a dialog is on its way rather than waiting for it.
-#include <SDL_system.h>
+#include <SDL3/SDL_system.h>
 #include <jni.h>
 
 namespace rechigros::platform {
 namespace {
 
 void requestPicker(int mode) {
-  JNIEnv* environment = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+  JNIEnv* environment = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
   if (environment == nullptr) return;
-  jobject activity = static_cast<jobject>(SDL_AndroidGetActivity());
+  jobject activity = static_cast<jobject>(SDL_GetAndroidActivity());
   if (activity == nullptr) return;
   jclass activityClass = environment->GetObjectClass(activity);
   if (activityClass == nullptr) {

@@ -2,7 +2,7 @@
 
 #include "rechigros/platform/AssetManager.hpp"
 
-#include <SDL_log.h>
+#include <SDL3/SDL_log.h>
 
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"

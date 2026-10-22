@@ -24,7 +24,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
 
 #include <algorithm>
 #include <chrono>
@@ -661,15 +661,14 @@ int main(int argc, char** argv) {
     std::cerr << "--frame-profile requires --chart <path>\n";
     return 2;
   }
-  if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+  if (!SDL_Init(SDL_INIT_VIDEO)) {
     std::cerr << "SDL_Init failed: " << SDL_GetError() << '\n';
     return 3;
   }
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-  SDL_Window* window = SDL_CreateWindow("frame-profile", SDL_WINDOWPOS_CENTERED,
-      SDL_WINDOWPOS_CENTERED, options.width, options.height,
+  SDL_Window* window = SDL_CreateWindow("frame-profile", options.width, options.height,
       SDL_WINDOW_HIDDEN | SDL_WINDOW_OPENGL);
   if (window == nullptr) {
     std::cerr << "No hidden GL window available: " << SDL_GetError() << '\n';
@@ -680,7 +679,7 @@ int main(int argc, char** argv) {
 #ifndef RECHIGROS_GLES
   if (context != nullptr && gladLoadGLLoader(reinterpret_cast<GLADloadproc>(SDL_GL_GetProcAddress)) == 0) {
     std::cerr << "Failed to load OpenGL entry points\n";
-    SDL_GL_DeleteContext(context);
+    SDL_GL_DestroyContext(context);
     context = nullptr;
   }
 #endif
@@ -767,7 +766,7 @@ int main(int argc, char** argv) {
     });
   }
 
-  SDL_GL_DeleteContext(context);
+  SDL_GL_DestroyContext(context);
   SDL_DestroyWindow(window);
   SDL_Quit();
   return exitCode;

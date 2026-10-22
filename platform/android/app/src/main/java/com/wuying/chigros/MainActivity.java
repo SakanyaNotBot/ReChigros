@@ -34,7 +34,7 @@ public final class MainActivity extends SDLActivity {
 
     @Override
     protected String[] getLibraries() {
-        return new String[] { "c++_shared", "SDL2", "main" };
+        return new String[] { "c++_shared", "SDL3", "main" };
     }
 
     // Automation and device bring-up runs need the same flags the desktop build takes

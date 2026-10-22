@@ -1,7 +1,7 @@
 plugins { id 'com.android.application' }
 
 def projectRoot = file('../../..')
-def sdlRoot = new File(projectRoot, 'third_party/SDL')
+def sdlRoot = new File(projectRoot, 'third_party/SDL3')
 def releaseKeystore = System.getenv('RECHIGROS_KEYSTORE')
 
 android {

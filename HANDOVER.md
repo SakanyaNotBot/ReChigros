@@ -14,7 +14,7 @@
 | 参考实现（只读） | `E:\Chigros`（Java/Android 原项目） |
 | 参考素材（只读） | `E:\Chigros-Reference` |
 | 语言/标准 | C++20 |
-| 依赖 | SDL2 2.30.11、OpenGL 3.3 Core / GLES 3.0、miniaudio、Dear ImGui、nlohmann/json、stb、miniz |
+| 依赖 | SDL3 3.4.18、OpenGL 3.3 Core / GLES 3.0、miniaudio、Dear ImGui、nlohmann/json、stb、miniz |
 | 构建 | CMake ≥3.15 + Ninja，`build.bat` 一键 |
 | 首方代码量 | 约 33,600 行 C++（参考 Java 约 40,000 行） |
 | Git | 主分支 `master`，最近提交见 `git log --oneline -1` |
@@ -82,14 +82,14 @@ build\desktop-release\src\app\ReChigros.exe `
 
 ### 依赖下载
 
-需要代理：`$env:HTTPS_PROXY='http://127.0.0.1:7899'`（以及 `HTTP_PROXY`）。CMake 首次配置会 FetchContent 下载 SDL2。
+需要代理：`$env:HTTPS_PROXY='http://127.0.0.1:7899'`（以及 `HTTP_PROXY`）。CMake 首次配置会 FetchContent 下载 SDL3。
 
 ### 自建构建目录（并行工作时避免互相干扰）
 
 ```powershell
 $vcvars='C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
 $cmake='D:\Studio-SDK\cmake\3.22.1\bin\cmake.exe'
-cmd /c "call `"$vcvars`" >nul 2>&1 && `"$cmake`" -S . -B build\myprobe -G Ninja -DCMAKE_BUILD_TYPE=Release -DRECHIGROS_SDL_SOURCE=E:/ReChigros/third_party/SDL && `"$cmake`" --build build\myprobe --parallel"
+cmd /c "call `"$vcvars`" >nul 2>&1 && `"$cmake`" -S . -B build\myprobe -G Ninja -DCMAKE_BUILD_TYPE=Release -DRECHIGROS_SDL_SOURCE=E:/ReChigros/third_party/SDL3 && `"$cmake`" --build build\myprobe --parallel"
 ```
 
 ---

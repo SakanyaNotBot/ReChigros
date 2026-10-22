@@ -2,7 +2,7 @@
 
 #include "rechigros/render/gl/Texture.hpp"
 
-#include <SDL_log.h>
+#include <SDL3/SDL_log.h>
 
 namespace rechigros::render::fx {
 namespace {

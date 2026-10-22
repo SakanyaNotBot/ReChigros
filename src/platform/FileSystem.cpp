@@ -1,8 +1,8 @@
 #include "rechigros/platform/FileSystem.hpp"
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #if defined(__ANDROID__)
-#include <SDL_system.h>
+#include <SDL3/SDL_system.h>
 #include <jni.h>
 #endif
 
@@ -40,9 +40,8 @@ std::filesystem::path resolveAssetRoot() {
   if (const char* overridePath = std::getenv("RECHIGROS_ASSETS")) {
     if (*overridePath) return pathFromUtf8(overridePath);
   }
-  if (char* base = SDL_GetBasePath()) {
+  if (const char* base = SDL_GetBasePath()) {
     const std::filesystem::path candidate = pathFromUtf8(base) / "assets";
-    SDL_free(base);
     std::error_code error;
     if (std::filesystem::is_directory(candidate, error)) return candidate;
   }
@@ -96,11 +95,9 @@ std::filesystem::path executablePath() {
   std::error_code error;
   const auto self = std::filesystem::read_symlink("/proc/self/exe", error);
   if (!error && !self.empty()) return self;
-  char* base = SDL_GetBasePath();
+  const char* base = SDL_GetBasePath();
   if (!base) return {};
-  const std::filesystem::path result = pathFromUtf8(base);
-  SDL_free(base);
-  return result;
+  return pathFromUtf8(base);
 }
 
 bool isValidUtf8(std::string_view bytes) {
@@ -307,8 +304,8 @@ std::string deviceDescription() {
   // The device model and the operating-system release both live on the Java side.
   std::string model;
   std::string release;
-  if (JNIEnv* environment = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv())) {
-    if (jobject activity = static_cast<jobject>(SDL_AndroidGetActivity())) {
+  if (JNIEnv* environment = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv())) {
+    if (jobject activity = static_cast<jobject>(SDL_GetAndroidActivity())) {
       if (jclass activityClass = environment->GetObjectClass(activity)) {
         const auto readStaticString = [&](const char* className, const char* field) {
           std::string value;

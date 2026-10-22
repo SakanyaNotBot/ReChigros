@@ -8,7 +8,7 @@ Windows、macOS、Linux、Android 与 iOS 上共用同一套源码，平台差�
 
 | 层 | 技术 |
 | --- | --- |
-| 窗口、事件、输入、主循环 | SDL2 2.30.11 |
+| 窗口、事件、输入、主循环 | SDL3 3.4.18 |
 | 渲染 | OpenGL 3.3 Core（桌面）/ OpenGL ES 3.0（Android、iOS） |
 | GL 加载 | glad |
 | 音频 | miniaudio 0.11.21，单回调软件混音 |
@@ -18,7 +18,7 @@ Windows、macOS、Linux、Android 与 iOS 上共用同一套源码，平台差�
 | ZIP 包解压 | miniz |
 | 构建 | CMake ≥ 3.20、C++20、RAII |
 
-依赖在配置阶段按固定版本与 SHA-256 校验下载，或从已解包的 `third_party/SDL` 就地使用，
+依赖在配置阶段按固定版本与 SHA-256 校验下载，或从已解包的 `third_party/SDL3` 就地使用，
 构建过程不需要 Git clone。
 
 ## 目录结构
@@ -36,7 +36,7 @@ src/chart/                  谱面解析实现
 src/render/                 OpenGL / OpenGL ES 渲染实现
 src/audio/                  miniaudio 音频实现
 src/platform/               平台服务实现
-src/app/                    SDL2 应用入口、界面与状态机
+src/app/                    SDL3 应用入口、界面与状态机
 platform/android/           Gradle + NDK 工程
 platform/ios/               Xcode 资源、Info.plist 与图标目录
 tests/                      与参考实现对照的回归测试
@@ -82,7 +82,7 @@ build.bat android Release
 ```
 
 APK 位于 `platform/android/app/build/outputs/apk/release/`。Gradle 构建 `arm64-v8a`、
-`armeabi-v7a`、`x86_64` 三个 ABI，入口是 SDL2 的 `SDLActivity`，原生库为 `libmain.so`。
+`armeabi-v7a`、`x86_64` 三个 ABI，入口是 SDL3 的 `SDLActivity`，原生库为 `libmain.so`。
 应用进入后台时挂起 miniaudio 设备并清理触点，回到前台恢复播放。以"打开方式"接收谱面包时，
 `content://` 流会先复制到应用私有缓存，再经条目数、展开体积与路径穿越检查后交给共享逻辑。
 
@@ -155,4 +155,4 @@ build\desktop-release\src\app\ReChigros.exe [谱面文件]
 ## 许可证
 
 沿用原项目许可证，见 `LICENSE`。第三方依赖各自遵循其上游许可证，构建时下载的源码位于
-`build/_deps`、`third_party/cache` 或 `third_party/SDL`。
+`build/_deps`、`third_party/cache` 或 `third_party/SDL3`。

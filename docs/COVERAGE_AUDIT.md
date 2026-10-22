@@ -1,4 +1,4 @@
-# Functional coverage audit — Chigros (Java/Android) vs ReChigros (C++20/SDL2)
+# Functional coverage audit — Chigros (Java/Android) vs ReChigros (C++20/SDL3)
 
 Read-only source comparison. Reference = `E:\Chigros`, port = `E:\ReChigros`.
 Nothing was built or executed; every claim below is a source-level observation with both
@@ -613,7 +613,7 @@ All values below were read from source on both sides. "≡" means identical.
 | `GameRenderer.java` (judging, ~3,000 lines) | `src/core/GameplaySession.cpp`, `src/core/JudgementEngine.cpp`, `src/core/NoteGeometry.cpp` |
 | `GameRenderer.java` (rendering, ~11,000 lines) | `src/render/GameRenderer.cpp`, `render/scene/*`, `render/fx/*`, `render/text/*` |
 | `NativeRenderCommands.java` | `render/batch/SpriteBatch.cpp`, `render/scene/NoteBatch.cpp` (no `NoteBucket` reset contract) |
-| `GameGLSurfaceView.java` | `src/app/Application.cpp` (SDL2 window/GL context) |
+| `GameGLSurfaceView.java` | `src/app/Application.cpp` (SDL3 window/GL context) |
 | `HitOffsetIndicator.java` | `src/core/HitOffsetIndicator.cpp` |
 | `ClickEffectItem.java` | `src/core/ClickEffectItem.cpp` |
 | `PlayResult.java` | `include/rechigros/game/PlayResult.hpp` |
