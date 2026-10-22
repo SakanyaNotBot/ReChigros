@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstdint>
 #include <cctype>
 #include <fstream>
 #include <sstream>
@@ -50,6 +51,64 @@ std::string firstNonEmpty(const std::vector<std::string>& values) {
     if (!isBlank(value)) return value;
   }
   return {};
+}
+
+// Several editors write spacing as a typographic space rather than a plain one. The
+// interface font has no glyph for those, so they would draw as empty boxes; every such
+// code point becomes a plain space instead.
+std::string normaliseUnicodeSpaces(const std::string& text) {
+  std::string result;
+  result.reserve(text.size());
+  for (std::size_t index = 0; index < text.size();) {
+    const auto lead = static_cast<unsigned char>(text[index]);
+    if (lead < 0x80) {
+      result.push_back(static_cast<char>(lead));
+      ++index;
+      continue;
+    }
+    // Decode the code point length from the lead byte.
+    std::size_t length = 0;
+    std::uint32_t code = 0;
+    if ((lead & 0xE0U) == 0xC0U) {
+      length = 2;
+      code = lead & 0x1FU;
+    } else if ((lead & 0xF0U) == 0xE0U) {
+      length = 3;
+      code = lead & 0x0FU;
+    } else if ((lead & 0xF8U) == 0xF0U) {
+      length = 4;
+      code = lead & 0x07U;
+    } else {
+      result.push_back(static_cast<char>(lead));
+      ++index;
+      continue;
+    }
+    bool valid = index + length <= text.size();
+    for (std::size_t offset = 1; valid && offset < length; ++offset) {
+      const auto continuation = static_cast<unsigned char>(text[index + offset]);
+      if ((continuation & 0xC0U) != 0x80U) {
+        valid = false;
+        break;
+      }
+      code = (code << 6U) | (continuation & 0x3FU);
+    }
+    if (!valid) {
+      result.push_back(static_cast<char>(lead));
+      ++index;
+      continue;
+    }
+    const bool isSpace = code == 0x00A0U || code == 0x2000U || code == 0x2001U ||
+        code == 0x2002U || code == 0x2003U || code == 0x2004U || code == 0x2005U ||
+        code == 0x2006U || code == 0x2007U || code == 0x2008U || code == 0x2009U ||
+        code == 0x200AU || code == 0x200BU || code == 0x202FU || code == 0x3000U;
+    if (isSpace) {
+      result.push_back(' ');
+    } else {
+      result.append(text, index, length);
+    }
+    index += length;
+  }
+  return result;
 }
 
 std::string collapseNormalSpaceRuns(const std::string& text) {
@@ -339,18 +398,10 @@ std::string getNestedString(const Json& object, std::initializer_list<const char
 
 std::string normalizeDifficultyText(const std::string& text) {
   if (text.empty()) return {};
-  const std::string collapsed = collapseNormalSpaceRuns(text);
-  if (collapsed.find(kNormalSpace) == std::string::npos) return collapsed;
-  std::string result;
-  result.reserve(collapsed.size() + 8);
-  for (const char character : collapsed) {
-    if (character == kNormalSpace) {
-      result.append(kEnSpace);
-    } else {
-      result.push_back(character);
-    }
-  }
-  return result;
+  // Difficulty labels are written with typographic spacing in some charts. The interface
+  // font has no glyph for those, so every space variant becomes a plain space that the
+  // font can draw.
+  return normaliseUnicodeSpaces(text);
 }
 
 std::string inferDifficultyPrefix(const std::filesystem::path& chartFile) {

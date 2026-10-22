@@ -629,7 +629,12 @@ void Application::printBatchSummary() {
 }
 
 void Application::captureFramebufferIfRequested() {
-  if (capturePath_.empty() || captureDone_ || app_ == nullptr || renderedFrames_ < 20) return;
+  // A capture of gameplay waits for the opening to finish, so the frame shows the play
+  // field rather than the transition into it.
+  const int minimumFrames = app_ != nullptr && app_->screen == Screen::Game ? 140 : 20;
+  if (capturePath_.empty() || captureDone_ || app_ == nullptr || renderedFrames_ < minimumFrames) {
+    return;
+  }
   const int width = app_->drawableWidth;
   const int height = app_->drawableHeight;
   if (width <= 0 || height <= 0) return;
