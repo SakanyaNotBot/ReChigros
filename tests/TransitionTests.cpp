@@ -1,5 +1,7 @@
+#include "rechigros/game/OfficialBlock.hpp"
 #include "rechigros/render/fx/BadEffectField.hpp"
 #include "rechigros/render/fx/BlockCompositePass.hpp"
+#include "rechigros/render/fx/BlockOverlay.hpp"
 #include "rechigros/render/fx/DsGridPass.hpp"
 #include "rechigros/render/scene/NoteBatch.hpp"
 #include "rechigros/render/fx/PrprChain.hpp"
@@ -9,6 +11,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <vector>
 
 namespace {
 
@@ -293,6 +296,112 @@ int main() {
       }
     }
     require(decreasing, "each glow ring is lighter than the one outside it");
+  }
+
+  // --- zone mask rasterisation -------------------------------------------------
+  {
+    using rechigros::game::OfficialBlock;
+    using rechigros::render::fx::BlockCompositePass;
+    using rechigros::render::fx::BlockMaskQuad;
+    using rechigros::render::fx::BlockOverlay;
+
+    constexpr float kScreenWidth = 1920.0F;
+    constexpr float kScreenHeight = 1080.0F;
+    const auto makeZone = [](float left, float bottom, float right, float top, float enableTime,
+                              bool subtract) {
+      OfficialBlock zone;
+      zone.bottomLeftX = left;
+      zone.bottomLeftY = bottom;
+      zone.topRightX = right;
+      zone.topRightY = top;
+      zone.appearTime = 0.0F;
+      zone.enableTime = enableTime;
+      zone.disableTime = 1000.0F;
+      zone.disappearTime = 1000.0F;
+      zone.isSubtract = subtract;
+      return zone;
+    };
+    const BlockOverlay overlay;
+
+    // The reduced targets follow the shipped material: masks and coverage at screen/8,
+    // the edge/glow target at screen/4, never below one texel.
+    require(BlockCompositePass::reducedSize(1920, BlockCompositePass::MASK_DIVISOR) == 240,
+        "a 1920-wide mask is 240 texels wide");
+    require(BlockCompositePass::reducedSize(1080, BlockCompositePass::MASK_DIVISOR) == 135,
+        "a 1080-tall mask is 135 texels tall");
+    require(BlockCompositePass::reducedSize(1920, BlockCompositePass::EFFECT_DIVISOR) == 480,
+        "the edge and glow target is a quarter of the screen");
+    require(BlockCompositePass::reducedSize(4, BlockCompositePass::MASK_DIVISOR) == 1,
+        "a reduced target never drops below one texel");
+    require(BlockCompositePass::MASK_DIVISOR == BlockCompositePass::COMPOSE_DIVISOR,
+        "the coverage target matches the mask resolution it samples");
+    require(BlockCompositePass::gate(BlockCompositePass::MASK_WRITE_ALPHA) > 0.0F,
+        "one subtract write covers the zone");
+    require(BlockCompositePass::gate(2.0F * BlockCompositePass::MASK_WRITE_ALPHA) < 0.0F,
+        "two overlapping subtract writes cancel the zone");
+
+    std::vector<OfficialBlock> zones;
+    zones.push_back(makeZone(0.86F, 0.0F, 1.0F, 1.0F, 0.0F, false));   // active normal
+    zones.push_back(makeZone(0.90F, 0.42F, 0.98F, 0.58F, 0.0F, true));  // active subtract
+    zones.push_back(makeZone(0.06F, 0.30F, 0.30F, 0.62F, 10.0F, false)); // pre-warning
+    // Three updates drive the one-shot warning fade to full strength (0.5 s at 0.25 s each).
+    for (int step = 0; step < 3; ++step) {
+      overlay.updateAll(zones, 1.0F, 0.25F, 0.0F, 0.0F, kScreenWidth, kScreenHeight);
+    }
+    std::vector<BlockMaskQuad> maskA;
+    std::vector<BlockMaskQuad> maskB;
+    overlay.collectMaskQuads(zones, 1.0F, maskA, maskB);
+    require(maskA.size() == 3, "the active and warning layers are written to the first mask");
+    require(maskB.empty(), "an active subtract zone is not repeated in the second mask");
+    if (maskA.size() == 3) {
+      // Active normal zone: red channel, at its real screen position and size.
+      require(close(maskA[0].red, 1.0F), "an active zone fills the red channel");
+      require(close(maskA[0].green, 0.0F) && close(maskA[0].blue, 0.0F),
+          "an active normal zone leaves the other mask channels alone");
+      require(close(maskA[0].centerX, 0.93F * kScreenWidth), "the zone keeps its screen centre");
+      require(close(maskA[0].width, 0.14F * kScreenWidth), "the zone keeps its screen width");
+      require(close(maskA[0].height, kScreenHeight), "a full-height zone covers the stage");
+      // Active subtract zone: green channel with a single 0.1 write.
+      require(close(maskA[1].green, BlockCompositePass::MASK_WRITE_ALPHA),
+          "an active subtract zone writes one mask step");
+      require(close(maskA[1].red, 0.0F), "a subtract zone writes no fill coverage");
+      // Pre-warning zone: blue channel carries the one-shot fade, not a coverage value.
+      require(close(maskA[2].blue, 1.0F), "the warning silhouette reaches full fade");
+      require(close(maskA[2].red, 0.0F) && close(maskA[2].green, 0.0F),
+          "the warning silhouette writes only the fade channel");
+    }
+
+    // A zone inside its ready lead writes the ready highlight in the second mask and
+    // keeps the warning silhouette in the first.
+    std::vector<OfficialBlock> readyZones;
+    readyZones.push_back(makeZone(0.10F, 0.20F, 0.40F, 0.50F, 5.0F, false));
+    readyZones.push_back(makeZone(0.50F, 0.20F, 0.60F, 0.50F, 5.0F, true));
+    for (int step = 0; step < 3; ++step) {
+      overlay.updateAll(readyZones, 4.75F, 0.25F, 0.0F, 0.0F, kScreenWidth, kScreenHeight);
+    }
+    require(readyZones[0].phase(4.75F) == 1, "a zone enters its ready phase before enabling");
+    maskA.clear();
+    maskB.clear();
+    overlay.collectMaskQuads(readyZones, 4.75F, maskA, maskB);
+    require(maskA.size() == 1, "a ready normal zone still shows its warning silhouette");
+    require(maskB.size() == 2, "ready normal and ready subtract zones land in the second mask");
+    if (maskA.size() == 1 && maskB.size() == 2) {
+      require(close(maskA[0].blue, 1.0F), "the warning silhouette reaches full fade");
+      require(close(maskB[0].green, 1.0F), "the ready highlight reaches full fade");
+      require(close(maskB[1].red, BlockCompositePass::MASK_WRITE_ALPHA),
+          "a ready subtract zone keeps its constant subtract step");
+      require(close(maskB[1].blue, BlockCompositePass::MASK_WRITE_ALPHA),
+          "a ready subtract zone writes the ready step into its own channel");
+    }
+
+    // A zone smaller than half a screen pixel in either direction cannot be rasterised.
+    std::vector<OfficialBlock> tiny;
+    tiny.push_back(makeZone(0.5F, 0.5F, 0.5002F, 1.0F, 0.0F, false));
+    overlay.updateAll(tiny, 1.0F, 0.25F, 0.0F, 0.0F, kScreenWidth, kScreenHeight);
+    maskA.clear();
+    maskB.clear();
+    overlay.collectMaskQuads(tiny, 1.0F, maskA, maskB);
+    require(maskA.empty() && maskB.empty(), "a zone too small to be seen is not rasterised");
   }
 
   if (g_failures != 0) {

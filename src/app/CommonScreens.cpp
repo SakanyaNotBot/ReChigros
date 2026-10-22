@@ -2,6 +2,7 @@
 
 #include "rechigros/app/ScreenCommon.hpp"
 #include "rechigros/app/Screens.hpp"
+#include "rechigros/app/UiLayout.hpp"
 #include "rechigros/app/UiStyle.hpp"
 #include "rechigros/platform/AssetManager.hpp"
 #include "rechigros/platform/FileSystem.hpp"
@@ -325,107 +326,120 @@ void handleIncomingPath(AppContext& context, const std::filesystem::path& path) 
 }
 
 void drawHomeScreen(AppContext& context) {
-  const auto size = viewportSize();
-  const float scale = layoutScale();
+  const ui::Canvas canvas = ui::canvas();
+  const ImVec2 viewport(canvas.viewport.x, canvas.viewport.y);
   ui::beginFullscreenWindow("##home");
   ImDrawList* drawList = ImGui::GetWindowDrawList();
-  ui::drawBackdrop(drawList, ImVec2(size.width, size.height), context.nowSec);
+  // Fallback artwork behind the interface. The GPU backdrop draws the same scene when it
+  // is available, in which case this call is suppressed.
+  ui::drawBackdrop(drawList, viewport, context.nowSec);
+  drawList->AddRectFilled(ImVec2(0.0F, 0.0F), viewport, ui::argb(0x46000000U));
 
-  // Flat scrim over the backdrop, so every surface above it keeps its contrast.
-  drawList->AddRectFilled(ImVec2(0.0F, 0.0F), ImVec2(size.width, size.height),
-      ui::rgba(0x46000000U));
+  // Title block: 280 x 92 design units, 22 units below the top edge, horizontally centred.
+  const ui::Box titleBox{(ui::kDesignWidth - 280.0F) * 0.5F, 22.0F,
+      (ui::kDesignWidth + 280.0F) * 0.5F, 114.0F};
+  ui::TextStyle titleStyle;
+  titleStyle.sizeDp = 46.0F;
+  titleStyle.bold = true;
+  titleStyle.align = ui::HAlign::Center;
+  titleStyle.valign = ui::VAlign::Middle;
+  ui::drawLabel(drawList, canvas, titleBox, "ReChigros", titleStyle, context.nowSec);
 
-  const auto point = [&](float x, float y) { return designPosition(ImVec2(size.width, size.height),
-        scale, x, y); };
+  // Menu block: a 457 x 204 design-unit area 134 units below the top edge, centred. It
+  // holds the start panel, the character that overlaps its lower edge and the side entries.
+  constexpr float kMenuWidth = 457.0F;
+  constexpr float kMenuLeft = (ui::kDesignWidth - kMenuWidth) * 0.5F;
+  constexpr float kMenuTop = 134.0F;
+  constexpr float kStartWidth = 292.0F;
+  constexpr float kStartHeight = 204.0F;
+  constexpr float kSideGap = 13.0F;
+  constexpr float kSideWidth = 152.0F;
+  constexpr float kButtonHeight = 52.0F;
+  constexpr float kButtonGap = 20.0F;
+  constexpr float kSkewSlope = 0.2679492F; // tan(15 degrees)
 
-  // Title.
-  const ImVec2 titlePosition = point(365.0F, 22.0F + 46.0F);
-  ui::drawTextCentered(drawList, titlePosition, 46.0F * scale, ui::rgba(ui::kTextPrimary),
-      "ReChigros");
+  const ui::Box startBox{kMenuLeft, kMenuTop, kMenuLeft + kStartWidth, kMenuTop + kStartHeight};
+  const ui::PanelStyle startPanel =
+      ui::glassPanel(ui::argb(0xA5222A35U), ui::argb(0xB8FFFFFFU));
 
-  // Start panel. The whole menu block is 457 design units wide and centred.
-  const ImVec2 startTopLeft = point(137.0F, 134.0F);
-  const ImVec2 startSize(292.0F * scale, 204.0F * scale);
-  ImGui::SetCursorScreenPos(startTopLeft);
-  const bool startPressed = ImGui::InvisibleButton("##start_chart", startSize);
-  const bool startHovered = ImGui::IsItemHovered();
-  ui::drawPanel(drawList, startTopLeft,
-      ImVec2(startTopLeft.x + startSize.x, startTopLeft.y + startSize.y),
-      204.0F * scale * ui::kSkewRatio, startHovered ? IM_COL32(48, 54, 68, 200)
-                                                   : ui::rgba(ui::kPanelFill),
-      ui::rgba(0xFFFFFFB8), 1.5F, false, true);
-  const ImVec2 startLabelPosition(startTopLeft.x + 292.0F * scale * ui::kSkewRatio + 18.0F * scale,
-      startTopLeft.y + 30.0F * scale);
-  ui::drawText(drawList, startLabelPosition, 34.0F * scale, ui::rgba(ui::kTextPrimary), "开始游玩");
-  const std::uint64_t startIcon = assetTexture(context, "res/play.png", 128);
-  if (startIcon != 0) {
-    const ImVec2 iconPosition(startTopLeft.x + 34.0F * scale, startTopLeft.y + 108.0F * scale);
-    drawList->AddImage(static_cast<ImTextureID>(startIcon), iconPosition,
-        ImVec2(iconPosition.x + 66.0F * scale, iconPosition.y + 66.0F * scale));
+  // The panel's top edge starts after the skew offset, so the label follows that edge.
+  const float startSkew = std::min(kSkewSlope * kStartHeight, kStartWidth * 0.42F);
+  const float labelLeft = kMenuLeft + startSkew + 16.0F;
+  const ui::Box startLabelBox{labelLeft, kMenuTop + 8.0F,
+      labelLeft + (kStartWidth - startSkew - 16.0F - 12.0F), kMenuTop + 8.0F + 54.0F};
+  ui::TextStyle startLabelStyle;
+  startLabelStyle.sizeDp = 38.0F;
+  startLabelStyle.bold = true;
+  startLabelStyle.align = ui::HAlign::Left;
+  startLabelStyle.valign = ui::VAlign::Middle;
+
+  const ui::Interaction start = ui::panelInteraction("##home_start", canvas, startBox, startPanel);
+  ui::drawPanelShape(drawList, canvas, startBox, startPanel);
+  ui::drawLabel(drawList, canvas, startLabelBox, "开始游玩", startLabelStyle, context.nowSec);
+
+  // Character artwork, anchored to the bottom edge of the start panel and overlapping it.
+  const std::uint64_t meowTexture = assetTexture(context, "res/meow.png", 320);
+  if (meowTexture != 0) {
+    const int meowTextureWidth = context.textures.width(meowTexture);
+    const int meowTextureHeight = context.textures.height(meowTexture);
+    const float meowSize = canvas.units(104.0F);
+    const float outset = std::max(1.0F, std::round(meowSize * 11.0F / 524.0F));
+    const ui::PxRect menuPixels = ui::toPixels(canvas,
+        ui::Box{kMenuLeft, kMenuTop, kMenuLeft + kMenuWidth, kMenuTop + kStartHeight});
+    const float left = menuPixels.min.x
+        + std::round((canvas.units(kStartWidth) - meowSize) * 0.5F) - std::round(canvas.dp(14.0F));
+    const float top = menuPixels.min.y + canvas.units(kStartHeight) - meowSize + outset;
+    ui::drawImage(drawList,
+        ui::PxRect{ImVec2(left, top), ImVec2(left + meowSize, top + meowSize)}, meowTexture,
+        meowTextureWidth, meowTextureHeight, ui::ImageFit::Fill);
   }
-  const std::uint64_t meow = assetTexture(context, "res/meow.png", 256);
-  if (meow != 0) {
-    const float meowSize = 104.0F * scale;
-    const ImVec2 meowMin(startTopLeft.x + (startSize.x - meowSize) * 0.5F - 14.0F * scale,
-        startTopLeft.y + 204.0F * scale - meowSize);
-    drawList->AddImage(static_cast<ImTextureID>(meow), meowMin,
-        ImVec2(meowMin.x + meowSize, meowMin.y + meowSize));
-  }
-  if (startPressed) {
-    context.libraryTab = 0;
-    context.library.invalidate();
-    context.screen = Screen::Library;
-  }
 
-  // Side menu.
-  struct MenuEntry {
-    const char* label;
-  };
-  const MenuEntry entries[] = {{"游玩设置"}, {"资源包"}, {"活动"}};
-  const float sideTop = 134.0F * scale;
-  const float sideLeft = startTopLeft.x + (292.0F + 13.0F) * scale;
-  const float buttonHeight = 52.0F * scale;
-  const float buttonGap = 20.0F * scale;
+  // Side entries: each one is 52 units tall, 20 apart, and shifted left by the slant of
+  // the stack so their leading edges line up with the start panel's edge.
+  const char* const sideLabels[3] = {"游玩设置", "资源包", "活动"};
+  int sidePressed = -1;
   for (int index = 0; index < 3; ++index) {
-    const ImVec2 buttonTopLeft(sideLeft - static_cast<float>(index) * (buttonHeight + buttonGap)
-            * ui::kSkewRatio,
-        sideTop + static_cast<float>(index) * (buttonHeight + buttonGap));
-    const std::string id = "##home_menu_" + std::to_string(index);
-    if (ui::skewButton(id.c_str(), entries[index].label, buttonTopLeft,
-            ImVec2(152.0F * scale, buttonHeight), 22.0F * scale, -1.0F, ui::rgba(ui::kPanelFill),
-            ui::rgba(0xFFFFFF96), false, true)) {
-      if (index == 0) {
-        context.settingsTab = 0;
-        context.settingsReturn = Screen::Home;
-        context.screen = Screen::Settings;
-      } else if (index == 1) {
-        context.settingsTab = 0;
-        context.settingsReturn = Screen::Home;
-        context.screen = Screen::Settings;
-      } else {
-        notify(context, "暂无活动");
-      }
-    }
+    const float stackTop = canvas.units((kButtonHeight + kButtonGap) * static_cast<float>(index));
+    const float left = kMenuLeft + kStartWidth + kSideGap
+        - std::round(stackTop * kSkewSlope) / canvas.scale;
+    const float top = kMenuTop + (kButtonHeight + kButtonGap) * static_cast<float>(index);
+    const ui::Box box{left, top, left + kSideWidth, top + kButtonHeight};
+    const ui::PanelStyle panel =
+        ui::glassPanel(ui::argb(0x9A222A35U), ui::argb(0x96FFFFFFU));
+    const std::string id = "##home_side_" + std::to_string(index);
+    const ui::Interaction side = ui::panelInteraction(id.c_str(), canvas, box, panel);
+    ui::drawPanelShape(drawList, canvas, box, panel);
+    ui::TextStyle labelStyle;
+    labelStyle.sizeDp = 22.0F;
+    labelStyle.bold = true;
+    labelStyle.align = ui::HAlign::Center;
+    labelStyle.valign = ui::VAlign::Middle;
+    ui::drawLabel(drawList, canvas, box, sideLabels[index], labelStyle, context.nowSec);
+    if (side.pressed) sidePressed = index;
   }
 
-  // Footer: the device the game is running on, as the reference shows it.
-  const std::string footer = rechigros::platform::deviceDescription();
-  ui::drawTextCentered(drawList, point(365.0F, 415.0F - 24.0F), 16.0F * scale,
-      ui::rgba(ui::kTextMuted), footer.c_str());
+  // Device footer and the project mark in the corner.
+  const ui::Box footerBox{0.0F, ui::kDesignHeight - 8.0F - 30.0F, ui::kDesignWidth,
+      ui::kDesignHeight - 8.0F};
+  ui::TextStyle footerStyle;
+  footerStyle.sizeDp = 16.0F;
+  footerStyle.bold = false;
+  footerStyle.color = ui::argb(0xB8FFFFFFU);
+  footerStyle.align = ui::HAlign::Center;
+  footerStyle.valign = ui::VAlign::Middle;
+  ui::drawLabel(drawList, canvas, footerBox, rechigros::platform::deviceDescription(),
+      footerStyle, context.nowSec);
 
-  // Project link in the bottom-right corner. The mark is drawn from primitives
-  // because no packaged glyph asset exists for it.
   {
-    const float markSize = 32.0F * scale;
-    const ImVec2 topLeft(size.width - 14.0F * scale - markSize,
-        size.height - 12.0F * scale - markSize);
-    ImGui::SetCursorScreenPos(topLeft);
-    const bool pressed = ImGui::InvisibleButton("##home_link", ImVec2(markSize, markSize));
-    const bool hovered = ImGui::IsItemHovered();
-    const ImU32 tint = hovered ? IM_COL32(255, 255, 255, 255) : IM_COL32(255, 255, 255, 235);
-    const ImVec2 center(topLeft.x + markSize * 0.5F, topLeft.y + markSize * 0.5F);
-    const float radius = markSize * 0.46F;
-    // Filled disc with a lighter notch, matching the solid badge the reference shows.
+    const ui::Box markBox{ui::kDesignWidth - 14.0F - 32.0F, ui::kDesignHeight - 12.0F - 32.0F,
+        ui::kDesignWidth - 14.0F, ui::kDesignHeight - 12.0F};
+    const ui::PanelStyle markPanel = ui::rectPanel(0x00000000U, 0x00000000U);
+    const ui::Interaction mark = ui::panelInteraction("##home_link", canvas, markBox, markPanel);
+    const ui::PxRect pixels = ui::toPixels(canvas, markBox);
+    const ImVec2 center((pixels.min.x + pixels.max.x) * 0.5F,
+        (pixels.min.y + pixels.max.y) * 0.5F);
+    const float radius = (pixels.max.x - pixels.min.x) * 0.46F;
+    const ImU32 tint = mark.hovered ? IM_COL32(255, 255, 255, 255) : IM_COL32(255, 255, 255, 235);
     drawList->AddCircleFilled(center, radius, tint, 0);
     const float notch = radius * 0.52F;
     drawList->AddRectFilled(ImVec2(center.x - notch, center.y - notch),
@@ -434,11 +448,27 @@ void drawHomeScreen(AppContext& context) {
     drawList->AddRectFilled(ImVec2(center.x - notch * 0.55F, center.y + notch * 0.5F),
         ImVec2(center.x + notch * 0.55F, center.y + notch * 1.05F), IM_COL32(16, 20, 26, 255),
         notch * 0.3F);
-    if (pressed) notify(context, "项目主页");
-    if (hovered) ImGui::SetTooltip("项目主页");
+    if (mark.pressed) notify(context, "项目主页");
   }
 
   ui::endFullscreenWindow();
+
+  if (start.pressed) {
+    context.libraryTab = 0;
+    context.library.invalidate();
+    context.screen = Screen::Library;
+  } else if (sidePressed == 0) {
+    context.settingsTab = 0;
+    context.settingsReturn = Screen::Home;
+    context.screen = Screen::Settings;
+  } else if (sidePressed == 1) {
+    context.settingsTab = 0;
+    context.settingsReturn = Screen::Home;
+    context.screen = Screen::Settings;
+    notify(context, "可在视频页导入皮肤资源");
+  } else if (sidePressed == 2) {
+    notify(context, "暂无活动");
+  }
 }
 
 void drawToast(AppContext& context) {

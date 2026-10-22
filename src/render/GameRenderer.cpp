@@ -9,9 +9,11 @@
 #include "rechigros/render/asset/TextureCache.hpp"
 #include "rechigros/render/batch/SpriteBatch.hpp"
 #include "rechigros/render/gl/Framebuffer.hpp"
+#include "rechigros/render/gl/GlDebug.hpp"
 #include "rechigros/render/gl/Texture.hpp"
 #include "rechigros/render/fx/FullscreenPass.hpp"
 #include "rechigros/render/fx/BadEffectField.hpp"
+#include "rechigros/render/fx/BlockCompositePass.hpp"
 #include "rechigros/render/fx/BlockOverlay.hpp"
 #include "rechigros/render/fx/DsGridPass.hpp"
 #include "rechigros/render/fx/KaleidoBackdropPass.hpp"
@@ -81,6 +83,9 @@ struct GameRenderer::Impl {
 
   void releaseResources() noexcept {
     chain.release();
+    // The composite owns GL programs and reduced-size targets; release them before the
+    // texture cache drops the samplers they point at.
+    blockComposite.release();
     // The overlay passes own GL programs; release them with the rest of the resources.
     pauseBackdrop.release();
     dsGrid.release();
@@ -102,6 +107,7 @@ struct GameRenderer::Impl {
     hitFx = nullptr;
     hudArtwork.pause = hudArtwork.timerLine = nullptr;
     effectGlitchMap = effectGlitchDogMap = effectWireNoise = effectDisplaceMap = nullptr;
+    blockDisplaceMap = blockSparkMap = blockNoiseMap = nullptr;
     headTextureList.clear();
   }
 
@@ -119,6 +125,9 @@ struct GameRenderer::Impl {
   fx::HitEffectField hitEffects;
   fx::PauseBackdropPass pauseBackdrop;
   fx::BlockOverlay blockOverlay;
+  // Replaces the finished frame inside a red zone; the inline silhouettes are skipped
+  // while it is active so the two paths never draw the same zone twice.
+  fx::BlockCompositePass blockComposite;
   fx::BadEffectField badEffects;
   // Notes that already produced their bad effect, so each note produces one copy.
   std::unordered_set<const game::Note*> badSpawned;
@@ -155,6 +164,10 @@ struct GameRenderer::Impl {
   gl::Texture* effectGlitchDogMap{};
   gl::Texture* effectWireNoise{};
   gl::Texture* effectDisplaceMap{};
+  // Noise maps the screen-space composite samples while it distorts a zone.
+  gl::Texture* blockDisplaceMap{};
+  gl::Texture* blockSparkMap{};
+  gl::Texture* blockNoiseMap{};
 
   // HUD artwork, grouped so the HUD pass receives it as one value.
   struct HudArtwork {
@@ -248,6 +261,25 @@ void GameRenderer::Impl::loadGameplayTextures() {
   }
   if (effectDisplaceMap != nullptr) effectDisplaceMap->setFilter(true);
   if (effectWireNoise != nullptr) effectWireNoise->setWrapRepeat(true, true);
+
+  // Red-zone composite samplers. Background pixels inside a zone are resampled through
+  // the displacement and noise maps, so they have to tile and stay point sampled: a
+  // filtered displacement map would smooth the staircase edge the material depends on.
+  blockDisplaceMap = textures.loadAsset("official_textures/BlockNoise1.png");
+  blockSparkMap = textures.loadAsset("official_textures/PointNoise.png");
+  blockNoiseMap = textures.loadAsset("official_textures/FD_Noise_00000.png");
+  if (blockDisplaceMap != nullptr) {
+    blockDisplaceMap->setFilter(false);
+    blockDisplaceMap->setWrapMirrored(true, true);
+  }
+  if (blockSparkMap != nullptr) {
+    blockSparkMap->setFilter(false);
+    blockSparkMap->setWrapRepeat(true, true);
+  }
+  if (blockNoiseMap != nullptr) {
+    blockNoiseMap->setFilter(false);
+    blockNoiseMap->setWrapMirrored(true, true);
+  }
 
   // Resolve the material settings before slicing the hold sheet: the pack and a skin may
   // change the slice sizes.
@@ -773,10 +805,23 @@ GameRenderer::~GameRenderer() = default;
 bool GameRenderer::initialize(const std::filesystem::path& assetRoot) {
   impl_->assets = assetRoot;
   impl_->textures.setAssetRoot(assetRoot);
-  if (!impl_->text.initialize(assetRoot)) return false;
+  if (!impl_->text.initialize(assetRoot)) {
+    // A renderer that was not initialised draws nothing at all, which reads as an empty
+    // scene on the device; the reason is logged instead of failing silently.
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+        "[render] renderer initialization failed: text layer unavailable (asset root %s)",
+        assetRoot.string().c_str());
+    return false;
+  }
   impl_->loadGameplayTextures();
+  // Both shipped shaders are loaded here and stay ready for the whole session; a missing
+  // asset simply leaves the composite unavailable and the inline silhouettes in charge.
+  impl_->blockComposite.prepare(assetRoot, impl_->blockDisplaceMap, impl_->blockSparkMap,
+      impl_->blockNoiseMap);
   bindDefaultBlend();
   impl_->initialized = true;
+  SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "[render] renderer initialized (asset root %s)",
+      assetRoot.string().c_str());
   return true;
 }
 
@@ -792,6 +837,7 @@ void GameRenderer::resize(int width, int height) noexcept {
   impl_->sceneFbo.resize(impl_->width, impl_->height);
   impl_->pingFbo.resize(impl_->width, impl_->height);
   impl_->pongFbo.resize(impl_->width, impl_->height);
+  impl_->blockComposite.resize(impl_->width, impl_->height);
 }
 
 void GameRenderer::Impl::drawLevelEffectObjects(game::Chart* chart,
@@ -898,11 +944,30 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       scene::computeStageLayout(static_cast<float>(width), static_cast<float>(height),
           16.0F / 9.0F, false);
 
+  // The screen-space composite resamples the finished frame inside a red zone, so it
+  // needs that frame as a texture while it writes into the caller's target. Any frame
+  // with a zone on screen therefore takes the offscreen route, with or without a
+  // storyboard chain. Zones are culled on the cheap appear/disappear window first: the
+  // pass is a full-screen resample and must not run on frames that show none.
+  bool anyZoneVisible = false;
+  if (chart != nullptr && !chart->blockAreaList.empty() && !input.transition.inIntro &&
+      input.chartTimeSec >= 0.0) {
+    for (const auto& zone : chart->blockAreaList) {
+      if (static_cast<float>(input.chartTimeSec) >= zone.appearTime &&
+          static_cast<float>(input.chartTimeSec) < zone.disappearTime) {
+        anyZoneVisible = true;
+        break;
+      }
+    }
+  }
+  const bool useBlockComposite = anyZoneVisible && blockComposite.ready() &&
+      blockComposite.allocated() && sceneFbo.valid();
+
   // A chart with storyboard effects renders into an offscreen target first so the
   // shader chain can process the whole play field.
   const bool useEffects = applyEffects && chart != nullptr && !chain.empty() &&
       !chart->prprEffects.empty() && sceneFbo.valid();
-  if (useEffects) {
+  if (useEffects || useBlockComposite) {
     sceneFbo.bind();
     glViewport(0, 0, width, height);
   } else {
@@ -914,6 +979,9 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
 
   clearTarget(0.0F, 0.0F, 0.0F, 1.0F);
   bindDefaultBlend();
+  // Each pass is followed by an optional error check: with diagnostics off this is a
+  // no-op, and with them on the log names the first pass that failed on the device.
+  gl::logErrors("scene.begin");
 
   // The opening rides the decorative line's growth from INTRO_START_BRIGHTNESS down to
   // the gameplay transmission; the exit walks everything to the result page's level.
@@ -927,9 +995,11 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
   const float dimAlpha = scene::backgroundDimAlpha(introStarted, introMix, input.backgroundDim,
       input.transition.inOutro, input.transition.outroElapsedSec);
   drawBackgroundPass(layout, artworkAlpha, dimAlpha);
+  gl::logErrors("scene.background");
 
   // A level effect may draw its own objects between the backdrop and the play field.
   drawLevelEffectObjects(chart, input, layout);
+  gl::logErrors("scene.levelObjects");
 
   if (chart != nullptr) {
     lineFrames.clear();
@@ -945,7 +1015,9 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       scene::buildLineDrawOrder(*chart, lineDrawOrder);
     }
     drawLinePass(input, chart, judgement, layout);
+    gl::logErrors("scene.lines");
     if (!blockNotes) drawNotePasses(layout, input, chart);
+    gl::logErrors("scene.notes");
     // Red zones sit over the play field but under the hit effects.
     if (!chart->blockAreaList.empty() && !input.transition.inIntro &&
         input.chartTimeSec >= 0.0) {
@@ -957,15 +1029,65 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
           ? 0.0F
           : std::clamp(static_cast<float>(nowSec - blockUpdateLastSec), 0.0F, 0.1F);
       blockUpdateLastSec = nowSec;
-      batch.begin();
-      blockOverlay.drawAll(chart->blockAreaList, static_cast<float>(input.chartTimeSec), deltaSec,
-          layout.stage.x, layout.stage.y, layout.stage.width, layout.stage.height, batch,
-          layout.projection(), textures.white());
+      if (useBlockComposite) {
+        // The composite draws the zones from mask geometry, so only the runtime state is
+        // advanced here; the masks are rasterised once the frame is finished.
+        blockOverlay.updateAll(chart->blockAreaList, static_cast<float>(input.chartTimeSec),
+            deltaSec, layout.stage.x, layout.stage.y, layout.stage.width, layout.stage.height);
+      } else {
+        batch.begin();
+        blockOverlay.drawAll(chart->blockAreaList, static_cast<float>(input.chartTimeSec), deltaSec,
+            layout.stage.x, layout.stage.y, layout.stage.width, layout.stage.height, batch,
+            layout.projection(), textures.white());
+      }
+      gl::logErrors("scene.blocks");
     }
     drawHitEffects(layout, input, chart);
+    gl::logErrors("scene.hitEffects");
   }
 
-  if (useEffects) {
+  // Tracks whether the HUD already became part of the frame the composite resamples, so
+  // it is not drawn a second time on top of the torn picture.
+  bool hudInsideScene = false;
+  if (useBlockComposite) {
+    // 1) Make the scene target hold the finished play field: the storyboard chain result
+    // when it ran, the raw play field otherwise. The composite samples this texture, so
+    // it can never be the target the composite writes to.
+    if (useEffects) {
+      gl::Texture* result = chain.apply(chart->prprEffects, &sceneFbo.color(), pingFbo, pongFbo,
+          input.chartTimeSec);
+      if (result != nullptr && result->id() != sceneFbo.color().id()) {
+        sceneFbo.bind();
+        glViewport(0, 0, width, height);
+        glDisable(GL_BLEND);
+        fx::BlitPass::instance().ensure();
+        fx::BlitPass::instance().draw(*result, 1.0F, 1.0F, 1.0F, 1.0F, false);
+        bindDefaultBlend();
+      }
+      gl::logErrors("scene.effectChain");
+    }
+    // 2) The HUD belongs to the finished frame: the composite tears it with the rest.
+    if (input.hud.visible && chart != nullptr) {
+      drawHudPass(input, layout);
+      hudInsideScene = true;
+      gl::logErrors("scene.hud");
+    }
+    // 3) Zone masks, coverage/edge/glow pre-passes, then replace the frame inside the
+    // zones with the displaced resample. The composite restores the target and viewport
+    // it found, so no binding fix-up is needed afterwards.
+    std::vector<fx::BlockMaskQuad> maskA;
+    std::vector<fx::BlockMaskQuad> maskB;
+    blockOverlay.collectMaskQuads(chart->blockAreaList, static_cast<float>(input.chartTimeSec),
+        maskA, maskB);
+    blockComposite.rasteriseMasks(maskA, maskB);
+    glBindFramebuffer(GL_FRAMEBUFFER, targetFbo);
+    glViewport(0, 0, width, height);
+    blockComposite.setStageRect(layout.stage.x, layout.stage.y, layout.stage.right(),
+        layout.stage.bottom());
+    blockComposite.draw(sceneFbo.color(), static_cast<float>(input.chartTimeSec));
+    bindDefaultBlend();
+    gl::logErrors("scene.blockComposite");
+  } else if (useEffects) {
     // Run the storyboard chain over the finished play field, then present the result.
     gl::Texture* result = chain.apply(chart->prprEffects, &sceneFbo.color(), pingFbo, pongFbo,
         input.chartTimeSec);
@@ -978,10 +1100,14 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       fx::BlitPass::instance().draw(*result, 1.0F, 1.0F, 1.0F, 1.0F, false);
       bindDefaultBlend();
     }
+    gl::logErrors("scene.effectChain");
   }
 
-  // The HUD is drawn after the chain, so a storyboard effect never blooms the score.
-  if (input.hud.visible && chart != nullptr) drawHudPass(input, layout);
+  // The HUD is drawn after the chain, so a storyboard effect never blooms the score. On
+  // the composite path it was drawn into the scene instead, because it is part of the
+  // frame the zones tear.
+  if (input.hud.visible && chart != nullptr && !hudInsideScene) drawHudPass(input, layout);
+  gl::logErrors("scene.hud");
 
   // Pause and resume draw the frozen play field behind the menu. The scene is re-rendered
   // into the offscreen target so the backdrop can be blurred, then the graded result is
@@ -1025,6 +1151,7 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
           scene::PAUSE_BACKDROP_VIBRANCY, brightness, flatten);
       bindDefaultBlend();
       if (hudWasVisible) drawHudPass(input, layout);
+      gl::logErrors("scene.pauseBackdrop");
     }
   }
 }
@@ -1081,6 +1208,7 @@ bool GameRenderer::renderOffscreen(const RenderFrameInput& input, game::Chart* c
   impl_->sceneFbo.resize(width, height);
   impl_->pingFbo.resize(width, height);
   impl_->pongFbo.resize(width, height);
+  impl_->blockComposite.resize(width, height);
   impl_->prepareForChart(chart);
 
   const scene::StageLayout layout =

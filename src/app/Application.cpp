@@ -1,15 +1,19 @@
 #include "Application.hpp"
 
 #include "rechigros/app/AppContext.hpp"
+#include "rechigros/app/CaptureHarness.hpp"
 #include "rechigros/app/ScreenCommon.hpp"
 #include "rechigros/app/Screens.hpp"
 #include "rechigros/app/TriGridBackdrop.hpp"
+#include "rechigros/app/UiLayout.hpp"
 #include "rechigros/app/UiStyle.hpp"
+#include "rechigros/app/UiText.hpp"
 #include "rechigros/audio/AudioEngine.hpp"
 #include "rechigros/platform/AssetManager.hpp"
 #include "rechigros/platform/FileSystem.hpp"
 #include "rechigros/render/GameRenderer.hpp"
 #include "rechigros/render/gl/Gl.hpp"
+#include "rechigros/render/gl/GlDebug.hpp"
 
 #include <SDL.h>
 #include <imgui.h>
@@ -22,6 +26,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <system_error>
 #include <unordered_set>
 #include <vector>
 
@@ -88,6 +93,18 @@ Application::Application(int argc, char** argv) {
       if (index + 1 < argc && argv[index + 1] != nullptr) {
         captureTimeSec_ = std::atof(argv[++index]);
       }
+    } else if (argument == "--data-root") {
+      if (index + 1 < argc && argv[index + 1] != nullptr) {
+        dataRootOverride_ = pathFromUtf8(argv[++index]);
+      }
+    } else if (argument == "--screen") {
+      if (index + 1 < argc && argv[index + 1] != nullptr) {
+        screenSetup_ = argv[++index];
+      }
+    } else if (argument == "--fixed-delta") {
+      fixedDelta_ = true;
+    } else if (argument == "--gl-debug") {
+      glDebug_ = true;
     } else if (argument == "--window") {
       if (index + 1 < argc && argv[index + 1] != nullptr) {
         int width = 0;
@@ -117,6 +134,9 @@ bool Application::initialize() {
     std::cerr << "SDL_Init: " << SDL_GetError() << '\n';
     return false;
   }
+  // The diagnostic switch has to be on before the first draw so the first failing pass
+  // is the one reported, rather than one inherited from an earlier frame.
+  render::gl::setErrorLoggingEnabled(glDebug_);
 #ifdef RECHIGROS_GLES
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
@@ -173,6 +193,9 @@ bool Application::initialize() {
     return false;
   }
 #endif
+  // Reported for a device bring-up run: the driver and language strings decide which
+  // shading features can be relied on.
+  render::gl::logContextInfo();
   SDL_GL_SetSwapInterval(1);
 
   IMGUI_CHECKVERSION();
@@ -275,6 +298,9 @@ bool Application::initialize() {
   if (!renderer_->initialize(assetRoot)) {
     std::cerr << "Renderer initialization failed (asset root: " << assetRoot.string() << ")\n";
   }
+  // Interface glyph cache. Every label is rasterised at the pixel size it is finally drawn
+  // at, which keeps text sharp at any window size and density.
+  ui::fontCache().initialize(assetRoot);
 
   // GPU menu backdrop. When its shaders or textures fail to load, the interface
   // keeps the simple ImGui backdrop instead. The environment switch exists so the
@@ -292,7 +318,8 @@ bool Application::initialize() {
   }
   ui::setBackdropSuppressed(backdrop_ != nullptr && backdrop_->ready());
 
-  app_ = std::make_unique<AppContext>(platform::userDataRoot() / "app");
+  app_ = std::make_unique<AppContext>(
+      dataRootOverride_.empty() ? platform::userDataRoot() / "app" : dataRootOverride_);
   app_->audio = audio_.get();
   app_->renderer = renderer_.get();
   app_->displayDpi = displayDpi_;
@@ -303,6 +330,12 @@ bool Application::initialize() {
   app_->playOverrides.mirrorX = mirrorOverride_;
   app_->playOverrides.autoplay = autoplayOverride_;
   updateAudioFromSettings();
+
+  // A capture run can open a specific screen with representative state, so a single
+  // screen can be inspected and compared without walking the interface by hand.
+  if (!screenSetup_.empty()) {
+    setupCaptureScreen(*app_, screenSetup_);
+  }
 
   SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
   SDL_EventState(SDL_DROPTEXT, SDL_ENABLE);
@@ -334,6 +367,7 @@ int Application::run() {
       delta = 0.0F;
       frameClockReset_ = false;
     }
+    if (fixedDelta_) delta = 1.0F / 60.0F;
     delta = std::clamp(delta, 0.0F, 0.1F);
     elapsed += static_cast<double>(delta);
     if (delta > 0.0F) {
@@ -673,6 +707,12 @@ void Application::captureFramebufferIfRequested() {
     std::copy_n(pixels.data() + static_cast<std::size_t>(height - 1 - row) * rowBytes, rowBytes,
         flipped.data() + static_cast<std::size_t>(row) * rowBytes);
   }
+  // A device capture path points into storage the caller owns; the directory is created
+  // here because the package build has no shell to prepare it.
+  if (!capturePath_.parent_path().empty()) {
+    std::error_code error;
+    std::filesystem::create_directories(capturePath_.parent_path(), error);
+  }
   const bool written = stbi_write_png(capturePath_.string().c_str(), width, height, 4,
       flipped.data(), static_cast<int>(rowBytes)) != 0;
   captureFailed_ = !written;
@@ -861,6 +901,7 @@ void Application::updateAudioFromSettings() {
 }
 
 void Application::shutdown() noexcept {
+  ui::fontCache().shutdown();
   if (app_ != nullptr) {
     app_->quitRequested = true;
     commitSettings(*app_);

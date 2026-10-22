@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <string>
 
 struct SDL_Window;
 using SDL_GLContext = void*;
@@ -54,7 +55,17 @@ private:
   std::filesystem::path replayPlaybackPath_;
   std::filesystem::path recordReplayPath_;
   std::filesystem::path capturePath_;
+  // Overrides the per-user data directory, so an automated run can start from a known
+  // library without touching the real one.
+  std::filesystem::path dataRootOverride_;
+  // Opens a named screen with representative state before the loop starts.
+  std::string screenSetup_;
+  // Locks the frame delta to 1/60 s, which makes frame-count-bounded runs deterministic.
+  bool fixedDelta_{};
   double captureTimeSec_{-1.0};
+  // Diagnostic mode: reports the graphics driver strings once and every pass that sets
+  // a GL error. Off unless the run asks for it.
+  bool glDebug_{};
   int windowWidthOverride_{1280};
   int windowHeightOverride_{720};
   bool captureDone_{};

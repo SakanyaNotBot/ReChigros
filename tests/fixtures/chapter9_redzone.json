@@ -1,0 +1,78 @@
+{
+  "formatVersion": 3,
+  "offset": 0,
+  "judgeLineList": [
+    {
+      "bpm": 120.0,
+      "notesAbove": [
+        { "type": 1, "time": 0.0, "holdTime": 0, "positionX": -0.6, "speed": 1 },
+        { "type": 1, "time": 0.5, "holdTime": 0, "positionX": -0.3, "speed": 1 },
+        { "type": 2, "time": 1.0, "holdTime": 0, "positionX": 0.0, "speed": 1 },
+        { "type": 1, "time": 1.5, "holdTime": 0, "positionX": 0.3, "speed": 1 },
+        { "type": 4, "time": 2.0, "holdTime": 0, "positionX": 0.6, "speed": 1 },
+        { "type": 3, "time": 2.5, "holdTime": 1.0, "positionX": -0.15, "speed": 1 },
+        { "type": 1, "time": 3.0, "holdTime": 0, "positionX": 0.15, "speed": 1 }
+      ],
+      "notesBelow": [
+        { "type": 1, "time": 0.25, "holdTime": 0, "positionX": 0.5, "speed": 1 },
+        { "type": 2, "time": 0.75, "holdTime": 0, "positionX": -0.5, "speed": 1 },
+        { "type": 1, "time": 1.25, "holdTime": 0, "positionX": 0.45, "speed": 1 },
+        { "type": 3, "time": 1.75, "holdTime": 0.75, "positionX": -0.35, "speed": 1 },
+        { "type": 1, "time": 2.25, "holdTime": 0, "positionX": 0.2, "speed": 1 },
+        { "type": 4, "time": 2.75, "holdTime": 0, "positionX": -0.2, "speed": 1 }
+      ],
+      "speedEvents": [
+        { "startTime": 0, "endTime": 100000.0, "value": 1.0, "endValue": 1.0 }
+      ],
+      "judgeLineMoveEvents": [
+        { "startTime": 0, "endTime": 100000.0, "start": 0.5, "end": 0.5, "start2": 0.42, "end2": 0.42 }
+      ],
+      "judgeLineRotateEvents": [
+        { "startTime": 0, "endTime": 100000.0, "start": 8.0, "end": 8.0 }
+      ],
+      "judgeLineDisappearEvents": [
+        { "startTime": 0, "endTime": 100000.0, "start": 1.0, "end": 1.0 }
+      ]
+    },
+    {
+      "bpm": 120.0,
+      "notesAbove": [],
+      "notesBelow": [],
+      "speedEvents": [
+        { "startTime": 0, "endTime": 100000.0, "value": 1.0, "endValue": 1.0 }
+      ],
+      "judgeLineMoveEvents": [
+        { "startTime": 0, "endTime": 100000.0, "start": 0.5, "end": 0.5, "start2": 0.68, "end2": 0.68 }
+      ],
+      "judgeLineRotateEvents": [
+        { "startTime": 0, "endTime": 100000.0, "start": -14.0, "end": -14.0 }
+      ],
+      "judgeLineDisappearEvents": [
+        { "startTime": 0, "endTime": 100000.0, "start": 1.0, "end": 1.0 }
+      ]
+    }
+  ],
+  "blockAreaList": [
+    {
+      "topRightPercentage": { "x": 1.0, "y": 1.0 },
+      "bottomLeftPercentage": { "x": 0.93, "y": 0.0 },
+      "appearTime": 0.0, "enableTime": 0.0,
+      "disableTime": 6.0, "disappearTime": 6.0,
+      "isSubtract": false
+    },
+    {
+      "topRightPercentage": { "x": 0.985, "y": 0.56 },
+      "bottomLeftPercentage": { "x": 0.945, "y": 0.44 },
+      "appearTime": 0.0, "enableTime": 0.0,
+      "disableTime": 6.0, "disappearTime": 6.0,
+      "isSubtract": true
+    },
+    {
+      "topRightPercentage": { "x": 0.30, "y": 0.62 },
+      "bottomLeftPercentage": { "x": 0.08, "y": 0.34 },
+      "appearTime": 0.0, "enableTime": 2.6,
+      "disableTime": 8.0, "disappearTime": 9.0,
+      "isSubtract": false
+    }
+  ]
+}

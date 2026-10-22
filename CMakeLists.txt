@@ -38,6 +38,10 @@ if(RECHIGROS_BUILD_APP)
   add_subdirectory(src/audio)
   add_subdirectory(src/render)
   add_subdirectory(src/app)
+  # Developer diagnostics that need a desktop GL context; the packaged platforms skip them.
+  if(NOT ANDROID AND NOT IOS)
+    add_subdirectory(src/tools)
+  endif()
 endif()
 
 if(RECHIGROS_BUILD_TESTS)

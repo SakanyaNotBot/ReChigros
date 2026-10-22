@@ -37,6 +37,18 @@ public final class MainActivity extends SDLActivity {
         return new String[] { "c++_shared", "SDL2", "main" };
     }
 
+    // Automation and device bring-up runs need the same flags the desktop build takes
+    // (a frame limit, a frame capture path, a GL diagnostic switch), so the launcher may
+    // hand them over as a single space-separated intent extra. A normal launch carries no
+    // extra and the native side sees no arguments.
+    @Override
+    protected String[] getArguments() {
+        final Intent intent = getIntent();
+        final String arguments = intent != null ? intent.getStringExtra("args") : null;
+        if (arguments == null || arguments.isBlank()) return new String[0];
+        return arguments.trim().split("\\s+");
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         // The activity has to be attached before a document can be resolved, so the incoming

@@ -310,7 +310,14 @@ void GameplaySession::judgeNewTouches(double time, const Stage& view) {
 
       const auto position = touchPosition(note, touch->x, touch->y, time);
       if (position >= RADIUS_SPATIAL_LIMIT) continue;
-      if (delta > JudgementEngine::spatialJudgeWindow(range.perfect, range.bad, position)) continue;
+      // Practice window overrides shrink or widen the spatial falloff for taps and holds,
+      // exactly like the classification that follows.
+      const bool tapOrHold = note.type == NOTE_TAP || note.type == NOTE_HOLD;
+      const double perfectWindow =
+          tapOrHold ? judgement_.tapPerfectWindow() : range.perfect;
+      if (delta > JudgementEngine::spatialJudgeWindow(perfectWindow, range.bad, position)) {
+        continue;
+      }
       const auto absolute = std::abs(delta);
       auto distance = judgeDistance(note, touch->x, touch->y, time);
       if (!std::isfinite(distance)) distance = position;
@@ -458,6 +465,9 @@ void GameplaySession::judgeTapHold(double time, const Stage& view) {
     if (note.type != NOTE_TAP && note.type != NOTE_HOLD) continue;
 
     const auto delta = note.sect - time;
+    // The settlement limits use the same practice-aware windows as the classification.
+    const double perfectWindow = judgement_.tapPerfectWindow();
+    const double goodWindow = judgement_.tapGoodWindow();
 
     if (note.type == NOTE_HOLD && note.holdActive) {
       // The body is held while any continuous touch is close enough; a small frame budget
@@ -486,14 +496,14 @@ void GameplaySession::judgeTapHold(double time, const Stage& view) {
 
     if (note.isJudged) {
       const auto absolute = std::abs(delta);
-      if (absolute < range.perfect) {
+      if (absolute < perfectWindow) {
         if (note.type == NOTE_TAP) {
           commitNote(note, JudgementEngine::Judgement::Perfect, delta, time);
         } else {
           activateHold(note, true, time, delta);
         }
         note.statOffset = delta;
-      } else if (absolute < range.good) {
+      } else if (absolute < goodWindow) {
         if (note.type == NOTE_TAP) {
           commitNote(note, JudgementEngine::Judgement::Good, delta, time);
         } else {
@@ -510,7 +520,7 @@ void GameplaySession::judgeTapHold(double time, const Stage& view) {
     }
 
     if (!note.isJudged && !note.holdActive && note.judgeResult < 0
-        && delta < -JudgementEngine::lateMissLimitSec(note.type, range)) {
+        && delta < -judgement_.lateMissLimitForNote(note.type)) {
       commitNote(note, JudgementEngine::Judgement::Miss, 0.25, time);
     }
   }
@@ -543,7 +553,7 @@ void GameplaySession::detectMisses(double time) {
     if (note.isFake) { ++judgeCursor_; continue; }
     if (note.judgeResult >= 0) { ++judgeCursor_; continue; }
     if (note.holdActive) break;
-    if (time - note.sect > JudgementEngine::lateMissLimitSec(note.type, range)) {
+    if (time - note.sect > judgement_.lateMissLimitForNote(note.type)) {
       commitNote(note, JudgementEngine::Judgement::Miss, 0.25, time);
       ++judgeCursor_;
       continue;

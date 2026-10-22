@@ -56,6 +56,19 @@ public:
   }
   void setPracticeEnabled(bool value) noexcept { practice_ = value; }
 
+  // Timing windows used for a note after the practice override is applied. The override
+  // covers taps and holds only, and participates in classification, spatial falloff, the
+  // per-type detection window and the late-miss limit alike, so every consumer has to go
+  // through the same accessor.
+  [[nodiscard]] double tapPerfectWindow() const noexcept {
+    return practiceOverrideActive() ? practiceWindows_->perfectSec() : windows().perfect;
+  }
+  [[nodiscard]] double tapGoodWindow() const noexcept {
+    return practiceOverrideActive() ? practiceWindows_->goodSec() : windows().good;
+  }
+  [[nodiscard]] double judgeWindowForNote(int noteType) const noexcept;
+  [[nodiscard]] double lateMissLimitForNote(int noteType) const noexcept;
+
   [[nodiscard]] Judgement calculate(int noteType, double absDiffSec, double challengeTimeSum) const noexcept;
   [[nodiscard]] Judgement calculate(int noteType, double absDiffSec) const noexcept {
     return calculate(noteType, absDiffSec, challengeTimeSum_);

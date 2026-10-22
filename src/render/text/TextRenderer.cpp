@@ -2,6 +2,8 @@
 
 #include "rechigros/platform/AssetManager.hpp"
 
+#include <SDL_log.h>
+
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
@@ -230,7 +232,18 @@ TextRenderer::TextRenderer() = default;
 TextRenderer::~TextRenderer() = default;
 
 bool TextRenderer::initialize(const std::filesystem::path& assetRoot) {
-  return font_.load(assetRoot / "res" / "font.ttf");
+  // A packaged build keeps its assets inside the package, where they are not files. The
+  // font is materialised to a readable path first, the same way the interface font is;
+  // opening the packaged path directly fails on the device, which used to report the
+  // whole scene renderer as uninitialised and leave the play field blank.
+  auto fontPath = platform::AssetManager::materialize(assetRoot, "res/font.ttf");
+  if (fontPath.empty()) fontPath = assetRoot / "res" / "font.ttf";
+  const bool loaded = font_.load(fontPath);
+  if (!loaded) {
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "[render] text font unavailable: %s",
+        fontPath.string().c_str());
+  }
+  return loaded;
 }
 
 void TextRenderer::shutdown() noexcept { cache_.clear(); }

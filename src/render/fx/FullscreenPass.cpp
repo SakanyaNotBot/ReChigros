@@ -2,6 +2,8 @@
 
 #include "rechigros/render/gl/Texture.hpp"
 
+#include <SDL_log.h>
+
 namespace rechigros::render::fx {
 namespace {
 // Clip-space quad as a triangle strip: (-1,-1), (1,-1), (-1,1), (1,1).
@@ -69,7 +71,11 @@ FullscreenPass::~FullscreenPass() { release(); }
 
 bool FullscreenPass::build(const char* fragmentSource) noexcept {
   if (fragmentSource == nullptr) return false;
-  if (!program_.build(kVertexSource, fragmentSource)) return false;
+  if (!program_.build(kVertexSource, fragmentSource)) {
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "[render] fullscreen pass shader failed: %s",
+        program_.log().c_str());
+    return false;
+  }
   return FullscreenQuad::instance().ensure();
 }
 

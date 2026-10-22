@@ -1,5 +1,7 @@
 #pragma once
 
+#include "rechigros/render/fx/BlockCompositePass.hpp"
+
 #include <array>
 #include <vector>
 
@@ -56,6 +58,20 @@ public:
   // Resolves the look a block uses at `phase` (0 disabled, 1 ready, 2 active).
   [[nodiscard]] static Style styleFor(int phase, bool subtract, float fade) noexcept;
 
+  // Advances every block to `chartTimeSec`. `deltaTimeSec` drives the one-shot show
+  // animation and must be the real frame delta, clamped by the caller. Each block's
+  // geometry and phase are final after this call.
+  void updateAll(std::vector<game::OfficialBlock>& blocks, float chartTimeSec,
+      float deltaTimeSec, float stageX, float stageY, float stageWidth,
+      float stageHeight) const;
+
+  // Emits the mask geometry the screen-space composite rasterises. The visible layer
+  // goes into `maskA`: red is an active zone, green an active subtract zone, blue the
+  // warning silhouette with its fade as the value. The second mask takes the subtract
+  // and ready layers. `updateAll` must have run first.
+  void collectMaskQuads(const std::vector<game::OfficialBlock>& blocks, float chartTimeSec,
+      std::vector<BlockMaskQuad>& maskA, std::vector<BlockMaskQuad>& maskB) const;
+
   // Emits one block. Returns the number of quads added.
   int draw(const game::OfficialBlock& block, float chartTimeSec, batch::SpriteBatch& target) const;
 
@@ -65,6 +81,10 @@ public:
   // delta, clamped by the caller.
   void drawAll(std::vector<game::OfficialBlock>& blocks, float chartTimeSec, float deltaTimeSec,
       float stageX, float stageY, float stageWidth, float stageHeight,
+      batch::SpriteBatch& target, const math::Mat4& projection, const gl::Texture& white) const;
+
+private:
+  void drawVisible(const std::vector<game::OfficialBlock>& blocks, float chartTimeSec,
       batch::SpriteBatch& target, const math::Mat4& projection, const gl::Texture& white) const;
 };
 

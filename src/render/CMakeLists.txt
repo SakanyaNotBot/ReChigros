@@ -5,6 +5,7 @@ add_library(rechigros_render STATIC
   gl/Texture.cpp
   gl/Framebuffer.cpp
   gl/ShaderProgram.cpp
+  gl/GlDebug.cpp
   asset/TextureCache.cpp
   batch/SpriteBatch.cpp
   text/TextRenderer.cpp

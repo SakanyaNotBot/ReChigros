@@ -4,6 +4,8 @@
 #include "rechigros/render/gl/Texture.hpp"
 #include "rechigros/render/math/Mat4.hpp"
 
+#include <SDL_log.h>
+
 #include <algorithm>
 #include <cmath>
 
@@ -69,6 +71,10 @@ bool SpriteBatch::ensureProgram() noexcept {
   if (program_ != nullptr) return program_->valid();
   program_ = new gl::ShaderProgram();
   if (!program_->build(VERTEX_SOURCE, FRAGMENT_SOURCE)) {
+    // Without the program every batch draw becomes a no-op, which presents as a missing
+    // picture rather than as a shader failure, so the diagnostic is printed here.
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "[render] sprite batch shader failed: %s",
+        program_->log().c_str());
     delete program_;
     program_ = nullptr;
     return false;

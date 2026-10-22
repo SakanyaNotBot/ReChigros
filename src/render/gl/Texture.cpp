@@ -86,6 +86,16 @@ void Texture::setWrapRepeat(bool repeatS, bool repeatT) noexcept {
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, repeatT ? GL_REPEAT : GL_CLAMP_TO_EDGE);
 }
 
+void Texture::setWrapMirrored(bool mirrorS, bool mirrorT) noexcept {
+  if (!contextAvailable()) return;
+  if (id_ == 0) return;
+  bindUnit0(id_);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
+      mirrorS ? GL_MIRRORED_REPEAT : GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,
+      mirrorT ? GL_MIRRORED_REPEAT : GL_CLAMP_TO_EDGE);
+}
+
 bool Texture::uploadRgba(int width, int height, const std::uint8_t* pixels) noexcept {
   if (width <= 0 || height <= 0) return false;
   if (!contextAvailable()) return false;

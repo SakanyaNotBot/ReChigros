@@ -99,16 +99,27 @@ JudgementEngine::Windows JudgementEngine::windows(double challengeTimeSum) const
 }
 
 double JudgementEngine::judgeWindowSec(int noteType) const noexcept {
+  return judgeWindowForNote(noteType);
+}
+
+double JudgementEngine::judgeWindowForNote(int noteType) const noexcept {
   const auto range = windows();
   switch (noteType) {
     case NOTE_DRAG:
     case NOTE_FLICK:
       return range.bad;
     case NOTE_HOLD:
-      return range.good;
+      return tapGoodWindow();
     default:
       return range.bad;
   }
+}
+
+double JudgementEngine::lateMissLimitForNote(int noteType) const noexcept {
+  const auto range = windows();
+  const bool tapOrHold = noteType == NOTE_TAP || noteType == NOTE_HOLD;
+  return lateMissLimitSec(noteType, tapOrHold ? tapPerfectWindow() : range.perfect,
+      tapOrHold ? tapGoodWindow() : range.good, range.bad);
 }
 
 JudgementEngine::Judgement JudgementEngine::calculate(int noteType, double difference,

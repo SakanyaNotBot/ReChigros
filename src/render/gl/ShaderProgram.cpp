@@ -33,7 +33,13 @@ std::string replaceWord(const std::string& source, const char* needle, const cha
 bool startsWithVersion(const std::string& line) {
   std::size_t index = 0;
   while (index < line.size() && std::isspace(static_cast<unsigned char>(line[index]))) ++index;
-  return line.compare(index, 8, "#version") == 0;
+  if (index >= line.size() || line[index] != '#') return false;
+  ++index;
+  // A directive may carry whitespace between the '#' and its name, and one shipped
+  // preset writes its version that way; it still has to be removed, because a second
+  // version directive after the injected one is a compile error.
+  while (index < line.size() && (line[index] == ' ' || line[index] == '\t')) ++index;
+  return line.compare(index, 7, "version") == 0;
 }
 
 bool isBlankOrComment(const std::string& line) {
@@ -75,7 +81,8 @@ bool declaresFragmentOutput(const std::string& source) {
 
 } // namespace
 
-std::string prepareShaderSource(bool fragment, const std::string& source) {
+std::string prepareShaderSourceForLanguage(bool fragment, bool esProfile,
+    const std::string& source) {
   std::string body = replaceWord(source, "attribute", "in");
   body = replaceWord(body, "varying", fragment ? "in" : "out");
   body = replaceWord(body, "texture2D", "texture");
@@ -92,20 +99,35 @@ std::string prepareShaderSource(bool fragment, const std::string& source) {
 
   const bool needsOutput = fragment && !declaresFragmentOutput(stripped);
   std::string out;
-#ifdef RECHIGROS_GLES
-  out = "#version 300 es\n";
-  // GLSL ES requires the default float precision to be established before any
-  // declaration. The colour output is a declaration, so the precision statement has
-  // to be emitted first, ahead of the injected output variable.
-  if (needsOutput && stripped.find("precision ") == std::string::npos) {
-    out += "precision highp float;\n";
+  if (esProfile) {
+    out = "#version 300 es\n";
+    if (fragment) {
+      // The ES fragment language declares no default precision for floating point types,
+      // so a precision statement has to be in scope before the first float declaration.
+      // That declaration can come from the body itself as well as from the injected colour
+      // output, and a body may place its own precision statement after anything injected
+      // here, so the default is always emitted first. Without it the program fails to
+      // compile on a conforming ES implementation, and every draw that uses it is lost.
+      out += "#ifdef GL_FRAGMENT_PRECISION_HIGH\n"
+          "precision highp float;\n"
+          "#else\n"
+          "precision mediump float;\n"
+          "#endif\n";
+    }
+  } else {
+    out = "#version 330 core\n";
   }
-#else
-  out = "#version 330 core\n";
-#endif
   if (needsOutput) out += "out vec4 fragmentColor;\n";
   out += stripped;
   return out;
+}
+
+std::string prepareShaderSource(bool fragment, const std::string& source) {
+#ifdef RECHIGROS_GLES
+  return prepareShaderSourceForLanguage(fragment, true, source);
+#else
+  return prepareShaderSourceForLanguage(fragment, false, source);
+#endif
 }
 
 ShaderProgram::~ShaderProgram() { reset(); }

@@ -25,6 +25,9 @@ public:
   void updateRgba(int width, int height, const std::uint8_t* pixels) noexcept;
   void setFilter(bool linear) noexcept;
   void setWrapRepeat(bool repeatS, bool repeatT) noexcept;
+  // Tiles by mirroring at the edge instead of repeating. The displaced zone noise maps
+  // are authored for mirrored tiling, so their seams do not line up.
+  void setWrapMirrored(bool mirrorS, bool mirrorT) noexcept;
 
   [[nodiscard]] unsigned int id() const noexcept { return id_; }
   [[nodiscard]] int width() const noexcept { return width_; }

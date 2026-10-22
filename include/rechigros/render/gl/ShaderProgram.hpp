@@ -50,4 +50,10 @@ private:
 // the version header plus a fragment output declaration when needed.
 [[nodiscard]] std::string prepareShaderSource(bool fragment, const std::string& source);
 
+// Same, for an explicitly chosen language family. The ES branch is reachable from a
+// desktop host so a build-time check can validate the device form of every shader
+// without an ES context.
+[[nodiscard]] std::string prepareShaderSourceForLanguage(bool fragment, bool esProfile,
+    const std::string& source);
+
 } // namespace rechigros::render::gl

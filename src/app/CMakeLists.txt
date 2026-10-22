@@ -10,6 +10,9 @@ set(RECHIGROS_APP_SOURCES
   GameScreen.cpp
   ScreenCommon.cpp
   UiStyle.cpp
+  UiText.cpp
+  UiLayout.cpp
+  CaptureHarness.cpp
   TriGridBackdrop.cpp
   CoverCache.cpp
   InfoFile.cpp

@@ -12,6 +12,8 @@ namespace {
 
 // Below this a zone is too small to read and is skipped.
 constexpr float kMinimumDrawableExtent = 1.0F;
+// The smallest extent a zone needs before it is worth rasterising into a mask.
+constexpr float kMinimumMaskExtent = 0.5F;
 // The silhouette never needs more than this many columns.
 constexpr int kMaximumColumns = 96;
 constexpr int kMinimumColumns = 4;
@@ -27,6 +29,23 @@ void emitRect(batch::SpriteBatch& target, float x, float y, float width, float h
     float green, float blue, float alpha) {
   if (!(width > 0.0F) || !(height > 0.0F) || !(alpha > 0.001F)) return;
   target.addQuadTopLeft(x, y, width, height, red, green, blue, alpha, 0.0F, 0.0F, 1.0F, 1.0F);
+}
+
+// Appends one zone rectangle to a mask list. The coverage lives in the colour channels,
+// so alpha stays zero and the mask can accumulate several zones per texel.
+void appendMaskQuad(std::vector<BlockMaskQuad>& out, const game::OfficialBlock& block,
+    float red, float green, float blue) {
+  BlockMaskQuad quad;
+  quad.centerX = block.centerX;
+  quad.centerY = block.centerY;
+  quad.width = block.halfW * 2.0F;
+  quad.height = block.halfH * 2.0F;
+  quad.rotationDeg = block.rotationDeg;
+  quad.red = red;
+  quad.green = green;
+  quad.blue = blue;
+  quad.alpha = 0.0F;
+  out.push_back(quad);
 }
 
 } // namespace
@@ -55,6 +74,56 @@ BlockOverlay::Style BlockOverlay::styleFor(int phase, bool subtract, float fade)
   style.sparkBlue = active ? SPARK_ACTIVE_B : SPARK_DISABLED_B;
   style.glow = active && GLOW_INTENSITY > 0.001F;
   return style;
+}
+
+void BlockOverlay::updateAll(std::vector<game::OfficialBlock>& blocks, float chartTimeSec,
+    float deltaTimeSec, float stageX, float stageY, float stageWidth, float stageHeight) const {
+  if (blocks.empty()) return;
+  // Cheap phase cull before the (much more expensive) event evaluation: a chapter-level
+  // chart can carry more than ten thousand zones and only a few are on screen at a time.
+  for (auto& block : blocks) {
+    if (chartTimeSec < block.appearTime || chartTimeSec >= block.disappearTime) {
+      block.resetRuntime();
+      continue;
+    }
+    block.update(chartTimeSec, stageX, stageY, stageWidth, stageHeight, deltaTimeSec);
+  }
+}
+
+void BlockOverlay::collectMaskQuads(const std::vector<game::OfficialBlock>& blocks,
+    float chartTimeSec, std::vector<BlockMaskQuad>& maskA,
+    std::vector<BlockMaskQuad>& maskB) const {
+  // The mask layout the shipped material expects: the first mask holds the active layer
+  // (R normal, G subtract) plus the warning silhouette in B with its fade as the value;
+  // the second holds the subtract layer (R, and B while the zone is ready) plus the ready
+  // highlight in G. Overlapping subtract zones add, and the composite's gate then turns a
+  // doubly written texel into a hole instead of a visible zone.
+  for (const auto& block : blocks) {
+    if (!block.visible) continue;
+    if (block.halfW * 2.0F <= kMinimumMaskExtent || block.halfH * 2.0F <= kMinimumMaskExtent) {
+      continue;
+    }
+    const int phase = block.phase(chartTimeSec);
+    if (phase == 2) {
+      // Active layer, one channel per kind so a hole is a separate mask value.
+      if (block.isSubtract) {
+        appendMaskQuad(maskA, block, 0.0F, BlockCompositePass::MASK_WRITE_ALPHA, 0.0F);
+      } else {
+        appendMaskQuad(maskA, block, 1.0F, 0.0F, 0.0F);
+      }
+      continue;
+    }
+    if (!block.isSubtract) {
+      // Warning silhouette, drawn at the true position rather than the displaced one.
+      const float fade = block.showProgress();
+      if (fade > 0.002F) appendMaskQuad(maskA, block, 0.0F, 0.0F, fade);
+      if (phase == 1) appendMaskQuad(maskB, block, 0.0F, block.showProgress(), 0.0F);
+      continue;
+    }
+    // Subtract zones that are not active are collected in the second mask.
+    const float ready = phase == 1 ? block.showProgress() : 0.0F;
+    appendMaskQuad(maskB, block, BlockCompositePass::MASK_WRITE_ALPHA, 0.0F, BlockCompositePass::MASK_WRITE_ALPHA * ready);
+  }
 }
 
 int BlockOverlay::draw(const game::OfficialBlock& block, float chartTimeSec,
@@ -189,19 +258,9 @@ int BlockOverlay::draw(const game::OfficialBlock& block, float chartTimeSec,
   return quads;
 }
 
-void BlockOverlay::drawAll(std::vector<game::OfficialBlock>& blocks, float chartTimeSec,
-    float deltaTimeSec, float stageX, float stageY, float stageWidth, float stageHeight,
-    batch::SpriteBatch& target, const math::Mat4& projection, const gl::Texture& white) const {
-  if (blocks.empty()) return;
-  // Cheap phase cull before the (much more expensive) event evaluation: a chapter-level
-  // chart can carry more than ten thousand zones and only a few are on screen at a time.
-  for (auto& block : blocks) {
-    if (chartTimeSec < block.appearTime || chartTimeSec >= block.disappearTime) {
-      block.resetRuntime();
-      continue;
-    }
-    block.update(chartTimeSec, stageX, stageY, stageWidth, stageHeight, deltaTimeSec);
-  }
+void BlockOverlay::drawVisible(const std::vector<game::OfficialBlock>& blocks,
+    float chartTimeSec, batch::SpriteBatch& target, const math::Mat4& projection,
+    const gl::Texture& white) const {
   // Chapter-level charts can carry more than ten thousand zones, so the batch is flushed in
   // chunks instead of being sized for the worst case.
   constexpr int kFlushThreshold = batch::MAX_BATCH_SPRITES / 2;
@@ -214,6 +273,14 @@ void BlockOverlay::drawAll(std::vector<game::OfficialBlock>& blocks, float chart
     draw(block, chartTimeSec, target);
   }
   if (!target.empty()) target.flush(projection, white, nullptr);
+}
+
+void BlockOverlay::drawAll(std::vector<game::OfficialBlock>& blocks, float chartTimeSec,
+    float deltaTimeSec, float stageX, float stageY, float stageWidth, float stageHeight,
+    batch::SpriteBatch& target, const math::Mat4& projection, const gl::Texture& white) const {
+  if (blocks.empty()) return;
+  updateAll(blocks, chartTimeSec, deltaTimeSec, stageX, stageY, stageWidth, stageHeight);
+  drawVisible(blocks, chartTimeSec, target, projection, white);
 }
 
 } // namespace rechigros::render::fx
