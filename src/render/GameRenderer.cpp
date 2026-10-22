@@ -30,6 +30,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <SDL_log.h>
+
 #include <algorithm>
 #include <chrono>
 #include <fstream>
@@ -902,6 +904,11 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       !chart->prprEffects.empty() && sceneFbo.valid();
   if (useEffects) {
     sceneFbo.bind();
+    glViewport(0, 0, width, height);
+  } else {
+    // The scene draws into the caller's target, so its binding and viewport are set here
+    // rather than assumed: a previous frame may have left another target bound.
+    glBindFramebuffer(GL_FRAMEBUFFER, targetFbo);
     glViewport(0, 0, width, height);
   }
 
