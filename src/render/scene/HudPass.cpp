@@ -447,33 +447,11 @@ void drawTextureCentred(batch::SpriteBatch& batch, const gl::Texture& texture, f
   batch.flush(projection, texture, nullptr);
 }
 
-// Draws the offset indicator readout, positioned like the reference's text textures.
-void drawOffsetText(batch::SpriteBatch& batch, text::TextRenderer& text,
-    const HudHitOffset& hitOffset, float centerX, float centerY, float textPx, float alpha,
+// The judgement offset dial / line, ported from the reference HUD pass. The shipped
+// reference has no numeric offset readout, so the dial is the only feedback it draws.
+void drawHitOffsetIndicator(batch::SpriteBatch& batch, const StageLayout& layout,
+    const HudHitOffset& hitOffset, float hudAlpha, const HudTextures& textures,
     const math::Mat4& projection) {
-  if (hitOffset.text.empty() || !(alpha > 0.001F) || textPx <= 0.0F) return;
-  auto* glyphs = text.get(hitOffset.text, textPx, false);
-  if (glyphs == nullptr || glyphs->width <= 0 || glyphs->height <= 0) return;
-  float red = 1.0F;
-  float green = 1.0F;
-  float blue = 1.0F;
-  offsetColour(hitOffset.textJudgement, red, green, blue);
-  const float width = static_cast<float>(glyphs->width);
-  const float height = static_cast<float>(glyphs->height);
-  const float left = centerX - width * 0.5F;
-  const float top = centerY - height * 0.5F;
-  // The reference bakes a soft drop shadow into this label; a translucent offset copy
-  // gives the same readability on the dark play field.
-  drawTextureTopLeftUntransformed(batch, glyphs->texture, left, top + std::max(1.0F, textPx * 0.05F),
-      width, height, 0.0F, 0.0F, 0.0F, alpha * 0.35F, projection);
-  drawTextureTopLeftUntransformed(batch, glyphs->texture, left, top, width, height, red, green, blue,
-      alpha, projection);
-}
-
-// The judgement offset dial / line, ported from the reference HUD pass.
-void drawHitOffsetIndicator(batch::SpriteBatch& batch, text::TextRenderer& text,
-    const StageLayout& layout, const HudHitOffset& hitOffset, float hudAlpha,
-    const HudTextures& textures, const math::Mat4& projection) {
   if (hitOffset.mode == 0 || hitOffset.suppressed || !(hudAlpha > 0.001F)) return;
   const float viewWidth = layout.viewWidth;
   const float viewHeight = layout.viewHeight;
@@ -567,9 +545,6 @@ void drawHitOffsetIndicator(batch::SpriteBatch& batch, text::TextRenderer& text,
       drawTextureCentred(batch, *textures.hitOffsetArrow, x, lineY + dp * 3.0F + arrowHeight * 0.5F,
           arrowWidth, arrowHeight, 0.0F, 1.0F, 1.0F, 1.0F, hudAlpha * 0.82F, projection);
     }
-    const float textSize = std::clamp(meterWidth * 0.075F, dp * 9.0F, dp * 13.0F);
-    drawOffsetText(batch, text, hitOffset, centerX, lineY - dp * 12.0F, textSize,
-        hitOffset.textAlpha * hudAlpha * 0.85F, projection);
     return;
   }
 
@@ -622,7 +597,6 @@ void drawHitOffsetIndicator(batch::SpriteBatch& batch, text::TextRenderer& text,
   }
   // The shipped reference dial has no numeric readout under the arc; the raw offset text
   // was a port-only addition and is intentionally not drawn here.
-  (void)text;
 }
 
 // Reference frame-rate readout: bottom-left "N FPS" on a half-transparent plate.
@@ -864,7 +838,7 @@ void drawHud(batch::SpriteBatch& batch, text::TextRenderer& text, const StageLay
     }
   }
 
-  drawHitOffsetIndicator(batch, text, layout, hitOffset, alpha, textures, projection);
+  drawHitOffsetIndicator(batch, layout, hitOffset, alpha, textures, projection);
   drawFpsCounter(batch, text, layout, values, alpha, textures, projection);
 }
 

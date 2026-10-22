@@ -270,12 +270,21 @@ bool GameplaySession::touchBlocked(std::int64_t id) const noexcept {
 }
 
 void GameplaySession::updateBlocks(double time, float frameDeltaSec) {
-  if (blocks_.empty()) {
+  // Zone state only feeds the per-finger touch block latch, so with no finger down a full
+  // pass cannot change a judgement; the renderer keeps its own zone runtime for drawing.
+  // Otherwise skip zones whose window is closed: a chapter chart can author more than ten
+  // thousand of them while only a handful are live at any moment.
+  if (blocks_.empty() || touches_.empty()) {
     blockedTouchIds_.clear();
     return;
   }
   const auto view = stage();
   for (auto& block : blocks_) {
+    if (time < static_cast<double>(block.appearTime)
+        || time >= static_cast<double>(block.disappearTime)) {
+      block.resetRuntime();
+      continue;
+    }
     block.update(static_cast<float>(time), view.left, view.top, view.width, view.height,
         frameDeltaSec);
   }

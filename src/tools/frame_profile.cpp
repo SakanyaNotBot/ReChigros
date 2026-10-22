@@ -18,6 +18,7 @@
 #include "rechigros/game/GameplaySession.hpp"
 #include "rechigros/game/JudgementEngine.hpp"
 #include "rechigros/render/GameRenderer.hpp"
+#include "rechigros/render/fx/BlockOverlay.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -90,6 +91,9 @@ struct Options {
   bool runAblations{false};
   bool runMicro{false};
   bool profileLoad{true};
+  // When set, prints a per-bin census of the chart (live zones, notes) instead of a
+  // steady-state run, so device frame times can be correlated with chart content.
+  double scanBinSec{0.0};
 };
 
 Options parseOptions(int argc, char** argv) {
@@ -124,6 +128,8 @@ Options parseOptions(int argc, char** argv) {
       options.runMicro = true;
     } else if (flag == "--no-load-profile") {
       options.profileLoad = false;
+    } else if (flag == "--scan-bins") {
+      options.scanBinSec = std::max(0.1, std::atof(next().c_str()));
     }
   }
   return options;
@@ -458,6 +464,52 @@ void runMicroBenchmarks(const Options& options, rechigros::game::Chart& chart) {
                  }
                })
             << "ms\n";
+  {
+    // Whole-list zone advancing (the previous per-frame behaviour) against the windowed
+    // advancing the overlay now performs, on the same list and the same time range.
+    std::vector<rechigros::game::OfficialBlock> whole = chart.blockAreaList;
+    std::vector<rechigros::game::OfficialBlock> windowed = chart.blockAreaList;
+    rechigros::render::fx::BlockOverlay overlay;
+    const float stageWidth = static_cast<float>(options.width);
+    const float stageHeight = static_cast<float>(options.height);
+    constexpr int kFrames = 600;
+    constexpr float kDelta = 1.0F / 60.0F;
+    const double begin = options.startTimeSec;
+    const auto wholeStart = Clock::now();
+    for (int frame = 0; frame < kFrames; ++frame) {
+      const double time = begin + static_cast<double>(frame) * static_cast<double>(kDelta);
+      for (auto& block : whole) {
+        if (time < static_cast<double>(block.appearTime)
+            || time >= static_cast<double>(block.disappearTime)) {
+          block.resetRuntime();
+          continue;
+        }
+        block.update(static_cast<float>(time), 0.0F, 0.0F, stageWidth, stageHeight, kDelta);
+      }
+    }
+    const double wholeMs = millisecondsSince(wholeStart) / static_cast<double>(kFrames);
+    const auto windowStart = Clock::now();
+    for (int frame = 0; frame < kFrames; ++frame) {
+      const float time = static_cast<float>(begin)
+          + static_cast<float>(frame) * kDelta;
+      overlay.updateAll(windowed, time, kDelta, 0.0F, 0.0F, stageWidth, stageHeight);
+    }
+    const double windowedMs = millisecondsSince(windowStart) / static_cast<double>(kFrames);
+    bool same = whole.size() == windowed.size();
+    if (same) {
+      for (std::size_t index = 0; index < whole.size(); ++index) {
+        if (whole[index].visible != windowed[index].visible
+            || whole[index].active != windowed[index].active) {
+          same = false;
+          break;
+        }
+      }
+    }
+    std::cout << "micro blockAdvanceWholeList=" << wholeMs
+              << "ms blockAdvanceWindowed=" << windowedMs
+              << "ms match=" << (same ? 1 : 0) << " (" << chart.blockAreaList.size()
+              << " zones)\n";
+  }
   std::cout << "micro eventSamplePerLine="
             << timeIt(20, [&chart]() {
                  for (const auto& line : chart.judgeLineList) {
@@ -518,7 +570,34 @@ int main(int argc, char** argv) {
     runMicroBenchmarks(options, *chart);
   }
 
-  if (exitCode == 0) {
+  bool scanOnly = false;
+  if (exitCode == 0 && options.scanBinSec > 0.0) {
+    scanOnly = true;
+    // Census of the chart per time bin: how many zones are inside their window and how many
+    // notes are authored, so external frame-time CSVs can be correlated with content.
+    std::cout << std::fixed << std::setprecision(3) << "scan: bin,startSec,endSec,liveZones,notes\n";
+    const double step = options.scanBinSec;
+    int bin = 0;
+    for (double start = 0.0; start < chart->chartEndTimeSec + step; start += step, ++bin) {
+      const double end = start + step;
+      const double middle = start + step * 0.5;
+      std::size_t liveZones = 0;
+      for (const auto& zone : chart->blockAreaList) {
+        if (middle >= static_cast<double>(zone.appearTime)
+            && middle < static_cast<double>(zone.disappearTime)) {
+          ++liveZones;
+        }
+      }
+      std::size_t notes = 0;
+      for (const auto* note : chart->allNotesSorted) {
+        if (note != nullptr && note->sect >= start && note->sect < end) ++notes;
+      }
+      std::cout << "scan: " << bin << ',' << start << ',' << end << ',' << liveZones << ','
+                << notes << '\n';
+    }
+  }
+
+  if (exitCode == 0 && !scanOnly) {
     std::cout << "profile: viewport=" << options.width << 'x' << options.height
               << " frames=" << options.frames << " warmup=" << options.warmupFrames
               << " start=" << options.startTimeSec << "s\n";

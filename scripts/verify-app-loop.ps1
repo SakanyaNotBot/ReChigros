@@ -43,8 +43,9 @@ function Invoke-Run([string]$Name, [string[]]$Extra, [string]$Expect) {
   Write-Host ("[ok]   {0,-18} screens={1}" -f $Name, $screens)
 }
 
-# A short run stays in gameplay.
-Invoke-Run 'gameplay' @('--frames', '120') 'game: chartTime'
+# A short run stays in gameplay. The fixed step keeps the frame clock deterministic, so the
+# run is still inside the opening wait when the frame limit is reached at a fast frame rate.
+Invoke-Run 'gameplay' @('--frames', '120', '--fixed-delta') 'game: chartTime'
 
 # A long run must reach the result screen with a real result.
 Invoke-Run 'to-result' @('--frames', '900', '--expect-result') 'perfect=[1-9]|good=[1-9]|miss=[1-9]'

@@ -119,9 +119,7 @@ struct HudHitOffset {
   float goodWindowSec{0.180F};
   float badWindowSec{0.220F};
   float pointerAngleDeg{};
-  std::string text;
-  float textAlpha{};
-  int textJudgement{};
+  // Per-judgement marks of the last 0.9 s, with their normalised age.
   std::array<HudHitOffsetMark, 64> marks{};
   int markCount{};
 };

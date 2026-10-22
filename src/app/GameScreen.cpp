@@ -1670,9 +1670,18 @@ void gameRender(AppContext& context) {
   input.hud.introProgress = game.inIntro
       ? static_cast<float>(std::clamp(game.introElapsedSec / kHudIntroDurationSec, 0.0, 1.0))
       : 1.0F;
-  input.hud.outroProgress = game.inOutro
-      ? static_cast<float>(std::clamp(game.outroElapsedSec / kHudOutroDurationSec, 0.0, 1.0))
-      : 0.0F;
+  // The reference build does not scale the HUD (or the stage) at the exit: the HUD keeps
+  // its layout while the play field blurs, then the whole gameplay frame fades out under
+  // the result entry. Only the final fade of the run is animated here.
+  input.hud.outroProgress = 0.0F;
+  input.hud.alpha = 1.0F;
+  if (game.inOutro) {
+    constexpr double exitFadeSec = 0.22;
+    const double remaining = kOutroDurationSec - game.outroElapsedSec;
+    if (remaining < exitFadeSec) {
+      input.hud.alpha = static_cast<float>(std::clamp(remaining / exitFadeSec, 0.0, 1.0));
+    }
+  }
   input.practice.enabled = game.practice;
   input.practice.speed = game.musicSpeed;
   input.practice.autoPlay = game.autoplay;

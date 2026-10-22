@@ -84,6 +84,8 @@ struct RenderFrameInput {
     // autoplay/replay suppression flag of its display.
     int hitOffsetIndicatorMode{0};
     bool hitOffsetSuppressed{false};
+    // Global HUD opacity (the exit fade of the gameplay screen).
+    float alpha{1.0F};
     // Frame-rate readout of the HUD.
     bool showFps{false};
     float fps{0.0F};

@@ -68,6 +68,8 @@ private:
   // Captures at an explicit frame instead of the per-screen default wait.
   int captureAtFrame_{-1};
   double captureTimeSec_{-1.0};
+  // Stage aspect ratio for a capture screen; zero keeps the reference capture value.
+  float aspectRatioOverride_{0.0F};
   // Per-frame pacing samples: the wall interval between frames and the time spent before
   // the buffer swap. Written as CSV when the run ends, which is how stutters are measured.
   std::filesystem::path frameStatsPath_;

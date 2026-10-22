@@ -1,0 +1,8 @@
+name: Info Yml Skin
+author: Reference Skin
+hitFxScale: 2.4
+hitFxDuration: 0.85
+hit_fx_rotate: true
+hide_particles: true
+colorPerfect: 0xFFFF00FF
+colorGood: 0x4000FFFF

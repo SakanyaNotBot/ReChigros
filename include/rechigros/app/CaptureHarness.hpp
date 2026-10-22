@@ -13,6 +13,9 @@ struct AppContext;
 // Supported names: home, library, library-online, library-manage, settings-video,
 // settings-audio, settings-replay, settings-more, detail, result, calibration, game,
 // game-pause, game-practice.
-void setupCaptureScreen(AppContext& context, const std::string& screen);
+// An aspect ratio override of 0 keeps the reference capture value; a positive value lets a
+// capture reproduce the narrow-stage treatment.
+void setupCaptureScreen(AppContext& context, const std::string& screen,
+    float aspectRatioOverride = 0.0F);
 
 } // namespace rechigros::app

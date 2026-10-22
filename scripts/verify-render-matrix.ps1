@@ -58,6 +58,7 @@ $singleNote = Join-Path $Fixtures 'single_note.json'
 $hold = Join-Path $Fixtures 'hold.json'
 $holdSkin = (Resolve-Path (Join-Path $Fixtures 'hold_skin')).Path
 $skin = (Resolve-Path (Join-Path $Fixtures 'skin')).Path
+$skinYml = (Resolve-Path (Join-Path $Fixtures 'skin_yml')).Path
 $rotated = Join-Path $Fixtures 'rotated.json'
 $rotatedLevel = Join-Path $Fixtures 'rotated_level.json'
 $moreBets = Join-Path $Fixtures 'morebets.json'
@@ -110,6 +111,9 @@ $cases = @(
   @{ Id = 'skin-overrides'; BaseChart = $plain; ChangedChart = $plain;
      Base = @('--time', '1.0'); Changed = @('--time', '1.0', '--skin', $skin); Minimum = 0.5;
      Description = 'a skin overrides the built-in materials' }
+  @{ Id = 'skin-info-yml'; BaseChart = $plain; ChangedChart = $plain;
+     Base = @('--time', '1.0'); Changed = @('--time', '1.0', '--skin', $skinYml); Minimum = 1.0;
+     Description = 'an info.yml skin configures materials and replaces note artwork' }
   @{ Id = 'effect-bloom'; BaseChart = $plain; ChangedChart = $bloom;
      Base = @('--time', '1.0'); Changed = @('--time', '1.0'); Minimum = 3.0;
      Description = 'a bloom storyboard pass runs' }

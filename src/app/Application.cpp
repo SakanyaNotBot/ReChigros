@@ -106,6 +106,12 @@ Application::Application(int argc, char** argv) {
       if (index + 1 < argc && argv[index + 1] != nullptr) {
         frameStatsPath_ = pathFromUtf8(argv[++index]);
       }
+    } else if (argument == "--aspect") {
+      // Overrides the stage aspect ratio a capture screen shows; a narrow value reproduces
+      // the letterboxed play field with its blurred side columns.
+      if (index + 1 < argc && argv[index + 1] != nullptr) {
+        aspectRatioOverride_ = static_cast<float>(std::atof(argv[++index]));
+      }
     } else if (argument == "--data-root") {
       if (index + 1 < argc && argv[index + 1] != nullptr) {
         dataRootOverride_ = pathFromUtf8(argv[++index]);
@@ -351,7 +357,7 @@ bool Application::initialize() {
   // A capture run can open a specific screen with representative state, so a single
   // screen can be inspected and compared without walking the interface by hand.
   if (!screenSetup_.empty()) {
-    setupCaptureScreen(*app_, screenSetup_);
+    setupCaptureScreen(*app_, screenSetup_, aspectRatioOverride_);
   }
 
   SDL_EventState(SDL_DROPFILE, SDL_ENABLE);

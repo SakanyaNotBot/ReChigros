@@ -140,12 +140,13 @@ std::string chartIdForName(AppContext& context, const std::string& name) {
 }
 
 // Applies the preference values the reference screenshots were taken with, so switches,
-// sliders and lists show the same state without hand-editing the settings file.
-void applyReferenceSettings(AppContext& context) {
+// sliders and lists show the same state without hand-editing the settings file. A positive
+// aspect override lets a capture reproduce the narrow-stage treatment.
+void applyReferenceSettings(AppContext& context, float aspectRatioOverride) {
   Settings& settings = context.settings;
   settings.keyScale = 1.0F;
   settings.backgroundDim = 1.0F;
-  settings.aspectRatio = 1.77777F;
+  settings.aspectRatio = aspectRatioOverride > 0.0F ? aspectRatioOverride : 1.77777F;
   settings.scrollSpeed = 1.0F;
   settings.judgeLineWidth = 1.0F;
   settings.musicVolume = 1.0F;
@@ -235,7 +236,7 @@ void startCaptureChart(AppContext& context, bool practice) {
 
 } // namespace
 
-void setupCaptureScreen(AppContext& context, const std::string& spec) {
+void setupCaptureScreen(AppContext& context, const std::string& spec, float aspectRatioOverride) {
   ensureLibrary(context);
   // A capture name may carry a chart selector, for example "result:Hate" or "detail:Message",
   // so a screen can be rendered with the same content as the reference capture.
@@ -246,7 +247,7 @@ void setupCaptureScreen(AppContext& context, const std::string& spec) {
     screen = spec.substr(0, separator);
     chartName = spec.substr(separator + 1);
   }
-  applyReferenceSettings(context);
+  applyReferenceSettings(context, aspectRatioOverride);
   const std::string chartId = chartIdForName(context, chartName);
 
   if (screen == "home") {

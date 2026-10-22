@@ -915,9 +915,6 @@ void GameRenderer::Impl::drawHudPass(const RenderFrameInput& input,
     hitOffset.goodWindowSec = static_cast<float>(judgement->tapGoodWindow());
     hitOffset.badWindowSec = static_cast<float>(judgement->windows().bad);
     hitOffset.pointerAngleDeg = indicator.pointerAngleDeg();
-    hitOffset.text = indicator.latestText();
-    hitOffset.textAlpha = indicator.latestTextAlpha(input.hud.visualTimeSec);
-    hitOffset.textJudgement = static_cast<int>(indicator.latestJudgement());
     for (const auto& mark : indicator.marks()) {
       if (hitOffset.markCount >= static_cast<int>(hitOffset.marks.size())) break;
       if (!mark.active) continue;
@@ -939,7 +936,8 @@ void GameRenderer::Impl::drawHudPass(const RenderFrameInput& input,
   hudTextures.noteRing = hudArtwork.noteRing;
   hudTextures.hitOffsetArrow = hudArtwork.hitOffsetArrow;
   hudTextures.white = &textures.white();
-  scene::drawHud(batch, text, layout, values, colors, hudTextures, transforms, hitOffset, 1.0F,
+  scene::drawHud(batch, text, layout, values, colors, hudTextures, transforms, hitOffset,
+      input.hud.alpha,
       layout.projection());
 }
 
