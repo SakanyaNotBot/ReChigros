@@ -1,6 +1,7 @@
 add_library(rechigros_platform STATIC
   AssetManager.cpp
   Archive.cpp
+  FileDialog.cpp
   FileSystem.cpp
   Gif.cpp)
 target_include_directories(rechigros_platform PUBLIC "${PROJECT_SOURCE_DIR}/include")

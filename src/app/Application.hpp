@@ -1,5 +1,7 @@
 #pragma once
 
+#include "rechigros/app/TriGridBackdrop.hpp"
+
 #include <filesystem>
 #include <memory>
 
@@ -40,15 +42,23 @@ private:
   void drawCurrentScreen();
   void updateBatchMode();
   void printBatchSummary();
+  void captureFramebufferIfRequested();
 
   SDL_Window* window_{};
   SDL_GLContext context_{};
   std::unique_ptr<AppContext> app_;
   std::unique_ptr<audio::AudioEngine> audio_;
   std::unique_ptr<render::GameRenderer> renderer_;
+  std::unique_ptr<TriGridBackdrop> backdrop_;
   std::filesystem::path initialPath_;
   std::filesystem::path replayPlaybackPath_;
   std::filesystem::path recordReplayPath_;
+  std::filesystem::path capturePath_;
+  double captureTimeSec_{-1.0};
+  int windowWidthOverride_{1280};
+  int windowHeightOverride_{720};
+  bool captureDone_{};
+  bool captureFailed_{};
   bool imguiReady_{};
   bool suspended_{};
   bool frameClockReset_{};
@@ -67,6 +77,8 @@ private:
   int screenFrameCounts_[7]{};
   // Synthetic input timing for the verification runs: a positive value presses the notes
   // late by that many milliseconds, which is how a mistimed judgement is produced.
+  // Whether the platform text input is running, so the on-screen keyboard follows focus.
+  bool textInputActive_{};
   double batchMistimeMs_{};
   // Widens the practice judgement window before the run, so the window can be verified
   // end to end rather than only through the engine.

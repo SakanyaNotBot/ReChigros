@@ -3,6 +3,7 @@
 #include "rechigros/app/AppContext.hpp"
 #include "rechigros/app/ScreenCommon.hpp"
 #include "rechigros/app/Screens.hpp"
+#include "rechigros/app/TriGridBackdrop.hpp"
 #include "rechigros/app/UiStyle.hpp"
 #include "rechigros/audio/AudioEngine.hpp"
 #include "rechigros/platform/AssetManager.hpp"
@@ -17,11 +18,15 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <unordered_set>
+#include <vector>
 
 #include <stb_image.h>
+#include <stb_image_write.h>
 
 namespace rechigros::app {
 namespace {
@@ -75,6 +80,24 @@ Application::Application(int argc, char** argv) {
       if (index + 1 < argc && argv[index + 1] != nullptr) {
         recordReplayPath_ = pathFromUtf8(argv[++index]);
       }
+    } else if (argument == "--capture-frame") {
+      if (index + 1 < argc && argv[index + 1] != nullptr) {
+        capturePath_ = pathFromUtf8(argv[++index]);
+      }
+    } else if (argument == "--capture-time") {
+      if (index + 1 < argc && argv[index + 1] != nullptr) {
+        captureTimeSec_ = std::atof(argv[++index]);
+      }
+    } else if (argument == "--window") {
+      if (index + 1 < argc && argv[index + 1] != nullptr) {
+        int width = 0;
+        int height = 0;
+        if (std::sscanf(argv[++index], "%dx%d", &width, &height) == 2 && width >= 160
+            && height >= 90) {
+          windowWidthOverride_ = width;
+          windowHeightOverride_ = height;
+        }
+      }
     } else if (!argument.empty() && argument[0] != '-' && initialPath_.empty()) {
       initialPath_ = pathFromUtf8(argument.c_str());
     }
@@ -115,8 +138,8 @@ bool Application::initialize() {
   // window on the user's desktop.
   if (batchMode_) windowFlags |= SDL_WINDOW_HIDDEN;
 #endif
-  window_ = SDL_CreateWindow("ReChigros", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720,
-      windowFlags);
+  window_ = SDL_CreateWindow("ReChigros", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+      windowWidthOverride_, windowHeightOverride_, windowFlags);
   if (window_ == nullptr) {
     std::cerr << "SDL_CreateWindow: " << SDL_GetError() << '\n';
     return false;
@@ -233,6 +256,16 @@ bool Application::initialize() {
     std::cerr << "Renderer initialization failed (asset root: " << assetRoot.string() << ")\n";
   }
 
+  // GPU menu backdrop. When its shaders or textures fail to load, the interface
+  // keeps the simple ImGui backdrop instead.
+  backdrop_ = std::make_unique<TriGridBackdrop>();
+  if (!backdrop_->prepare(assetRoot)) {
+    std::cerr << "GPU backdrop unavailable; using the fallback background\n";
+    backdrop_->release();
+    backdrop_.reset();
+  }
+  ui::setBackdropSuppressed(backdrop_ != nullptr && backdrop_->ready());
+
   app_ = std::make_unique<AppContext>(platform::userDataRoot() / "app");
   app_->audio = audio_.get();
   app_->renderer = renderer_.get();
@@ -307,8 +340,33 @@ int Application::run() {
     } else {
       glBindFramebuffer(GL_FRAMEBUFFER, 0);
       glViewport(0, 0, app_->drawableWidth, app_->drawableHeight);
-      glClearColor(0.05F, 0.06F, 0.08F, 1.0F);
-      glClear(GL_COLOR_BUFFER_BIT);
+      if (backdrop_ != nullptr && backdrop_->ready()) {
+        // The chart detail page supplies its own artwork behind the grid.
+        unsigned int source = 0;
+        bool hasSource = false;
+        int sourceWidth = 0;
+        int sourceHeight = 0;
+        if (app_->screen == Screen::Detail && !app_->activeChartId.empty()) {
+          if (const auto record = app_->library.find(app_->activeChartId)) {
+            const std::uint64_t texture = coverTexture(*app_, *record, 1024);
+            if (texture != 0) {
+              source = static_cast<unsigned int>(texture);
+              hasSource = true;
+              sourceWidth = app_->textures.width(texture);
+              sourceHeight = app_->textures.height(texture);
+            }
+          }
+        }
+        // A capture run may pin the animation clock so the moving band is visible
+        // on a frame-count-bounded hidden run.
+        const double backdropTime = captureTimeSec_ >= 0.0 ? captureTimeSec_ : app_->nowSec;
+        backdrop_->render(app_->drawableWidth, app_->drawableHeight, backdropTime, source,
+            hasSource, sourceWidth, sourceHeight);
+      } else {
+        glClearColor(0.05F, 0.06F, 0.08F, 1.0F);
+        glClear(GL_COLOR_BUFFER_BIT);
+      }
+      captureFramebufferIfRequested();
       drawCurrentScreen();
     }
     drawToast(*app_);
@@ -321,6 +379,18 @@ int Application::run() {
     if (batchMode_) {
       updateBatchMode();
       if (renderedFrames_ >= frameLimit_) running = false;
+    }
+
+    // A focused text field needs the platform text input running, otherwise the on-screen
+    // keyboard never appears and no character events are produced.
+    const bool wantsText = ImGui::GetIO().WantTextInput;
+    if (wantsText != textInputActive_) {
+      if (wantsText) {
+        SDL_StartTextInput();
+      } else {
+        SDL_StopTextInput();
+      }
+      textInputActive_ = wantsText;
     }
 
     ImGui::Render();
@@ -484,10 +554,13 @@ void Application::printBatchSummary() {
               << played.miss << " | match=" << (replayMatch_ ? 1 : 0) << '\n';
   }
   batchOk_ = batchMode_ && renderedFrames_ >= frameLimit_ && (homeOnly ? true : chartRunPass);
+  if (!capturePath_.empty() && (!captureDone_ || captureFailed_)) batchOk_ = false;
   std::cout << "BATCH-RUN " << (batchOk_ ? "PASS" : "FAIL") << " frames=" << renderedFrames_
             << " requested=" << frameLimit_ << " fps=" << smoothedFps_;
   if (audio_ != nullptr) std::cout << " audioHz=" << audio_->outputSampleRate();
   std::cout << " pointerEvents=" << app_->forwardedPointerEvents << '\n';
+  std::cout << "backdrop: module=" << (backdrop_ != nullptr && backdrop_->ready() ? 1 : 0)
+            << " captured=" << (captureDone_ && !captureFailed_ ? 1 : 0) << '\n';
   std::cout << "screens:";
   for (int index = 0; index < 7; ++index) {
     if (screenFrameCounts_[index] > 0) {
@@ -524,6 +597,57 @@ void Application::printBatchSummary() {
                 << " miss=" << result.miss << " total=" << result.totalNotes << '\n';
     }
   }
+}
+
+void Application::captureFramebufferIfRequested() {
+  if (capturePath_.empty() || captureDone_ || app_ == nullptr || renderedFrames_ < 20) return;
+  const int width = app_->drawableWidth;
+  const int height = app_->drawableHeight;
+  if (width <= 0 || height <= 0) return;
+  captureDone_ = true;
+
+  const auto rowBytes = static_cast<std::size_t>(width) * 4;
+  std::vector<std::uint8_t> pixels(rowBytes * static_cast<std::size_t>(height));
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+
+  // Colour statistics prove the shaders produced content, not a flat clear.
+  std::unordered_set<std::uint32_t> colours;
+  colours.reserve(4096);
+  std::uint64_t sumRed = 0;
+  std::uint64_t sumGreen = 0;
+  std::uint64_t sumBlue = 0;
+  std::uint64_t samples = 0;
+  const auto stride = static_cast<std::size_t>(std::max(1, (width * height) / 4096));
+  const auto pixelCount = pixels.size() / 4;
+  for (std::size_t index = 0; index < pixelCount; index += stride) {
+    const std::uint8_t* pixel = pixels.data() + index * 4;
+    const std::uint32_t quantised = (static_cast<std::uint32_t>(pixel[0]) >> 2) << 12
+        | (static_cast<std::uint32_t>(pixel[1]) >> 2) << 6
+        | (static_cast<std::uint32_t>(pixel[2]) >> 2);
+    colours.insert(quantised);
+    sumRed += pixel[0];
+    sumGreen += pixel[1];
+    sumBlue += pixel[2];
+    ++samples;
+  }
+
+  // Readback rows are bottom-up; flip them for the PNG writer.
+  std::vector<std::uint8_t> flipped(pixels.size());
+  for (int row = 0; row < height; ++row) {
+    std::copy_n(pixels.data() + static_cast<std::size_t>(height - 1 - row) * rowBytes, rowBytes,
+        flipped.data() + static_cast<std::size_t>(row) * rowBytes);
+  }
+  const bool written = stbi_write_png(capturePath_.string().c_str(), width, height, 4,
+      flipped.data(), static_cast<int>(rowBytes)) != 0;
+  captureFailed_ = !written;
+  const unsigned meanRed = samples > 0 ? static_cast<unsigned>(sumRed / samples) : 0;
+  const unsigned meanGreen = samples > 0 ? static_cast<unsigned>(sumGreen / samples) : 0;
+  const unsigned meanBlue = samples > 0 ? static_cast<unsigned>(sumBlue / samples) : 0;
+  std::cout << "CAPTURE " << (written ? "PASS" : "FAIL") << " path=" << capturePath_.string()
+            << " size=" << width << 'x' << height << " uniqueColors=" << colours.size()
+            << " meanRGB=" << meanRed << ',' << meanGreen << ',' << meanBlue << '\n';
 }
 
 void Application::drawCurrentScreen() {
@@ -714,6 +838,11 @@ void Application::shutdown() noexcept {
   if (renderer_ != nullptr) {
     if (context_ != nullptr) renderer_->shutdown();
     renderer_.reset();
+  }
+  ui::setBackdropSuppressed(false);
+  if (backdrop_ != nullptr) {
+    if (context_ != nullptr) backdrop_->release();
+    backdrop_.reset();
   }
   if (audio_ != nullptr) {
     audio_->shutdown();
