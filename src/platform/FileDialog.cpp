@@ -49,6 +49,33 @@ std::filesystem::path runOpenDialog(const wchar_t* filter, const wchar_t* title)
   return std::filesystem::path(buffer.data());
 }
 
+// Multi-selection variant. The dialog returns the directory followed by the selected
+// file names, each terminated by a NUL; a single selection has no separate directory.
+std::vector<std::filesystem::path> runOpenDialogMulti(const wchar_t* filter, const wchar_t* title) {
+  ComScope com;
+  std::vector<wchar_t> buffer(65536, L'\0');
+  OPENFILENAMEW options{};
+  options.lStructSize = sizeof(options);
+  options.hwndOwner = GetActiveWindow();
+  options.lpstrFilter = filter;
+  options.lpstrFile = buffer.data();
+  options.nMaxFile = static_cast<DWORD>(buffer.size());
+  options.lpstrTitle = title;
+  options.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER | OFN_NOCHANGEDIR
+      | OFN_ALLOWMULTISELECT;
+  if (GetOpenFileNameW(&options) == FALSE) return {};
+  const std::filesystem::path first(buffer.data());
+  const wchar_t* cursor = buffer.data() + first.native().size() + 1;
+  if (*cursor == L'\0') return {first};
+  std::vector<std::filesystem::path> files;
+  while (*cursor != L'\0') {
+    const std::filesystem::path name(cursor);
+    files.push_back(first / name);
+    cursor += name.native().size() + 1;
+  }
+  return files;
+}
+
 std::filesystem::path runFolderDialog(const wchar_t* title) {
   ComScope com;
   BROWSEINFOW info{};
@@ -81,6 +108,26 @@ std::filesystem::path FileDialog::openChartFolder() {
 std::filesystem::path FileDialog::openChartPackage() {
   static const wchar_t kFilter[] = L"谱面包 (*.zip)\0*.zip\0所有文件\0*.*\0\0";
   return runOpenDialog(kFilter, L"选择谱面包");
+}
+
+std::filesystem::path FileDialog::openReplayFile() {
+  static const wchar_t kFilter[] =
+      L"回放文件 (*.cgrp;*.zip;*.json)\0*.cgrp;*.zip;*.json\0所有文件\0*.*\0\0";
+  return runOpenDialog(kFilter, L"选择回放文件");
+}
+
+std::filesystem::path FileDialog::openSkinPackage() {
+  static const wchar_t kFilter[] = L"皮肤资源包 (*.zip)\0*.zip\0所有文件\0*.*\0\0";
+  return runOpenDialog(kFilter, L"选择皮肤资源包");
+}
+
+std::vector<std::filesystem::path> FileDialog::openChartSourceFiles() {
+  static const wchar_t kFilter[] =
+      L"谱面文件 (*.json;*.txt;*.pec)\0*.json;*.txt;*.pec\0"
+      L"音频 (*.ogg;*.mp3;*.wav;*.flac;*.m4a;*.aac)\0*.ogg;*.mp3;*.wav;*.flac;*.m4a;*.aac\0"
+      L"图片 (*.png;*.jpg;*.jpeg;*.webp;*.bmp)\0*.png;*.jpg;*.jpeg;*.webp;*.bmp\0"
+      L"所有文件\0*.*\0\0";
+  return runOpenDialogMulti(kFilter, L"选择谱面、音乐与背景");
 }
 
 bool FileDialog::available() noexcept { return true; }
@@ -135,6 +182,13 @@ std::filesystem::path FileDialog::openChartPackage() {
   return {};
 }
 
+// Replay and skin pickers would need their own document-picker modes and answer routing
+// in the packaged platform layer; until that exists they report "no selection" and the
+// caller keeps its current state.
+std::filesystem::path FileDialog::openReplayFile() { return {}; }
+std::filesystem::path FileDialog::openSkinPackage() { return {}; }
+std::vector<std::filesystem::path> FileDialog::openChartSourceFiles() { return {}; }
+
 // The picker is asynchronous here, so the answer arrives as a drop event instead of a
 // return value. Callers should treat an empty result as "ask again later".
 bool FileDialog::available() noexcept { return true; }
@@ -149,6 +203,9 @@ namespace rechigros::platform {
 std::filesystem::path FileDialog::openChartFile() { return {}; }
 std::filesystem::path FileDialog::openChartFolder() { return {}; }
 std::filesystem::path FileDialog::openChartPackage() { return {}; }
+std::filesystem::path FileDialog::openReplayFile() { return {}; }
+std::filesystem::path FileDialog::openSkinPackage() { return {}; }
+std::vector<std::filesystem::path> FileDialog::openChartSourceFiles() { return {}; }
 bool FileDialog::available() noexcept { return false; }
 
 } // namespace rechigros::platform
@@ -161,6 +218,9 @@ namespace rechigros::platform {
 std::filesystem::path FileDialog::openChartFile() { return {}; }
 std::filesystem::path FileDialog::openChartFolder() { return {}; }
 std::filesystem::path FileDialog::openChartPackage() { return {}; }
+std::filesystem::path FileDialog::openReplayFile() { return {}; }
+std::filesystem::path FileDialog::openSkinPackage() { return {}; }
+std::vector<std::filesystem::path> FileDialog::openChartSourceFiles() { return {}; }
 bool FileDialog::available() noexcept { return false; }
 
 } // namespace rechigros::platform

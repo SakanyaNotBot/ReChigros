@@ -3,6 +3,7 @@
 #include "rechigros/platform/FileSystem.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <sstream>
 #include <string_view>
@@ -43,6 +44,14 @@ bool parseBool(const std::string& value, bool fallback) {
   if (value == "1" || value == "true") return true;
   if (value == "0" || value == "false") return false;
   return fallback;
+}
+
+// The stage aspect accepts zero ("follow the window") or a finite ratio clamped to the
+// range the settings slider can produce. A non-finite value is repaired to "follow window".
+float sanitizeAspectRatio(float value) {
+  if (!std::isfinite(value)) return 0.0F;
+  if (value == 0.0F) return 0.0F;
+  return std::max(0.5F, std::min(value, 5.0F));
 }
 
 } // namespace
@@ -103,6 +112,7 @@ bool Settings::load(const std::filesystem::path& file) {
   if (skin != values.end()) selectedSkin = skin->second;
 
   // Clamp everything that feeds the mixer or the play field scaling directly.
+  aspectRatio = sanitizeAspectRatio(aspectRatio);
   keyScale = std::max(0.7F, std::min(keyScale, 1.5F));
   backgroundDim = std::max(0.0F, std::min(backgroundDim, 1.0F));
   scrollSpeed = std::max(0.1F, std::min(scrollSpeed, 5.0F));

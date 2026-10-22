@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <vector>
 
 namespace rechigros::platform {
 
@@ -20,6 +21,18 @@ public:
 
   // Shows a picker for a chart package and returns the chosen archive.
   [[nodiscard]] static std::filesystem::path openChartPackage();
+
+  // Shows a picker for a replay package or replay document: a `.cgrp`/`.zip` archive
+  // or a plain replay JSON file.
+  [[nodiscard]] static std::filesystem::path openReplayFile();
+
+  // Shows a picker for a skin / resource package archive.
+  [[nodiscard]] static std::filesystem::path openSkinPackage();
+
+  // Shows a multi-selection picker over the loose files a chart is built from (chart
+  // document, audio track, illustration). Returns the chosen files; empty means the
+  // dialog was cancelled or the platform has no multi-selection picker.
+  [[nodiscard]] static std::vector<std::filesystem::path> openChartSourceFiles();
 
   // True when the current platform implements the pickers. A caller can fall back to a
   // typed path when this is false.

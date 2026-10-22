@@ -8,10 +8,11 @@ namespace rechigros::app {
 // Persistent user preferences. Every field has a defined default so a missing or
 // partially written file still yields a playable configuration.
 struct Settings {
-  // Play field.
+  // Play field. The stage aspect defaults to the reference's 16:9; zero means "follow the
+  // window" and is only written after the user picks that option.
   float keyScale{1.0F};
   float backgroundDim{0.25F};
-  float aspectRatio{0.0F};
+  float aspectRatio{16.0F / 9.0F};
   float scrollSpeed{1.0F};
   float judgeLineWidth{1.0F};
 

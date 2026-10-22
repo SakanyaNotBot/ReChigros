@@ -46,9 +46,9 @@ constexpr float kCoverAlpha = 0.34F;
 constexpr float kCanvasTextScale = 1.0F / ui::kDensityRatio;
 
 // Reference design sizes of the labels.
-constexpr float kNameSize = 22.0F;
-constexpr float kInfoKeySize = 15.0F;
-constexpr float kInfoValueSize = 18.0F;
+constexpr float kNameSize = 19.4F;
+constexpr float kInfoKeySize = 7.6F;
+constexpr float kInfoValueSize = 9.0F;
 constexpr float kChipTextSize = 20.0F;
 constexpr float kScoreTextSize = 36.0F;
 constexpr float kAccuracyTextSize = 20.0F;
@@ -67,6 +67,10 @@ constexpr float kHostUnit = ui::kDensityRatio;
 ui::Box hostBox(float leftDp, float topDp, float widthDp, float heightDp) {
   return ui::Box{leftDp * kHostUnit, topDp * kHostUnit, (leftDp + widthDp) * kHostUnit,
       (topDp + heightDp) * kHostUnit};
+}
+
+ui::Box shifted(const ui::Box& box, float dx, float dy = 0.0F) {
+  return ui::Box{box.x0 + dx, box.y0 + dy, box.x1 + dx, box.y1 + dy};
 }
 
 ui::TextStyle canvasTextStyle(float designSize, bool bold, ImU32 color) {
@@ -88,6 +92,23 @@ std::string orUnknown(const std::string& value) {
   return value.empty() ? "Unkown" : value;
 }
 
+// The library normalises the difficulty label with an en space between the prefix and "Lv.";
+// the reference page renders that separator as a plain space.
+std::string plainSpaces(const std::string& value) {
+  static const char* const kSpaces[] = {"\xE2\x80\x82", "\xE2\x80\x89", "\xE2\x80\x8A",
+      "\xC2\xA0", "\xE3\x80\x80"};
+  std::string result = value;
+  for (const char* space : kSpaces) {
+    const std::string from = space;
+    std::size_t position = 0;
+    while ((position = result.find(from, position)) != std::string::npos) {
+      result.replace(position, from.size(), " ");
+      ++position;
+    }
+  }
+  return result;
+}
+
 std::string fileNameOrUnknown(const std::filesystem::path& file) {
   return file.empty() ? std::string("Unkown") : file.filename().string();
 }
@@ -106,8 +127,31 @@ void drawIconOnPlate(AppContext& context, ImDrawList* drawList, const ui::Canvas
   int textureHeight = 0;
   const std::uint64_t texture =
       assetTextureSized(context, asset, 128, textureWidth, textureHeight);
-  ui::drawIconPlate(drawList, canvas, box, style, texture, textureWidth, textureHeight, 16.0F,
+  ui::PanelStyle plate = style;
+  plate.accentEdge = 0;
+  ui::drawIconPlate(drawList, canvas, box, plate, texture, textureWidth, textureHeight, 16.0F,
       10.0F, 3.0F);
+}
+
+// Accent strip along the slanted leading edge of a top-wider plate. The shared panel helper draws
+// the strip of that variant shifted by the skew, so the plate's own variant is drawn here.
+void drawTopWiderAccent(ImDrawList* drawList, const ui::Canvas& canvas, const ui::Box& box,
+    const ui::PanelStyle& style) {
+  if (drawList == nullptr || style.accentEdge == 0 || style.accentWidthDp <= 0.0F) return;
+  const ui::PxRect rect = ui::toPixels(canvas, box);
+  const float width = rect.max.x - rect.min.x;
+  const float height = rect.max.y - rect.min.y;
+  if (width <= 0.0F || height <= 0.0F) return;
+  const float skew = std::min(std::tan(style.skewDegrees * 3.14159265F / 180.0F) * height,
+      width * 0.42F);
+  const float accentWidth = std::max(1.0F, canvas.dp(style.accentWidthDp));
+  ImVec2 points[4] = {
+      ImVec2(rect.min.x, rect.min.y),
+      ImVec2(rect.min.x + accentWidth, rect.min.y),
+      ImVec2(rect.min.x + skew + accentWidth, rect.max.y),
+      ImVec2(rect.min.x + skew, rect.max.y),
+  };
+  drawList->AddConvexPolyFilled(points, 4, style.accent);
 }
 
 // The back plate centres the glyph's ink on the centroid of the visible parallelogram, which is
@@ -198,7 +242,7 @@ bool drawInfoDialog(AppContext& context, ImDrawList* drawList, const ui::Canvas&
   const float accentWidth = 3.0F * design;
 
   const char* const keys[] = {"曲名: ", "难度: ", "谱师: ", "曲师: ", "画师: ", "音乐: ", "谱面: "};
-  const std::string values[] = {record.songName, record.difficulty,
+  const std::string values[] = {record.songName, plainSpaces(record.difficulty),
       orUnknown(record.info.charter), orUnknown(record.info.composer),
       orUnknown(record.info.illustrator), fileNameOrUnknown(record.musicFile),
       fileNameOrUnknown(record.chartFile)};
@@ -363,7 +407,7 @@ void drawDetailScreen(AppContext& context) {
   const float contentWidth = viewport.x / canvas.scale;
   const float contentHeight = viewport.y / canvas.scale;
   drawList->AddRectFilled(ImVec2(0.0F, 0.0F), viewport, ui::argb(0x46000000U));
-  const std::uint64_t cover = coverTexture(context, *record, 1200);
+  const std::uint64_t cover = coverTexture(context, *record, 2048);
   if (cover != 0) {
     const int coverWidth = static_cast<int>(context.textures.width(cover));
     const int coverHeight = static_cast<int>(context.textures.height(cover));
@@ -383,7 +427,8 @@ void drawDetailScreen(AppContext& context) {
   const ui::Box settingsBox = ui::Box{contentWidth - 78.0F * kHostUnit, 88.0F * kHostUnit,
       contentWidth, 136.0F * kHostUnit};
   const ui::Box startBox = ui::Box{contentWidth - 78.0F * kHostUnit,
-      contentHeight - 66.0F * kHostUnit, contentWidth, contentHeight - 18.0F * kHostUnit};
+      contentHeight - 66.0F * kHostUnit - 48.0F * kHostUnit, contentWidth,
+      contentHeight - 66.0F * kHostUnit};
 
   bool backPressed = false;
   bool infoPressed = false;
@@ -444,7 +489,7 @@ void drawDetailScreen(AppContext& context) {
     const char* const keys[] = {"charter", "composer"};
     const std::string values[] = {record->info.charter, record->info.composer};
     for (int index = 0; index < 2; ++index) {
-      const float rowTop = kInfoTop + 8.0F + static_cast<float>(index) * 48.0F;
+      const float rowTop = kInfoTop + 9.0F + static_cast<float>(index) * 49.0F;
       ui::TextStyle key = canvasFitTextStyle(kInfoKeySize, false, ui::argb(0xB8FFFFFFU));
       ui::drawLabel(drawList, canvas, ui::Box{left, rowTop, right, rowTop + 22.0F}, keys[index],
           key, context.nowSec);
@@ -471,7 +516,7 @@ void drawDetailScreen(AppContext& context) {
     text.align = ui::HAlign::Center;
     text.paddingLeftDp = 16.0F * kCanvasTextScale;
     text.paddingRightDp = 16.0F * kCanvasTextScale;
-    ui::drawLabel(drawList, canvas, box, record->difficulty, text, context.nowSec);
+    ui::drawLabel(drawList, canvas, box, plainSpaces(record->difficulty), text, context.nowSec);
   }
 
   // Best score plate along the bottom-left.
@@ -510,6 +555,8 @@ void drawDetailScreen(AppContext& context) {
   drawBackPlate(context, drawList, canvas, backBox, backStyle);
   drawIconOnPlate(context, drawList, canvas, infoBox, topStyle, "res/detail.png");
   drawIconOnPlate(context, drawList, canvas, settingsBox, topStyle, "res/settings.png");
+  drawTopWiderAccent(drawList, canvas, infoBox, topStyle);
+  drawTopWiderAccent(drawList, canvas, settingsBox, topStyle);
   drawIconOnPlate(context, drawList, canvas, startBox, sideStyle, "res/start.png");
 
   // ---- information dialog ----

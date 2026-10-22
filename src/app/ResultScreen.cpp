@@ -36,7 +36,7 @@ constexpr float kCanvasTextScale = 1.0F / ui::kDensityRatio;
 // Reference layout sizes, in canvas design units. The glyph sizes are calibrated so the rendered
 // ink matches the reference capture: the reference build draws this page's text noticeably
 // smaller than the reconstructed layout numbers suggest, and not by a constant factor.
-constexpr float kScoreTextSize = 18.5F;
+constexpr float kScoreTextSize = 19.5F;
 constexpr float kComboValueSize = 10.0F;
 constexpr float kComboLabelSize = 4.9F;
 constexpr float kStdValueSize = 10.4F;
@@ -281,6 +281,23 @@ std::string formatMultiplier(float value) {
   return buffer;
 }
 
+// The library normalises the difficulty label with an en space between the prefix and "Lv.";
+// the reference settlement renders that separator as a plain space.
+std::string plainSpaces(const std::string& value) {
+  static const char* const kSpaces[] = {"\xE2\x80\x82", "\xE2\x80\x89", "\xE2\x80\x8A",
+      "\xC2\xA0", "\xE3\x80\x80"};
+  std::string result = value;
+  for (const char* space : kSpaces) {
+    const std::string from = space;
+    std::size_t position = 0;
+    while ((position = result.find(from, position)) != std::string::npos) {
+      result.replace(position, from.size(), " ");
+      ++position;
+    }
+  }
+  return result;
+}
+
 std::uint64_t resultCover(AppContext& context, int maxSize) {
   const auto record = context.library.find(context.play.chartId);
   if (record) return coverTexture(context, *record, maxSize);
@@ -289,67 +306,50 @@ std::uint64_t resultCover(AppContext& context, int maxSize) {
 }
 
 // The settlement shows the chart artwork as a heavily blurred backdrop. The texture cache can
-// only upload a nearest-neighbour downscale of the image, so the backdrop averages several small
-// textures sampled at sub-texel offsets. Averaging independent sampling grids approximates the
-// reference's heavy box blur and hides the sparse-sampling blobs of a single small texture.
+// only upload a nearest-neighbour downscale of the image, so the backdrop draws that small
+// texture many times at spaced offsets and averages the results: the shifted bilinear samples
+// together form the wide box kernel of the reference's blur, and the dense sample grid hides the
+// aliasing of a single small upscale.
 void drawBlurredBackdrop(AppContext& context, ImDrawList* drawList, ImVec2 viewport) {
-  struct Layer {
-    std::uint64_t texture{};
-    int textureWidth{};
-    int textureHeight{};
-    float offsetX{};
-    float offsetY{};
-  };
-  std::vector<Layer> layers;
-  const int sizes[5] = {46, 40, 34, 28, 22};
-  const float offsets[1] = {0.0F};
-  for (const int maxSize : sizes) {
-    const std::uint64_t texture = resultCover(context, maxSize);
-    if (texture == 0) continue;
-    const int textureWidth = static_cast<int>(context.textures.width(texture));
-    const int textureHeight = static_cast<int>(context.textures.height(texture));
-    if (textureWidth <= 0 || textureHeight <= 0) continue;
-    for (const float offsetX : offsets) {
-      for (const float offsetY : offsets) {
-        Layer layer;
-        layer.texture = texture;
-        layer.textureWidth = textureWidth;
-        layer.textureHeight = textureHeight;
-        layer.offsetX = offsetX;
-        layer.offsetY = offsetY;
-        layers.push_back(layer);
-      }
-    }
+  constexpr int kMaxSize = 44;
+  const std::uint64_t texture = resultCover(context, kMaxSize);
+  if (texture == 0) return;
+  const int textureWidth = static_cast<int>(context.textures.width(texture));
+  const int textureHeight = static_cast<int>(context.textures.height(texture));
+  if (textureWidth <= 0 || textureHeight <= 0) return;
+
+  const float screenAspect = viewport.x / std::max(1.0F, viewport.y);
+  const float textureAspect = static_cast<float>(textureWidth) / static_cast<float>(textureHeight);
+  float u0 = 0.0F;
+  float v0 = 0.0F;
+  float u1 = 1.0F;
+  float v1 = 1.0F;
+  if (textureAspect > screenAspect) {
+    const float fraction = screenAspect / textureAspect;
+    u0 = (1.0F - fraction) * 0.5F;
+    u1 = 1.0F - u0;
+  } else if (textureAspect < screenAspect) {
+    const float fraction = textureAspect / screenAspect;
+    v0 = (1.0F - fraction) * 0.5F;
+    v1 = 1.0F - v0;
   }
-  if (layers.empty()) return;
-  const std::size_t count = layers.size();
-  for (std::size_t index = 0; index < count; ++index) {
-    const Layer& layer = layers[index];
-    const float screenAspect = viewport.x / std::max(1.0F, viewport.y);
-    const float textureAspect =
-        static_cast<float>(layer.textureWidth) / static_cast<float>(layer.textureHeight);
-    float u0 = 0.0F;
-    float v0 = 0.0F;
-    float u1 = 1.0F;
-    float v1 = 1.0F;
-    if (textureAspect > screenAspect) {
-      const float fraction = screenAspect / textureAspect;
-      u0 = (1.0F - fraction) * 0.5F;
-      u1 = 1.0F - u0;
-    } else if (textureAspect < screenAspect) {
-      const float fraction = textureAspect / screenAspect;
-      v0 = (1.0F - fraction) * 0.5F;
-      v1 = 1.0F - v0;
+  const float texelX = viewport.x * (u1 - u0) / static_cast<float>(textureWidth);
+  const float texelY = viewport.y * (v1 - v0) / static_cast<float>(textureHeight);
+  const float spread = 1.2F;
+  const int taps[5] = {-2, -1, 0, 1, 2};
+  int index = 0;
+  for (const int tapX : taps) {
+    for (const int tapY : taps) {
+      const ImVec2 shift(static_cast<float>(tapX) * spread * texelX,
+          static_cast<float>(tapY) * spread * texelY);
+      // The first layer replaces the clear colour, every later layer blends in with weight
+      // 1 / (index + 1) so the result is the plain average of all layers.
+      const float alpha = index == 0 ? 1.0F : 1.0F / static_cast<float>(index + 1);
+      drawList->AddImage(static_cast<ImTextureID>(texture), shift,
+          ImVec2(viewport.x + shift.x, viewport.y + shift.y), ImVec2(u0, v0), ImVec2(u1, v1),
+          IM_COL32(255, 255, 255, static_cast<int>(std::lround(255.0F * alpha))));
+      ++index;
     }
-    const float texelX = viewport.x * (u1 - u0) / static_cast<float>(layer.textureWidth);
-    const float texelY = viewport.y * (v1 - v0) / static_cast<float>(layer.textureHeight);
-    const ImVec2 shift(layer.offsetX * texelX, layer.offsetY * texelY);
-    // The first layer replaces the clear colour, every later layer blends in with weight
-    // 1 / (index + 1) so the result is the plain average of all layers.
-    const float alpha = index == 0 ? 1.0F : 1.0F / static_cast<float>(index + 1);
-    drawList->AddImage(static_cast<ImTextureID>(layer.texture), shift,
-        ImVec2(viewport.x + shift.x, viewport.y + shift.y), ImVec2(u0, v0), ImVec2(u1, v1),
-        IM_COL32(255, 255, 255, static_cast<int>(std::lround(255.0F * alpha))));
   }
 }
 
@@ -625,7 +625,7 @@ void drawResultScreen(AppContext& context) {
     style.strokeWidthDp = 0.0F;
     style.skewDegrees = 15.0F;
     ui::drawPanelShape(drawList, content, cardPixels, style);
-    const std::uint64_t illustration = resultCover(context, 1200);
+    const std::uint64_t illustration = resultCover(context, 2048);
     if (illustration != 0) {
       drawPanelImage(drawList, content, cardPixels, illustration,
           static_cast<int>(context.textures.width(illustration)),
@@ -644,7 +644,8 @@ void drawResultScreen(AppContext& context) {
     ui::TextStyle difficulty = boardText(kDifficultyTextSize, IM_COL32(255, 255, 255, 255),
         ui::HAlign::Right, ui::VAlign::Bottom, false, true);
     ui::drawLabel(drawList, content,
-        shifted(box(363.0F, 377.0F, 101.0F, 26.0F), settlement.cardDx), context.play.difficulty,
+        shifted(box(363.0F, 377.0F, 101.0F, 26.0F), settlement.cardDx),
+        plainSpaces(context.play.difficulty),
         difficulty, context.nowSec);
   }
 
@@ -658,7 +659,7 @@ void drawResultScreen(AppContext& context) {
 
     ui::TextStyle score = boardText(kScoreTextSize,
         whiteAlpha(settlement.scoreAlpha), ui::HAlign::Left, ui::VAlign::Bottom, false, true);
-    ui::drawLabel(drawList, content, shifted(box(560.0F, 150.7F, 220.0F, 58.0F), settlement.upperDx),
+    ui::drawLabel(drawList, content, shifted(box(561.0F, 150.7F, 220.0F, 58.0F), settlement.upperDx),
         formatScore(result.score), score, context.nowSec);
 
     const ui::PxRect rule = ui::toPixels(content,
@@ -792,13 +793,18 @@ void drawResultScreen(AppContext& context) {
       const float containerRight = 915.0F;
       const float containerTop = 34.0F;
       const float height = 32.0F;
-      const float gap = 6.0F;
+      const float gap = 9.5F;
       std::vector<float> widths(tags.size());
       float rowWidth = 0.0F;
       for (std::size_t index = 0; index < tags.size(); ++index) {
         const float textWidth =
             ui::labelWidth(content, tags[index].label, kModeTagTextSize * kCanvasTextScale, false);
-        widths[index] = textWidth + 46.0F + height * kSkewSlope;
+        // The reference tags are tighter around CJK labels than around Latin ones; the bundled
+        // typeface sets the two scripts with different side bearings, so their padding differs.
+        const bool latinOnly = std::all_of(tags[index].label.begin(), tags[index].label.end(),
+            [](unsigned char value) { return value < 0x80U; });
+        const float padding = latinOnly ? 50.0F : 33.5F;
+        widths[index] = textWidth + padding + height * kSkewSlope;
         rowWidth += widths[index];
         if (index > 0) rowWidth += gap;
       }
@@ -810,7 +816,7 @@ void drawResultScreen(AppContext& context) {
         style.strokeWidthDp = 0.0F;
         style.accentEdge = 1;
         style.accent = whiteAlpha(settlement.tagsAlpha);
-        style.accentWidthDp = 2.5F;
+        style.accentWidthDp = 2.5F * kCanvasTextScale;
         style.fill = ui::fade(ui::argb(kPanelFill), settlement.tagsAlpha);
         ui::drawPanelShape(drawList, content, chip, style);
         ui::TextStyle text = boardText(kModeTagTextSize, whiteAlpha(settlement.tagsAlpha),
@@ -826,19 +832,18 @@ void drawResultScreen(AppContext& context) {
   const ui::PanelStyle cornerBase = ui::glassPanel(ui::argb(kMenuButtonFill),
       ui::argb(kMenuButtonStroke));
   ui::PanelStyle retryStyle = cornerBase;
-  retryStyle.strokeWidthDp = 1.0F;
+  retryStyle.strokeWidthDp = kCanvasTextScale;
   retryStyle.straightLeft = true;
   retryStyle.accentEdge = 2;
   retryStyle.accent = whiteAlpha(1.0F);
-  retryStyle.accentWidthDp = 2.0F;
+  retryStyle.accentWidthDp = 2.0F * kCanvasTextScale;
   ui::PanelStyle exitStyle = cornerBase;
-  exitStyle.strokeWidthDp = 1.0F;
+  exitStyle.strokeWidthDp = kCanvasTextScale;
   exitStyle.straightRight = true;
   exitStyle.accentEdge = 1;
   exitStyle.accent = whiteAlpha(1.0F);
-  exitStyle.accentWidthDp = 2.0F;
+  exitStyle.accentWidthDp = 2.0F * kCanvasTextScale;
 
-  const bool showRetry = !context.play.replayMode;
   const ui::Box retryBox = box(0.0F, cornerMargin + settlement.retryDx, 102.0F, 78.0F);
   const ui::Box exitBox = box(kDesignWidth - 102.0F + settlement.cornerDx,
       kDesignHeight - cornerMargin - 78.0F, 102.0F, 78.0F);
@@ -872,7 +877,7 @@ void drawResultScreen(AppContext& context) {
   // Replay actions: the two small chips left of the exit plate when the run was recorded.
   if (context.lastRunHasReplay && !context.play.replayMode) {
     ui::PanelStyle chip = cornerBase;
-    chip.strokeWidthDp = 1.0F;
+    chip.strokeWidthDp = kCanvasTextScale;
     const float chipsRight = kDesignWidth - 106.0F;
     const float chipsY = kDesignHeight - cornerMargin - 78.0F + 26.0F;
     const ui::Box playBox = box(chipsRight - 146.0F + settlement.cornerDx, chipsY, 70.0F, 40.0F);

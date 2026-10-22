@@ -397,10 +397,33 @@ std::string getNestedString(const Json& object, std::initializer_list<const char
 
 std::string normalizeDifficultyText(const std::string& text) {
   if (text.empty()) return {};
-  // Difficulty labels are written with typographic spacing in some charts. The interface
-  // font has no glyph for those, so every space variant becomes a plain space that the
-  // font can draw.
-  return normaliseUnicodeSpaces(text);
+  // The reference collapses runs of ASCII spaces and then turns every remaining ASCII space
+  // into an EN SPACE (U+2002). The typographic space variants editors write are mapped to
+  // ASCII first, so all of them end up as the one separator the interface font can draw.
+  const std::string ascii = normaliseUnicodeSpaces(text);
+  std::string collapsed;
+  collapsed.reserve(ascii.size());
+  bool previousWasSpace = false;
+  for (const char character : ascii) {
+    if (character == ' ') {
+      if (previousWasSpace) continue;
+      previousWasSpace = true;
+    } else {
+      previousWasSpace = false;
+    }
+    collapsed.push_back(character);
+  }
+  std::string result;
+  result.reserve(collapsed.size() + 8);
+  for (const char character : collapsed) {
+    // U+2002 EN SPACE, encoded as UTF-8, is the separator the reference labels use.
+    if (character == ' ') {
+      result += "\xE2\x80\x82";
+    } else {
+      result.push_back(character);
+    }
+  }
+  return result;
 }
 
 std::string inferDifficultyPrefix(const std::filesystem::path& chartFile) {
@@ -421,7 +444,7 @@ std::string inferDifficultyPrefix(const std::filesystem::path& chartFile) {
 
 std::string buildDifficultyLabel(const ChartInfo& info, const std::filesystem::path& chartFile) {
   if (!info.level.empty()) return normalizeDifficultyText(info.level);
-  if (info.difficulty.empty()) return std::string("SP Lv.?");
+  if (info.difficulty.empty()) return std::string("SP\xE2\x80\x82Lv.?");
   const std::string trimmed = normalizeDifficultyText(trimDifficultyWhitespace(info.difficulty));
   if (trimmed.find_first_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
           != std::string::npos

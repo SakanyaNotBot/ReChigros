@@ -19,6 +19,8 @@ set(RECHIGROS_APP_SOURCES
   Settings.cpp
   ChartLibrary.cpp
   Replay.cpp
+  ImportCore.cpp
+  ImportDialogs.cpp
   SelfTest.cpp)
 
 if(ANDROID)
@@ -76,4 +78,23 @@ endif()
 if(NOT ANDROID)
   add_custom_command(TARGET ReChigros POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:ReChigros>/assets")
+endif()
+
+# Batch check for the file import flows. It only links the import logic and the library /
+# replay persistence it drives, so it runs without a window or a GL context.
+if(NOT ANDROID AND NOT IOS)
+  add_executable(rechigros_import_check
+    ImportCheck.cpp
+    ImportCore.cpp
+    ChartLibrary.cpp
+    InfoFile.cpp
+    Replay.cpp)
+  target_include_directories(rechigros_import_check PRIVATE "${PROJECT_SOURCE_DIR}/include")
+  target_link_libraries(rechigros_import_check PRIVATE
+    rechigros_platform
+    nlohmann_json_headers
+    miniz_headers)
+  if(TARGET miniz)
+    target_link_libraries(rechigros_import_check PRIVATE miniz)
+  endif()
 endif()

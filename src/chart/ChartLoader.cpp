@@ -2,6 +2,7 @@
 
 #include "rechigros/chart/OfficialChartParser.hpp"
 #include "rechigros/chart/PecChartParser.hpp"
+#include "rechigros/chart/PlainChartParser.hpp"
 #include "rechigros/chart/RpeChartParser.hpp"
 #include "rechigros/game/Chart.hpp"
 #include "rechigros/game/OfficialLevelEffects.hpp"
@@ -13,6 +14,7 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -100,6 +102,97 @@ std::string readFile(const std::filesystem::path& path) {
   std::ostringstream buffer;
   buffer << input.rdbuf();
   return buffer.str();
+}
+
+// Lenient boolean binding: a boolean, a number (non-zero is true) or one of the strings the
+// metadata formats write.
+std::optional<bool> parseFlagValue(const json& node) {
+  if (node.is_boolean()) return node.get<bool>();
+  if (node.is_number()) return node.get<double>() != 0.0;
+  if (!node.is_string()) return std::nullopt;
+  std::string text = node.get<std::string>();
+  std::transform(text.begin(), text.end(), text.begin(),
+      [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+  if (text == "true" || text == "1") return true;
+  if (text == "false" || text == "0") return false;
+  return std::nullopt;
+}
+
+std::string lowercase(std::string text) {
+  std::transform(text.begin(), text.end(), text.begin(),
+      [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+  return text;
+}
+
+std::string trimSpaces(const std::string& text) {
+  std::size_t begin = 0;
+  std::size_t end = text.size();
+  while (begin < end && std::isspace(static_cast<unsigned char>(text[begin])) != 0) ++begin;
+  while (end > begin && std::isspace(static_cast<unsigned char>(text[end - 1])) != 0) --end;
+  return text.substr(begin, end - begin);
+}
+
+std::string stripQuotes(const std::string& text) {
+  if (text.size() >= 2 && ((text.front() == '"' && text.back() == '"') ||
+                              (text.front() == '\'' && text.back() == '\''))) {
+    return text.substr(1, text.size() - 2);
+  }
+  return text;
+}
+
+bool isAttachUiFixKey(const std::string& key) {
+  const std::string lower = lowercase(trimSpaces(key));
+  return lower == "useattachuifix" || lower == "use_attach_ui_fix";
+}
+
+// Reads the `useAttachUiFix` flag out of one metadata file. JSON is parsed as JSON; every
+// other shape is the line-oriented `key: value` form, which is what the metadata files use.
+std::optional<bool> parseAttachUiFix(const std::string& content, bool jsonFile) {
+  if (jsonFile) {
+    const auto root = json::parse(content, nullptr, false);
+    if (root.is_discarded() || !root.is_object()) return std::nullopt;
+    for (const char* key : {"useAttachUiFix", "use_attach_ui_fix"}) {
+      const auto iterator = root.find(key);
+      if (iterator == root.end()) continue;
+      if (const auto flag = parseFlagValue(*iterator)) return flag;
+    }
+    return std::nullopt;
+  }
+  std::istringstream stream(content);
+  std::string line;
+  while (std::getline(stream, line)) {
+    const std::string trimmed = trimSpaces(line);
+    if (trimmed.empty() || trimmed.front() == '#') continue;
+    const auto separator = trimmed.find(':');
+    if (separator == std::string::npos || separator == 0) continue;
+    if (!isAttachUiFixKey(trimmed.substr(0, separator))) continue;
+    const std::string value = lowercase(stripQuotes(trimSpaces(trimmed.substr(separator + 1))));
+    if (value == "true" || value == "1") return true;
+    if (value == "false" || value == "0") return false;
+    return std::nullopt;
+  }
+  return std::nullopt;
+}
+
+// Applies a pack's `useAttachUiFix` choice. The nearest metadata file found at or above the
+// chart file's directory supplies the flag; a file that does not declare it leaves the
+// chart's own value (default true) in place.
+void applyAttachUiFixFlag(game::Chart& chart, const std::filesystem::path& chartPath) {
+  std::error_code error;
+  std::filesystem::path directory = chartPath.parent_path();
+  for (int depth = 0; depth < kExtraSearchDepth && !directory.empty(); ++depth) {
+    for (const char* name : {"info.yml", "info.yaml", "info.json", "Info.yml", "Info.json"}) {
+      const auto candidate = directory / name;
+      if (!std::filesystem::is_regular_file(candidate, error)) continue;
+      const bool jsonFile = lowercase(candidate.extension().string()) == ".json";
+      if (const auto flag = parseAttachUiFix(readFile(candidate), jsonFile)) {
+        chart.useAttachUiFix = *flag;
+      }
+      return;
+    }
+    if (!directory.has_parent_path() || directory.parent_path() == directory) break;
+    directory = directory.parent_path();
+  }
 }
 
 // A BPM segment of the storyboard timeline: beats become seconds through it.
@@ -535,11 +628,14 @@ std::unique_ptr<game::Chart> ChartLoader::loadFromFile(const std::filesystem::pa
       chart = RpeChartParser::parse(content, path.parent_path());
       break;
     case ChartFormat::JsonObject:
+      // A JSON object with none of the identifying headers binds like a plain chart: the
+      // format version stays 0 and no official-parser coercion applies.
+      chart = PlainChartParser::parse(std::string_view(content));
+      break;
     case ChartFormat::PhiEdit:
     default:
-      // A JSON object that carries none of the identifying keys is treated as an official
-      // chart; anything else is the plain-text editor format.
-      if (looksLikeJsonObject(content)) chart = OfficialChartParser::parse(std::string_view(content));
+      // The plain-text editor format.
+      if (looksLikeJsonObject(content)) chart = PlainChartParser::parse(std::string_view(content));
       else chart = PecChartParser::parse(content);
       break;
   }
@@ -553,6 +649,9 @@ std::unique_ptr<game::Chart> ChartLoader::loadFromFile(const std::filesystem::pa
     applyLineCsv(chart, path);
   }
   applyPrprExtra(chart, path.parent_path());
+  // A pack's metadata may switch the attach-UI correction off; the reference applies it for
+  // every chart format, after the chart and its storyboard companions have been read.
+  applyAttachUiFixFlag(chart, path);
 
   // A level effect replaces the chart's own storyboard list when one is selected; the
   // effect table lives beside the executable, not in the chart pack.

@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <limits>
+#include <utility>
 
 namespace rechigros::game {
 namespace {
@@ -38,8 +40,16 @@ void GameplaySession::setChart(Chart* chart, bool challengeMode) {
   blocks_ = chart_ ? chart_->blockAreaList : std::vector<OfficialBlock>{};
   for (auto& block : blocks_) block.resetRuntime();
   blockedTouchIds_.clear();
+  // A restarted or seeked run starts a new recording, and a replay restarts from its first
+  // entry. The recording mode itself survives, because it belongs to the session settings.
+  replayCursor_ = 0;
+  recordedHoldPressNotes_.clear();
+  holdFxNotes_.clear();
+  holdBodyBursts_.clear();
+  if (replayRecording_) recordedReplay_.clear();
   judgement_.reset(chart_ ? static_cast<int>(chart_->allNotesSorted.size()) : 0, challengeMode);
   judgement_.setAutoplay(autoplay_);
+  judgement_.setReplayPlayback(replayPlayback_);
   if (autoplay_) judgement_.setHitOffsetIndicatorEnabled(false);
 }
 
@@ -175,7 +185,8 @@ float GameplaySession::judgeDistance(const Note& note, float x, float y, double 
   return horizontal + std::abs(perpendicular / JUDGE_DISTANCE_Y_SCALE);
 }
 
-void GameplaySession::activateHold(Note& note, bool perfect, double chartTime, double diff) noexcept {
+void GameplaySession::activateHold(Note& note, bool perfect, double chartTime, double diff,
+    bool recordPress) noexcept {
   note.holdActive = true;
   note.holdPerfect = perfect;
   note.holdPreJudge = false;
@@ -185,21 +196,73 @@ void GameplaySession::activateHold(Note& note, bool perfect, double chartTime, d
   note.safeFrame = HOLD_SAFE_FRAME_INIT;
   note.clicked = true;
   note.holdBroken = false;
+  // The body burst timer restarts with the head, and the hold joins the small set the
+  // per-frame burst work walks instead of scanning the whole chart.
+  note.holdFxTimerSec = 0.0;
+  if (std::find(holdFxNotes_.begin(), holdFxNotes_.end(), &note) == holdFxNotes_.end()) {
+    holdFxNotes_.push_back(&note);
+  }
   const auto judgement = perfect ? JudgementEngine::Judgement::Perfect
                                  : JudgementEngine::Judgement::Good;
   judgement_.recordOffset(note, judgement, diff, true);
   judgement_.recordIndicator(note, judgement, diff, true);
   soundEvents_.push_back(NOTE_TAP);
+  if (recordPress) recordHoldPress(note, perfect, diff);
   (void)chartTime;
 }
 
 bool GameplaySession::commitNote(Note& note, JudgementEngine::Judgement judgement,
     double diff, double time, bool emitSound) noexcept {
   const auto committed = judgement_.commit(note, judgement, diff, time);
-  if (committed && emitSound && note.type != NOTE_HOLD && JudgementEngine::isHit(judgement)) {
-    soundEvents_.push_back(note.type);
+  if (committed) {
+    if (emitSound && note.type != NOTE_HOLD && JudgementEngine::isHit(judgement)) {
+      soundEvents_.push_back(note.type);
+    }
+    recordJudgement(note, judgement, diff, time);
   }
   return committed;
+}
+
+void GameplaySession::recordJudgement(const Note& note, JudgementEngine::Judgement judgement,
+    double diffSec, double chartTimeSec) {
+  if (!replayRecording_ || note.sortedIndex < 0) return;
+  ReplayJudgement entry;
+  switch (note.type) {
+    case NOTE_TAP: entry.type = ReplayJudgement::Type::Tap; break;
+    case NOTE_DRAG: entry.type = ReplayJudgement::Type::Drag; break;
+    case NOTE_HOLD: entry.type = ReplayJudgement::Type::HoldRelease; break;
+    case NOTE_FLICK: entry.type = ReplayJudgement::Type::Flick; break;
+    default: entry.type = ReplayJudgement::Type::Tap; break;
+  }
+  entry.noteIndex = note.sortedIndex;
+  entry.judgement = static_cast<int>(judgement);
+  // A hold release and a miss are timed at the frame they happened; every other judgement
+  // is timed at the moment the note was actually hit, which is the note time minus the
+  // signed timing delta.
+  const bool atFrameTime = entry.type == ReplayJudgement::Type::HoldRelease
+      || judgement == JudgementEngine::Judgement::Miss;
+  entry.timeSec = atFrameTime ? chartTimeSec : note.sect - diffSec;
+  recordedReplay_.push_back(entry);
+}
+
+void GameplaySession::recordHoldPress(const Note& note, bool perfect, double diffSec) {
+  if (!replayRecording_ || note.sortedIndex < 0) return;
+  if (!recordedHoldPressNotes_.insert(note.sortedIndex).second) return;
+  ReplayJudgement entry;
+  entry.type = ReplayJudgement::Type::HoldPress;
+  entry.noteIndex = note.sortedIndex;
+  entry.judgement = perfect ? static_cast<int>(JudgementEngine::Judgement::Perfect)
+                            : static_cast<int>(JudgementEngine::Judgement::Good);
+  entry.timeSec = note.sect - diffSec;
+  recordedReplay_.push_back(entry);
+}
+
+void GameplaySession::recordMissingHoldPresses() {
+  if (!replayRecording_ || chart_ == nullptr) return;
+  for (auto* note : chart_->allNotesSorted) {
+    if (note->type != NOTE_HOLD || !note->holdActive) continue;
+    recordHoldPress(*note, note->holdPerfect, note->holdDiffSec);
+  }
 }
 
 bool GameplaySession::touchBlocked(std::int64_t id) const noexcept {
@@ -254,30 +317,162 @@ void GameplaySession::update(double time, float frameDelta) {
     touch->flick.advanceFrame(frameDelta, flickSpeed);
   }
 
-  if (autoplay_) {
+  if (replayPlayback_) {
+    // A replay re-applies its recorded judgements; it never synthesises touches, so the
+    // viewer's window, speed and input path cannot change the outcome.
+    applyReplayEntries(time);
+  } else if (autoplay_) {
     auto& notes = chart_->allNotesSorted;
     while (autoNoteIndex_ < notes.size() && notes[autoNoteIndex_]->sect <= time) {
       auto& note = *notes[autoNoteIndex_];
       if (note.judgeResult < 0) {
         if (note.type == NOTE_HOLD) {
           soundEvents_.push_back(NOTE_TAP);
-          activateHold(note, true, time, 0.0);
+          activateHold(note, true, time, 0.0, false);
         } else {
           commitNote(note, JudgementEngine::Judgement::Perfect, time - note.sect, time, false);
         }
       }
       ++autoNoteIndex_;
     }
+    if (replayRecording_) recordMissingHoldPresses();
   } else {
     const auto view = stage();
     judgeNewTouches(time, view);
     judgeDrags(time, view);
     judgeFlicks(time, view);
     judgeTapHold(time, view);
+    if (replayRecording_) recordMissingHoldPresses();
   }
 
+  // Hold body feedback and tail settlement run on every judgement source, so a replay
+  // shows the same hold feedback a live run did.
+  updateHoldBodyBursts(time, frameDelta);
   settleHoldTails(time);
   detectMisses(time);
+}
+
+void GameplaySession::setReplayRecording(bool enabled) noexcept {
+  replayRecording_ = enabled;
+  if (!enabled) {
+    recordedReplay_.clear();
+    recordedHoldPressNotes_.clear();
+  }
+}
+
+void GameplaySession::clearRecordedReplay() noexcept {
+  recordedReplay_.clear();
+  recordedHoldPressNotes_.clear();
+}
+
+void GameplaySession::setReplayPlayback(std::vector<ReplayJudgement> entries) {
+  replayEntries_ = std::move(entries);
+  std::stable_sort(replayEntries_.begin(), replayEntries_.end(),
+      [](const ReplayJudgement& first, const ReplayJudgement& second) {
+        return first.timeSec < second.timeSec;
+      });
+  replayPlayback_ = !replayEntries_.empty();
+  replayCursor_ = 0;
+  judgement_.setReplayPlayback(replayPlayback_);
+}
+
+void GameplaySession::clearReplayPlayback() noexcept {
+  replayEntries_.clear();
+  replayPlayback_ = false;
+  replayCursor_ = 0;
+  judgement_.setReplayPlayback(false);
+}
+
+std::vector<HoldBodyBurst> GameplaySession::takeHoldBodyBursts() {
+  std::vector<HoldBodyBurst> bursts;
+  bursts.swap(holdBodyBursts_);
+  return bursts;
+}
+
+void GameplaySession::applyReplayEntries(double time) {
+  auto& notes = chart_->allNotesSorted;
+  while (replayCursor_ < replayEntries_.size()) {
+    const auto& entry = replayEntries_[replayCursor_];
+    if (!(entry.timeSec <= time)) break;
+    if (entry.noteIndex >= 0 && entry.noteIndex < static_cast<int>(notes.size())) {
+      Note& note = *notes[static_cast<std::size_t>(entry.noteIndex)];
+      if (note.judgeResult < 0) {
+        const auto judgement = static_cast<JudgementEngine::Judgement>(
+            std::clamp(entry.judgement, 0, 3));
+        if (note.type == NOTE_HOLD) {
+          if (entry.type == ReplayJudgement::Type::HoldPress) {
+            if (!note.holdActive && JudgementEngine::isHit(judgement)) {
+              // The recorded press time is the effect time, exactly like a manual head hit.
+              activateHold(note, judgement == JudgementEngine::Judgement::Perfect,
+                  entry.timeSec, note.sect - entry.timeSec, false);
+            }
+          } else if (JudgementEngine::isHit(judgement)) {
+            // A good hold release only arms the tail; the official settlement window then
+            // commits it with the head's judgement.
+            note.holdPreJudge = true;
+          } else {
+            note.holdActive = false;
+            note.holdPreJudge = false;
+            commitNote(note, judgement, note.sect - entry.timeSec, entry.timeSec);
+          }
+        } else {
+          commitNote(note, judgement, note.sect - entry.timeSec, entry.timeSec);
+        }
+      }
+    }
+    ++replayCursor_;
+  }
+}
+
+double GameplaySession::holdBodyIntervalSec(const Note& note) noexcept {
+  const double bpm = note.master != nullptr && note.master->bpm > 0.0 ? note.master->bpm : 120.0;
+  return 0.5 * 60.0 / bpm;
+}
+
+void GameplaySession::updateHoldBodyBursts(double time, float frameDeltaSec) {
+  if (holdFxNotes_.empty()) return;
+  double realDelta = static_cast<double>(frameDeltaSec);
+  if (!std::isfinite(realDelta) || realDelta <= 0.0) realDelta = 1.0 / 60.0;
+  if (realDelta > 0.1) realDelta = 0.1;
+  for (std::size_t index = 0; index < holdFxNotes_.size();) {
+    Note* note = holdFxNotes_[index];
+    // A judged or released hold stops producing body feedback; the note is dropped from the
+    // active set instead of being tested every frame.
+    if (note == nullptr || !note->holdFxActive
+        || note->judgeResult == static_cast<int>(JudgementEngine::Judgement::Miss)
+        || note->holdBroken || time >= note->holdEndTime) {
+      if (note != nullptr) note->holdFxActive = false;
+      holdFxNotes_.erase(holdFxNotes_.begin() + static_cast<std::ptrdiff_t>(index));
+      continue;
+    }
+    if (time <= note->sect) {
+      // The reference zeroes the timer every frame while the note has not started, so the
+      // first burst lands one interval after max(note time, head hit).
+      note->holdFxTimerSec = 0.0;
+      ++index;
+      continue;
+    }
+    const double interval = holdBodyIntervalSec(*note);
+    if (!std::isfinite(interval) || interval <= 0.0) {
+      note->holdFxActive = false;
+      holdFxNotes_.erase(holdFxNotes_.begin() + static_cast<std::ptrdiff_t>(index));
+      continue;
+    }
+    note->holdFxTimerSec += realDelta;
+    if (note->holdFxTimerSec >= interval - 1.0e-5) {
+      holdBodyBursts_.push_back({note->sortedIndex, time, note->holdPerfect});
+      note->holdFxTimerSec = 0.0;
+      // The queue is drained by the renderer each frame; keep a bound so a build that does
+      // not consume bursts yet cannot grow it without limit.
+      constexpr std::size_t kMaxPendingHoldBursts = 64;
+      if (holdBodyBursts_.size() > kMaxPendingHoldBursts) {
+        holdBodyBursts_.erase(holdBodyBursts_.begin(),
+            holdBodyBursts_.begin()
+                + static_cast<std::ptrdiff_t>(holdBodyBursts_.size() - kMaxPendingHoldBursts));
+      }
+    }
+    ++index;
+  }
 }
 
 void GameplaySession::judgeNewTouches(double time, const Stage& view) {
@@ -500,14 +695,14 @@ void GameplaySession::judgeTapHold(double time, const Stage& view) {
         if (note.type == NOTE_TAP) {
           commitNote(note, JudgementEngine::Judgement::Perfect, delta, time);
         } else {
-          activateHold(note, true, time, delta);
+          activateHold(note, true, time, delta, true);
         }
         note.statOffset = delta;
       } else if (absolute < goodWindow) {
         if (note.type == NOTE_TAP) {
           commitNote(note, JudgementEngine::Judgement::Good, delta, time);
         } else {
-          activateHold(note, false, time, delta);
+          activateHold(note, false, time, delta, true);
         }
         note.statOffset = delta;
       } else if (note.type != NOTE_HOLD) {

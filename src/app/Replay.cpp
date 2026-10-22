@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <sstream>
 
 namespace rechigros::app {
@@ -12,7 +13,10 @@ namespace {
 
 using Json = nlohmann::json;
 
-constexpr int kReplayVersion = 1;
+// Version 1 files store touch samples; version 2 files store judgement entries keyed by
+// note index. The reader accepts both, plus the reference's own field spellings.
+constexpr int kTouchSampleVersion = 1;
+constexpr int kJudgementVersion = 2;
 
 std::string entryKindName(int kind) {
   switch (kind) {
@@ -29,6 +33,10 @@ int parseEntryKind(const std::string& name) {
   return 0;
 }
 
+int judgementTypeIndex(game::ReplayJudgement::Type type) {
+  return static_cast<int>(type);
+}
+
 Json metaToJson(const ReplayMeta& meta) {
   Json node = Json::object();
   node["chartId"] = meta.chartId;
@@ -42,7 +50,16 @@ Json metaToJson(const ReplayMeta& meta) {
   node["good"] = meta.good;
   node["bad"] = meta.bad;
   node["miss"] = meta.miss;
+  node["goodEarly"] = meta.goodEarly;
+  node["goodLate"] = meta.goodLate;
+  node["stdDevMs"] = meta.stdDevMs;
+  if (meta.hasJudgementOffsetBins) {
+    Json bins = Json::array();
+    for (const int value : meta.judgementOffsetBins) bins.push_back(value);
+    node["judgementOffsetBins"] = std::move(bins);
+  }
   node["timestampMs"] = meta.timestampMs;
+  node["timestamp"] = meta.timestampMs;
   node["autoplay"] = meta.autoplay;
   node["challenge"] = meta.challenge;
   node["mirrorX"] = meta.mirrorX;
@@ -85,7 +102,11 @@ ReplayMeta metaFromJson(const Json& node) {
   meta.good = static_cast<int>(integer("good", 0));
   meta.bad = static_cast<int>(integer("bad", 0));
   meta.miss = static_cast<int>(integer("miss", 0));
-  meta.timestampMs = integer("timestampMs", 0);
+  meta.goodEarly = static_cast<int>(integer("goodEarly", 0));
+  meta.goodLate = static_cast<int>(integer("goodLate", 0));
+  meta.stdDevMs = number("stdDevMs", 0.0);
+  // File names differ between this port and the reference; accept both.
+  meta.timestampMs = integer("timestampMs", integer("timestamp", 0));
   meta.autoplay = boolean("autoplay", false);
   meta.challenge = boolean("challenge", false);
   meta.mirrorX = boolean("mirrorX", false);
@@ -94,10 +115,58 @@ ReplayMeta metaFromJson(const Json& node) {
   meta.scrollSpeed = static_cast<float>(number("scrollSpeed", 1.0));
   meta.chartOffsetMs = static_cast<int>(integer("chartOffsetMs", 0));
   meta.audioOffsetMs = static_cast<int>(integer("audioOffsetMs", 0));
+  if (const auto bins = node.find("judgementOffsetBins");
+      bins != node.end() && bins->is_array()) {
+    meta.hasJudgementOffsetBins = true;
+    for (std::size_t index = 0; index < meta.judgementOffsetBins.size() && index < bins->size();
+        ++index) {
+      const auto& value = (*bins)[index];
+      if (value.is_number()) {
+        meta.judgementOffsetBins[index] = static_cast<int>(value.get<double>());
+      }
+    }
+  }
   return meta;
 }
 
+bool hasBinData(const std::array<int, game::PlayResult::JUDGEMENT_DETAIL_BIN_COUNT>& bins) {
+  for (const int value : bins) {
+    if (value != 0) return true;
+  }
+  return false;
+}
+
 } // namespace
+
+game::PlayResult ReplayMeta::toPlayResult() const {
+  game::PlayResult result;
+  result.score = score;
+  result.accuracy = accuracy;
+  result.maxCombo = maxCombo;
+  result.totalNotes = totalNotes;
+  result.perfect = perfect;
+  result.good = good;
+  result.bad = bad;
+  result.miss = miss;
+  result.goodEarly = goodEarly;
+  result.goodLate = goodLate;
+  result.stdDevMs = stdDevMs;
+  if (hasJudgementOffsetBins) result.judgementOffsetBins = judgementOffsetBins;
+  return result;
+}
+
+game::PlayResult mergeReplayPlaybackResult(const ReplayMeta& meta, const game::PlayResult& live) {
+  const game::PlayResult saved = meta.toPlayResult();
+  const bool savedHasBins = meta.hasJudgementOffsetBins && hasBinData(meta.judgementOffsetBins);
+  if (!hasBinData(live.judgementOffsetBins) && savedHasBins) {
+    // No live samples (for example a replay recorded by a build that did not collect them):
+    // the saved histogram is the only data there is.
+    return saved;
+  }
+  game::PlayResult merged = saved;
+  merged.judgementOffsetBins = live.judgementOffsetBins;
+  return merged;
+}
 
 void applyResultToReplayMeta(ReplayData& data, const game::PlayResult& result) {
   auto& meta = data.meta;
@@ -109,22 +178,41 @@ void applyResultToReplayMeta(ReplayData& data, const game::PlayResult& result) {
   meta.good = result.good;
   meta.bad = result.bad;
   meta.miss = result.miss;
+  meta.goodEarly = result.goodEarly;
+  meta.goodLate = result.goodLate;
+  meta.stdDevMs = result.stdDevMs;
+  meta.judgementOffsetBins = result.judgementOffsetBins;
+  meta.hasJudgementOffsetBins = true;
 }
 
 bool writeReplayFile(const std::filesystem::path& file, const ReplayData& data) {
+  const bool legacy = data.judgements.empty() && !data.entries.empty();
   Json root = Json::object();
-  root["version"] = kReplayVersion;
+  root["version"] = legacy ? kTouchSampleVersion : kJudgementVersion;
   root["meta"] = metaToJson(data.meta);
   Json entries = Json::array();
-  entries.get_ref<Json::array_t&>().reserve(data.entries.size());
-  for (const auto& entry : data.entries) {
-    Json node = Json::object();
-    node["k"] = entryKindName(static_cast<int>(entry.kind));
-    node["id"] = entry.pointerId;
-    node["x"] = entry.x;
-    node["y"] = entry.y;
-    node["t"] = entry.timeSec;
-    entries.push_back(std::move(node));
+  entries.get_ref<Json::array_t&>().reserve(legacy ? data.entries.size() : data.judgements.size());
+  if (legacy) {
+    for (const auto& entry : data.entries) {
+      Json node = Json::object();
+      node["k"] = entryKindName(static_cast<int>(entry.kind));
+      node["id"] = entry.pointerId;
+      node["x"] = entry.x;
+      node["y"] = entry.y;
+      node["t"] = entry.timeSec;
+      entries.push_back(std::move(node));
+    }
+  } else {
+    // One entry per judgement: type, note index, judgement and chart time. The key names
+    // match the reference format so a file can travel between the two.
+    for (const auto& entry : data.judgements) {
+      Json node = Json::object();
+      node["t"] = judgementTypeIndex(entry.type);
+      node["ni"] = entry.noteIndex;
+      node["j"] = entry.judgement;
+      node["ts"] = entry.timeSec;
+      entries.push_back(std::move(node));
+    }
   }
   root["entries"] = std::move(entries);
   return platform::writeTextFile(file, root.dump());
@@ -136,27 +224,66 @@ std::optional<ReplayData> readReplayFile(const std::filesystem::path& file) {
   const Json root = Json::parse(content, nullptr, false);
   if (root.is_discarded() || !root.is_object()) return std::nullopt;
   ReplayData data;
+  int version = 1;
+  for (const char* key : {"version", "v"}) {
+    const auto iterator = root.find(key);
+    if (iterator != root.end() && iterator->is_number()) {
+      version = static_cast<int>(iterator->get<double>());
+      break;
+    }
+  }
   const auto meta = root.find("meta");
   if (meta != root.end() && meta->is_object()) data.meta = metaFromJson(*meta);
   const auto entries = root.find("entries");
-  if (entries != root.end() && entries->is_array()) {
-    data.entries.reserve(entries->size());
+  const bool hasEntries = entries != root.end() && entries->is_array();
+  // The version number alone cannot distinguish the two layouts (early judgement files were
+  // written with version 1 as well), so the entry shape decides.
+  bool judgementModel = version >= kJudgementVersion;
+  if (hasEntries && !entries->empty()) {
+    const auto& first = entries->front();
+    judgementModel = first.is_object()
+        && (first.contains("ni") || first.contains("ts") || first.contains("j"));
+  }
+  data.version = judgementModel ? kJudgementVersion : kTouchSampleVersion;
+  if (hasEntries) {
+    data.judgements.reserve(judgementModel ? entries->size() : 0U);
+    data.entries.reserve(judgementModel ? 0U : entries->size());
     for (const auto& node : *entries) {
       if (!node.is_object()) continue;
-      ReplayTouchEvent entry;
-      const auto kind = node.find("k");
-      if (kind != node.end() && kind->is_string()) {
-        entry.kind = static_cast<ReplayTouchEvent::Kind>(parseEntryKind(kind->get<std::string>()));
+      if (judgementModel) {
+        game::ReplayJudgement entry;
+        const auto type = node.find("t");
+        if (type != node.end() && type->is_number()) {
+          entry.type = static_cast<game::ReplayJudgement::Type>(type->get<int>());
+        }
+        const auto noteIndex = node.find("ni");
+        if (noteIndex != node.end() && noteIndex->is_number()) {
+          entry.noteIndex = noteIndex->get<int>();
+        }
+        const auto judgement = node.find("j");
+        if (judgement != node.end() && judgement->is_number()) {
+          entry.judgement = judgement->get<int>();
+        }
+        const auto time = node.find("ts");
+        if (time != node.end() && time->is_number()) entry.timeSec = time->get<double>();
+        data.judgements.push_back(entry);
+      } else {
+        ReplayTouchEvent entry;
+        const auto kind = node.find("k");
+        if (kind != node.end() && kind->is_string()) {
+          entry.kind =
+              static_cast<ReplayTouchEvent::Kind>(parseEntryKind(kind->get<std::string>()));
+        }
+        const auto id = node.find("id");
+        if (id != node.end() && id->is_number()) entry.pointerId = id->get<long long>();
+        const auto x = node.find("x");
+        if (x != node.end() && x->is_number()) entry.x = x->get<float>();
+        const auto y = node.find("y");
+        if (y != node.end() && y->is_number()) entry.y = y->get<float>();
+        const auto time = node.find("t");
+        if (time != node.end() && time->is_number()) entry.timeSec = time->get<double>();
+        data.entries.push_back(entry);
       }
-      const auto id = node.find("id");
-      if (id != node.end() && id->is_number()) entry.pointerId = id->get<long long>();
-      const auto x = node.find("x");
-      if (x != node.end() && x->is_number()) entry.x = x->get<float>();
-      const auto y = node.find("y");
-      if (y != node.end() && y->is_number()) entry.y = y->get<float>();
-      const auto time = node.find("t");
-      if (time != node.end() && time->is_number()) entry.timeSec = time->get<double>();
-      data.entries.push_back(entry);
     }
   }
   return data;

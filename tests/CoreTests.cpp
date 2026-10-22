@@ -209,6 +209,114 @@ int main(){
   require(close(yOffsetToTransYPx(0.25F,1.0,900.0F),225.0F)&&close(yOffsetToTransYPx(0.25F,7.0,900.0F),225.0F),"yOffset to pixels");
   require(close(sanitizeJudgeArea(0.0F),1.0F)&&close(sanitizeJudgeArea(-2.0F),1.0F)&&close(sanitizeJudgeArea(2.5F),2.5F),"judge area sanitize");
 
+  // --- replay model: recording, playback and hold body feedback ---------------
+  {
+    const GameplaySession::Viewport replayViewport{1600,900,16.0F/9.0F,1,380};
+    // A manual tap run records one judgement entry, timed at the actual hit rather than at
+    // the frame that observed it.
+    auto tapChart=singleNoteChart(NOTE_TAP);
+    GameplaySession recorder;
+    recorder.setViewport(replayViewport);
+    recorder.setReplayRecording(true);
+    recorder.setChart(&tapChart);
+    recorder.touchDown(1,800,450);
+    recorder.update(0.95,1.0F/60.0F);
+    require(recorder.recordedReplay().size()==1,"a tap run records one judgement entry");
+    if(!recorder.recordedReplay().empty()){
+      const auto& entry=recorder.recordedReplay().front();
+      require(entry.type==ReplayJudgement::Type::Tap,"the tap entry carries the tap type");
+      require(entry.noteIndex==0,"the tap entry is keyed by note index");
+      require(entry.judgement==0,"the tap entry records the judgement");
+      require(close(entry.timeSec,0.95),"the tap entry is timed at the hit, not the frame");
+    }
+    const auto recordedTapResult=recorder.judgement().result();
+    const auto tapEntries=recorder.recordedReplay();
+    recorder.touchUp(1);
+    recorder.setReplayRecording(false);
+    require(recorder.recordedReplay().empty(),"turning recording off drops the collected entries");
+
+    // Playback re-applies the recorded judgement without any touch input.
+    tapChart.resetRuntime();
+    GameplaySession player;
+    player.setViewport(replayViewport);
+    player.setReplayPlayback(tapEntries);
+    player.setChart(&tapChart);
+    require(player.replayPlayback(),"replay playback is active for a non-empty list");
+    for(double t=0.95;t<=1.2;t+=1.0/60.0)player.update(t,1.0F/60.0F);
+    const auto playedTapResult=player.judgement().result();
+    require(playedTapResult.perfect==1,"replay playback commits the recorded tap judgement");
+    require(playedTapResult.score==1000000,"replay playback reproduces the recorded score");
+    require(tapChart.allNotesSorted[0]->judgeResult==0,"the replayed tap is judged perfect");
+    require(close(tapChart.allNotesSorted[0]->judgeTimeSec,0.95),
+        "the replayed judgement keeps the recorded effect time");
+
+    // A hold records a press entry when the head activates and a release entry when it
+    // settles; the head is not a plain judgement entry.
+    auto holdChart=singleNoteChart(NOTE_HOLD,1.0);
+    GameplaySession holdRecorder;
+    holdRecorder.setViewport(replayViewport);
+    holdRecorder.setReplayRecording(true);
+    holdRecorder.setChart(&holdChart);
+    holdRecorder.touchDown(1,800,450);
+    holdRecorder.update(0.95,1.0F/60.0F);
+    require(holdRecorder.recordedReplay().size()==1,"a hold head records a press entry");
+    // Body bursts: interval is half a beat, 0.25 s at 120 bpm, counted after the note start.
+    int burstCount=0;
+    double firstBurstTime=-1.0;
+    double t=0.95;
+    while(t<1.30){
+      t+=1.0/60.0;
+      holdRecorder.update(t,1.0F/60.0F);
+      for(const auto& burst:holdRecorder.takeHoldBodyBursts()){
+        ++burstCount;
+        if(firstBurstTime<0.0)firstBurstTime=burst.timeSec;
+        require(burst.noteIndex==0,"a hold body burst addresses the hold note");
+        require(burst.perfect,"a perfect hold body burst is marked perfect");
+      }
+    }
+    require(burstCount==1,"exactly one body burst lands inside the first interval");
+    require(firstBurstTime>1.0&&firstBurstTime<1.31,
+        "the first body burst lands one interval after the hold start");
+    while(t<2.0){
+      t+=1.0/60.0;
+      holdRecorder.update(t,1.0F/60.0F);
+    }
+    holdRecorder.takeHoldBodyBursts();
+    require(holdChart.allNotesSorted[0]->judgeResult==0,"the manual hold settles perfect");
+    require(holdRecorder.recordedReplay().size()==2,"a hold records a press and a release");
+    if(holdRecorder.recordedReplay().size()==2){
+      require(holdRecorder.recordedReplay()[0].type==ReplayJudgement::Type::HoldPress,
+          "the first hold entry is the press");
+      require(holdRecorder.recordedReplay()[1].type==ReplayJudgement::Type::HoldRelease,
+          "the second hold entry is the release");
+      require(close(holdRecorder.recordedReplay()[0].timeSec,0.95),
+          "the press entry is timed at the head hit");
+      require(holdRecorder.recordedReplay()[1].timeSec>1.7,
+          "the release entry is timed at the settlement frame");
+    }
+    const auto recordedHoldResult=holdRecorder.judgement().result();
+    const auto holdEntries=holdRecorder.recordedReplay();
+    holdRecorder.setReplayRecording(false);
+    holdRecorder.touchUp(1);
+
+    // Playback of the hold reproduces the judgement and still shows body feedback.
+    holdChart.resetRuntime();
+    GameplaySession holdPlayer;
+    holdPlayer.setViewport(replayViewport);
+    holdPlayer.setReplayPlayback(holdEntries);
+    holdPlayer.setChart(&holdChart);
+    int replayBursts=0;
+    for(double time=0.95;time<=2.0;time+=1.0/60.0){
+      holdPlayer.update(time,1.0F/60.0F);
+      replayBursts+=static_cast<int>(holdPlayer.takeHoldBodyBursts().size());
+    }
+    const auto playedHoldResult=holdPlayer.judgement().result();
+    require(playedHoldResult.perfect==recordedHoldResult.perfect
+            &&playedHoldResult.score==recordedHoldResult.score,
+        "hold replay playback reproduces the recorded judgement");
+    require(holdChart.allNotesSorted[0]->judgeResult==0,"the replayed hold is judged perfect");
+    require(replayBursts>0,"a replayed hold still produces body feedback");
+  }
 
   std::cout<<"All ReChigros core tests passed\n";return 0;
 }

@@ -37,7 +37,10 @@ struct Note {
   bool holdPreJudge{false}, holdFxActive{false};
   double holdUpTimeSec{std::numeric_limits<double>::infinity()};
   double holdDiffSec{};
-  double holdFxAtSec{std::numeric_limits<double>::quiet_NaN()};
+  // Real seconds accumulated since the last hold-body burst. The reference resets it every
+  // frame while the hold has not started and again right after a burst, which is what makes
+  // the bursts travel with a hold that slides along its judge line.
+  double holdFxTimerSec{};
   int morebets{};
   JudgeLine* master{nullptr};
   std::vector<Note*> nearNotes;

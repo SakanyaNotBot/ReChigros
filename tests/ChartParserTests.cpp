@@ -2,6 +2,7 @@
 #include "rechigros/chart/ChartLoader.hpp"
 #include "rechigros/chart/OfficialChartParser.hpp"
 #include "rechigros/chart/PecChartParser.hpp"
+#include "rechigros/chart/PlainChartParser.hpp"
 #include "rechigros/game/EventUtils.hpp"
 #include "rechigros/game/GameConstants.hpp"
 
@@ -629,6 +630,163 @@ int main() {
     require(versionOf(withVersion(7)) == 3, "an unknown version is treated as version 3");
     const std::string unversioned = R"({ "judgeLineList": [] })";
     require(versionOf(unversioned) == 3, "a chart without a version is treated as version 3");
+  }
+
+  // --- header-less JSON charts bind like plain charts -------------------------
+  {
+    const auto directory = rechigros::test::scratchDirectory("plain-chart");
+    const auto writeText = [&directory](const std::string& name, const std::string& text) {
+      const auto path = directory / name;
+      std::ofstream out(path, std::ios::binary);
+      out.write(text.data(), static_cast<std::streamsize>(text.size()));
+      out.close();
+      return path;
+    };
+    // The document carries none of the identifying headers, so it must bind through the
+    // plain schema: format version 0, no official-parser coercions, packed coordinates
+    // untouched, no block areas.
+    const std::string headerless = R"({
+      "offset": 0.25,
+      "useAttachUiFix": false,
+      "blockAreaList": [
+        { "topRightPercentage": { "x": 1.0, "y": 1.0 },
+          "bottomLeftPercentage": { "x": 0.0, "y": 0.0 },
+          "appearTime": 0, "enableTime": 0, "disableTime": 100, "disappearTime": 100 }
+      ],
+      "judgeLineList": [
+        { "bpm": 120.0,
+          "notesAbove": [
+            { "type": 3, "time": 32, "holdTime": 32, "positionX": 0.0, "speed": 2 }
+          ],
+          "speedEvents": [ { "startTime": 0, "endTime": 1000, "value": 1 } ],
+          "judgeLineMoveEvents": [
+            { "startTime": 0, "endTime": 1000, "start": 0.25, "end": 0.25,
+              "start2": 0.75, "end2": 0.75 }
+          ],
+          "judgeLineRotateEvents": [ { "startTime": 0, "endTime": 1000, "start": 30, "end": 30 } ]
+        }
+      ]
+    })";
+    const auto plainPath = writeText("headerless.json", headerless);
+    const auto plain = rechigros::chart::ChartLoader::loadFromFile(plainPath);
+    require(plain != nullptr, "a header-less JSON chart loads");
+    if (plain != nullptr) {
+      require(plain->formatVersion == 0,
+          "a header-less chart keeps format version 0 instead of being coerced to 3");
+      require(close(plain->offset, 0.25), "the plain offset binds without a unit conversion");
+      require(!plain->useAttachUiFix, "a plain chart can bind its own attach-UI flag");
+      require(plain->blockAreaList.empty(),
+          "a header-less chart does not parse block areas");
+      require(plain->judgeLineList.size() == 1, "the plain chart binds its judge line");
+      if (plain->judgeLineList.size() == 1) {
+        const auto& line = *plain->judgeLineList[0];
+        require(close(line.bpm, 120.0), "the plain bpm binds raw");
+        require(!line.isCover, "the plain isCover default is false");
+        require(line.invertRotation, "the plain invertRotation default is true");
+        require(line.judgeLineMoveEvents.size() == 1,
+            "the plain chart keeps its move events");
+        if (!line.judgeLineMoveEvents.empty()) {
+          require(close(line.judgeLineMoveEvents[0].start, 0.25)
+                  && close(line.judgeLineMoveEvents[0].start2, 0.75),
+              "plain move coordinates are not re-packed by half a screen");
+        }
+        require(line.judgeLineRotateEvents.size() == 1, "the plain chart keeps its rotate events");
+        if (!line.judgeLineRotateEvents.empty()) {
+          require(close(line.judgeLineRotateEvents[0].start, 30.0),
+              "plain rotation values are not negated");
+        }
+        require(plain->allNotesSorted.size() == 1, "the plain chart keeps its note");
+        if (!plain->allNotesSorted.empty()) {
+          require(!plain->allNotesSorted[0]->useOfficialSpeed,
+              "a non-official chart takes the non-official hold geometry branch");
+        }
+      }
+    }
+
+    // Absent fields keep the plain model defaults, including a zero bpm and the enabled
+    // invertRotation flag; this is the difference to the official parser in one assertion.
+    const auto sparse = rechigros::chart::PlainChartParser::parse(std::string_view(R"json(
+      { "judgeLineList": [ { "speedEvents": [] } ] }
+    )json"));
+    require(sparse.formatVersion == 0, "a sparse plain chart stays at version 0");
+    require(sparse.judgeLineList.size() == 1, "a sparse plain chart binds its line");
+    if (sparse.judgeLineList.size() == 1) {
+      require(close(sparse.judgeLineList[0]->bpm, 0.0),
+          "an absent bpm keeps the plain model's zero default");
+      require(sparse.judgeLineList[0]->invertRotation,
+          "an absent invertRotation keeps the plain model's enabled default");
+      require(!sparse.judgeLineList[0]->isCover, "an absent isCover keeps its false default");
+    }
+
+    // A chart that declares a format version keeps it and still binds plainly.
+    const auto declared = rechigros::chart::PlainChartParser::parse(std::string_view(R"json(
+      { "formatVersion": 2, "offset": -0.5, "judgeLineList": [] }
+    )json"));
+    require(declared.formatVersion == 2, "a plain chart keeps a declared format version");
+    require(close(declared.offset, -0.5), "a plain chart keeps a declared offset");
+  }
+
+  // --- attach-UI fix flag from the pack metadata ------------------------------
+  {
+    const auto packRoot = rechigros::test::scratchDirectory("attach-fix-pack");
+    const auto charts = packRoot / "charts";
+    std::filesystem::create_directories(charts);
+    const auto chartPath = charts / "chart.json";
+    {
+      std::ofstream out(chartPath, std::ios::binary);
+      const std::string chart = R"({
+        "formatVersion": 3,
+        "judgeLineList": [
+          { "bpm": 120.0, "notesAbove": [], "notesBelow": [], "speedEvents": [],
+            "judgeLineMoveEvents": [], "judgeLineRotateEvents": [],
+            "judgeLineDisappearEvents": [] }
+        ]
+      })";
+      out.write(chart.data(), static_cast<std::streamsize>(chart.size()));
+    }
+    const auto writeInfo = [&packRoot](const std::string& name, const std::string& text) {
+      const auto path = packRoot / name;
+      std::ofstream out(path, std::ios::binary);
+      out.write(text.data(), static_cast<std::streamsize>(text.size()));
+      out.close();
+      return path;
+    };
+
+    // No info file: the chart keeps the default (fix enabled).
+    const auto defaulted = rechigros::chart::ChartLoader::loadFromFile(chartPath);
+    require(defaulted != nullptr, "the pack chart loads without an info file");
+    if (defaulted != nullptr) {
+      require(defaulted->useAttachUiFix, "the attach-UI fix defaults to enabled");
+    }
+
+    // info.yml turns it off.
+    writeInfo("info.yml", "name: Test\nuseAttachUiFix: false\n");
+    const auto disabled = rechigros::chart::ChartLoader::loadFromFile(chartPath);
+    require(disabled != nullptr, "the pack chart loads with info.yml");
+    if (disabled != nullptr) {
+      require(!disabled->useAttachUiFix, "info.yml disables the attach-UI fix");
+    }
+
+    // A JSON metadata file with a lenient string value is understood as well.
+    std::filesystem::remove(packRoot / "info.yml");
+    writeInfo("info.json", R"({ "useAttachUiFix": "true" })");
+    const auto enabled = rechigros::chart::ChartLoader::loadFromFile(chartPath);
+    require(enabled != nullptr, "the pack chart loads with info.json");
+    if (enabled != nullptr) {
+      require(enabled->useAttachUiFix, "info.json re-enables the attach-UI fix");
+    }
+
+    // The nearest metadata file wins: one beside the chart overrides the pack root.
+    std::filesystem::remove(packRoot / "info.json");
+    writeInfo("info.yml", "useAttachUiFix: true\n");
+    writeInfo("charts/info.yml", "useAttachUiFix: false\n");
+    const auto nearest = rechigros::chart::ChartLoader::loadFromFile(chartPath);
+    require(nearest != nullptr, "the pack chart loads with nested metadata");
+    if (nearest != nullptr) {
+      require(!nearest->useAttachUiFix, "the nearest metadata file wins");
+    }
+    std::filesystem::remove(charts / "info.yml");
+    std::filesystem::remove(packRoot / "info.yml");
   }
 
   std::cout << "All ReChigros chart parser tests passed\n";

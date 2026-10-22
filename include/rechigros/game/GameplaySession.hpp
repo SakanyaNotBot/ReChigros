@@ -1,8 +1,10 @@
 #pragma once
 
 #include "rechigros/game/Chart.hpp"
+#include "rechigros/game/HoldBodyBurst.hpp"
 #include "rechigros/game/JudgementEngine.hpp"
 #include "rechigros/game/NoteGeometry.hpp"
+#include "rechigros/game/ReplayLog.hpp"
 
 #include <array>
 #include <cstdint>
@@ -47,6 +49,27 @@ public:
   [[nodiscard]] float judgeDistance(const Note& note, float x, float y, double chartTimeSec) const noexcept;
   [[nodiscard]] float effectiveJudgeArea(const Note& note, double chartTimeSec) const noexcept;
 
+  // --- replay model -----------------------------------------------------------
+  // Recording appends one entry per judgement plus a press entry when a hold head
+  // activates. Playback re-applies the recorded judgements in chart-time order instead of
+  // synthesising touches, so a replay is judged the same way on any device and the modes
+  // recorded in its metadata stay display-only.
+  void setReplayRecording(bool enabled) noexcept;
+  [[nodiscard]] bool replayRecording() const noexcept { return replayRecording_; }
+  [[nodiscard]] const std::vector<ReplayJudgement>& recordedReplay() const noexcept {
+    return recordedReplay_;
+  }
+  void clearRecordedReplay() noexcept;
+
+  // Entries must be sorted by time; an empty list turns playback off.
+  void setReplayPlayback(std::vector<ReplayJudgement> entries);
+  void clearReplayPlayback() noexcept;
+  [[nodiscard]] bool replayPlayback() const noexcept { return replayPlayback_; }
+
+  // One hold-body burst produced during the last update. The caller spawns the hit effect
+  // for the note; the index addresses Chart::allNotesSorted.
+  std::vector<HoldBodyBurst> takeHoldBodyBursts();
+
   // Red-zone state, updated each frame in the current stage geometry. `render` draws from
   // Chart::blockAreaList; judgement consults blockedTouchIds().
   [[nodiscard]] const std::vector<OfficialBlock>& blocks() const noexcept { return blocks_; }
@@ -68,9 +91,22 @@ private:
   [[nodiscard]] bool inStage(float x, float y) const noexcept;
   [[nodiscard]] NoteGeometry geometryFor(const Note& note, const JudgeLine::State& state,
       const Stage& view) const noexcept;
-  void activateHold(Note& note, bool perfect, double chartTimeSec, double diffSec) noexcept;
+  void activateHold(Note& note, bool perfect, double chartTimeSec, double diffSec,
+      bool recordPress) noexcept;
   bool commitNote(Note& note, JudgementEngine::Judgement judgement,
       double diffSec, double chartTimeSec, bool emitSound = true) noexcept;
+  // Replay recording hooks: every commit produces an entry, and every hold head that is
+  // still active but not yet recorded gets a press entry (which covers a hold that was
+  // already active when recording started).
+  void recordJudgement(const Note& note, JudgementEngine::Judgement judgement, double diffSec,
+      double chartTimeSec);
+  void recordHoldPress(const Note& note, bool perfect, double diffSec);
+  void recordMissingHoldPresses();
+  // Replay playback: applies every recorded entry whose time has come.
+  void applyReplayEntries(double time);
+  // Hold-body burst timer, as the reference drives it from the hold movement update.
+  void updateHoldBodyBursts(double time, float frameDeltaSec);
+  [[nodiscard]] static double holdBodyIntervalSec(const Note& note) noexcept;
   void updateChallengeTiming(float frameDeltaSec) noexcept;
   void judgeNewTouches(double time, const Stage& view);
   void judgeDrags(double time, const Stage& view);
@@ -95,5 +131,17 @@ private:
   std::vector<OfficialBlock> blocks_;
   // Fingers latched inside a red zone emit no judge candidates for the rest of the press.
   std::unordered_set<std::int64_t> blockedTouchIds_;
+  // Replay state. `recordedHoldPressNotes_` holds note indices that already produced a
+  // press entry, so a re-armed hold cannot record twice.
+  bool replayRecording_{};
+  bool replayPlayback_{};
+  std::vector<ReplayJudgement> recordedReplay_;
+  std::vector<ReplayJudgement> replayEntries_;
+  std::size_t replayCursor_{};
+  std::unordered_set<int> recordedHoldPressNotes_;
+  // Holds whose body burst timer is running, so the per-frame work stays proportional to
+  // the number of active holds rather than to the chart size.
+  std::vector<Note*> holdFxNotes_;
+  std::vector<HoldBodyBurst> holdBodyBursts_;
 };
 }

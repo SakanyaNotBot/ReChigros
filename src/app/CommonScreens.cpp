@@ -124,12 +124,9 @@ void startAdhocReplay(AppContext& context, const std::filesystem::path& chartFil
   context.play.replayFile = replayFile;
   context.play.autoplay = false;
   context.play.practice = false;
-  context.play.musicSpeed = replay->meta.musicSpeed > 0.0F ? replay->meta.musicSpeed : 1.0F;
-  context.play.scrollSpeed = replay->meta.scrollSpeed > 0.0F ? replay->meta.scrollSpeed : 1.0F;
-  context.play.mirrorX = replay->meta.mirrorX;
-  context.play.challenge = replay->meta.challenge;
-  context.play.chartOffsetMs = replay->meta.chartOffsetMs;
-  context.play.audioOffsetMs = replay->meta.audioOffsetMs;
+  // The modes and speeds stored in the replay describe the run that was recorded; playback
+  // judges and draws with the viewer's own settings. Judging is driven by the recorded
+  // judgements, so only the display modes are affected.
   if (!gameEnter(context)) {
     notify(context, "谱面加载失败");
     return;
@@ -280,12 +277,14 @@ void startSavedReplay(AppContext& context, const std::string& replayId) {
   context.play.chartFile = record->chartFile;
   context.play.musicFile = record->musicFile;
   context.play.bgFile = record->bgFile;
-  context.play.chartOffsetMs = replay->meta.chartOffsetMs;
-  context.play.audioOffsetMs = replay->meta.audioOffsetMs;
-  context.play.musicSpeed = replay->meta.musicSpeed > 0.0F ? replay->meta.musicSpeed : 1.0F;
-  context.play.scrollSpeed = replay->meta.scrollSpeed > 0.0F ? replay->meta.scrollSpeed : 1.0F;
-  context.play.mirrorX = replay->meta.mirrorX;
-  context.play.challenge = replay->meta.challenge;
+  // Playback uses the viewer's own settings, exactly like startAdhocReplay: the modes stored
+  // in the replay are display-only.
+  context.play.chartOffsetMs = record->chartOffsetMs;
+  context.play.audioOffsetMs = context.settings.audioOffsetMs;
+  context.play.musicSpeed = context.settings.musicSpeed;
+  context.play.scrollSpeed = context.settings.scrollSpeed;
+  context.play.mirrorX = context.settings.mirrorX;
+  context.play.challenge = context.settings.challengeMode;
   context.play.replayMode = true;
   context.play.replayFile = info->file;
   if (!gameEnter(context)) {

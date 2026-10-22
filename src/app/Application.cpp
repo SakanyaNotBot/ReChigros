@@ -479,7 +479,8 @@ int Application::run() {
     const bool saved = writeReplayFile(recordReplayPath_, recorded);
     std::cout << "REPLAY-RECORDED " << (saved ? "PASS" : "FAIL")
               << " path=" << recordReplayPath_.string()
-              << " entries=" << recorded.entries.size()
+              << " entries=" << (recorded.judgements.size() + recorded.entries.size())
+              << " judgements=" << recorded.judgements.size()
               << " notes=" << recorded.meta.totalNotes
               << " score=" << recorded.meta.score
               << " accuracy=" << recorded.meta.accuracy << '\n';
@@ -608,10 +609,11 @@ void Application::printBatchSummary() {
     chartRunPass = chartRunPass && resultFrames > 0 && app_->lastResult.totalNotes > 0;
   }
   if (replayRun) {
-    // The recorded metadata is the reference: driving the touch pipeline from the
-    // replay must reproduce the same score, accuracy and judgement counts.
+    // The recorded metadata is the reference. A judgement-entry replay takes its settlement
+    // result FROM that metadata, so the comparison has to read the live judgement result:
+    // re-applying the entries must reproduce every recorded judgement.
     const auto& recorded = app_->game.playback.meta;
-    const auto& played = app_->lastResult;
+    const auto played = app_->game.session.judgement().result();
     const bool scoreMatch = played.score == recorded.score;
     const bool accuracyMatch = std::abs(played.accuracy - recorded.accuracy) <= 1.0e-6;
     const bool countsMatch = played.perfect == recorded.perfect && played.good == recorded.good

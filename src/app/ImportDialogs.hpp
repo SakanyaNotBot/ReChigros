@@ -1,0 +1,33 @@
+#pragma once
+
+#include "rechigros/app/AppContext.hpp"
+
+// Dialog-driven import entry points used by the library and settings screens.
+//
+// Each function asks the platform picker for the required source, runs the matching
+// import flow from ImportCore and reports the result through the shared toast. On a
+// platform whose picker answers asynchronously (empty return value) the function reports
+// "no selection" and leaves the current screen untouched; the incoming document then
+// travels through the normal drop-file path instead.
+namespace rechigros::app {
+
+// Chart package archive picked from the browser. On success the library refreshes and the
+// imported chart's detail page opens, matching the reference behaviour.
+[[nodiscard]] bool importChartPackageFromDialog(AppContext& context);
+
+// Unpacked chart pack directory picked from the browser.
+[[nodiscard]] bool importChartFolderFromDialog(AppContext& context);
+
+// Loose chart document, audio track and illustration picked together; they are gathered
+// into one pack before installation.
+[[nodiscard]] bool importChartFilesFromDialog(AppContext& context);
+
+// Replay package or replay document picked from the browser; the replay list refreshes on
+// the next settings draw.
+[[nodiscard]] bool importReplayFromDialog(AppContext& context);
+
+// Skin / resource package picked from the browser; the imported skin becomes the current
+// skin so the renderer reloads it on the next run.
+[[nodiscard]] bool importSkinFromDialog(AppContext& context);
+
+} // namespace rechigros::app

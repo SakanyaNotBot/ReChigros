@@ -2,6 +2,7 @@ add_library(rechigros_chart STATIC
   ChartLoader.cpp
   OfficialChartParser.cpp
   PecChartParser.cpp
+  PlainChartParser.cpp
   RpeChartParser.cpp
   Md5.cpp)
 target_include_directories(rechigros_chart PUBLIC "${PROJECT_SOURCE_DIR}/include")

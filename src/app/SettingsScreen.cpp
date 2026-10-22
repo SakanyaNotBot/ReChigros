@@ -1,4 +1,7 @@
 #include "rechigros/app/ScreenCommon.hpp"
+
+#include "ImportDialogs.hpp"
+
 #include "rechigros/app/Screens.hpp"
 #include "rechigros/app/UiLayout.hpp"
 #include "rechigros/app/UiStyle.hpp"
@@ -1068,8 +1071,8 @@ void drawDual(const DrawContext& draw, const Block& block, float left, float top
   const auto runAction = [&](ActionKind kind) {
     switch (kind) {
       case ActionKind::SkinImport:
-        dialogState().skinImportOpen = true;
-        ImGui::OpenPopup("##settings_skin_import");
+        // The platform picker installs the skin and reports the result through the toast.
+        (void)importSkinFromDialog(context);
         break;
       case ActionKind::SkinDelete: {
         if (context.settings.selectedSkin.empty()) {
@@ -1083,8 +1086,8 @@ void drawDual(const DrawContext& draw, const Block& block, float left, float top
         break;
       }
       case ActionKind::ReplayImport:
-        dialogState().replayImportOpen = true;
-        ImGui::OpenPopup("##settings_replay_import");
+        // The platform picker imports the replay; the list below rebuilds from the store.
+        (void)importReplayFromDialog(context);
         break;
       case ActionKind::ReplayRefresh:
         break;

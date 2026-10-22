@@ -51,6 +51,26 @@ if(NOT ANDROID AND NOT IOS)
   add_test(NAME rechigros_level_effect_tests COMMAND rechigros_level_effect_tests)
 endif()
 
+# Application-layer data helpers (metadata labels, settings clamping, replay storage).
+# This suite compiles the few application sources that are free of interface and GPU
+# dependencies, so their behaviour is covered by the normal test run.
+if(TARGET rechigros_platform)
+  add_executable(rechigros_app_data_tests
+    AppDataTests.cpp
+    ../src/app/InfoFile.cpp
+    ../src/app/Settings.cpp
+    ../src/app/Replay.cpp)
+  target_include_directories(rechigros_app_data_tests PRIVATE
+    "${PROJECT_SOURCE_DIR}/include"
+    "${PROJECT_SOURCE_DIR}/src/app"
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(rechigros_app_data_tests PRIVATE
+    rechigros_core rechigros_platform nlohmann_json_headers)
+  if(NOT ANDROID AND NOT IOS)
+    add_test(NAME rechigros_app_data_tests COMMAND rechigros_app_data_tests)
+  endif()
+endif()
+
 target_include_directories(rechigros_core_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_include_directories(rechigros_chart_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_include_directories(rechigros_platform_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

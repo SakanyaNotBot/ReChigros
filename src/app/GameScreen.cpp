@@ -77,20 +77,20 @@ render::scene::StageLayout renderStage(const AppContext& context) {
 }
 
 bool isPauseButtonHit(const AppContext& context, float windowX, float windowY) {
-  const auto stage = renderStage(context);
-  const float unit = stage.stage.height > 1.0e-6F ? stage.stage.height / 1000.0F : 1.0F;
-  const float centerDrawableX = stage.stage.x + 50.5887985F * unit;
-  const float centerDrawableY = stage.centerY() - 444.2999878F * unit;
-  const float scaleX = context.drawableWidth > 0
-      ? static_cast<float>(context.windowWidth) / static_cast<float>(context.drawableWidth)
-      : 1.0F;
-  const float scaleY = context.drawableHeight > 0
-      ? static_cast<float>(context.windowHeight) / static_cast<float>(context.drawableHeight)
-      : 1.0F;
-  const float centerX = centerDrawableX * scaleX;
-  const float centerY = centerDrawableY * scaleY;
-  const float radiusX = std::max(56.0F * unit * scaleX, 40.0F);
-  const float radiusY = std::max(56.0F * unit * scaleY, 40.0F);
+  // The pause control's hit area is its rect expanded by a padded radius, sized from the
+  // play field's 1000-unit canvas exactly like the reference layout.
+  const StageRect stage = touchStage(context);
+  if (stage.width <= 1.0F || stage.height <= 1.0F) return false;
+  const float unit = stage.height / 1000.0F;
+  const float halfUiW = stage.width / stage.height * 500.0F;
+  const float centerX = stage.left + stage.width * 0.5F + (50.5887985F - halfUiW) * unit;
+  const float centerY = stage.top + stage.height * 0.5F - 444.2999878F * unit;
+  const float pauseWidth = 34.262F * unit;
+  const float pauseHeight = 37.966F * unit;
+  const float dp = 1.75F * std::max(0.2F, stage.height / 1080.0F);
+  const float pad = std::clamp(std::max(pauseWidth, pauseHeight) * 1.1F, dp * 20.0F, dp * 80.0F);
+  const float radiusX = pauseWidth * 0.5F + pad;
+  const float radiusY = pauseHeight * 0.5F + pad;
   return std::abs(windowX - centerX) <= radiusX && std::abs(windowY - centerY) <= radiusY;
 }
 
@@ -154,6 +154,8 @@ void updateJudgementPopup(GameRuntime& game) {
 void dispatchRecordedTouches(AppContext& context) {
   auto& game = context.game;
   if (!game.replayPlayback) return;
+  // Judgement-entry replays are applied by the session, not through synthetic touches.
+  if (game.playback.usesJudgementModel()) return;
   const auto stage = touchStage(context);
   while (game.replayCursor < game.playback.entries.size()) {
     const auto& entry = game.playback.entries[game.replayCursor];
@@ -189,10 +191,19 @@ void finishGame(AppContext& context) {
   if (game.finished) return;
   game.finished = true;
   const auto& judgement = game.session.judgement();
-  context.lastResult = judgement.result();
+  // A replay playback shows the recorded settlement, with the live offset histogram when it
+  // collected samples; every other run shows its own judgement result.
+  context.lastResult = game.replayPlayback && game.playback.usesJudgementModel()
+      ? mergeReplayPlaybackResult(game.playback.meta, judgement.result())
+      : judgement.result();
   context.lastRunWasReplay = context.play.replayMode;
   context.lastRunHasReplay = game.recording;
   if (game.recording) {
+    // The run's judgements are the replay; touch samples are only kept for the legacy
+    // format and are dropped once a judgement recording exists.
+    game.recorded.judgements = game.session.recordedReplay();
+    game.recorded.entries.clear();
+    game.recorded.version = 2;
     auto& meta = game.recorded.meta;
     meta.chartId = context.play.chartId;
     meta.songName = context.play.songName;
@@ -633,6 +644,10 @@ struct PracticeUiState {
   float scrubFineAnchorX{0.0F};
 };
 PracticeUiState gPractice;
+// The chart the practice state belongs to and the playback speed it last used; a restart
+// of the same run keeps both, a different chart resets them.
+std::string gPracticeChartId;
+float gPracticeSpeed{1.0F};
 
 constexpr double kPracticeRepeatMinLengthSec = 1.0;
 constexpr double kPracticeJumpSec = 5.0;
@@ -827,6 +842,7 @@ void togglePracticeRepeat(AppContext& context) {
 void setPracticeSpeed(AppContext& context, float speed) {
   auto& game = context.game;
   game.musicSpeed = std::clamp(speed, kPracticeSpeedMin, kPracticeSpeedMax);
+  gPracticeSpeed = game.musicSpeed;
   if (context.audio != nullptr) context.audio->setPlaybackSpeed(game.musicSpeed);
 }
 
@@ -1384,6 +1400,18 @@ bool gameEnter(AppContext& context) {
   game.session.judgement().setPracticeEnabled(game.practice);
   game.musicSpeed = context.play.musicSpeed > 0.0F ? context.play.musicSpeed : 1.0F;
   game.scrollSpeed = context.play.scrollSpeed > 0.0F ? context.play.scrollSpeed : 1.0F;
+  // A fresh chart starts with neutral practice state; restarting the same practice run
+  // keeps the A/B points and the playback speed the player had set.
+  if (context.play.chartId != gPracticeChartId) {
+    gPractice = PracticeUiState{};
+    gPracticeChartId = context.play.chartId;
+    gPracticeSpeed = 1.0F;
+  }
+  if (game.practice) game.musicSpeed = gPracticeSpeed;
+  gPauseRingStartSec = -1.0;
+  gLastPauseTapMs = 0.0;
+  gLastPauseTapX = 0.0F;
+  gLastPauseTapY = 0.0F;
   game.userOffsetSec =
       static_cast<double>(context.play.chartOffsetMs + context.play.audioOffsetMs) / 1000.0;
   game.chartOffsetSec = game.chart->offset;
@@ -1418,9 +1446,15 @@ bool gameEnter(AppContext& context) {
     game.playback = *replay;
     game.replayPlayback = true;
     game.recording = false;
+    // A judgement-entry replay is re-applied by the session itself; only a legacy
+    // touch-sample file still drives the touch pipeline.
+    if (game.playback.usesJudgementModel()) {
+      game.session.setReplayPlayback(game.playback.judgements);
+    }
   } else {
     game.replayPlayback = false;
     game.recording = context.settings.replayEnabled && !game.autoplay && !game.practice;
+    game.session.setReplayRecording(game.recording);
     if (game.recording) {
       game.recorded.meta.chartId = context.play.chartId;
       game.recorded.meta.songName = context.play.songName;
@@ -1521,6 +1555,29 @@ void gameUpdate(AppContext& context, float frameDeltaSec) {
     return;
   }
 
+  // Practice seeks requested by the pause panel are applied on the next gameplay frame.
+  if (game.practice && game.seekRequestSec >= 0.0) {
+    const double target = game.seekRequestSec;
+    game.seekRequestSec = -1.0;
+    applyPracticeSeek(context, target);
+  }
+
+  // Practice loop: keep the playhead inside the A..B range while the music runs. The wrap
+  // starts slightly before A (scaled by the playback speed) so the loop seam is not heard.
+  if (game.practice && gPractice.repeatActive && std::isfinite(gPractice.repeatFromSec) &&
+      std::isfinite(gPractice.repeatToSec) && gPractice.repeatToSec > gPractice.repeatFromSec) {
+    const double lead = 0.2 * static_cast<double>(game.musicSpeed);
+    const double duration = practiceDurationSec(context);
+    const bool playing = !game.inIntro;
+    const bool outsideRange = game.chartTimeSec < gPractice.repeatFromSec - lead ||
+        game.chartTimeSec > gPractice.repeatToSec;
+    const bool audioEnd = game.chartTimeSec >= duration - 0.1 &&
+        gPractice.repeatToSec >= duration - 0.1;
+    if (playing && (outsideRange || audioEnd)) {
+      game.seekRequestSec = gPractice.repeatFromSec;
+    }
+  }
+
   // Recorded touches are injected for this chart time before the session judges,
   // so replay playback observes the same timing a live player did.
   dispatchRecordedTouches(context);
@@ -1600,6 +1657,9 @@ void gameRender(AppContext& context) {
   input.hud.comboLabel = game.replayPlayback ? "REPLAY"
       : (game.practice ? "PRACTICE" : (game.autoplay ? "AUTOPLAY" : "COMBO"));
   input.hud.visualTimeSec = game.visualTimeSec;
+  if (gPauseRingStartSec >= 0.0 && context.nowSec - gPauseRingStartSec >= 1.0) {
+    gPauseRingStartSec = -1.0;
+  }
   input.hud.pauseRingAgeSec =
       gPauseRingStartSec >= 0.0 ? context.nowSec - gPauseRingStartSec : -1.0;
   // The HUD start tween keeps running across the intro boundary: the intro ends before
@@ -1701,10 +1761,29 @@ bool gamePointerDown(AppContext& context, std::int64_t pointerId, float x, float
   if (!game.loaded || game.finished || game.inOutro) return false;
   if (game.pause != GameRuntime::Pause::None) return false;
   if (game.inIntro) return false;
+
+  // The pause control reacts to a double tap inside its expanded hit area; a single tap
+  // only flashes the ring feedback (the reference keeps the ring even when the tap lands
+  // on the play field, and the same press is still forwarded to the judgement below).
   if (isPauseButtonHit(context, x, y)) {
-    gameTogglePause(context);
-    return true;
+    gPauseRingStartSec = context.nowSec;
+    const double nowMs = static_cast<double>(nowMilliseconds());
+    const float maxDistance = 40.0F * gameDp(gameStagePixels(context));
+    const float deltaX = x - gLastPauseTapX;
+    const float deltaY = y - gLastPauseTapY;
+    if (gLastPauseTapMs > 0.0 && nowMs - gLastPauseTapMs <= 1000.0 &&
+        deltaX * deltaX + deltaY * deltaY <= maxDistance * maxDistance) {
+      gLastPauseTapMs = 0.0;
+      gameTogglePause(context);
+      return true;
+    }
+    gLastPauseTapMs = nowMs;
+    gLastPauseTapX = x;
+    gLastPauseTapY = y;
+  } else {
+    gLastPauseTapMs = 0.0;
   }
+
   if (game.replayPlayback) return false;
   // Mirroring is applied before recording so a replay reproduces the same gameplay.
   x = mirrorTouchX(context, x);
