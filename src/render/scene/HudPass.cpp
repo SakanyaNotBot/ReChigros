@@ -655,11 +655,18 @@ void drawHud(batch::SpriteBatch& batch, text::TextRenderer& text, const StageLay
   canvas.rootScale = computeRootScale(values.introProgress, values.outroProgress);
   const float comboAlpha = comboLabelOutroAlpha(values.outroProgress);
 
-  // Pause button and its touch feedback ring.
+  // Pause button and its touch feedback ring. The reveal camera scales texture HUD
+  // elements with the shrunken play field (reference transform).
   {
-    const float centerX = canvas.x(kPauseXOffset - canvas.halfUiW);
-    const float centerY = canvas.y(kPauseY);
-    const float drawHeight = canvas.size(kPauseH);
+    const float stageCenterX = layout.stage.x + layout.stage.width * 0.5F;
+    const float stageCenterY = layout.stage.y + layout.stage.height * 0.5F;
+    const float revealScale = (values.revealCameraActive
+        ? std::clamp(values.revealScale, 0.3F, 1.0F)
+        : 1.0F);
+    const float centerX = stageCenterX +
+        (canvas.x(kPauseXOffset - canvas.halfUiW) - stageCenterX) * revealScale;
+    const float centerY = stageCenterY + (canvas.y(kPauseY) - stageCenterY) * revealScale;
+    const float drawHeight = canvas.size(kPauseH) * revealScale;
     const float drawWidth = drawHeight * kPauseVisualAspect;
 
     if (textures.noteRing != nullptr && textures.noteRing->valid()
@@ -667,11 +674,11 @@ void drawHud(batch::SpriteBatch& batch, text::TextRenderer& text, const StageLay
       const float progress =
           std::clamp(static_cast<float>(values.pauseRingAgeSec) / kPauseRingFadeInSec, 0.0F, 1.0F);
       const float ringAlpha = alpha * kPauseRingAlphaMax * progress;
-      const float ringSize = canvas.size(kPauseRingSizeUi);
+      const float ringSize = canvas.size(kPauseRingSizeUi) * revealScale;
       drawElementQuad(batch, *textures.noteRing, canvas, HudElement::Pause, transforms,
-          centerX + canvas.size(kPauseRingOffsetXUi), centerY - canvas.size(kPauseRingOffsetYUi),
-          ringSize, ringSize, 0.0F, 1.0F, 1.0F, 1.0F, ringAlpha, 0.0F, 0.0F, 1.0F, 1.0F,
-          projection);
+          centerX + canvas.size(kPauseRingOffsetXUi) * revealScale,
+          centerY - canvas.size(kPauseRingOffsetYUi) * revealScale, ringSize, ringSize, 0.0F,
+          1.0F, 1.0F, 1.0F, ringAlpha, 0.0F, 0.0F, 1.0F, 1.0F, projection);
     }
 
     if (textures.pause != nullptr && textures.pause->valid()) {

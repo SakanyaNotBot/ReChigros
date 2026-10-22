@@ -223,6 +223,19 @@ struct DialogState {
   char aspectText[32]{};
   char skinPath[512]{};
   char replayPath[512]{};
+
+  // Skin selection surface animation. Closed means no panel is drawn; Entering/Open accept
+  // input; Closing keeps the page blocked until the shrink-out finishes.
+  enum class SkinPhase { Closed, Entering, Open, Closing };
+  SkinPhase skinPhase{SkinPhase::Closed};
+  double skinPhaseStart{-1.0};
+  float skinExitFrom{1.0F};
+  float skinScroll{};
+  int skinPressedRow{-1};
+  bool skinPressOutside{};
+  bool skinScrollDragging{};
+  float skinPressY{};
+  float skinScrollAtPress{};
 };
 
 DialogState& dialogState() {
@@ -235,6 +248,9 @@ bool anyDialogOpen() {
   return dialogs.aspectOpen || dialogs.skinSelectOpen || dialogs.skinImportOpen
       || dialogs.replayImportOpen;
 }
+
+// Opens the reference-styled skin selection surface (defined with the dialog section below).
+void openSkinDialog(double nowSec);
 
 // ---------------------------------------------------------------------------
 // Widget geometry
@@ -947,6 +963,12 @@ void drawSwitch(const DrawContext& draw, const Block& block, float left, float t
     *block.boolean = !*block.boolean;
     startToggleAnimation(key, from, *block.boolean ? 1.0F : 0.0F, draw.nowSec);
     markChanged(context);
+    // Revealing chart detail only makes sense with the automatic demonstration; the
+    // reference flips autoplay on when reveal is enabled and keeps the row in sync.
+    if (context.settings.chartReveal && !context.settings.autoplay) {
+      context.settings.autoplay = true;
+      startToggleAnimation("switch:video.autoplay", 0.0F, 1.0F, draw.nowSec);
+    }
   }
 
   drawTextPx(draw.drawList, m, left, centerY, draw.rowWidth - toggleWidth, 20.0F, false,
@@ -1030,8 +1052,7 @@ void drawAction(const DrawContext& draw, const Block& block, float left, float t
       markChanged(context);
       break;
     case ActionKind::SkinSelect:
-      dialogState().skinSelectOpen = true;
-      ImGui::OpenPopup("##settings_skin_select");
+      openSkinDialog(draw.nowSec);
       break;
     case ActionKind::Calibration:
       context.calibration.offsetMs = static_cast<float>(context.settings.audioOffsetMs);
@@ -1136,6 +1157,382 @@ void drawEmpty(const DrawContext& draw, const Block& block, float left, float to
   const float characterWidth = ui::labelWidth(m.canvas, block.label, 16.0F, false) * m.scale;
   drawTextPx(draw.drawList, m, centerX - characterWidth * 0.5F, centerY,
       std::max(1.0F, characterWidth + 2.0F), 16.0F, false, ui::argb(kEmptyNotice), block.label);
+}
+
+// ---------------------------------------------------------------------------
+// Skin selection dialog
+// ---------------------------------------------------------------------------
+
+// The reference dialog surface: one 75 degree parallelogram whose content area sits above a
+// 52 dp black action strip. The skin list is a list dialog, so the strip carries no actions;
+// the panel scales in from 65% over 200 ms, shrinks out over 140 ms and dims the page behind
+// it to half black.
+constexpr std::uint32_t kDialogContentFill = 0xF0202429U;
+constexpr std::uint32_t kDialogStripFill = 0xD9000000U;
+constexpr std::uint32_t kDialogAccentFill = 0xFFFFFFFFU;
+constexpr std::uint32_t kDialogRuleFill = 0x99FFFFFFU;
+constexpr std::uint32_t kDialogTitleText = 0xFFFFFFFFU;
+constexpr std::uint32_t kDialogRowText = 0xFFFFFFFFU;
+constexpr std::uint32_t kDialogRowPressedFill = 0x2EFFFFFFU;
+constexpr double kDialogEnterSec = 0.20;
+constexpr double kDialogExitSec = 0.14;
+constexpr float kDialogBackdropDim = 0.5F;
+constexpr float kDialogPadHDp = 26.0F;
+constexpr float kDialogPadTopDp = 22.0F;
+constexpr float kDialogPadBottomDp = 16.0F;
+constexpr float kDialogStripDp = 52.0F;
+constexpr float kDialogAccentDp = 3.0F;
+constexpr float kDialogTitleDp = 22.0F;
+constexpr float kDialogRowHeightDp = 46.0F;
+constexpr float kDialogRowGapDp = 2.0F;
+constexpr float kDialogRowTextDp = 18.0F;
+constexpr float kDialogRuleWidthDp = 44.0F;
+constexpr float kDialogRuleHeightDp = 2.0F;
+
+struct SkinDialogLayout {
+  int rowCount{};
+  float viewWidth{};
+  float viewHeight{};
+  float panelWidth{};
+  float panelHeight{};
+  float panelLeft{};
+  float panelTop{};
+  float strip{};
+  float slant{};
+  float stripSlant{};
+  float padTop{};
+  float padBottom{};
+  float contentWidth{};
+  float contentLeft{};
+  float contentBottom{};
+  float titleTop{};
+  float titleLine{};
+  float titleBlock{};
+  float ruleTop{};
+  float listTop{};
+  float listViewport{};
+  float rowsTotal{};
+  float rowHeight{};
+  float rowGap{};
+  float rowStride{};
+  bool rowsOverflow{};
+};
+
+
+SkinDialogLayout skinDialogLayout(const Metrics& m, int rowCount) {
+  SkinDialogLayout layout;
+  layout.rowCount = std::max(0, rowCount);
+  layout.viewWidth = m.width;
+  layout.viewHeight = m.height;
+  const float padH = m.dp(kDialogPadHDp);
+  layout.padTop = m.dp(kDialogPadTopDp);
+  layout.padBottom = m.dp(kDialogPadBottomDp);
+  layout.strip = m.dp(kDialogStripDp);
+  layout.titleLine = m.lineBox(kDialogTitleDp);
+  layout.titleBlock = layout.titleLine + m.dp(2.0F);
+  const float ruleBlock = m.dp(6.0F) + m.dp(kDialogRuleHeightDp) + m.dp(12.0F);
+  layout.rowHeight = m.dp(kDialogRowHeightDp);
+  layout.rowGap = m.dp(kDialogRowGapDp);
+  layout.rowStride = layout.rowHeight + layout.rowGap;
+  layout.rowsTotal = layout.rowCount > 0
+      ? layout.rowCount * layout.rowHeight + (layout.rowCount - 1) * layout.rowGap
+      : 0.0F;
+  const float desiredContent = layout.titleBlock + ruleBlock + layout.rowsTotal;
+  // The reference caps every dialog at 86% of the window (and never below three strips) and
+  // lets the item list scroll inside that cap.
+  const float maxTotalHeight = std::max(layout.strip * 3.0F, layout.viewHeight * 0.86F);
+  const float maxContentHeight = std::max(0.0F, maxTotalHeight - layout.strip
+      - layout.padTop - layout.padBottom);
+  const float contentMeasured = std::min(desiredContent, maxContentHeight);
+  const float listSpace = std::max(0.0F, contentMeasured - layout.titleBlock - ruleBlock);
+  layout.listViewport = std::min(layout.rowsTotal, listSpace);
+  layout.rowsOverflow = layout.rowsTotal > layout.listViewport + 0.5F;
+
+  const float wideTarget = std::min(layout.viewWidth * 0.58F, m.dp(620.0F));
+  layout.panelWidth =
+      std::max(std::min(m.dp(340.0F), layout.viewWidth * 0.92F), wideTarget);
+  layout.panelHeight = layout.padTop + contentMeasured + layout.padBottom + layout.strip;
+  layout.panelLeft = (layout.viewWidth - layout.panelWidth) * 0.5F;
+  layout.panelTop = (layout.viewHeight - layout.panelHeight) * 0.5F;
+  layout.contentBottom = layout.panelTop + layout.padTop + contentMeasured + layout.padBottom;
+  layout.slant = layout.panelHeight * kSlope;
+  layout.stripSlant = layout.strip * kSlope;
+  layout.contentLeft = layout.panelLeft + layout.stripSlant + padH;
+  layout.contentWidth = layout.panelWidth - layout.slant - padH * 2.0F;
+  layout.titleTop = layout.panelTop + layout.padTop;
+  layout.ruleTop = layout.titleTop + layout.titleBlock + m.dp(6.0F);
+  layout.listTop = layout.titleTop + layout.titleBlock + ruleBlock;
+  return layout;
+}
+
+std::vector<std::string> skinNames(const AppContext& context) {
+  std::vector<std::string> names{"内置皮肤"};
+  for (const auto& skin : listSkinDirectories(context)) {
+    names.push_back(skin.filename().string());
+  }
+  return names;
+}
+
+// Multiplies the alpha channel of a palette colour by the dialog's current opacity.
+ImU32 fadeColor(std::uint32_t color, float alphaScale) {
+  const int baseAlpha = static_cast<int>((color >> 24) & 0xFFU);
+  const int alpha = std::clamp(static_cast<int>(std::lround(baseAlpha * alphaScale)), 0, 255);
+  return ui::argb((static_cast<std::uint32_t>(alpha) << 24) | (color & 0x00FFFFFFU));
+}
+
+void beginSkinDialogClose(double nowSec);
+
+// Advances the dialog animation and returns the linear progress (0 hidden, 1 settled).
+float skinDialogProgress(DialogState& dialogs, double nowSec) {
+  switch (dialogs.skinPhase) {
+    case DialogState::SkinPhase::Closed: return 0.0F;
+    case DialogState::SkinPhase::Entering: {
+      const float linear = static_cast<float>(
+          std::clamp((nowSec - dialogs.skinPhaseStart) / kDialogEnterSec, 0.0, 1.0));
+      if (linear >= 1.0F) {
+        dialogs.skinPhase = DialogState::SkinPhase::Open;
+        return 1.0F;
+      }
+      return linear;
+    }
+    case DialogState::SkinPhase::Open: return 1.0F;
+    case DialogState::SkinPhase::Closing: {
+      // The reference shrink-out starts from the current panel opacity and shortens with it.
+      const double duration = std::max(1.0e-3, kDialogExitSec * dialogs.skinExitFrom);
+      const float linear = static_cast<float>(
+          std::clamp(1.0 - (nowSec - dialogs.skinPhaseStart) / duration, 0.0, 1.0));
+      if (linear <= 0.0F) {
+        dialogs.skinPhase = DialogState::SkinPhase::Closed;
+        dialogs.skinSelectOpen = false;
+        dialogs.skinPressedRow = -1;
+        dialogs.skinScrollDragging = false;
+        return 0.0F;
+      }
+      return linear * dialogs.skinExitFrom;
+    }
+  }
+  return 0.0F;
+}
+
+void drawSkinSelectDialog(
+    AppContext& context, const Metrics& m, ImDrawList* drawList, double nowSec) {
+  DialogState& dialogs = dialogState();
+  if (dialogs.skinPhase == DialogState::SkinPhase::Closed) return;
+  const std::vector<std::string> names = skinNames(context);
+  const SkinDialogLayout layout =
+      skinDialogLayout(m, static_cast<int>(names.size()));
+  if (dialogs.skinScroll > 0.0F) {
+    const float maxScroll = std::max(0.0F, layout.rowsTotal - layout.listViewport);
+    dialogs.skinScroll = std::clamp(dialogs.skinScroll, 0.0F, maxScroll);
+  }
+
+  const float linear = std::max(0.0F, skinDialogProgress(dialogs, nowSec));
+  if (dialogs.skinPhase == DialogState::SkinPhase::Closed) return;
+  const float inverse = 1.0F - std::clamp(linear, 0.0F, 1.0F);
+  const float eased = 1.0F - inverse * inverse * inverse;
+  const float panelScale = 0.65F + 0.35F * eased;
+
+  const float centerX = layout.panelLeft + layout.panelWidth * 0.5F;
+  const float centerY = layout.panelTop + layout.panelHeight * 0.5F;
+  const auto fit = [&](float x, float y) {
+    return ImVec2(centerX + (x - centerX) * panelScale, centerY + (y - centerY) * panelScale);
+  };
+  const auto inverseFit = [&](ImVec2 point) {
+    return ImVec2(centerX + (point.x - centerX) / std::max(0.01F, panelScale),
+        centerY + (point.y - centerY) / std::max(0.01F, panelScale));
+  };
+
+  // Page dimmer.
+  drawList->AddRectFilled(ImVec2(0.0F, 0.0F), ImVec2(m.width, m.height),
+      IM_COL32(0, 0, 0,
+          static_cast<int>(std::lround(255.0F * kDialogBackdropDim * eased))));
+
+  // Panel: content parallelogram, empty action strip below it and the white edge accent.
+  const float stripTop = layout.panelTop + layout.panelHeight - layout.strip;
+  const ImVec2 contentPoints[4] = {
+      fit(layout.panelLeft + layout.slant, layout.panelTop),
+      fit(layout.panelLeft + layout.panelWidth, layout.panelTop),
+      fit(layout.panelLeft + layout.panelWidth
+              - (layout.panelHeight - layout.strip) * kSlope, stripTop),
+      fit(layout.panelLeft + layout.stripSlant, stripTop),
+  };
+  drawList->AddConvexPolyFilled(contentPoints, 4, fadeColor(kDialogContentFill, eased));
+  const ImVec2 stripPoints[4] = {
+      fit(layout.panelLeft + layout.stripSlant, stripTop),
+      fit(layout.panelLeft + layout.panelWidth
+              - (layout.panelHeight - layout.strip) * kSlope, stripTop),
+      fit(layout.panelLeft + layout.panelWidth - layout.slant,
+          layout.panelTop + layout.panelHeight),
+      fit(layout.panelLeft, layout.panelTop + layout.panelHeight),
+  };
+  const float stripAlpha = ((kDialogStripFill >> 24) & 0xFFU) / 255.0F;
+  drawList->AddConvexPolyFilled(stripPoints, 4,
+      IM_COL32(0, 0, 0, static_cast<int>(std::lround(255.0F * stripAlpha * eased))));
+  const ImVec2 accentPoints[4] = {
+      fit(layout.panelLeft + layout.slant, layout.panelTop),
+      fit(layout.panelLeft + layout.slant + m.dp(kDialogAccentDp), layout.panelTop),
+      fit(layout.panelLeft + layout.stripSlant + m.dp(kDialogAccentDp), stripTop),
+      fit(layout.panelLeft + layout.stripSlant, stripTop),
+  };
+  drawList->AddConvexPolyFilled(accentPoints, 4, fadeColor(kDialogAccentFill, eased));
+
+  // Title and its rule follow the slanted left edge at their own height.
+  const float titleCenterY = layout.panelTop + layout.padTop + layout.titleLine * 0.5F;
+  const float titleShift = (layout.contentBottom - titleCenterY) * kSlope;
+  const ImVec2 titleCenter = fit(layout.contentLeft + titleShift, titleCenterY);
+  drawTextPx(drawList, m, titleCenter.x, titleCenter.y,
+      std::max(1.0F, layout.contentWidth * panelScale), kDialogTitleDp * panelScale, false,
+      fadeColor(kDialogTitleText, eased), "选择皮肤", true);
+  const float ruleShift = (layout.contentBottom - (layout.ruleTop + m.dp(1.0F))) * kSlope;
+  const ImVec2 ruleTopLeft = fit(layout.contentLeft + ruleShift, layout.ruleTop);
+  drawList->AddRectFilled(ruleTopLeft,
+      ImVec2(ruleTopLeft.x + m.dp(kDialogRuleWidthDp) * panelScale,
+          ruleTopLeft.y + m.dp(kDialogRuleHeightDp) * panelScale),
+      fadeColor(kDialogRuleFill, eased));
+
+  // The list scrolls inside its viewport; each row's box is shifted along the slanted edge the
+  // same way the reference view applies the panel slant.
+  const float rowSlant = layout.rowHeight * kSlope;
+  drawList->PushClipRect(fit(layout.panelLeft, layout.listTop),
+      fit(layout.panelLeft + layout.panelWidth, layout.listTop + layout.listViewport), true);
+  for (int index = 0; index < layout.rowCount; ++index) {
+    const float rowTop = layout.listTop + index * layout.rowStride - dialogs.skinScroll;
+    if (rowTop + layout.rowHeight < layout.listTop - 0.5F
+        || rowTop > layout.listTop + layout.listViewport + 0.5F) {
+      continue;
+    }
+    const float rowCenter = rowTop + layout.rowHeight * 0.5F;
+    const float clampedCenter = std::clamp(
+        rowCenter, layout.listTop, layout.listTop + layout.listViewport);
+    const float shift = (layout.contentBottom - clampedCenter) * kSlope;
+    const float rowLeft = layout.contentLeft + shift;
+    const float rowRight = rowLeft + layout.contentWidth;
+    if (dialogs.skinPressedRow == index) {
+      const ImVec2 pressedPoints[4] = {
+          fit(rowLeft + rowSlant, rowTop),
+          fit(rowRight, rowTop),
+          fit(rowRight - rowSlant, rowTop + layout.rowHeight),
+          fit(rowLeft, rowTop + layout.rowHeight),
+      };
+      drawList->AddConvexPolyFilled(pressedPoints, 4, fadeColor(kDialogRowPressedFill, eased));
+    }
+    const ImVec2 rowTextCenter = fit(rowLeft, rowCenter);
+    drawTextPx(drawList, m, rowTextCenter.x, rowTextCenter.y,
+        std::max(1.0F, layout.contentWidth * panelScale), kDialogRowTextDp * panelScale, false,
+        fadeColor(kDialogRowText, eased), names[static_cast<std::size_t>(index)], true);
+  }
+  drawList->PopClipRect();
+
+  // Input: taps outside cancel, a tap on a row selects it and dismisses, dragging the list
+  // scrolls it like the reference ScrollView.
+  if (dialogs.skinPhase == DialogState::SkinPhase::Closing) return;
+  const bool interactive = eased > 0.2F;
+  if (!interactive) return;
+  // The reference dialog is cancelable: the back key closes it like an outside tap.
+  if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) beginSkinDialogClose(nowSec);
+  const PointerSnapshot pointer = pointerSnapshot();
+  const ImVec2 local = inverseFit(pointer.position);
+  const bool insidePanel = pointInside(local, layout.panelLeft, layout.panelTop,
+      layout.panelLeft + layout.panelWidth, layout.panelTop + layout.panelHeight);
+  const bool insideList = pointInside(local, layout.contentLeft, layout.listTop,
+      layout.contentLeft + layout.contentWidth, layout.listTop + layout.listViewport);
+  const auto rowAtPosition = [&](ImVec2 position) -> int {
+    if (!pointInside(position, layout.contentLeft, layout.listTop,
+            layout.contentLeft + layout.contentWidth,
+            layout.listTop + layout.listViewport)) {
+      return -1;
+    }
+    const float offset = position.y - layout.listTop + dialogs.skinScroll;
+    if (offset < 0.0F || layout.rowStride <= 0.0F) return -1;
+    const int index = static_cast<int>(offset / layout.rowStride);
+    if (index < 0 || index >= layout.rowCount) return -1;
+    const float rowTop = layout.listTop + index * layout.rowStride - dialogs.skinScroll;
+    const float rowCenter = rowTop + layout.rowHeight * 0.5F;
+    const float clampedCenter = std::clamp(
+        rowCenter, layout.listTop, layout.listTop + layout.listViewport);
+    const float rowLeft = layout.contentLeft + (layout.contentBottom - clampedCenter) * kSlope;
+    if (position.x < rowLeft - 0.5F || position.x > rowLeft + layout.contentWidth + 0.5F) {
+      return -1;
+    }
+    return index;
+  };
+
+  if (pointer.clicked) {
+    const int row = rowAtPosition(local);
+    dialogs.skinPressedRow = row;
+    dialogs.skinScrollDragging = false;
+    dialogs.skinPressOutside = !insidePanel;
+    if (insideList) {
+      dialogs.skinPressY = local.y;
+      dialogs.skinScrollAtPress = dialogs.skinScroll;
+    }
+  }
+  if (pointer.down && dialogs.skinPressedRow >= 0 && insideList) {
+    const float delta = local.y - dialogs.skinPressY;
+    if (std::abs(delta) > m.dp(6.0F)) dialogs.skinScrollDragging = true;
+    if (dialogs.skinScrollDragging) {
+      const float maxScroll = std::max(0.0F, layout.rowsTotal - layout.listViewport);
+      dialogs.skinScroll =
+          std::clamp(dialogs.skinScrollAtPress - delta, 0.0F, maxScroll);
+    }
+  }
+  const float wheel = ImGui::GetIO().MouseWheel;
+  if (insideList && std::abs(wheel) > 0.0F && !dialogs.skinScrollDragging) {
+    const float maxScroll = std::max(0.0F, layout.rowsTotal - layout.listViewport);
+    dialogs.skinScroll = std::clamp(dialogs.skinScroll - wheel * m.dp(60.0F), 0.0F, maxScroll);
+  }
+  if (pointer.released) {
+    if (dialogs.skinPressedRow >= 0 && !dialogs.skinScrollDragging) {
+      const int row = rowAtPosition(local);
+      if (row == dialogs.skinPressedRow) {
+        if (row == 0) {
+          context.settings.selectedSkin.clear();
+        } else {
+          const auto skins = listSkinDirectories(context);
+          const auto index = static_cast<std::size_t>(row - 1);
+          if (index < skins.size()) {
+            context.settings.selectedSkin = skins[index].filename().string();
+          }
+        }
+        markChanged(context);
+        beginSkinDialogClose(nowSec);
+      }
+    } else if (dialogs.skinPressOutside && !insidePanel) {
+      beginSkinDialogClose(nowSec);
+    }
+    dialogs.skinPressedRow = -1;
+    dialogs.skinScrollDragging = false;
+    dialogs.skinPressOutside = false;
+  }
+}
+
+void beginSkinDialogClose(double nowSec) {
+  DialogState& dialogs = dialogState();
+  if (dialogs.skinPhase != DialogState::SkinPhase::Entering
+      && dialogs.skinPhase != DialogState::SkinPhase::Open) {
+    return;
+  }
+  // Start the shrink-out from the current panel opacity, like the reference animator.
+  float linear = 1.0F;
+  if (dialogs.skinPhase == DialogState::SkinPhase::Entering) {
+    linear = static_cast<float>(
+        std::clamp((nowSec - dialogs.skinPhaseStart) / kDialogEnterSec, 0.0, 1.0));
+  }
+  const float inverse = 1.0F - linear;
+  dialogs.skinPhase = DialogState::SkinPhase::Closing;
+  dialogs.skinPhaseStart = nowSec;
+  dialogs.skinExitFrom = std::max(0.05F, 1.0F - inverse * inverse * inverse);
+}
+
+void openSkinDialog(double nowSec) {
+  DialogState& dialogs = dialogState();
+  dialogs.skinSelectOpen = true;
+  dialogs.skinPhase = DialogState::SkinPhase::Entering;
+  dialogs.skinPhaseStart = nowSec;
+  dialogs.skinScroll = 0.0F;
+  dialogs.skinPressedRow = -1;
+  dialogs.skinScrollDragging = false;
+  dialogs.skinPressOutside = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1338,36 +1735,6 @@ void drawDialogs(AppContext& context, const Metrics& m, const BackButtonLayout& 
     }
   }
 
-  // Skin selection.
-  if (dialogs.skinSelectOpen) {
-    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5F, 0.5F));
-    ImGui::SetNextWindowSize(ImVec2(420.0F, 0.0F), ImGuiCond_Appearing);
-    if (ImGui::BeginPopupModal("##settings_skin_select", nullptr,
-            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
-      ImGui::SetWindowFontScale(scale);
-      ImGui::TextUnformatted("选择皮肤");
-      if (ImGui::Button("内置皮肤", ImVec2(360.0F, 0.0F))) {
-        context.settings.selectedSkin.clear();
-        markChanged(context);
-        dialogs.skinSelectOpen = false;
-        ImGui::CloseCurrentPopup();
-      }
-      for (const auto& skin : listSkinDirectories(context)) {
-        const std::string name = skin.filename().string();
-        if (ImGui::Button(name.c_str(), ImVec2(360.0F, 0.0F))) {
-          context.settings.selectedSkin = name;
-          markChanged(context);
-          dialogs.skinSelectOpen = false;
-          ImGui::CloseCurrentPopup();
-        }
-      }
-      if (ImGui::Button("取消", ImVec2(360.0F, 0.0F))) {
-        dialogs.skinSelectOpen = false;
-        ImGui::CloseCurrentPopup();
-      }
-      ImGui::EndPopup();
-    }
-  }
 
   // Skin import.
   if (dialogs.skinImportOpen) {
@@ -1452,6 +1819,8 @@ void drawDialogs(AppContext& context, const Metrics& m, const BackButtonLayout& 
 
 void drawSettingsScreen(AppContext& context) {
   const Metrics m = metrics();
+
+
   ScreenState& state = screenState();
   PointerState& pointer = pointerState();
 
@@ -1612,6 +1981,7 @@ void drawSettingsScreen(AppContext& context) {
   }
 
   drawDialogs(context, m, backLayout, tabLayout);
+  drawSkinSelectDialog(context, m, drawList, context.nowSec);
 
   ui::endFullscreenWindow();
 }

@@ -11,7 +11,7 @@ add_library(rechigros_render STATIC
   batch/SpriteBatch.cpp
   text/TextRenderer.cpp
   fx/BloomPass.cpp
-  fx/FullscreenPass.cpp
+  fx/FullscreenPass.cpp  fx/FxaaPass.cpp
   fx/BadEffectField.cpp
   fx/BlockCompositePass.cpp
   fx/BlockOverlay.cpp
@@ -21,6 +21,7 @@ add_library(rechigros_render STATIC
   fx/PauseBackdropPass.cpp
   fx/PrprChain.cpp
   scene/BackgroundBlur.cpp
+  scene/PauseHudBlur.cpp
   scene/StageLayout.cpp
   scene/LinePass.cpp
   scene/NoteBatch.cpp

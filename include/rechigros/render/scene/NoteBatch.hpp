@@ -41,6 +41,9 @@ struct NotePassParams {
   bool revealHiddenObjects{false};
   float revealHiddenFloorAlpha{};
   float frameGlobalAlpha{1.0F};
+  // Multi-press highlight setting: when off, notes flagged for the highlight variant are
+  // drawn with the normal sheet and the normal width scale.
+  bool multiPressHighlight{true};
   // Age past which an unjudged note stops being drawn.
   double missFadeWindow{0.18};
   math::Rect cullBounds{};

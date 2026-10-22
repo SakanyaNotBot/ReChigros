@@ -78,21 +78,63 @@ render::scene::StageLayout renderStage(const AppContext& context) {
       static_cast<float>(context.drawableHeight), 16.0F / 9.0F, false);
 }
 
+// Chart-reveal camera state for the current gameplay frame. The renderer resolves the same
+// curves from its own frame input; the app needs them for HUD texture transforms and for
+// the pause-button hit area.
+bool chartRevealCameraActive(const AppContext& context) {
+  if (!context.settings.chartReveal || !context.game.loaded || context.game.chart == nullptr) {
+    return false;
+  }
+  const auto& game = context.game;
+  return !game.inIntro && !game.inOutro && game.chartTimeSec >= 0.0;
+}
+
+float chartRevealScale(const AppContext& context) {
+  if (!chartRevealCameraActive(context)) return 1.0F;
+  const auto& game = context.game;
+  const double totalSec = game.musicDurationSec > 0.05 ? game.musicDurationSec
+                                                       : game.chart->chartEndTimeSec;
+  if (!(totalSec > 0.0)) return 1.0F;
+  constexpr float kRevealTransitionSec = 1.0F;
+  constexpr float kRevealTargetScale = 0.30F;
+  const float playhead = static_cast<float>(game.playheadSec);
+  const float total = static_cast<float>(totalSec);
+  const auto smooth = [](float value) {
+    value = std::clamp(value, 0.0F, 1.0F);
+    return value * value * (3.0F - 2.0F * value);
+  };
+  float scale = 1.0F;
+  if (playhead >= std::max(0.0F, total - kRevealTransitionSec)) {
+    const float start = std::max(0.0F, total - kRevealTransitionSec);
+    scale = kRevealTargetScale +
+        (1.0F - kRevealTargetScale) * smooth((playhead - start) / kRevealTransitionSec);
+  } else {
+    scale = 1.0F + (kRevealTargetScale - 1.0F) * smooth(playhead / kRevealTransitionSec);
+  }
+  return std::clamp(scale, kRevealTargetScale, 1.0F);
+}
+
 bool isPauseButtonHit(const AppContext& context, float windowX, float windowY) {
   // The pause control's hit area is its rect expanded by a padded radius, sized from the
-  // play field's 1000-unit canvas exactly like the reference layout.
+  // play field's 1000-unit canvas exactly like the reference layout. During a chart reveal
+  // the rect and the padded radius shrink with the revealed play field.
   const StageRect stage = touchStage(context);
   if (stage.width <= 1.0F || stage.height <= 1.0F) return false;
   const float unit = stage.height / 1000.0F;
   const float halfUiW = stage.width / stage.height * 500.0F;
-  const float centerX = stage.left + stage.width * 0.5F + (50.5887985F - halfUiW) * unit;
-  const float centerY = stage.top + stage.height * 0.5F - 444.2999878F * unit;
+  const float baseCenterX = stage.left + stage.width * 0.5F + (50.5887985F - halfUiW) * unit;
+  const float baseCenterY = stage.top + stage.height * 0.5F - 444.2999878F * unit;
   const float pauseWidth = 34.262F * unit;
   const float pauseHeight = 37.966F * unit;
   const float dp = 1.75F * std::max(0.2F, stage.height / 1080.0F);
   const float pad = std::clamp(std::max(pauseWidth, pauseHeight) * 1.1F, dp * 20.0F, dp * 80.0F);
-  const float radiusX = pauseWidth * 0.5F + pad;
-  const float radiusY = pauseHeight * 0.5F + pad;
+  const float revealScale = chartRevealScale(context);
+  const float stageCenterX = stage.left + stage.width * 0.5F;
+  const float stageCenterY = stage.top + stage.height * 0.5F;
+  const float centerX = stageCenterX + (baseCenterX - stageCenterX) * revealScale;
+  const float centerY = stageCenterY + (baseCenterY - stageCenterY) * revealScale;
+  const float radiusX = (pauseWidth * 0.5F + pad) * revealScale;
+  const float radiusY = (pauseHeight * 0.5F + pad) * revealScale;
   return std::abs(windowX - centerX) <= radiusX && std::abs(windowY - centerY) <= radiusY;
 }
 
@@ -1447,7 +1489,8 @@ bool gameEnter(AppContext& context) {
     }
   } else {
     game.replayPlayback = false;
-    game.recording = context.settings.replayEnabled && !game.autoplay && !game.practice;
+    game.recording = (context.settings.replayEnabled || context.recordRequested)
+        && !game.autoplay && !game.practice;
     game.session.setReplayRecording(game.recording);
     if (game.recording) {
       game.recorded.meta.chartId = context.play.chartId;
@@ -1614,6 +1657,15 @@ void gameRender(AppContext& context) {
   input.aspectRatio = context.settings.aspectRatio;
   input.challengeMode = game.challenge;
   input.apfcIndicator = context.settings.apfcIndicator;
+  // Display settings are read when the run starts; the settings screen is not reachable
+  // while gameplay is active.
+  input.judgeLineWidth = context.settings.judgeLineWidth;
+  input.lowResolutionMode = context.settings.lowResolutionMode;
+  input.antialias = context.settings.antialias;
+  input.disableChartShader = context.settings.disableChartShader;
+  input.multiPressHighlight = context.settings.multiPressHighlight;
+  input.storyMode = context.settings.storyMode;
+  input.chartReveal = context.settings.chartReveal;
   switch (game.pause) {
     case GameRuntime::Pause::Menu:
       input.pause.mode = render::PauseMode::Menu;
@@ -1665,18 +1717,21 @@ void gameRender(AppContext& context) {
   }
   input.hud.pauseRingAgeSec =
       gPauseRingStartSec >= 0.0 ? context.nowSec - gPauseRingStartSec : -1.0;
+  input.hud.revealCameraActive = chartRevealCameraActive(context);
+  input.hud.revealScale = chartRevealScale(context);
   // The HUD start tween runs over the first 40 frames of the opening and is finished
   // before gameplay starts.
   input.hud.introProgress = game.inIntro
       ? static_cast<float>(std::clamp(game.introElapsedSec / kHudIntroDurationSec, 0.0, 1.0))
       : 1.0F;
   // The reference build does not scale the HUD (or the stage) at the exit: the HUD keeps
-  // its layout while the play field blurs, then the whole gameplay frame fades out under
-  // the result entry. Only the final fade of the run is animated here.
+  // its layout while the play field blurs, then fades out under the result entry. The
+  // reference recording fades the HUD over roughly 0.4 s (frames 7.30-7.70 s of the
+  // capture), so that window is used here.
   input.hud.outroProgress = 0.0F;
   input.hud.alpha = 1.0F;
   if (game.inOutro) {
-    constexpr double exitFadeSec = 0.22;
+    constexpr double exitFadeSec = 0.40;
     const double remaining = kOutroDurationSec - game.outroElapsedSec;
     if (remaining < exitFadeSec) {
       input.hud.alpha = static_cast<float>(std::clamp(remaining / exitFadeSec, 0.0, 1.0));

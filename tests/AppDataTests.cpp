@@ -547,6 +547,268 @@ void testChartLibraryPackDetection() {
   require(sawAlpha, "complete packs appear in the indexed list");
 }
 
+void requireNear(float actual, float expected, const char* what) {
+  require(std::abs(actual - expected) < 1.0e-4F,
+      std::string(what) + " (got " + std::to_string(actual) + ", want " + std::to_string(expected)
+          + ")");
+}
+
+// Settings behaviour: the reference's field initialisers, the save/load round trip and the
+// load-time clamps, plus the reveal -> autoplay coupling.
+void testSettingsDefaultsPersistenceAndClamps() {
+  using namespace rechigros::app;
+  const auto directory = rechigros::test::scratchDirectory("app-data-settings-behaviour");
+
+  // Defaults match the reference field initialisers (ChartSelectActivity.java:210-238).
+  Settings defaults;
+  requireNear(defaults.keyScale, 1.0F, "default key scale");
+  requireNear(defaults.backgroundDim, 0.25F, "default background dim");
+  requireNear(defaults.aspectRatio, 16.0F / 9.0F, "default stage aspect");
+  requireNear(defaults.scrollSpeed, 1.0F, "default scroll speed");
+  requireNear(defaults.judgeLineWidth, 1.0F, "default judge line width");
+  requireNear(defaults.musicVolume, 1.0F, "default music volume");
+  requireNear(defaults.soundEffectVolume, 1.0F, "default sound effect volume");
+  requireNear(defaults.musicSpeed, 1.0F, "default music speed");
+  require(defaults.audioOffsetMs == 0, "default audio offset");
+  require(defaults.hitOffsetIndicatorMode == 0, "default hit offset indicator is disabled");
+  require(!defaults.apfcIndicator, "default apfc indicator");
+  require(!defaults.judgementDetailDistribution, "default judgement detail distribution");
+  require(!defaults.realtimeAccuracy, "default realtime accuracy");
+  require(!defaults.scoreJumpEffect, "default score jump effect");
+  require(defaults.multiPressHighlight, "default multi press highlight");
+  require(!defaults.mirrorX && !defaults.autoplay && !defaults.challengeMode,
+      "default play modes");
+  require(!defaults.lowResolutionMode && !defaults.antialias && !defaults.showFps,
+      "default render toggles");
+  require(!defaults.showDebugInfo && !defaults.disableChartShader && !defaults.chartReveal,
+      "default debug and chart toggles");
+  require(defaults.storyMode, "default story mode");
+  require(!defaults.replayEnabled, "default replay recording is off");
+  require(defaults.selectedSkin.empty(), "default skin is the built-in one");
+
+  // Every persisted field survives a save/load round trip.
+  Settings custom;
+  custom.keyScale = 1.23F;
+  custom.backgroundDim = 0.4F;
+  custom.aspectRatio = 1.5F;
+  custom.scrollSpeed = 2.2F;
+  custom.judgeLineWidth = 1.7F;
+  custom.musicVolume = 3.5F;
+  custom.soundEffectVolume = 0.1F;
+  custom.musicSpeed = 1.75F;
+  custom.audioOffsetMs = -120;
+  custom.hitOffsetIndicatorMode = 2;
+  custom.apfcIndicator = true;
+  custom.judgementDetailDistribution = true;
+  custom.realtimeAccuracy = true;
+  custom.scoreJumpEffect = true;
+  custom.multiPressHighlight = false;
+  custom.mirrorX = true;
+  custom.autoplay = true;
+  custom.challengeMode = true;
+  custom.practiceMode = true;
+  custom.lowResolutionMode = true;
+  custom.antialias = true;
+  custom.showFps = true;
+  custom.showDebugInfo = true;
+  custom.disableChartShader = true;
+  custom.chartReveal = true;
+  custom.storyMode = false;
+  custom.replayEnabled = true;
+  custom.selectedSkin = "Skin A";
+  require(custom.save(directory / "settings.ini"), "settings are saved");
+  Settings loaded;
+  require(loaded.load(directory / "settings.ini"), "saved settings load again");
+  requireNear(loaded.keyScale, 1.23F, "key scale round trip");
+  requireNear(loaded.backgroundDim, 0.4F, "background dim round trip");
+  requireNear(loaded.aspectRatio, 1.5F, "stage aspect round trip");
+  requireNear(loaded.scrollSpeed, 2.2F, "scroll speed round trip");
+  requireNear(loaded.judgeLineWidth, 1.7F, "judge line width round trip");
+  requireNear(loaded.musicVolume, 3.5F, "music volume round trip");
+  requireNear(loaded.soundEffectVolume, 0.1F, "sound effect volume round trip");
+  requireNear(loaded.musicSpeed, 1.75F, "music speed round trip");
+  require(loaded.audioOffsetMs == -120, "audio offset round trip");
+  require(loaded.hitOffsetIndicatorMode == 2, "hit offset indicator mode round trip");
+  require(loaded.apfcIndicator && loaded.judgementDetailDistribution && loaded.realtimeAccuracy
+          && loaded.scoreJumpEffect && !loaded.multiPressHighlight,
+      "judgement display toggles round trip");
+  require(loaded.mirrorX && loaded.autoplay && loaded.challengeMode && loaded.practiceMode,
+      "play mode toggles round trip");
+  require(loaded.lowResolutionMode && loaded.antialias && loaded.showFps && loaded.showDebugInfo
+          && loaded.disableChartShader && loaded.chartReveal,
+      "render and debug toggles round trip");
+  require(!loaded.storyMode && loaded.replayEnabled, "story and replay toggles round trip");
+  require(loaded.selectedSkin == "Skin A", "selected skin round trip");
+
+  // Out-of-range stored values are clamped to the reference ranges on load.
+  const auto write = [&directory](const char* name, const std::string& text) {
+    writeText(directory / name, text);
+    return directory / name;
+  };
+  Settings high;
+  require(high.load(write("clamp-high.ini",
+              "keyScale=5\nscrollSpeed=9\njudgeLineWidth=3\nbackgroundDim=2\nmusicVolume=9\n"
+              "soundEffectVolume=9\nmusicSpeed=4\naudioOffsetMs=5000\n"
+              "hitOffsetIndicatorMode=7\naspectRatio=12\n")),
+      "high clamp file loads");
+  requireNear(high.keyScale, 1.5F, "key scale clamps to the top");
+  requireNear(high.scrollSpeed, 5.0F, "scroll speed clamps to the top");
+  requireNear(high.judgeLineWidth, 2.0F, "judge line width clamps to the top");
+  requireNear(high.backgroundDim, 1.0F, "background dim clamps to the top");
+  requireNear(high.musicVolume, 5.0F, "music volume clamps to 500 percent");
+  requireNear(high.soundEffectVolume, 5.0F, "sound effect volume clamps to 500 percent");
+  requireNear(high.musicSpeed, 2.0F, "music speed clamps to the top");
+  require(high.audioOffsetMs == 500, "audio offset clamps to the top");
+  require(high.hitOffsetIndicatorMode == 2, "hit offset indicator mode clamps to the top");
+  requireNear(high.aspectRatio, 5.0F, "stage aspect clamps to the top");
+
+  Settings low;
+  require(low.load(write("clamp-low.ini",
+              "keyScale=0.1\nscrollSpeed=0\njudgeLineWidth=0\nbackgroundDim=-1\n"
+              "musicVolume=-2\nsoundEffectVolume=-1\nmusicSpeed=0.1\naudioOffsetMs=-5000\n"
+              "hitOffsetIndicatorMode=-3\naspectRatio=-3\n")),
+      "low clamp file loads");
+  requireNear(low.keyScale, 0.7F, "key scale clamps to the bottom");
+  requireNear(low.scrollSpeed, 0.1F, "scroll speed clamps to the bottom");
+  requireNear(low.judgeLineWidth, 0.5F, "judge line width clamps to the bottom");
+  requireNear(low.backgroundDim, 0.0F, "background dim clamps to the bottom");
+  requireNear(low.musicVolume, 0.0F, "music volume clamps to zero");
+  requireNear(low.soundEffectVolume, 0.0F, "sound effect volume clamps to zero");
+  requireNear(low.musicSpeed, 0.5F, "music speed clamps to the bottom");
+  require(low.audioOffsetMs == -500, "audio offset clamps to the bottom");
+  require(low.hitOffsetIndicatorMode == 0, "hit offset indicator mode clamps to the bottom");
+  requireNear(low.aspectRatio, 0.5F, "stage aspect clamps to the bottom");
+
+  // Zero means "follow the window"; a non-finite stored ratio is repaired to it as well.
+  Settings follow;
+  require(follow.load(write("aspect-zero.ini", "aspectRatio=0\n")), "zero aspect file loads");
+  require(follow.aspectRatio == 0.0F, "zero aspect means follow the window");
+  Settings brokenAspect;
+  require(brokenAspect.load(write("aspect-nan.ini", "aspectRatio=nan\n")),
+      "non-finite aspect file loads");
+  require(brokenAspect.aspectRatio == 0.0F, "a non-finite aspect is repaired to follow-window");
+
+  // Revealing the chart detail forces the automatic demonstration on, at load time like the
+  // reference (ChartSelectActivity.java:2514-2518), and both values then persist together.
+  Settings reveal;
+  require(reveal.load(write("reveal.ini", "chartReveal=1\nautoplay=0\n")), "reveal file loads");
+  require(reveal.chartReveal, "reveal is read");
+  require(reveal.autoplay, "reveal forces autoplay on load");
+  require(reveal.save(directory / "reveal-out.ini"), "reveal pair is saved");
+  Settings revealOut;
+  require(revealOut.load(directory / "reveal-out.ini"), "reveal pair loads again");
+  require(revealOut.chartReveal && revealOut.autoplay, "reveal and autoplay persist together");
+
+  // A missing file reports failure and keeps the constructor defaults.
+  Settings missing;
+  require(!missing.load(directory / "absent.ini"), "a missing settings file reports failure");
+  requireNear(missing.keyScale, 1.0F, "a missing settings file keeps the defaults");
+}
+
+// Sidecar discovery for charts played outside the library: only files directly in the
+// chart's own directory may be used, so a neighbouring pack's metadata or artwork cannot be
+// mistaken for this chart's (the regression that made tests/fixtures/plain.json report the
+// skin fixture's info.yml as its metadata).
+void testSidecarDiscovery() {
+  using namespace rechigros::app;
+  const auto root = rechigros::test::scratchDirectory("app-data-sidecar");
+  // The scratch directory survives between runs, so start from a clean tree: this test
+  // asserts the absence of sidecars before writing them.
+  std::filesystem::remove_all(root);
+  const auto chartDirectory = root / "chart";
+  std::filesystem::create_directories(chartDirectory);
+  writeText(chartDirectory / "plain.json", "{\"formatVersion\":3}");
+
+  // A neighbouring directory that looks like a pack must not supply this chart's sidecars.
+  std::filesystem::create_directories(root / "neighbour" / "art");
+  writeText(root / "neighbour" / "info.yml",
+      "name: Neighbour\nmusic: song.ogg\nillustration: art/cover.png\n");
+  writeText(root / "neighbour" / "song.ogg", "OggS");
+  writeText(root / "neighbour" / "art" / "cover.png", "PNG");
+  require(findSidecarInfoFile(chartDirectory).empty(),
+      "a sibling pack's metadata is not this chart's sidecar");
+  require(findSidecarMusicFile(chartDirectory).empty(),
+      "a sibling pack's audio is not this chart's music");
+  require(findSidecarImageFile(chartDirectory).empty(),
+      "a sibling pack's artwork is not this chart's illustration");
+
+  // Files nested below the chart directory are not sidecars either.
+  std::filesystem::create_directories(chartDirectory / "nested");
+  writeText(chartDirectory / "nested" / "info.json", "{\"name\":\"Nested\"}");
+  writeText(chartDirectory / "nested" / "song.ogg", "OggS");
+  writeText(chartDirectory / "nested" / "cover.png", "PNG");
+  require(findSidecarInfoFile(chartDirectory).empty(), "a nested info file is not a sidecar");
+  require(findSidecarMusicFile(chartDirectory).empty(), "a nested audio file is not a sidecar");
+  require(findSidecarImageFile(chartDirectory).empty(), "a nested image is not a sidecar");
+
+  // Direct files in the chart's own directory are found.
+  writeText(chartDirectory / "info.yml", "name: Local\n");
+  writeText(chartDirectory / "song.ogg", "OggS");
+  writeText(chartDirectory / "cover.png", "PNG");
+  require(findSidecarInfoFile(chartDirectory) == chartDirectory / "info.yml",
+      "the direct info file is the sidecar");
+  require(findSidecarMusicFile(chartDirectory) == chartDirectory / "song.ogg",
+      "the direct audio file is the sidecar");
+  require(findSidecarImageFile(chartDirectory) == chartDirectory / "cover.png",
+      "the direct illustration is the sidecar");
+
+  // Candidates are sorted by path, so the canonical json spelling wins deterministically.
+  writeText(chartDirectory / "info.json", "{}");
+  require(findSidecarInfoFile(chartDirectory) == chartDirectory / "info.json",
+      "info.json sorts before info.yml");
+  require(findSidecarInfoFile(root / "missing").empty(), "a missing directory yields no sidecar");
+}
+
+// Saved replay rows on the settings page are backed by this store: adding, listing newest
+// first and deleting must all work without the interface.
+void testReplayStoreRows() {
+  using namespace rechigros::app;
+  const auto root = rechigros::test::scratchDirectory("app-data-replay-store");
+  // The scratch directory survives between runs; start with an empty store so the row
+  // counts below are deterministic.
+  std::filesystem::remove_all(root / "replays");
+  ReplayStore store(root / "replays");
+
+  const auto makeReplay = [](std::int64_t timestamp, const std::string& song, int score) {
+    ReplayData data;
+    data.meta.chartId = "chart";
+    data.meta.songName = song;
+    data.meta.difficulty = "IN 15";
+    data.meta.score = score;
+    data.meta.totalNotes = 1;
+    data.meta.timestampMs = timestamp;
+    rechigros::game::ReplayJudgement judgement;
+    judgement.type = rechigros::game::ReplayJudgement::Type::Tap;
+    judgement.noteIndex = 0;
+    judgement.judgement = 0;
+    judgement.timeSec = 1.0;
+    data.judgements.push_back(judgement);
+    return data;
+  };
+
+  const std::string first = store.save(makeReplay(1700000000000LL, "First Song", 111111));
+  require(!first.empty(), "a saved replay gets an identifier");
+  const std::string second = store.save(makeReplay(1700000100000LL, "Second Song", 222222));
+  require(!second.empty() && second != first, "a second replay gets its own identifier");
+
+  const auto listed = store.list();
+  require(listed.size() == 2, "the replay store lists both rows");
+  if (listed.size() == 2) {
+    require(listed[0].meta.songName == "Second Song", "replay rows list newest first");
+    require(listed[0].meta.score == 222222, "a replay row carries its score");
+    require(listed[0].meta.difficulty == "IN 15", "a replay row carries its difficulty label");
+  }
+  const auto found = store.find(first);
+  require(found.has_value() && found->meta.songName == "First Song",
+      "a replay row is opened by its identifier");
+
+  require(store.remove(first), "the selected replay row is deleted");
+  require(!store.find(first).has_value(), "a deleted replay no longer resolves");
+  const auto remaining = store.list();
+  require(remaining.size() == 1 && remaining[0].id == second,
+      "deleting one row keeps the other rows");
+}
+
 } // namespace
 
 int main() {
@@ -556,6 +818,9 @@ int main() {
   testReplayPlaybackResultMerge();
   testInfoFileFormats();
   testChartLibraryPackDetection();
+  testSettingsDefaultsPersistenceAndClamps();
+  testSidecarDiscovery();
+  testReplayStoreRows();
   if (g_failures != 0) {
     std::cerr << g_failures << " application data test(s) failed\n";
     return 1;

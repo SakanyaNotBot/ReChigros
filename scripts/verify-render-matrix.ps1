@@ -137,6 +137,36 @@ $cases = @(
      Base = @('--time', '140.0');
      Changed = @('--time', '140.0', '--song', 'message'); Minimum = 3.0;
      Description = 'the kaleidoscope level effect draws' }
+  # Display settings that are persisted by the settings screen must reach the picture.
+  @{ Id = 'setting-judge-line-width'; BaseChart = $plain; ChangedChart = $plain;
+     Base = @('--time', '4.0');
+     Changed = @('--time', '4.0', '--judge-line-width', '2.0'); Minimum = 0.2;
+     Description = 'the judge-line-width setting scales plain lines' }
+  @{ Id = 'setting-multi-press'; BaseChart = $moreBets; ChangedChart = $moreBets;
+     Base = @('--time', '0.0');
+     Changed = @('--time', '0.0', '--no-multi-press'); Minimum = 0.2;
+     Description = 'disabling multi-press highlight falls back to the normal sheet' }
+  @{ Id = 'setting-low-res'; BaseChart = $plain; ChangedChart = $plain;
+     Base = @('--time', '1.0');
+     Changed = @('--time', '1.0', '--low-res'); Minimum = 0.2;
+     Description = 'the low-resolution setting renders through the half-res target' }
+  @{ Id = 'setting-antialias'; BaseChart = $plain; ChangedChart = $plain;
+     Base = @('--time', '1.0', '--low-res');
+     Changed = @('--time', '1.0', '--low-res', '--antialias'); Minimum = 0.05;
+     Description = 'the antialias setting resolves the low-res frame through FXAA' }
+  @{ Id = 'setting-chart-reveal'; BaseChart = $plain; ChangedChart = $plain;
+     Base = @('--time', '0.9');
+     Changed = @('--time', '0.9', '--chart-reveal'); Minimum = 1.0;
+     Description = 'the chart-reveal setting draws the revealing play field' }
+  @{ Id = 'setting-story-mode'; BaseChart = $plain; ChangedChart = $plain;
+     Base = @('--time', '115.0', '--song', 'desultorysignals');
+     Changed = @('--time', '115.0', '--song', 'desultorysignals', '--no-story-mode');
+     Minimum = 1.0;
+     Description = 'disabling story mode gates the non-Message level effect' }
+  @{ Id = 'setting-chart-shader'; BaseChart = $bloom; ChangedChart = $bloom;
+     Base = @('--time', '1.0');
+     Changed = @('--time', '1.0', '--no-chart-shader'); Minimum = 1.0;
+     Description = 'disabling the chart shader skips the storyboard pass' }
 )
 
 $failures = 0

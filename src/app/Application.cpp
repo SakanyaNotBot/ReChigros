@@ -387,6 +387,8 @@ bool Application::initialize() {
   app_->renderer = renderer_.get();
   app_->displayDpi = displayDpi_;
   app_->settingsDirty = false;
+  // An explicit record path asks for a replay regardless of the stored preference.
+  app_->recordRequested = !recordReplayPath_.empty();
   // A verification run can pin the play mode regardless of the stored settings.
   app_->playOverrides.practice = practiceOverride_;
   app_->playOverrides.challenge = challengeOverride_;

@@ -23,7 +23,9 @@ struct Settings {
   int audioOffsetMs{};
 
   // Judgement display.
-  int hitOffsetIndicatorMode{1};
+  // Judgement display. The offset indicator is disabled by default like the reference; the
+  // user enables it from the settings page.
+  int hitOffsetIndicatorMode{};
   bool apfcIndicator{};
   bool judgementDetailDistribution{};
   bool realtimeAccuracy{};
@@ -42,7 +44,8 @@ struct Settings {
   bool disableChartShader{};
   bool chartReveal{};
   bool storyMode{true};
-  bool replayEnabled{true};
+  // The reference starts with replay recording off.
+  bool replayEnabled{false};
 
   std::string selectedSkin;
 

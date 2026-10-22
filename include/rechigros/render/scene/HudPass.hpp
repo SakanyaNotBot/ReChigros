@@ -79,6 +79,10 @@ struct HudValues {
   double visualTimeSec{};
   // Seconds since the pause button was last touched; negative when idle.
   double pauseRingAgeSec{-1.0F};
+  // Chart-reveal camera state: texture HUD elements that belong to the play field are
+  // transformed with the revealed stage, like the reference reveal pass.
+  bool revealCameraActive{false};
+  float revealScale{1.0F};
   // Frame-rate readout (reference: bottom-left "N FPS" plate).
   float fps{};
   bool showFps{false};

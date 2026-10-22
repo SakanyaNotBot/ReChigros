@@ -122,6 +122,9 @@ bool Settings::load(const std::filesystem::path& file) {
   musicSpeed = std::max(0.5F, std::min(musicSpeed, 2.0F));
   audioOffsetMs = std::max(-500, std::min(audioOffsetMs, 500));
   hitOffsetIndicatorMode = std::max(0, std::min(hitOffsetIndicatorMode, 2));
+  // Revealing chart detail only makes sense with the automatic demonstration, so the
+  // reference turns autoplay on when reveal is enabled.
+  if (chartReveal && !autoplay) autoplay = true;
   return true;
 }
 

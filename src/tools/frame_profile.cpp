@@ -620,6 +620,27 @@ void runMicroBenchmarks(const Options& options, rechigros::game::Chart& chart) {
     std::cout << "micro zoneDraw20=" << timeIt(50, drawPass) << "ms ("
               << kZones << " active zones)\n";
   }
+  {
+    // Equivalence of the cached block-window query against a full scan across the whole
+    // chart, which is the check the renderer patch relies on.
+    std::size_t mismatches = 0;
+    std::size_t samples = 0;
+    constexpr double kStep = 1.0 / 60.0;
+    for (double time = 0.0; time <= chart.chartEndTimeSec; time += kStep) {
+      const float chartTime = static_cast<float>(time);
+      bool expected = false;
+      for (const auto& zone : chart.blockAreaList) {
+        if (chartTime >= zone.appearTime && chartTime < zone.disappearTime) {
+          expected = true;
+          break;
+        }
+      }
+      if (chart.hasLiveBlock(time) != expected) ++mismatches;
+      ++samples;
+    }
+    std::cout << "micro blockWindowQuery mismatches=" << mismatches << " over " << samples
+              << " samples (" << chart.blockAreaList.size() << " zones)\n";
+  }
   std::cout << "micro eventSamplePerLine="
             << timeIt(20, [&chart]() {
                  for (const auto& line : chart.judgeLineList) {

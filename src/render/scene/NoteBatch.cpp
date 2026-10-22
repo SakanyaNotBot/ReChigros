@@ -308,7 +308,7 @@ void buildHeadBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
     for (std::size_t noteIndex = firstNote; noteIndex < typedCount; ++noteIndex) {
       const auto& note = noteAt(noteIndex);
       if (note.isHold || note.type != noteType) continue;
-      if ((note.morebets == 1) != highlightVariant) continue;
+      if (((note.morebets == 1) && params.multiPressHighlight) != highlightVariant) continue;
       if (isAnyJudgement(note.judgeResult)) continue;
       // Unjudged notes fade out over the good window once their time has passed.
       if (params.chartTimeSec - note.sect > params.missFadeWindow) continue;
@@ -419,7 +419,7 @@ void buildHeadBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
 
       // A highlight texture carries a different canvas size, so its width ratio restores
       // the note to the same drawn size as the normal variant.
-      const float widthScale = params.widthScaleFor(note.type, highlightVariant);
+      const float widthScale = params.widthScaleFor(note.type, highlightVariant && params.multiPressHighlight);
       const float baseWidth =
           params.noteWidthBase * size * widthScale * scaleControl * inclineValue;
       const float noteWidth = baseWidth * xScale;
@@ -495,7 +495,7 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
     for (std::size_t noteIndex = firstNote; noteIndex < typedCount; ++noteIndex) {
       const auto& note = noteAt(noteIndex);
       if (!note.isHold) continue;
-      if ((note.morebets == 1) != highlightVariant) continue;
+      if (((note.morebets == 1) && params.multiPressHighlight) != highlightVariant) continue;
       if (note.holdEndTime < params.chartTimeSec) continue;
 
       const bool lineHiddenNote = reveal && frame.hideNotes;
@@ -669,7 +669,7 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
             calcInclineValue(inclineSinr, baseFpWithControl, transYPx, stageAspect, params.stageHeight);
       }
 
-      const float widthScale = params.widthScaleFor(note.type, highlightVariant);
+      const float widthScale = params.widthScaleFor(note.type, highlightVariant && params.multiPressHighlight);
       const float baseWidth =
           params.noteWidthBase * size * widthScale * scaleControl * inclineValue;
       const float noteWidth = baseWidth * xScale;

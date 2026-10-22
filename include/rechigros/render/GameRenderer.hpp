@@ -40,6 +40,29 @@ struct RenderFrameInput {
   // Colours plain judge lines by the best judgement so far.
   bool apfcIndicator{false};
 
+  // Display settings applied by the renderer; every default preserves the reference look.
+  // Plain judge line width multiplier (0.5..2); storyboard textures and text lines keep
+  // their own size.
+  float judgeLineWidth{1.0F};
+  // Renders the play field into a half-resolution target and upscales it.
+  bool lowResolutionMode{false};
+  // Renders through a full-resolution offscreen target and resolves it with FXAA.
+  bool antialias{false};
+  // Skips the storyboard/level-effect shader chain entirely.
+  bool disableChartShader{false};
+  // Uses the multi-press highlight note textures and width scales for flagged notes.
+  bool multiPressHighlight{true};
+  // Enables the story level effects; the Message level always plays its effects.
+  bool storyMode{true};
+  // Reveals the play field: shrunk camera at the start and end plus hidden objects.
+  bool chartReveal{false};
+  // Resolved by the renderer from chartReveal for the frame it is drawing; the caller
+  // leaves these at their defaults.
+  bool revealCameraActive{false};
+  float revealScale{1.0F};
+  bool revealHiddenObjects{false};
+  float revealHiddenFloorAlpha{0.0F};
+
   struct PauseState {
     PauseMode mode{PauseMode::None};
     // Seconds since the pause overlay started animating.
@@ -78,6 +101,10 @@ struct RenderFrameInput {
     // Wall clock and the age of the last pause-button touch (negative when idle).
     double visualTimeSec{0.0};
     double pauseRingAgeSec{-1.0};
+    // Chart-reveal camera state: texture HUD elements and the pause hit area follow the
+    // shrunk play field, like the reference reveal transform.
+    bool revealCameraActive{false};
+    float revealScale{1.0F};
     // Optional catch-up animation of the score and accuracy readouts.
     bool scoreJumpEffect{false};
     // Judgement offset indicator setting (0 disabled, 1 sector dial, 2 line) and the

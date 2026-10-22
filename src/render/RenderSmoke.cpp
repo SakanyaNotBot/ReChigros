@@ -48,6 +48,14 @@ struct Options {
   bool forceBad{false};
   bool mirrorX{false};
   float scrollSpeed{1.0F};
+  // Renderer settings mirroring the settings screen; defaults keep the reference look.
+  float judgeLineWidth{1.0F};
+  bool lowResolutionMode{false};
+  bool antialias{false};
+  bool disableChartShader{false};
+  bool multiPressHighlight{true};
+  bool storyMode{true};
+  bool chartReveal{false};
   bool pauseMenu{false};
   float pauseElapsedSec{0.3F};
   // Drops the hold-body bursts so a frame can be compared with and without them.
@@ -98,6 +106,20 @@ Options parseOptions(int argc, char** argv) {
       options.pauseElapsedSec = static_cast<float>(std::atof(next().c_str()));
     } else if (flag == "--no-hold-bursts") {
       options.holdBodyBursts = false;
+    } else if (flag == "--judge-line-width") {
+      options.judgeLineWidth = static_cast<float>(std::atof(next().c_str()));
+    } else if (flag == "--low-res") {
+      options.lowResolutionMode = true;
+    } else if (flag == "--antialias") {
+      options.antialias = true;
+    } else if (flag == "--no-chart-shader") {
+      options.disableChartShader = true;
+    } else if (flag == "--no-multi-press") {
+      options.multiPressHighlight = false;
+    } else if (flag == "--no-story-mode") {
+      options.storyMode = false;
+    } else if (flag == "--chart-reveal") {
+      options.chartReveal = true;
     }
   }
   return options;
@@ -208,6 +230,32 @@ int main(int argc, char** argv) {
       input.keyScale = options.keyScale;
       input.mirrorX = options.mirrorX;
       input.scrollSpeed = options.scrollSpeed;
+  input.judgeLineWidth = options.judgeLineWidth;
+  input.lowResolutionMode = options.lowResolutionMode;
+  input.antialias = options.antialias;
+  input.disableChartShader = options.disableChartShader;
+  input.multiPressHighlight = options.multiPressHighlight;
+  input.storyMode = options.storyMode;
+  input.chartReveal = options.chartReveal;
+  // The app resolves the reveal camera for the HUD transforms too; mirror it here so the
+  // headless frame shows the same HUD as a gameplay frame.
+  if (options.chartReveal) {
+    const float total = static_cast<float>(input.hud.totalDurationSec);
+    const float playhead = static_cast<float>(input.chartTimeSec);
+    const float transition = 1.0F;
+    const float target = 0.30F;
+    const auto smooth = [](float value) {
+      value = std::clamp(value, 0.0F, 1.0F);
+      return value * value * (3.0F - 2.0F * value);
+    };
+    input.hud.revealCameraActive = true;
+    if (total > 0.0F && playhead >= std::max(0.0F, total - transition)) {
+      const float start = std::max(0.0F, total - transition);
+      input.hud.revealScale = target + (1.0F - target) * smooth((playhead - start) / transition);
+    } else {
+      input.hud.revealScale = 1.0F + (target - 1.0F) * smooth(playhead / transition);
+    }
+  }
       // Hold-body bursts produced while the session was driven to this chart time. The
       // renderer draws one burst per entry, so a hold frame can be inspected headlessly.
       input.holdBodyBursts = session.takeHoldBodyBursts();

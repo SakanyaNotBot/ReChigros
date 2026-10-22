@@ -101,4 +101,13 @@ private:
 // Maps a run result to the grade artwork index.
 [[nodiscard]] int gradeIndexForScore(int score, bool fullCombo);
 
+// Sidecar discovery for a chart file that is played outside the library (command line, drag
+// and drop, batch captures). Only regular files that sit directly in `directory` are
+// considered: those runs have no pack root, so a neighbouring directory's metadata or
+// artwork must never be mistaken for this chart's own. The pack path in `detectPack` stays
+// recursive, matching the reference's pack layout search.
+[[nodiscard]] std::filesystem::path findSidecarInfoFile(const std::filesystem::path& directory);
+[[nodiscard]] std::filesystem::path findSidecarMusicFile(const std::filesystem::path& directory);
+[[nodiscard]] std::filesystem::path findSidecarImageFile(const std::filesystem::path& directory);
+
 } // namespace rechigros::app

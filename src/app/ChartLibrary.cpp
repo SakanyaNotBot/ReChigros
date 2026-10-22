@@ -787,4 +787,46 @@ void ChartLibrary::sortRecords() {
   });
 }
 
+namespace {
+
+// One candidate from the directory itself, sorted by path so parallel files resolve the same
+// way on every platform. Subdirectories are deliberately not visited.
+template <typename Predicate>
+std::filesystem::path sidecarDirectFile(
+    const std::filesystem::path& directory, Predicate predicate) {
+  if (directory.empty()) return {};
+  std::error_code error;
+  if (!std::filesystem::is_directory(directory, error)) return {};
+  std::vector<std::filesystem::path> found;
+  for (std::filesystem::directory_iterator iterator(directory, error), end; iterator != end;
+       iterator.increment(error)) {
+    if (error) break;
+    if (!iterator->is_regular_file(error)) continue;
+    const std::filesystem::path path = iterator->path();
+    if (predicate(path)) found.push_back(path);
+  }
+  std::sort(found.begin(), found.end());
+  return found.empty() ? std::filesystem::path{} : found.front();
+}
+
+bool isInfoFileName(const std::filesystem::path& file) {
+  const std::string name = toLower(file.filename().string());
+  return name == "info.json" || name == "info.yml" || name == "info.yaml" || name == "info.txt"
+      || name == "info.csv";
+}
+
+} // namespace
+
+std::filesystem::path findSidecarInfoFile(const std::filesystem::path& directory) {
+  return sidecarDirectFile(directory, isInfoFileName);
+}
+
+std::filesystem::path findSidecarMusicFile(const std::filesystem::path& directory) {
+  return sidecarDirectFile(directory, isAudioCandidate);
+}
+
+std::filesystem::path findSidecarImageFile(const std::filesystem::path& directory) {
+  return sidecarDirectFile(directory, isImageCandidate);
+}
+
 } // namespace rechigros::app

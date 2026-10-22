@@ -153,7 +153,7 @@ void applyReferenceSettings(AppContext& context, float aspectRatioOverride) {
   settings.soundEffectVolume = 1.0F;
   settings.musicSpeed = 1.0F;
   settings.audioOffsetMs = 0;
-  settings.hitOffsetIndicatorMode = 1;
+  settings.hitOffsetIndicatorMode = 0;
   settings.apfcIndicator = true;
   settings.judgementDetailDistribution = true;
   settings.realtimeAccuracy = false;
@@ -164,12 +164,12 @@ void applyReferenceSettings(AppContext& context, float aspectRatioOverride) {
   settings.challengeMode = false;
   settings.practiceMode = false;
   settings.lowResolutionMode = false;
-  settings.antialias = true;
+  settings.antialias = false;
   settings.showFps = false;
   settings.showDebugInfo = false;
   settings.disableChartShader = false;
   settings.chartReveal = false;
-  settings.storyMode = false;
+  settings.storyMode = true;
   settings.replayEnabled = false;
 }
 
@@ -187,29 +187,33 @@ void populatePlay(AppContext& context, const std::string& chartId) {
   context.play.chartOffsetMs = record->chartOffsetMs;
 }
 
-game::PlayResult representativeResult() {
-  // Values the settlement page is compared against: a full-perfect run of a 1397-note chart.
+game::PlayResult representativeResult(int totalNotes, double stdDevMs) {
+  // Values the settlement page is compared against: a full-perfect autoplay run. The note
+  // count and timing deviation follow the chart the reference capture was taken on.
   game::PlayResult result;
   result.score = 1000000;
   result.accuracy = 1.0;
-  result.maxCombo = 1397;
-  result.totalNotes = 1397;
-  result.perfect = 1397;
+  result.maxCombo = totalNotes;
+  result.totalNotes = totalNotes;
+  result.perfect = totalNotes;
   result.good = 0;
   result.bad = 0;
   result.miss = 0;
-  result.stdDevMs = 3.092;
-  result.judgementOffsetBins[9] = 1397;
+  result.stdDevMs = stdDevMs;
+  result.judgementOffsetBins[9] = totalNotes;
   return result;
 }
 
 void setupResult(AppContext& context, const std::string& chartId) {
   populatePlay(context, chartId);
-  // The settlement reference capture was taken in autoplay with challenge mode enabled, so
-  // the two mode tags are both visible.
+  // The reference settlement captures were taken in autoplay; the challenge tag appears
+  // only on the run that recorded it (the earlier Hate capture), not the current one.
+  const bool challenge = context.play.songName.find("Entrance") == std::string::npos;
+  const int totalNotes = challenge ? 1397 : 1249;
+  const double stdDevMs = challenge ? 3.092 : 3.068;
   context.play.autoplay = true;
-  context.play.challenge = true;
-  context.lastResult = representativeResult();
+  context.play.challenge = challenge;
+  context.lastResult = representativeResult(totalNotes, stdDevMs);
   context.lastRunWasReplay = false;
   // The reference settlement capture shows no replay actions, so the capture state has no
   // replay to save or play back.

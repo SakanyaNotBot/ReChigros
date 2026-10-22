@@ -22,6 +22,12 @@ constexpr float kDesignHeight = 540.0F;
 // The settlement animation follows the reference's official timing: one linear 3.5 s pass that
 // drives the panel slides and the staged reveals.
 constexpr double kSettlementSeconds = 3.5;
+// The reference enters the settlement with its blurred cover alone. The outro capture measures
+// the cover fading in over ~0.55 s, holding an empty backdrop for ~1.85 s, and only then showing
+// the settlement content; the board/card animation still starts when the content appears.
+constexpr float kBackdropFadeSeconds = 0.55F;
+constexpr float kBackdropHoldSeconds = 1.85F;
+constexpr float kContentStartSeconds = kBackdropFadeSeconds + kBackdropHoldSeconds;
 constexpr float kSlideUnits = 1200.0F; // design canvas widths, as in the reference
 constexpr float kBackgroundDim = 0.4F;
 // The corner layer margins in the reference are plain density pixels while the plates scale with
@@ -556,17 +562,39 @@ struct ModeTag {
 
 std::vector<ModeTag> modeTags(const AppContext& context) {
   std::vector<ModeTag> tags;
-  if (context.play.replayMode || context.lastRunWasReplay) tags.push_back({"回放"});
-  if (context.play.mirrorX) tags.push_back({"镜像"});
-  if (context.play.challenge) tags.push_back({"挑战"});
-  if (std::abs(context.play.musicSpeed - 1.0F) > 0.001F) {
-    tags.push_back({"倍速 " + formatMultiplier(context.play.musicSpeed) + "x"});
+  const bool replayPlayback = context.play.replayMode || context.lastRunWasReplay;
+  if (replayPlayback) tags.push_back({"回放"});
+  // A settlement reached by replay playback describes the run that was RECORDED: the modes and
+  // multipliers are display-only history and must not follow the viewer's current settings.
+  // Normal runs read the live setup they were played with.
+  bool mirror = context.play.mirrorX;
+  bool challenge = context.play.challenge;
+  bool autoplay = context.play.autoplay;
+  bool practice = context.play.practice;
+  float musicSpeed = context.play.musicSpeed;
+  float scrollSpeed = context.play.scrollSpeed;
+  const ReplayData& playback = context.game.playback;
+  const bool hasRecordedMeta = replayPlayback
+      && (!playback.meta.chartId.empty() || playback.meta.timestampMs != 0
+          || !playback.judgements.empty() || !playback.entries.empty());
+  if (hasRecordedMeta) {
+    mirror = playback.meta.mirrorX;
+    challenge = playback.meta.challenge;
+    autoplay = playback.meta.autoplay;
+    practice = playback.meta.practice;
+    musicSpeed = playback.meta.musicSpeed > 0.0F ? playback.meta.musicSpeed : 1.0F;
+    scrollSpeed = playback.meta.scrollSpeed > 0.0F ? playback.meta.scrollSpeed : 1.0F;
   }
-  if (std::abs(context.play.scrollSpeed - 1.0F) > 0.001F) {
-    tags.push_back({"流速 " + formatMultiplier(context.play.scrollSpeed) + "x"});
+  if (mirror) tags.push_back({"镜像"});
+  if (challenge) tags.push_back({"挑战"});
+  if (std::abs(musicSpeed - 1.0F) > 0.001F) {
+    tags.push_back({"倍速 " + formatMultiplier(musicSpeed) + "x"});
   }
-  if (context.play.autoplay) tags.push_back({"AUTOPLAY"});
-  if (context.play.practice) tags.push_back({"练习"});
+  if (std::abs(scrollSpeed - 1.0F) > 0.001F) {
+    tags.push_back({"流速 " + formatMultiplier(scrollSpeed) + "x"});
+  }
+  if (autoplay) tags.push_back({"AUTOPLAY"});
+  if (practice) tags.push_back({"练习"});
   return tags;
 }
 
@@ -594,35 +622,40 @@ void drawResultScreen(AppContext& context) {
     animationStartSec = context.nowSec <= 0.1 ? -1.0 : context.nowSec;
   }
   lastDrawSec = context.nowSec;
-  const float progress = animationStartSec > 0.0
-      ? std::clamp(static_cast<float>((context.nowSec - animationStartSec) / kSettlementSeconds),
-            0.0F, 1.0F)
+  const bool staged = animationStartSec > 0.0;
+  const float sinceStart = staged
+      ? std::max(0.0F, static_cast<float>(context.nowSec - animationStartSec))
+      : static_cast<float>(kSettlementSeconds);
+  // The backdrop crossfades in first and holds on its own, exactly like the reference outro.
+  const float backdropFade = staged
+      ? ui::interpolate(ui::Interp::DecelerateQuad,
+            std::clamp(sinceStart / kBackdropFadeSeconds, 0.0F, 1.0F))
+      : 1.0F;
+  const bool contentVisible = !staged || sinceStart >= kContentStartSeconds;
+  // The reference settlement animators start with the result page itself and run while only the
+  // backdrop is on screen, so the content is already settled when the hold ends and it appears.
+  const float progress = staged
+      ? std::clamp(sinceStart / static_cast<float>(kSettlementSeconds), 0.0F, 1.0F)
       : 1.0F;
   const Settlement settlement = settlementAt(progress);
-
-  // Window entrance: the reference fades the settlement in over 220 ms and slides it up by 2%
-  // of its height while the play activity fades out behind it.
-  const float enter = animationStartSec > 0.0
-      ? std::clamp(static_cast<float>((context.nowSec - animationStartSec) / 0.22), 0.0F, 1.0F)
-      : 1.0F;
-  const float enterEased = ui::interpolate(ui::Interp::DecelerateQuad, enter);
-  const float enterOffset = viewport.y * 0.02F * (1.0F - enterEased);
 
   // ---- background: the chart illustration, blurred and dimmed ----
   drawList->AddRectFilled(ImVec2(0.0F, 0.0F), viewport, IM_COL32(0, 0, 0, 255));
   drawBlurredBackdrop(context, drawList, viewport);
-  // The dim overlay fades in over 360 ms.
-  const float dim = animationStartSec > 0.0
-      ? kBackgroundDim * ui::interpolate(ui::Interp::DecelerateQuad,
-            std::clamp(static_cast<float>((context.nowSec - animationStartSec) / 0.36), 0.0F, 1.0F))
-      : kBackgroundDim;
   drawList->AddRectFilled(ImVec2(0.0F, 0.0F), viewport,
-      IM_COL32(0, 0, 0, static_cast<int>(std::lround(255.0F * dim))));
+      IM_COL32(0, 0, 0, static_cast<int>(std::lround(255.0F * kBackgroundDim))));
+  if (backdropFade < 1.0F) {
+    drawList->AddRectFilled(ImVec2(0.0F, 0.0F), viewport,
+        IM_COL32(0, 0, 0, static_cast<int>(std::lround(255.0F * (1.0F - backdropFade)))));
+  }
+  // Until the hold ends only the blurred cover is on screen, as in the reference.
+  if (!contentVisible) {
+    ui::endFullscreenWindow();
+    return;
+  }
 
-  // Everything below is authored in the 960 x 540 design space; the window entrance offset is
-  // applied by moving the canvas origin.
+  // Everything below is authored in the 960 x 540 design space.
   ui::Canvas content = canvas;
-  content.origin.y += enterOffset;
 
   const auto box = [](float x0, float y0, float w, float h) {
     return ui::Box{x0, y0, x0 + w, y0 + h};
@@ -920,7 +953,6 @@ void drawResultScreen(AppContext& context) {
     hitStyle.strokeWidthDp = 0.0F;
     if (histogramVisible) {
       ui::Canvas plain = canvas;
-      plain.origin.y += enterOffset;
       drawJudgementHistogram(context, drawList, plain, histogramBox, context.play.challenge, 1.0F,
           0.0F);
       ImGui::SetCursorScreenPos(content.point(histogramBox.x0, histogramBox.y0));
@@ -946,11 +978,8 @@ void drawResultScreen(AppContext& context) {
   }
 
 
-  // The window entrance fades the whole settlement in.
-  if (enter < 1.0F) {
-    drawList->AddRectFilled(ImVec2(0.0F, 0.0F), viewport,
-        IM_COL32(0, 0, 0, static_cast<int>(std::lround(255.0F * (1.0F - enterEased)))));
-  }
+  // The settlement content keeps its own staged reveals; the backdrop crossfade above already
+  // handled the entrance, so no extra full-screen fade is drawn here.
 
   ui::endFullscreenWindow();
 

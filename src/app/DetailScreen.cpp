@@ -121,14 +121,17 @@ std::uint64_t assetTextureSized(
   return texture;
 }
 
+// Draws the icon plate. The top-wider variant has its accent drawn separately because the shared
+// helper offsets that variant's strip by the skew; every other variant keeps its own accent.
 void drawIconOnPlate(AppContext& context, ImDrawList* drawList, const ui::Canvas& canvas,
-    const ui::Box& box, const ui::PanelStyle& style, const std::string& asset) {
+    const ui::Box& box, const ui::PanelStyle& style, const std::string& asset,
+    bool keepAccent = false) {
   int textureWidth = 0;
   int textureHeight = 0;
   const std::uint64_t texture =
       assetTextureSized(context, asset, 128, textureWidth, textureHeight);
   ui::PanelStyle plate = style;
-  plate.accentEdge = 0;
+  if (!keepAccent) plate.accentEdge = 0;
   ui::drawIconPlate(drawList, canvas, box, plate, texture, textureWidth, textureHeight, 16.0F,
       10.0F, 3.0F);
 }
@@ -220,15 +223,27 @@ double dialogEase(double startSec, double nowSec) {
 }
 
 // The information dialog: one 75 degree parallelogram carrying the title and the record
-// details, with a black action strip along the bottom. The reference eases the panel in from
-// 65% size over 200 ms and dims the page behind it to half black.
-// Returns false when the dialog was dismissed this frame.
+// details, with a black action strip along the bottom. The panel is as tall as the reference's
+// maximum dialog height (86% of the window) and the message block expands to fill the content
+// area; the reference eases the panel in from 65% size over 200 ms, back out over 140 ms, and
+// dims the page behind it to half black.
+// Returns false once the close animation has finished.
 bool drawInfoDialog(AppContext& context, ImDrawList* drawList, const ui::Canvas& canvas,
-    const ChartRecord& record, double startSec, ImVec2 viewport) {
-  const double eased = dialogEase(startSec, context.nowSec);
-  const float panelScale = static_cast<float>(0.65 + 0.35 * eased);
+    const ChartRecord& record, double startSec, double& closeStartSec, ImVec2 viewport) {
+  const bool closing = closeStartSec > 0.0;
+  float linear = 1.0F;
+  if (closing) {
+    const float elapsed = static_cast<float>(context.nowSec - closeStartSec);
+    if (elapsed >= 0.14F) return false;
+    linear = 1.0F - elapsed / 0.14F;
+  } else if (startSec > 0.0) {
+    linear = std::clamp(static_cast<float>((context.nowSec - startSec) / 0.2), 0.0F, 1.0F);
+  }
+  const float k = 1.0F - linear;
+  const float eased = 1.0F - k * k * k;
+  const float panelScale = 0.65F + 0.35F * eased;
   drawList->AddRectFilled(ImVec2(0.0F, 0.0F), viewport,
-      IM_COL32(0, 0, 0, static_cast<int>(std::lround(127.5 * eased))));
+      IM_COL32(0, 0, 0, static_cast<int>(std::lround(127.5F * eased))));
 
   // The dialog lives on the unscaled window: density values become design units here, while the
   // text keeps its plain density size.
@@ -238,11 +253,11 @@ bool drawInfoDialog(AppContext& context, ImDrawList* drawList, const ui::Canvas&
   const float padH = 26.0F * design;
   const float padTop = 22.0F * design;
   const float padBottom = 16.0F * design;
-  const float stripH = 52.0F * design;
+  const float stripHeight = 52.0F * design;
   const float accentWidth = 3.0F * design;
 
   const char* const keys[] = {"曲名: ", "难度: ", "谱师: ", "曲师: ", "画师: ", "音乐: ", "谱面: "};
-  const std::string values[] = {record.songName, plainSpaces(record.difficulty),
+  const std::string values[] = {record.songName, record.difficulty,
       orUnknown(record.info.charter), orUnknown(record.info.composer),
       orUnknown(record.info.illustrator), fileNameOrUnknown(record.musicFile),
       fileNameOrUnknown(record.chartFile)};
@@ -250,10 +265,14 @@ bool drawInfoDialog(AppContext& context, ImDrawList* drawList, const ui::Canvas&
 
   const float titleLine = ui::labelLineHeight(canvas, 22.0F);
   const float messageLine = ui::labelLineHeight(canvas, 17.0F);
+  const float titleBlock = titleLine + 2.0F * design;
+  const float ruleBlock = 6.0F * design + 2.0F * design + 12.0F * design;
   const float messageSpacing = 4.0F * design;
-  const float contentHeight = titleLine + 2.0F * design + 20.0F * design + 8.0F * design
-      + static_cast<float>(kLineCount) * (messageLine + messageSpacing);
-  const float totalHeight = contentHeight + padTop + padBottom + stripH;
+  const float messagePad = 4.0F * design;
+  // The reference measures the panel against the maximum dialog height: the message scroll
+  // expands to fill whatever the title and rule leave over.
+  const float totalHeight = std::max(stripHeight * 3.0F, viewHeight * 0.86F);
+  const float contentHeight = totalHeight - stripHeight;
 
   const float panelWidth =
       std::max(std::min(340.0F * design, viewWidth * 0.92F),
@@ -271,7 +290,7 @@ bool drawInfoDialog(AppContext& context, ImDrawList* drawList, const ui::Canvas&
   };
 
   const float slant = totalHeight * kSkewSlope;
-  const float stripSlant = stripH * kSkewSlope;
+  const float stripSlant = stripHeight * kSkewSlope;
   const float stripTop = panelTop + contentHeight;
   const float panelBottom = panelTop + totalHeight;
 
@@ -293,77 +312,104 @@ bool drawInfoDialog(AppContext& context, ImDrawList* drawList, const ui::Canvas&
       toScreen(panelLeft + stripSlant + accentWidth, stripTop),
       toScreen(panelLeft + stripSlant, stripTop),
   };
-  drawList->AddConvexPolyFilled(contentPoints, 4, IM_COL32(240, 32, 36, 41));
-  drawList->AddConvexPolyFilled(stripPoints, 4, IM_COL32(0, 0, 0, 217));
-  drawList->AddConvexPolyFilled(accentPoints, 4, IM_COL32(255, 255, 255, 255));
+  const auto alpha = [&](float value) {
+    return static_cast<int>(std::lround(std::clamp(value, 0.0F, 1.0F) * 255.0F * eased));
+  };
+  drawList->AddConvexPolyFilled(contentPoints, 4, IM_COL32(32, 36, 41, alpha(240.0F / 255.0F)));
+  drawList->AddConvexPolyFilled(stripPoints, 4, IM_COL32(0, 0, 0, alpha(217.0F / 255.0F)));
+  drawList->AddConvexPolyFilled(accentPoints, 4, IM_COL32(255, 255, 255, alpha(1.0F)));
 
   const float contentLeft = panelLeft + stripSlant + padH;
   const float contentWidth = panelWidth - totalHeight * kSkewSlope - padH * 2.0F;
   const auto rowShift = [&](float rowTop, float rowHeight) {
     return (stripTop - (rowTop + rowHeight * 0.5F)) * kSkewSlope;
   };
-  const auto drawRow = [&](float rowTop, float rowHeight, const std::string& label, float sizeDp,
-                           ImU32 color) {
-    const ImVec2 origin = fit(contentLeft + rowShift(rowTop, rowHeight), rowTop);
+  const auto drawRow = [&](float rowTop, float rowHeight, float shift, const std::string& label,
+                           float sizeDp, ImU32 color) {
+    const ImVec2 origin = fit(contentLeft + shift, rowTop);
     ui::TextStyle style;
     style.sizeDp = sizeDp;
     style.bold = false;
     style.color = color;
     style.ellipsize = true;
+    style.valign = ui::VAlign::Top;
     ui::drawLabel(drawList, canvas,
         ui::Box{origin.x, origin.y, origin.x + contentWidth, origin.y + rowHeight}, label, style,
         context.nowSec);
   };
 
-  float cursor = panelTop + padTop;
-  drawRow(cursor, titleLine, "详细信息", 22.0F, IM_COL32(255, 255, 255, 255));
-  cursor += titleLine + 2.0F * design;
+  const float titleTop = panelTop + padTop;
+  drawRow(titleTop, titleBlock, rowShift(titleTop, titleBlock), "详细信息", 22.0F,
+      IM_COL32(255, 255, 255, alpha(1.0F)));
+  const float ruleTop = titleTop + titleBlock + 6.0F * design;
   {
-    const ImVec2 ruleTopLeft = toScreen(contentLeft + rowShift(cursor, 2.0F * design), cursor);
+    const ImVec2 ruleTopLeft = toScreen(contentLeft + rowShift(ruleTop, 2.0F * design), ruleTop);
     drawList->AddRectFilled(ruleTopLeft,
         ImVec2(ruleTopLeft.x + canvas.units(44.0F * design),
             ruleTopLeft.y + canvas.units(2.0F * design)),
-        IM_COL32(255, 255, 255, 153));
-    cursor += 2.0F * design + 6.0F * design + 12.0F * design;
+        IM_COL32(255, 255, 255, alpha(153.0F / 255.0F)));
   }
-  cursor += 4.0F * design;
-  std::string lines[kLineCount];
+  // The message block scrolls as one unit: the reference shifts it by the strip inset only,
+  // while the title and rule follow the slanted edge at their own height.
+  const float messageLeft = contentLeft + padBottom * kSkewSlope;
+  float cursor = titleTop + titleBlock + ruleBlock + messagePad;
   for (int index = 0; index < kLineCount; ++index) {
-    lines[index] = std::string(keys[index]) + values[index];
-    drawRow(cursor, messageLine, lines[index], 17.0F, IM_COL32(230, 255, 255, 255));
+    const std::string line = std::string(keys[index]) + values[index];
+    const ImVec2 origin = fit(messageLeft, cursor);
+    ui::TextStyle style;
+    style.sizeDp = 17.0F;
+    style.bold = false;
+    style.color = IM_COL32(230, 255, 255, alpha(1.0F));
+    style.ellipsize = true;
+    style.valign = ui::VAlign::Top;
+    ui::drawLabel(drawList, canvas,
+        ui::Box{origin.x, origin.y, origin.x + contentWidth - padBottom * kSkewSlope,
+            origin.y + messageLine},
+        line, style, context.nowSec);
     cursor += messageLine + messageSpacing;
   }
 
-  // The strip carries the single confirm action.
-  bool dismissed = false;
-  ImGui::SetCursorScreenPos(ImVec2(0.0F, 0.0F));
-  ImGui::InvisibleButton("##detail_dialog_backdrop", viewport);
-  if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) dismissed = true;
+  // The strip carries the single confirm action, centred in its parallelogram cell.
   {
-    const ImVec2 topLeft = toScreen(panelLeft + stripSlant, stripTop);
-    ImGui::SetCursorScreenPos(topLeft);
-    ImGui::PushID("##detail_dialog_strip");
-    ImGui::InvisibleButton("confirm",
-        ImVec2(std::max(1.0F, canvas.units(panelWidth - stripSlant)),
-            std::max(1.0F, canvas.units(stripH))));
-    const bool confirm = ImGui::IsItemHovered()
-        && ImGui::IsMouseReleased(ImGuiMouseButton_Left);
-    ImGui::PopID();
-    const ImVec2 labelOrigin = fit(panelLeft + stripSlant + 22.0F * design, stripTop);
+    const float cellWidth = panelWidth - slant + stripSlant;
+    const ImVec2 cellFitted = fit(panelLeft + cellWidth * 0.5F, stripTop + stripHeight * 0.5F);
     ui::TextStyle style;
     style.sizeDp = 18.0F;
     style.bold = false;
-    style.color = IM_COL32(255, 255, 255, 255);
+    style.color = IM_COL32(255, 255, 255, alpha(1.0F));
     style.fitWidth = true;
     style.align = ui::HAlign::Center;
+    style.valign = ui::VAlign::Middle;
     ui::drawLabel(drawList, canvas,
-        ui::Box{labelOrigin.x, labelOrigin.y, labelOrigin.x + panelWidth - slant
-                    - 44.0F * design,
-            labelOrigin.y + stripH},
+        ui::Box{cellFitted.x - cellWidth * 0.5F, cellFitted.y - stripHeight * 0.5F,
+            cellFitted.x + cellWidth * 0.5F, cellFitted.y + stripHeight * 0.5F},
         "确定", style, context.nowSec);
-    if (confirm) dismissed = true;
   }
-  return !dismissed;
+
+  // One modal hit layer: taps outside the panel cancel the dialog, taps on the panel itself are
+  // swallowed, and a tap in the confirm cell closes it.
+  bool requestedClose = false;
+  if (!closing) {
+    ImGui::SetCursorScreenPos(ImVec2(0.0F, 0.0F));
+    ImGui::InvisibleButton("##detail_dialog_backdrop", viewport);
+    const bool released =
+        ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+    if (released) {
+      const ImVec2 mouse = ImGui::GetIO().MousePos;
+      const ui::PxRect panelRect = ui::toPixels(canvas,
+          ui::Box{panelLeft, panelTop, panelLeft + panelWidth, panelBottom});
+      const float cellWidth = panelWidth - slant + stripSlant;
+      const ui::PxRect cellRect = ui::toPixels(canvas,
+          ui::Box{panelLeft, stripTop, panelLeft + cellWidth, stripTop + stripHeight});
+      const bool insidePanel = mouse.x >= panelRect.min.x && mouse.x <= panelRect.max.x
+          && mouse.y >= panelRect.min.y && mouse.y <= panelRect.max.y;
+      const bool insideCell = mouse.x >= cellRect.min.x && mouse.x <= cellRect.max.x
+          && mouse.y >= cellRect.min.y && mouse.y <= cellRect.max.y;
+      if (insideCell || !insidePanel) requestedClose = true;
+    }
+  }
+  if (requestedClose) closeStartSec = context.nowSec;
+  return true;
 }
 
 } // namespace
@@ -398,6 +444,7 @@ void drawDetailScreen(AppContext& context) {
 
   static bool dialogOpen = false;
   static double dialogStartSec = -1.0;
+  static double dialogCloseSec = -1.0;
   const bool dialogWasOpen = dialogOpen;
 
   // The page never owns a background: the GPU backdrop already draws the chart illustration
@@ -557,12 +604,16 @@ void drawDetailScreen(AppContext& context) {
   drawIconOnPlate(context, drawList, canvas, settingsBox, topStyle, "res/settings.png");
   drawTopWiderAccent(drawList, canvas, infoBox, topStyle);
   drawTopWiderAccent(drawList, canvas, settingsBox, topStyle);
-  drawIconOnPlate(context, drawList, canvas, startBox, sideStyle, "res/start.png");
+  drawIconOnPlate(context, drawList, canvas, startBox, sideStyle, "res/start.png", true);
 
   // ---- information dialog ----
   if (dialogOpen) {
-    dialogOpen = drawInfoDialog(context, drawList, canvas, *record, dialogStartSec, viewport);
-    if (!dialogOpen) dialogStartSec = -1.0;
+    dialogOpen =
+        drawInfoDialog(context, drawList, canvas, *record, dialogStartSec, dialogCloseSec, viewport);
+    if (!dialogOpen) {
+      dialogStartSec = -1.0;
+      dialogCloseSec = -1.0;
+    }
   }
 
   ui::endFullscreenWindow();
@@ -570,6 +621,7 @@ void drawDetailScreen(AppContext& context) {
   if (infoPressed) {
     dialogOpen = true;
     dialogStartSec = context.nowSec;
+    dialogCloseSec = -1.0;
   }
   if (backPressed) navigateTo(context, Screen::Library);
   if (settingsPressed) {

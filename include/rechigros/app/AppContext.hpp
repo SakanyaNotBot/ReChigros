@@ -139,6 +139,10 @@ struct AppContext {
   Screen settingsReturn{Screen::Home};
   Screen detailReturn{Screen::Library};
   bool quitRequested{};
+  // A run started with an explicit replay output path records even when the stored
+  // preference has replay recording disabled. It lives outside the gameplay state so a
+  // new run's reset cannot clear it.
+  bool recordRequested{};
   bool settingsDirty{};
   float displayDpi{380.0F};
   int windowWidth{1280};

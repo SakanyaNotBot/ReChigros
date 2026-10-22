@@ -13,6 +13,13 @@ inline constexpr float PAUSE_BACKDROP_FLATTEN = -0.125F;
 // HUD far below what the reference shows, so the live values are drawn again at this
 // fraction of their normal alpha.
 inline constexpr float PAUSE_HUD_DIM = 0.27F;
+// The pause HUD is rendered at reduced resolution, blurred with the same separable kernel
+// as the backdrop and composited over the graded frame, so its edges stay as soft as the
+// rest of the pause picture.
+inline constexpr int PAUSE_HUD_SOFT_DIVISOR = 2;
+inline constexpr int PAUSE_HUD_SOFT_ITERATIONS = 3;
+inline constexpr float PAUSE_HUD_SOFT_OFFSET_PX = 1.25F;
+inline constexpr float PAUSE_HUD_SOFT_BRIGHTNESS = 2.6F;
 inline constexpr float RESUME_BACKDROP_BRIGHTNESS_DURATION_SEC = 2.0F;
 inline constexpr float RESUME_BACKDROP_FLATTEN_DURATION_SEC = 2.5F;
 inline constexpr float RESUME_BACKDROP_ALPHA_FADE_START_SEC = 1.5F;

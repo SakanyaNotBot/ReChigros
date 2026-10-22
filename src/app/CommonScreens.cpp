@@ -28,38 +28,31 @@ std::string toLower(std::string value) {
   return value;
 }
 
-std::filesystem::path findInfoFileIn(const std::filesystem::path& directory) {
-  for (const auto& file : platform::listFiles(directory)) {
-    const std::string name = toLower(file.filename().string());
-    if (name == "info.json" || name == "info.yml" || name == "info.yaml" || name == "info.txt"
-        || name == "info.csv") {
-      return file;
-    }
-  }
-  return {};
-}
-
 std::filesystem::path resolveInside(const std::filesystem::path& directory,
     const std::string& relativePath) {
   if (relativePath.empty()) return {};
   const auto joined = platform::joinPortable(directory, relativePath);
-  return platform::fileExists(joined) ? joined : std::filesystem::path{};
-}
-
-std::filesystem::path firstWithPredicate(const std::filesystem::path& directory,
-    bool (*predicate)(const std::filesystem::path&)) {
-  for (const auto& file : platform::listFiles(directory)) {
-    if (predicate(file)) return file;
+  if (!platform::fileExists(joined)) return {};
+  // The chart file is the root of an ad-hoc pack, so a sidecar path may point into its
+  // subdirectories but never outside it.
+  std::error_code error;
+  const auto relative = std::filesystem::relative(
+      std::filesystem::weakly_canonical(joined, error),
+      std::filesystem::weakly_canonical(directory, error), error);
+  if (error || relative.empty() || relative.native().rfind(std::filesystem::path(".."), 0) == 0) {
+    return {};
   }
-  return {};
+  return joined;
 }
 
 // Fills `context.play` from a chart file and its sidecar metadata. The chart is
-// allowed to live outside the library (drag-and-drop, command line, batch mode).
+// allowed to live outside the library (drag-and-drop, command line, batch mode). An ad-hoc
+// chart has no pack root, so every sidecar lookup only looks at the chart's own directory:
+// a sibling directory's metadata or artwork belongs to a different pack.
 bool buildAdhocSetup(AppContext& context, const std::filesystem::path& chartFile) {
   const auto directory = chartFile.parent_path();
   ChartInfo info;
-  const auto infoFile = findInfoFileIn(directory);
+  const auto infoFile = findSidecarInfoFile(directory);
   if (!infoFile.empty()) info = readInfoFile(infoFile);
   const ChartInfo meta = readInfoFromChartFile(chartFile);
   const auto fill = [](std::string& target, const std::string& candidate) {
@@ -76,11 +69,11 @@ bool buildAdhocSetup(AppContext& context, const std::filesystem::path& chartFile
   context.play.chartFile = chartFile;
   context.play.musicFile = resolveInside(directory, info.music);
   if (context.play.musicFile.empty()) {
-    context.play.musicFile = firstWithPredicate(directory, isAudioCandidate);
+    context.play.musicFile = findSidecarMusicFile(directory);
   }
   context.play.bgFile = resolveInside(directory, info.illustration);
   if (context.play.bgFile.empty()) {
-    context.play.bgFile = firstWithPredicate(directory, isImageCandidate);
+    context.play.bgFile = findSidecarImageFile(directory);
   }
   if (info.name.empty()) info.name = chartFile.stem().string();
   context.play.songName = info.name;
