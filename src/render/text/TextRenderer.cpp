@@ -65,6 +65,13 @@ std::vector<std::uint32_t> decodeUtf8(const std::string& text) {
       ++index;
       continue;
     }
+    // Difficulty labels and a few interface strings separate their parts with typographic
+    // spaces. The bundled font has no glyph for those code points, and the fallback glyph
+    // would show as a placeholder box, so they resolve to the plain space advance.
+    if ((code >= 0x2000U && code <= 0x200AU) || code == 0x00A0U || code == 0x202FU
+        || code == 0x205FU || code == 0x3000U) {
+      code = 0x20U;
+    }
     codepoints.push_back(code);
     index += length;
   }

@@ -300,13 +300,17 @@ void setupCaptureScreen(AppContext& context, const std::string& spec) {
     return;
   }
   if (screen == "game" || screen == "game-pause" || screen == "game-practice"
-      || screen == "game-countdown") {
+      || screen == "game-practice-pause" || screen == "game-countdown") {
     if (!chartId.empty()) context.activeChartId = chartId;
-    startCaptureChart(context, screen == "game-practice");
+    // The practice panel only exists while the practice run is paused, so the paused practice
+    // capture turns practice on as well as opening the menu.
+    const bool practice = screen == "game-practice" || screen == "game-practice-pause";
+    startCaptureChart(context, practice);
     if (context.screen != Screen::Game) return;
-    if (screen == "game-pause" || screen == "game-countdown") {
-      context.game.pause = screen == "game-pause" ? GameRuntime::Pause::Menu
-                                                  : GameRuntime::Pause::Countdown;
+    const bool pauseMenu = screen == "game-pause" || screen == "game-practice-pause";
+    if (pauseMenu || screen == "game-countdown") {
+      context.game.pause = pauseMenu ? GameRuntime::Pause::Menu
+                                     : GameRuntime::Pause::Countdown;
       context.game.pauseElapsedSec = 0.0;
       context.game.pausePlayheadSec = context.game.playheadSec;
       context.game.countdown = 3;
