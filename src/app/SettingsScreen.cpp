@@ -111,8 +111,10 @@ RowLayout placeRow(float scale, ImVec2 viewport) {
   return layout;
 }
 
-void sectionHeading(const char* title, float scale) {
+// Section heading, placed on the same slanted edge as the rows beneath it.
+void sectionHeading(const char* title, float scale, ImVec2 viewport) {
   ImGui::Dummy(ImVec2(1.0F, 8.0F * scale));
+  placeRow(scale, viewport);
   ui::drawText(ImGui::GetWindowDrawList(), ImGui::GetCursorScreenPos(), 14.0F * scale,
       ui::rgba(ui::kSectionHeading), title);
   ImGui::Dummy(ImVec2(1.0F, kSectionHeadingHeight * scale));
@@ -238,10 +240,7 @@ void drawSettingsScreen(AppContext& context) {
   ImGui::Dummy(ImVec2(1.0F, kContentTop * scale));
 
   const auto drawSection = [&](const char* title) {
-    const float width = placeRow(scale, ImVec2(size.width, size.height)).width;
-    sectionHeading(title, scale);
-    ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y));
-    (void)width;
+    sectionHeading(title, scale, ImVec2(size.width, size.height));
   };
 
   const auto drawSliderRow = [&](const char* id, const char* label, float* value, float from,

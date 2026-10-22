@@ -232,26 +232,20 @@ public final class MainActivity extends SDLActivity {
     }
 
     // --- platform file and folder picker -------------------------------------
-    // The picker is requested from the native side and its answer is delivered through the
-    // same drop-file path that an incoming document uses, so the rest of the application
-    // does not need a second way to receive a chosen path.
+    // The picker is requested from the native side. Its answer is delivered through the same
+    // drop-file path an incoming document uses, so the rest of the application needs no
+    // second way to receive a chosen path.
 
     private static final int PICKER_FILE = 0;
     private static final int PICKER_FOLDER = 1;
+    private static final int REQUEST_PICKER = 0x51D1;
 
     private static MainActivity instance;
-    private boolean pickerSetup;
 
     @Override
     protected void onResume() {
         super.onResume();
         instance = this;
-        // Registering has to wait until the activity is attached, so it happens here and
-        // only once.
-        if (!pickerSetup) {
-            registerPicker();
-            pickerSetup = true;
-        }
     }
 
     @Override
@@ -260,52 +254,46 @@ public final class MainActivity extends SDLActivity {
         super.onDestroy();
     }
 
-    private final androidx.activity.result.ActivityResultLauncher<android.content.Intent> pickerLauncher =
-        registerForActivityResult(new androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
-            result -> {
-                if (result.getResultCode() != android.app.Activity.RESULT_OK) return;
-                android.content.Intent data = result.getData();
-                if (data == null || data.getData() == null) return;
-                final android.net.Uri uri = data.getData();
-                // Resolving a document can touch the disk, so it runs off the UI thread.
-                new Thread(() -> {
-                    try {
-                        String path = materializeUri(uri);
-                        if (path != null) SDLActivity.onNativeDropFile(path);
-                    } catch (IOException error) {
-                        Log.e(TAG, "Unable to read the chosen document", error);
-                    }
-                }).start();
-            });
-
-    private void registerPicker() {
-        // The launcher above registers itself during construction, which needs the activity
-        // to be attached; nothing else is required here.
-    }
-
-    // Called from the native side once the picker button is pressed.
+    // Called from the native side when the import button is pressed.
     public static void requestPicker(final int mode) {
         final MainActivity activity = instance;
         if (activity == null) return;
         activity.runOnUiThread(() -> {
             try {
+                final android.content.Intent intent;
                 if (mode == PICKER_FOLDER) {
-                    android.content.Intent intent = new android.content.Intent(
+                    intent = new android.content.Intent(
                             android.content.Intent.ACTION_OPEN_DOCUMENT_TREE);
-                    intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                    activity.pickerLauncher.launch(intent);
                 } else {
-                    android.content.Intent intent = new android.content.Intent(
-                            android.content.Intent.ACTION_OPEN_DOCUMENT);
+                    intent = new android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT);
                     intent.addCategory(android.content.Intent.CATEGORY_OPENABLE);
                     intent.setType("*/*");
-                    intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                    activity.pickerLauncher.launch(intent);
                 }
+                intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                activity.startActivityForResult(intent, REQUEST_PICKER);
             } catch (RuntimeException error) {
                 Log.e(TAG, "Unable to open the document picker", error);
             }
         });
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_PICKER) return;
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        final Uri uri = data.getData();
+        // Reading the document touches the disk, so it runs off the UI thread.
+        new Thread(() -> {
+            try {
+                File imported = copyContentUri(uri);
+                final String path = isZip(imported) ? extractChartArchive(imported).getAbsolutePath()
+                        : imported.getAbsolutePath();
+                SDLActivity.onNativeDropFile(path);
+            } catch (IOException error) {
+                Log.e(TAG, "Unable to read the chosen document", error);
+            }
+        }).start();
     }
     private static void deleteRecursively(File file) {
         File[] children = file.listFiles();

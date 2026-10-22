@@ -221,8 +221,28 @@ bool Application::initialize() {
       config.OversampleH = 1;
       config.OversampleV = 1;
       config.PixelSnapH = false;
+      // The common range covers most of the interface but leaves a few characters out. The
+      // extras below are the ones the screens actually use, so they are appended rather than
+      // switching to the full range, which would multiply the atlas size. A glyph range list
+      // is a run of (first, last) pairs ended by a lone zero in the first slot.
+      //
+      // The list must outlive the atlas build: the loader keeps the pointer rather than
+      // copying the values, so it is held statically.
+      static std::vector<ImWchar> ranges;
+      ranges.clear();
+      static const ImWchar kExtraGlyphs[] = {0x8F74, 0x8F74, 0x9891, 0x9891, 0};
+      const ImWchar* common = io.Fonts->GetGlyphRangesChineseSimplifiedCommon();
+      for (std::size_t index = 0; common[index] != 0; index += 2) {
+        ranges.push_back(common[index]);
+        ranges.push_back(common[index + 1]);
+      }
+      for (std::size_t index = 0; kExtraGlyphs[index] != 0; index += 2) {
+        ranges.push_back(kExtraGlyphs[index]);
+        ranges.push_back(kExtraGlyphs[index + 1]);
+      }
+      ranges.push_back(0);
       font = io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), 20.0F, &config,
-          io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
+          ranges.data());
     }
     if (font == nullptr) io.Fonts->AddFontDefault();
   }
