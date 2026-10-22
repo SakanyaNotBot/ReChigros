@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <utility>
+#include <vector>
 
 namespace rechigros::render::gl {
 
@@ -15,15 +16,13 @@ bool contextAvailable() noexcept {
 }
 
 namespace {
-unsigned int boundTexture = 0;
-
-
-
+// Binds `id` to texture unit 0. Every upload and parameter change goes through here.
+// A cached "currently bound" value cannot be used: the effect passes bind textures
+// directly, so a cached id would silently disagree with the real binding and uploads
+// would land in an unrelated texture.
 void bindUnit0(unsigned int id) noexcept {
-  if (boundTexture == id) return;
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, id);
-  boundTexture = id;
 }
 } // namespace
 
@@ -58,10 +57,7 @@ void Texture::reset() noexcept {
     height_ = 0;
     return;
   }
-  if (id_ != 0) {
-    if (boundTexture == id_) boundTexture = 0;
-    glDeleteTextures(1, &id_);
-  }
+  if (id_ != 0) glDeleteTextures(1, &id_);
   id_ = 0;
   width_ = 0;
   height_ = 0;
@@ -116,11 +112,19 @@ bool Texture::allocateEmpty(int width, int height) noexcept {
   width_ = width;
   height_ = height;
   bindUnit0(id_);
+  // Render targets are fully sampled by later passes, so their initial content must be
+  // defined. Passing a null data pointer leaves the image undefined: drivers differ, and
+  // a target sampled before its first write shows up as random bright pixels.
+  const auto rowBytes = static_cast<std::size_t>(width) * 4U;
+  std::vector<std::uint8_t> zeroed(rowBytes * static_cast<std::size_t>(height), 0U);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, linear_ ? GL_LINEAR : GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, linear_ ? GL_LINEAR : GL_NEAREST);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+      zeroed.data());
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
   return true;
 }
 

@@ -63,6 +63,8 @@ struct RenderFrameInput {
     // 0..1 playback progress shown by the top bar.
     double progress{0.0};
     float alpha{1.0F};
+    // The accuracy readout follows a gameplay setting.
+    bool showAccuracy{true};
   } hud;
 
   struct PracticeState {

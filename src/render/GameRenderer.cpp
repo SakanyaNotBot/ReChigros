@@ -98,6 +98,7 @@ struct GameRenderer::Impl {
     holdTextures[0] = holdTextures[1] = nullptr;
     holdBodies[0] = holdBodies[1] = nullptr;
     hitFx = nullptr;
+    hudArtwork.pause = hudArtwork.timerLine = nullptr;
     effectGlitchMap = effectGlitchDogMap = effectWireNoise = effectDisplaceMap = nullptr;
     headTextureList.clear();
   }
@@ -153,6 +154,12 @@ struct GameRenderer::Impl {
   gl::Texture* effectWireNoise{};
   gl::Texture* effectDisplaceMap{};
 
+  // HUD artwork, grouped so the HUD pass receives it as one value.
+  struct HudArtwork {
+    gl::Texture* pause{};
+    gl::Texture* timerLine{};
+  } hudArtwork;
+
   game::Chart* loadedChart{};
   std::vector<scene::LineFrame> lineFrames;
   std::vector<int> lineDrawOrder;
@@ -204,6 +211,9 @@ void GameRenderer::Impl::loadGameplayTextures() {
   noteHeads[kNoteTypeHold][0] = holdTextures[0];
   noteHeads[kNoteTypeHold][1] = holdTextures[1];
   hitFx = textures.loadAsset("res/hit_fx.png");
+  // HUD artwork; a missing file makes the corresponding widget fall back to a flat quad.
+  hudArtwork.pause = textures.loadAsset("res/pause.png");
+  hudArtwork.timerLine = textures.loadAsset("res/timerLine.png");
   // A highlight sheet is a different canvas size from its normal counterpart, so the drawn
   // width is corrected by the ratio of the two sheets to keep the note the same size.
   for (int type = 0; type < 5; ++type) {
@@ -344,6 +354,13 @@ void GameRenderer::Impl::applyResPackLayer(const nlohmann::json& root) {
   }
   if (const auto it = root.find("hitFxTinted"); it != root.end() && it->is_boolean()) {
     hitStyle.tinted = it->get<bool>();
+  }
+  // The pack can turn the debris particles off entirely, under either spelling.
+  if (const auto it = root.find("hideParticles"); it != root.end() && it->is_boolean()) {
+    hitStyle.showParticles = !it->get<bool>();
+  }
+  if (const auto it = root.find("showParticles"); it != root.end() && it->is_boolean()) {
+    hitStyle.showParticles = it->get<bool>();
   }
 
   // Hold slicing and body behaviour. Each array is one sheet's pair of slice sizes, in the
@@ -736,8 +753,15 @@ void GameRenderer::Impl::drawHudPass(const RenderFrameInput& input,
   values.maxCombo = input.hud.maxCombo;
   values.accuracy = input.hud.accuracy;
   values.progress = input.hud.progress;
+  values.songName = input.songName;
+  values.levelName = input.levelName;
+  values.showAccuracy = input.hud.showAccuracy;
   scene::HudColors colors;
-  scene::drawHud(batch, text, layout, values, colors, input.hud.alpha, layout.projection());
+  scene::HudTextures textures;
+  textures.pause = hudArtwork.pause;
+  textures.timerLine = hudArtwork.timerLine;
+  scene::drawHud(batch, text, layout, values, colors, textures, input.hud.alpha,
+      layout.projection());
 }
 
 GameRenderer::GameRenderer() : impl_(std::make_unique<Impl>()) {}

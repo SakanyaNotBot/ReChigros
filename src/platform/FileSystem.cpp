@@ -1,12 +1,17 @@
 #include "rechigros/platform/FileSystem.hpp"
 
 #include <SDL.h>
+#if defined(__ANDROID__)
+#include <SDL_system.h>
+#include <jni.h>
+#endif
 
 #include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
 #include <mutex>
+#include <string>
 #include <system_error>
 
 namespace rechigros::platform {
@@ -195,6 +200,72 @@ std::filesystem::path joinPortable(const std::filesystem::path& base, std::strin
   }
   if (!component.empty()) result /= component;
   return result;
+}
+
+std::string deviceDescription() {
+#if defined(__ANDROID__)
+  // The device model and the operating-system release both live on the Java side.
+  std::string model;
+  std::string release;
+  if (JNIEnv* environment = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv())) {
+    if (jobject activity = static_cast<jobject>(SDL_AndroidGetActivity())) {
+      if (jclass activityClass = environment->GetObjectClass(activity)) {
+        const auto readStaticString = [&](const char* className, const char* field) {
+          std::string value;
+          if (jclass target = environment->FindClass(className)) {
+            if (jfieldID id = environment->GetStaticFieldID(target, field, "Ljava/lang/String;")) {
+              if (auto* text = static_cast<jstring>(
+                      environment->GetStaticObjectField(target, id))) {
+                if (const char* utf = environment->GetStringUTFChars(text, nullptr)) {
+                  value = utf;
+                  environment->ReleaseStringUTFChars(text, utf);
+                }
+                environment->DeleteLocalRef(text);
+              }
+            }
+            environment->DeleteLocalRef(target);
+          }
+          if (environment->ExceptionCheck()) environment->ExceptionClear();
+          return value;
+        };
+        model = readStaticString("android/os/Build", "MODEL");
+        release = readStaticString("android/os/Build$VERSION", "RELEASE");
+        environment->DeleteLocalRef(activityClass);
+      }
+      environment->DeleteLocalRef(activity);
+    }
+  }
+  if (model.empty() && release.empty()) return "Android";
+  std::string result = model.empty() ? "Android" : model;
+  if (!release.empty()) {
+    result += " - Android ";
+    result += release;
+  }
+  return result;
+#elif defined(_WIN32)
+  // The product name is the friendly model name; the build number stands in for a release.
+  std::string model;
+  if (const char* product = SDL_GetHint("SDL_WINDOWS_DEVICE_MODEL"); product != nullptr) {
+    model = product;
+  }
+  if (model.empty()) model = "Windows";
+  std::string result = model;
+  if (const char* version = SDL_GetHint("SDL_WINDOWS_DEVICE_RELEASE");
+      version != nullptr && *version != '\0') {
+    result += " - Windows ";
+    result += version;
+  }
+  return result;
+#elif defined(__APPLE__)
+#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+  return "iPhone - iOS";
+#else
+  return "Mac";
+#endif
+#else
+  const char* platformName = SDL_GetPlatform();
+  return platformName != nullptr ? platformName : "Unknown";
+#endif
 }
 
 } // namespace rechigros::platform

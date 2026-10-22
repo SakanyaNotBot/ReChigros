@@ -39,6 +39,11 @@ bool removeRecursively(const std::filesystem::path& path);
 // Replaces characters that are illegal in a file name on any supported platform.
 std::string sanitiseFileName(const std::string& name);
 
+// Human readable device description, as the interface footer shows it: the device model
+// followed by the operating system release, for example "Pixel 7 - Android 14".
+// Falls back to a plain platform name when the model is unavailable.
+[[nodiscard]] std::string deviceDescription();
+
 // Joins two path fragments using `/` semantics regardless of the host separator.
 std::filesystem::path joinPortable(const std::filesystem::path& base, std::string_view relative);
 

@@ -72,5 +72,24 @@ constexpr std::uint32_t kTopBar = 0xF00F141BU;
 constexpr std::uint32_t kChip = 0xFF1F2A35U;
 constexpr std::uint32_t kGradePerfect = 0xFFFEFFA9U;
 constexpr std::uint32_t kGradeCombo = 0xFFA2EEFFU;
+// Tab strip: a dark track with a bright plate behind the selected slice.
+constexpr std::uint32_t kTabTrack = 0xB205070BU;
+constexpr std::uint32_t kTabSelectedPlate = 0xFFE8EAEEU;
+// Corner control plates and their bright leading edge.
+constexpr std::uint32_t kIconButtonFill = 0x8610171DU;
+constexpr std::uint32_t kIconButtonFillHover = 0xB2161F27U;
+constexpr std::uint32_t kCornerEdge = 0xFFFFFFFFU;
+// List surfaces: the scroll panel and the translucent chart card.
+constexpr std::uint32_t kListPanel = 0x7B070A10U;
+constexpr std::uint32_t kCardFill = 0xB2171A20U;
+constexpr std::uint32_t kCardBorder = 0x6FFFFFFFU;
+constexpr std::uint32_t kCoverShade = 0x85000000U;
+// Settings backdrop plate and muted section heading.
+constexpr std::uint32_t kSettingsBackdrop = 0x70505559U;
+constexpr std::uint32_t kSectionHeading = 0xAFFFFFFFU;
+// Detail screen scrims.
+constexpr std::uint32_t kDetailCoverShade = 0x88000000U;
+constexpr std::uint32_t kDetailTitlePanel = 0xB8000000U;
+constexpr std::uint32_t kDetailInfoPanel = 0x7A000000U;
 
 } // namespace rechigros::app::ui

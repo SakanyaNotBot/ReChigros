@@ -90,20 +90,20 @@ std::string prepareShaderSource(bool fragment, const std::string& source) {
     stripped.push_back('\n');
   }
 
+  const bool needsOutput = fragment && !declaresFragmentOutput(stripped);
   std::string out;
 #ifdef RECHIGROS_GLES
   out = "#version 300 es\n";
+  // GLSL ES requires the default float precision to be established before any
+  // declaration. The colour output is a declaration, so the precision statement has
+  // to be emitted first, ahead of the injected output variable.
+  if (needsOutput && stripped.find("precision ") == std::string::npos) {
+    out += "precision highp float;\n";
+  }
 #else
   out = "#version 330 core\n";
 #endif
-  if (fragment) {
-    if (!declaresFragmentOutput(stripped)) {
-      if (stripped.find("precision ") == std::string::npos) {
-        out += "precision highp float;\n";
-      }
-      out += "out vec4 fragmentColor;\n";
-    }
-  }
+  if (needsOutput) out += "out vec4 fragmentColor;\n";
   out += stripped;
   return out;
 }

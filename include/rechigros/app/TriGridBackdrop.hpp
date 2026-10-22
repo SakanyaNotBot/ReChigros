@@ -26,9 +26,10 @@ public:
 
   // Draws the backdrop into the bound framebuffer, covering the whole viewport.
   // A non-zero `sourceTexture` replaces the bundled artwork (the cover fit and
-  // breath/vignette/scanline terms stay the same); its size is queried from GL.
+  // breath/vignette/scanline terms stay the same). GLES cannot query a texture's
+  // dimensions, so the caller passes them for the replacement texture.
   void render(int width, int height, double timeSec, unsigned int sourceTexture = 0,
-      bool hasSource = false);
+      bool hasSource = false, int sourceWidth = 0, int sourceHeight = 0);
 
 private:
   struct Texture {

@@ -291,6 +291,10 @@ void drawHomeScreen(AppContext& context) {
   ImDrawList* drawList = ImGui::GetWindowDrawList();
   ui::drawBackdrop(drawList, ImVec2(size.width, size.height), context.nowSec);
 
+  // Flat scrim over the backdrop, so every surface above it keeps its contrast.
+  drawList->AddRectFilled(ImVec2(0.0F, 0.0F), ImVec2(size.width, size.height),
+      ui::rgba(0x46000000U));
+
   const auto point = [&](float x, float y) { return designPosition(ImVec2(size.width, size.height),
         scale, x, y); };
 
@@ -364,14 +368,35 @@ void drawHomeScreen(AppContext& context) {
     }
   }
 
-  // Footer: platform and version.
-  std::string footer = SDL_GetPlatform() != nullptr ? SDL_GetPlatform() : "Unknown";
-#ifdef RECHIGROS_VERSION
-  footer += "  -  ReChigros ";
-  footer += RECHIGROS_VERSION;
-#endif
+  // Footer: the device the game is running on, as the reference shows it.
+  const std::string footer = rechigros::platform::deviceDescription();
   ui::drawTextCentered(drawList, point(365.0F, 415.0F - 24.0F), 16.0F * scale,
       ui::rgba(ui::kTextMuted), footer.c_str());
+
+  // Project link in the bottom-right corner. The mark is drawn from primitives
+  // because no packaged glyph asset exists for it.
+  {
+    const float markSize = 32.0F * scale;
+    const ImVec2 topLeft(size.width - 14.0F * scale - markSize,
+        size.height - 12.0F * scale - markSize);
+    ImGui::SetCursorScreenPos(topLeft);
+    const bool pressed = ImGui::InvisibleButton("##home_link", ImVec2(markSize, markSize));
+    const bool hovered = ImGui::IsItemHovered();
+    const ImU32 tint = hovered ? IM_COL32(255, 255, 255, 255) : IM_COL32(255, 255, 255, 235);
+    const ImVec2 center(topLeft.x + markSize * 0.5F, topLeft.y + markSize * 0.5F);
+    const float radius = markSize * 0.46F;
+    // Filled disc with a lighter notch, matching the solid badge the reference shows.
+    drawList->AddCircleFilled(center, radius, tint, 0);
+    const float notch = radius * 0.52F;
+    drawList->AddRectFilled(ImVec2(center.x - notch, center.y - notch),
+        ImVec2(center.x + notch, center.y + notch * 0.35F), IM_COL32(16, 20, 26, 255),
+        notch * 0.4F);
+    drawList->AddRectFilled(ImVec2(center.x - notch * 0.55F, center.y + notch * 0.5F),
+        ImVec2(center.x + notch * 0.55F, center.y + notch * 1.05F), IM_COL32(16, 20, 26, 255),
+        notch * 0.3F);
+    if (pressed) notify(context, "项目主页");
+    if (hovered) ImGui::SetTooltip("项目主页");
+  }
 
   ui::endFullscreenWindow();
 }

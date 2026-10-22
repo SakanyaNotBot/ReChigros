@@ -257,12 +257,18 @@ bool Application::initialize() {
   }
 
   // GPU menu backdrop. When its shaders or textures fail to load, the interface
-  // keeps the simple ImGui backdrop instead.
-  backdrop_ = std::make_unique<TriGridBackdrop>();
-  if (!backdrop_->prepare(assetRoot)) {
-    std::cerr << "GPU backdrop unavailable; using the fallback background\n";
-    backdrop_->release();
-    backdrop_.reset();
+  // keeps the simple ImGui backdrop instead. The environment switch exists so the
+  // fallback path can be verified without touching the asset tree.
+  const char* disableBackdrop = std::getenv("RECHIGROS_DISABLE_BACKDROP");
+  if (disableBackdrop != nullptr && *disableBackdrop != '\0') {
+    std::cerr << "GPU backdrop disabled by environment; using the fallback background\n";
+  } else {
+    backdrop_ = std::make_unique<TriGridBackdrop>();
+    if (!backdrop_->prepare(assetRoot)) {
+      std::cerr << "GPU backdrop unavailable; using the fallback background\n";
+      backdrop_->release();
+      backdrop_.reset();
+    }
   }
   ui::setBackdropSuppressed(backdrop_ != nullptr && backdrop_->ready());
 
@@ -366,7 +372,6 @@ int Application::run() {
         glClearColor(0.05F, 0.06F, 0.08F, 1.0F);
         glClear(GL_COLOR_BUFFER_BIT);
       }
-      captureFramebufferIfRequested();
       drawCurrentScreen();
     }
     drawToast(*app_);
@@ -395,6 +400,9 @@ int Application::run() {
 
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    // The capture happens after the interface pass, so the saved frame shows the
+    // composed result (GPU backdrop or its fallback) exactly as presented.
+    if (app_->screen != Screen::Game) captureFramebufferIfRequested();
     SDL_GL_SwapWindow(window_);
   }
 

@@ -1,14 +1,42 @@
 #include "rechigros/app/ScreenCommon.hpp"
 #include "rechigros/app/Screens.hpp"
 #include "rechigros/app/UiStyle.hpp"
+#include "rechigros/app/UiWidgets.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
 namespace rechigros::app {
 namespace {
+
+// Layout metrics, in design units of the list canvas.
+constexpr float kBackWidth = 78.0F;
+constexpr float kBackHeight = 48.0F;
+constexpr float kBackTop = 8.0F;
+constexpr float kTabsLeft = 170.0F;
+constexpr float kTabsTop = 11.0F;
+constexpr float kTabsWidth = 330.0F;
+constexpr float kTabsHeight = 42.0F;
+constexpr float kSearchTop = 14.0F;
+constexpr float kPanelLeft = 72.0F;
+constexpr float kPanelTop = 74.0F;
+constexpr float kPanelRight = 98.0F;
+constexpr float kPanelBottom = 6.0F;
+constexpr float kGridInset = 8.0F;
+constexpr float kCardMargin = 5.0F;
+constexpr int kGridColumns = 4;
+// Card internals, as fractions of the 16:9 card so they follow its width.
+constexpr float kCardDifficultyHeight = 28.0F;
+constexpr float kCardNameHeight = 32.0F;
+constexpr float kCardNameBottomMargin = 4.0F;
+constexpr float kCardCheckWidth = 28.0F;
+constexpr float kCardCheckHeight = 20.0F;
+constexpr float kCoverAlpha = 0.72F;
+constexpr float kStateTextSize = 18.0F;
+constexpr double kTabAnimationSeconds = 0.34;
 
 std::string toLower(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(),
@@ -22,18 +50,42 @@ bool matchesSearch(const ChartRecord& record, const std::string& query) {
   return haystack.find(toLower(query)) != std::string::npos;
 }
 
-void drawChartCard(AppContext& context, const ChartRecord& record, ImVec2 topLeft, float cardWidth,
-    float cardHeight, bool selected, bool manageMode) {
-  ImDrawList* drawList = ImGui::GetWindowDrawList();
-  const ImVec2 bottomRight(topLeft.x + cardWidth, topLeft.y + cardHeight);
-  const float scale = layoutScale();
-  const float coverHeight = cardWidth * 0.86F;
+// Tracks a tab change over time so the selected plate slides instead of jumping.
+struct TabAnimation {
+  int from{};
+  int to{};
+  double startSec{-1.0};
 
-  ImGui::SetCursorScreenPos(topLeft);
+  void begin(int target, double nowSec) {
+    from = to;
+    to = target;
+    startSec = nowSec;
+  }
+
+  [[nodiscard]] float progress(double nowSec) const {
+    if (startSec < 0.0 || from == to) return 1.0F;
+    const float t = static_cast<float>((nowSec - startSec) / kTabAnimationSeconds);
+    if (t >= 1.0F) return 1.0F;
+    const float clamped = std::max(0.0F, t);
+    return 1.0F - std::pow(1.0F - clamped, 3.0F);
+  }
+};
+
+TabAnimation g_chartTabAnimation;
+TabAnimation g_settingsTabAnimation;
+
+// Draws one 16:9 chart card: cover, shade, difficulty, best score, name, and the
+// selection plate used while managing the library.
+bool drawChartCard(AppContext& context, const ChartRecord& record, ImVec2 topLeft, float width,
+    float height, float scale, bool selected, bool manageMode, double nowSec) {
+  ImDrawList* drawList = ImGui::GetWindowDrawList();
+  const ImVec2 bottomRight(topLeft.x + width, topLeft.y + height);
   const std::string id = "##card_" + record.id;
-  ImGui::InvisibleButton(id.c_str(), ImVec2(cardWidth, cardHeight));
+  ImGui::SetCursorScreenPos(topLeft);
+  ImGui::InvisibleButton(id.c_str(), ImVec2(width, height));
   const bool hovered = ImGui::IsItemHovered();
-  if (ImGui::IsItemClicked()) {
+  const bool clicked = ImGui::IsItemClicked();
+  if (clicked) {
     if (manageMode) {
       const auto iterator = std::find(context.selectedIds.begin(), context.selectedIds.end(),
           record.id);
@@ -47,64 +99,77 @@ void drawChartCard(AppContext& context, const ChartRecord& record, ImVec2 topLef
     }
   }
 
-  const ImU32 fill = hovered ? IM_COL32(40, 48, 62, 210) : IM_COL32(24, 30, 40, 176);
-  ui::drawPanel(drawList, topLeft, bottomRight, cardHeight * ui::kSkewRatio * 0.5F, fill,
-      selected ? ui::rgba(ui::kAccent) : IM_COL32(255, 255, 255, 40), selected ? 2.5F : 1.0F,
-      false, true);
+  const ImU32 fill = hovered ? ui::rgba(0xCC1D2129U) : ui::rgba(ui::kCardFill);
+  ui::roundedRect(drawList, topLeft, bottomRight, ui::kCardRadius * scale, fill,
+      ui::rgba(ui::kCardBorder), 1.0F);
 
-  // Cover artwork fills the upper part of the card.
-  const std::uint64_t cover = coverTexture(context, record, 256);
-  const ImVec2 coverMin(topLeft.x + 5.0F * scale, topLeft.y + 5.0F * scale);
-  const ImVec2 coverMax(bottomRight.x - 9.0F * scale - cardHeight * ui::kSkewRatio * 0.5F,
-      coverMin.y + coverHeight - 10.0F * scale);
+  // Cover artwork, dimmed so the text above it stays readable.
+  const std::uint64_t cover = coverTexture(context, record, 320);
   if (cover != 0) {
-    drawList->AddImage(static_cast<ImTextureID>(cover), coverMin, coverMax);
+    drawList->AddImage(static_cast<ImTextureID>(cover), topLeft, bottomRight);
+    drawList->AddRectFilled(topLeft, bottomRight, IM_COL32(0, 0, 0,
+        static_cast<int>(255.0F * (1.0F - kCoverAlpha) + 0.5F)));
   } else {
-    drawList->AddRectFilled(coverMin, coverMax, IM_COL32(38, 46, 58, 255));
-    ui::drawTextCentered(drawList, ImVec2((coverMin.x + coverMax.x) * 0.5F,
-                              (coverMin.y + coverMax.y) * 0.5F),
-        16.0F * scale, IM_COL32(150, 165, 185, 200), "NO COVER");
+    drawList->AddRectFilled(topLeft, bottomRight, ui::rgba(ui::kChip), ui::kCardRadius * scale);
   }
+  // The shade keeps labels readable over bright covers.
+  drawList->AddRectFilled(topLeft, bottomRight, ui::rgba(ui::kCoverShade), ui::kCardRadius * scale);
 
-  // Difficulty chip over the cover.
-  const float chipHeight = 24.0F * scale;
-  const ImVec2 chipMin(coverMin.x + 6.0F * scale, coverMax.y - chipHeight - 4.0F * scale);
+  const float difficultyHeight = kCardDifficultyHeight * scale;
+  const float nameHeight = kCardNameHeight * scale;
+  const float padding = 9.0F * scale;
+
+  // Difficulty at the top-left, best score at the top-right.
   const std::string difficulty = record.difficulty.empty() ? "SP Lv.?" : record.difficulty;
-  const ImVec2 chipTextExtent = ui::measureText(difficulty.c_str(), 14.0F * scale);
-  drawList->AddRectFilled(chipMin,
-      ImVec2(chipMin.x + chipTextExtent.x + 12.0F * scale, chipMin.y + chipHeight),
-      IM_COL32(0, 0, 0, 190), 3.0F);
-  ui::drawText(drawList, ImVec2(chipMin.x + 6.0F * scale, chipMin.y + 4.0F * scale),
-      14.0F * scale, ui::rgba(ui::kTextPrimary), difficulty.c_str());
+  const float half = width * 0.5F;
+  ui::drawClippedText(drawList, ImVec2(topLeft.x + padding,
+                            topLeft.y + (difficultyHeight - 13.0F * scale) * 0.5F),
+      topLeft, ImVec2(topLeft.x + half, topLeft.y + difficultyHeight), 13.0F * scale,
+      ui::rgba(ui::kTextPrimary), ui::ellipsize(difficulty, 13.0F * scale, half - padding * 2.0F));
 
-  // Song name.
-  char nameBuffer[160];
-  std::snprintf(nameBuffer, sizeof(nameBuffer), "%.42s", record.songName.c_str());
-  ui::drawText(drawList, ImVec2(topLeft.x + 8.0F * scale, coverMax.y + 8.0F * scale),
-      17.0F * scale, ui::rgba(ui::kTextPrimary), nameBuffer);
+  char scoreBuffer[16];
+  std::snprintf(scoreBuffer, sizeof(scoreBuffer), "%07d", record.bestScore > 0
+      ? record.bestScore
+      : 0);
+  const ImVec2 scoreExtent = ui::measureText(scoreBuffer, 13.0F * scale);
+  ui::drawText(drawList, ImVec2(bottomRight.x - padding - scoreExtent.x,
+                            topLeft.y + (difficultyHeight - 13.0F * scale) * 0.5F),
+      13.0F * scale, ui::rgba(ui::kTextPrimary), scoreBuffer);
 
-  // Grade badge and best score.
-  const float badgeSize = 30.0F * scale;
-  const ImVec2 badgeCenter(bottomRight.x - badgeSize * 0.5F - 12.0F * scale,
-      coverMax.y + 14.0F * scale + badgeSize * 0.5F);
-  drawGradeImage(context, drawList, badgeCenter, badgeSize, record.bestGradeIndex(),
-      record.bestScore > 0 ? 1.0F : 0.35F);
-  const std::string scoreText = record.bestScore > 0 ? formatScore(record.bestScore) : "-------";
-  ui::drawText(drawList, ImVec2(topLeft.x + 8.0F * scale, coverMax.y + 30.0F * scale),
-      15.0F * scale, ui::rgba(ui::kTextSecondary), scoreText.c_str());
+  // Chart name along the bottom edge.
+  const float nameLeft = topLeft.x + 10.0F * scale;
+  const float nameTop = bottomRight.y - nameHeight - kCardNameBottomMargin * scale;
+  const float nameWidth = width - (manageMode ? 44.0F : 22.0F) * scale;
+  ui::drawMarqueeText(drawList, ImVec2(nameLeft, nameTop + (nameHeight - 14.0F * scale) * 0.5F),
+      nameWidth, 14.0F * scale, ui::rgba(ui::kTextPrimary), record.songName, nowSec);
 
+  // Selection plate in the bottom-right corner.
   if (manageMode) {
-    const ImVec2 boxMin(topLeft.x + cardWidth - 26.0F * scale, topLeft.y + 8.0F * scale);
-    drawList->AddRectFilled(boxMin,
-        ImVec2(boxMin.x + 18.0F * scale, boxMin.y + 18.0F * scale),
-        selected ? ui::rgba(ui::kAccent) : IM_COL32(0, 0, 0, 150), 3.0F);
+    const float checkWidth = kCardCheckWidth * scale;
+    const float checkHeight = kCardCheckHeight * scale;
+    const ImVec2 checkTopLeft(bottomRight.x - checkWidth, bottomRight.y - checkHeight);
+    ui::skewQuad(drawList, checkTopLeft.x + checkHeight * ui::kSkewRatio, checkTopLeft.y,
+        checkTopLeft.x + checkWidth, checkTopLeft.y + checkHeight,
+        checkHeight * ui::kSkewRatio, ui::rgba(ui::kTabSelectedPlate));
     if (selected) {
-      ui::drawTextCentered(drawList,
-          ImVec2(boxMin.x + 9.0F * scale, boxMin.y + 8.0F * scale), 15.0F * scale,
-          IM_COL32(255, 255, 255, 255), "v");
+      const std::uint64_t checked = assetTexture(context, "res/checked.png", 64);
+      const ImVec2 inset(checkTopLeft.x + 6.0F * scale, checkTopLeft.y + 3.0F * scale);
+      if (checked != 0) {
+        drawList->AddImage(static_cast<ImTextureID>(checked), inset,
+            ImVec2(checkTopLeft.x + checkWidth - 5.0F * scale,
+                checkTopLeft.y + checkHeight - 3.0F * scale));
+      } else {
+        ui::drawTextCentered(drawList, ImVec2(checkTopLeft.x + checkWidth * 0.5F,
+                                    checkTopLeft.y + checkHeight * 0.5F),
+            13.0F * scale, IM_COL32(16, 21, 27, 255), "v");
+      }
     }
   }
+  return clicked;
 }
+
+// The three chart tabs the reference shows above the grid.
+const char* const kChartTabs[] = {"本地", "上架", "未上架"};
 
 } // namespace
 
@@ -115,138 +180,147 @@ void drawLibraryScreen(AppContext& context) {
   ImDrawList* drawList = ImGui::GetWindowDrawList();
   ui::drawBackdrop(drawList, ImVec2(size.width, size.height), context.nowSec);
 
-  if (backButton(context, "##library_back", scale)) {
-    navigateTo(context, Screen::Home);
-  }
+  // Everything is laid out on the reference's design canvas so the proportions hold
+  // at any window size.
+  const ui::DesignCanvas canvas = ui::designCanvas(ImVec2(size.width, size.height),
+      ui::kListCanvasWidth, ui::kListCanvasHeight);
+  const float unit = canvas.scale;
+  const auto point = [&](float x, float y) { return ui::canvasPoint(canvas, x, y); };
 
-  // Tabs: local charts and the (inactive) online catalogue.
-  const char* tabLabels[] = {"本地谱面", "在线谱面"};
-  for (int index = 0; index < 2; ++index) {
-    const bool selected = context.libraryTab == index;
-    const ImVec2 tabTopLeft((150.0F + static_cast<float>(index) * 132.0F) * scale, 11.0F * scale);
-    const std::string id = "##library_tab_" + std::to_string(index);
-    if (ui::skewButton(id.c_str(), tabLabels[index], tabTopLeft,
-            ImVec2(126.0F * scale, 42.0F * scale), 20.0F * scale, -1.0F,
-            selected ? IM_COL32(215, 222, 232, 230) : ui::rgba(ui::kPanelFill),
-            IM_COL32(255, 255, 255, 90), false, true)) {
-      if (context.libraryTab != index) {
-        context.libraryTab = index;
-        context.manageMode = false;
-        context.selectedIds.clear();
-      }
+  // Back control in the top-left corner.
+  {
+    const ImVec2 topLeft = point(0.0F, kBackTop);
+    if (ui::cornerButton("##library_back", topLeft, ImVec2(kBackWidth * unit, kBackHeight * unit),
+            true, assetTexture(context, "res/return.png", 96), nullptr, 20.0F * unit, "返回")) {
+      navigateTo(context, Screen::Home);
     }
   }
 
-  // Search field.
-  const ImVec2 searchTopLeft(size.width - (98.0F + 172.0F) * scale, 14.0F * scale);
-  const ImVec2 searchSize(172.0F * scale, 36.0F * scale);
-  ImGui::SetCursorScreenPos(searchTopLeft);
-  const bool searchClicked = ImGui::InvisibleButton("##search_field", searchSize);
-  ui::drawPanel(drawList, searchTopLeft,
-      ImVec2(searchTopLeft.x + searchSize.x, searchTopLeft.y + searchSize.y),
-      searchSize.y * ui::kSkewRatio, IM_COL32(231, 235, 240, 158), IM_COL32(255, 255, 255, 110),
-      1.0F, false, true);
-  ui::drawText(drawList, ImVec2(searchTopLeft.x + 16.0F * scale, searchTopLeft.y + 9.0F * scale),
-      17.0F * scale, ui::rgba(ui::kTextPrimary),
-      context.searchQuery.empty() ? "搜索曲名" : context.searchQuery.c_str());
-  if (searchClicked) ImGui::OpenPopup("##search_popup");
+  // Tab strip: local charts first, then the two catalogue tabs.
+  context.libraryTab = std::clamp(context.libraryTab, 0, 2);
+  const ui::DesignCanvas tabCanvas = canvas;
+  const float tabProgress = g_chartTabAnimation.progress(context.nowSec);
+  const int previousTab = g_chartTabAnimation.from;
+  const int pressedTab = ui::tabStrip("##library_tabs", point(kTabsLeft, kTabsTop),
+      kTabsWidth * unit, kTabsHeight * unit, context.libraryTab, previousTab, tabProgress,
+      kChartTabs, 3, 18.0F * unit);
+  (void)tabCanvas;
+  if (pressedTab >= 0 && pressedTab != context.libraryTab) {
+    g_chartTabAnimation.begin(pressedTab, context.nowSec);
+    context.libraryTab = pressedTab;
+    context.manageMode = false;
+    context.selectedIds.clear();
+  }
 
-  // List panel.
-  const ImVec2 panelTopLeft(72.0F * scale, 74.0F * scale);
-  const ImVec2 panelSize(size.width - (72.0F + 98.0F) * scale, size.height - 80.0F * scale);
-  drawList->AddRectFilled(panelTopLeft,
-      ImVec2(panelTopLeft.x + panelSize.x, panelTopLeft.y + panelSize.y),
-      IM_COL32(7, 10, 16, 123));
+  // Search field on the right of the tab row.
+  {
+    const ImVec2 topLeft = point(ui::kListCanvasWidth - kPanelRight - ui::kSearchWidth, kSearchTop);
+    const ImVec2 fieldSize(ui::kSearchWidth * unit, ui::kSearchHeight * unit);
+    ImGui::SetCursorScreenPos(topLeft);
+    const bool clicked = ImGui::InvisibleButton("##library_search", fieldSize);
+    const bool hovered = ImGui::IsItemHovered();
+    ui::roundedRect(drawList, topLeft,
+        ImVec2(topLeft.x + fieldSize.x, topLeft.y + fieldSize.y), ui::kCardRadius * unit,
+        hovered ? ui::rgba(0xB8E7EBF0U) : ui::rgba(0x9DE7EBF0U));
+    const std::string label = context.searchQuery.empty() ? "搜索曲名" : context.searchQuery;
+    ui::drawClippedText(drawList,
+        ImVec2(topLeft.x + 14.0F * unit, topLeft.y + (fieldSize.y - 16.0F * unit) * 0.5F),
+        topLeft, ImVec2(topLeft.x + fieldSize.x, topLeft.y + fieldSize.y), 16.0F * unit,
+        ui::rgba(ui::kTextPrimary), ui::ellipsize(label, 16.0F * unit, fieldSize.x - 24.0F * unit));
+    if (clicked) ImGui::OpenPopup("##search_popup");
+  }
 
-  const float gridPadding = 8.0F * scale;
-  const float gridWidth = panelSize.x - gridPadding * 2.0F;
-  const int columns = 4;
-  const float gap = 9.0F * scale;
-  const float cardWidth = (gridWidth - gap * static_cast<float>(columns - 1))
-      / static_cast<float>(columns);
-  const float cardHeight = cardWidth * 0.86F + 52.0F * scale;
+  // Scroll panel holding the card grid.
+  const ImVec2 panelTopLeft = point(kPanelLeft, kPanelTop);
+  const ImVec2 panelBottomRight = point(ui::kListCanvasWidth - kPanelRight,
+      ui::kListCanvasHeight - kPanelBottom);
+  drawList->AddRectFilled(panelTopLeft, panelBottomRight, ui::rgba(ui::kListPanel));
 
-  ImGui::SetCursorScreenPos(ImVec2(panelTopLeft.x + gridPadding, panelTopLeft.y + gridPadding));
+  const float panelWidth = panelBottomRight.x - panelTopLeft.x;
+  const float panelHeight = panelBottomRight.y - panelTopLeft.y;
+  ImGui::SetCursorScreenPos(panelTopLeft);
   ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0F, 0.0F, 0.0F, 0.0F));
-  ImGui::BeginChild("##library_grid", ImVec2(panelSize.x - gridPadding * 2.0F,
-                        panelSize.y - gridPadding * 2.0F),
-      false, ImGuiWindowFlags_NoBackground);
+  ImGui::BeginChild("##library_grid", ImVec2(panelWidth, panelHeight), false,
+      ImGuiWindowFlags_NoBackground);
   const ImVec2 gridOrigin = ImGui::GetCursorScreenPos();
+
+  const float gridInset = kGridInset * unit;
+  const float cardMargin = kCardMargin * unit;
+  const float columnWidth = (panelWidth - gridInset * 2.0F) / static_cast<float>(kGridColumns);
+  const float cardWidth = columnWidth - cardMargin * 2.0F;
+  const float cardHeight = ui::coverHeightFor(cardWidth);
+  const float rowHeight = cardHeight + cardMargin * 2.0F;
 
   if (context.libraryTab == 0) {
     std::vector<const ChartRecord*> visible;
-    const auto& records = context.library.records();
-    for (const auto& record : records) {
+    for (const auto& record : context.library.records()) {
       if (matchesSearch(record, context.searchQuery)) visible.push_back(&record);
     }
-    const auto rows = static_cast<int>((visible.size() + static_cast<std::size_t>(columns) - 1)
-        / static_cast<std::size_t>(columns));
-    const float contentHeight = static_cast<float>(std::max(0, rows)) * (cardHeight + gap);
-    ImGui::Dummy(ImVec2(gridWidth, std::max(contentHeight, 1.0F)));
+    const int rows = static_cast<int>((visible.size() + static_cast<std::size_t>(kGridColumns)
+        - 1) / static_cast<std::size_t>(kGridColumns));
+    const float contentHeight = static_cast<float>(std::max(0, rows)) * rowHeight;
+    ImGui::Dummy(ImVec2(panelWidth - gridInset * 2.0F, std::max(contentHeight, 1.0F)));
     for (std::size_t index = 0; index < visible.size(); ++index) {
-      const auto row = static_cast<int>(index) / columns;
-      const int column = static_cast<int>(index) % columns;
-      const ImVec2 cellTopLeft(gridOrigin.x + static_cast<float>(column) * (cardWidth + gap),
-          gridOrigin.y + static_cast<float>(row) * (cardHeight + gap));
+      const int row = static_cast<int>(index) / kGridColumns;
+      const int column = static_cast<int>(index) % kGridColumns;
+      const ImVec2 cardTopLeft(gridOrigin.x + gridInset + static_cast<float>(column) * columnWidth
+              + cardMargin,
+          gridOrigin.y + gridInset + static_cast<float>(row) * rowHeight + cardMargin);
       const bool selected = std::find(context.selectedIds.begin(), context.selectedIds.end(),
-                                visible[index]->id)
+                                  visible[index]->id)
           != context.selectedIds.end();
-      drawChartCard(context, *visible[index], cellTopLeft, cardWidth, cardHeight, selected,
-          context.manageMode);
+      drawChartCard(context, *visible[index], cardTopLeft, cardWidth, cardHeight, unit, selected,
+          context.manageMode, context.nowSec);
     }
     if (visible.empty()) {
-      const ImVec2 center(gridOrigin.x + gridWidth * 0.5F,
-          gridOrigin.y + (panelSize.y - gridPadding * 2.0F) * 0.45F);
-      ui::drawTextCentered(drawList, center, 20.0F * scale, ui::rgba(ui::kTextSecondary),
+      ui::drawTextCentered(drawList, ImVec2(gridOrigin.x + panelWidth * 0.5F,
+                                  gridOrigin.y + panelHeight * 0.42F),
+          kStateTextSize * unit, ui::rgba(ui::kTextPrimary),
           context.searchQuery.empty() ? "本地暂无谱面" : "没有匹配的谱面");
-    } else if (context.manageMode) {
+    }
+    // Selection counter, shown only while managing.
+    if (context.manageMode && !visible.empty()) {
       const std::string state = "已选择 " + std::to_string(context.selectedIds.size()) + " / "
           + std::to_string(visible.size());
-      ui::drawText(drawList, ImVec2(panelTopLeft.x + 12.0F * scale,
-                           panelTopLeft.y + 8.0F * scale),
-          15.0F * scale, ui::rgba(ui::kTextSecondary), state.c_str());
+      ui::drawTextCentered(drawList, ImVec2(size.width * 0.5F, point(0.0F, 64.0F).y),
+          13.0F * unit, ui::rgba(ui::kTextPrimary), state.c_str());
     }
   } else {
-    const ImVec2 center(gridOrigin.x + gridWidth * 0.5F,
-        gridOrigin.y + (panelSize.y - gridPadding * 2.0F) * 0.42F);
-    ui::drawTextCentered(drawList, center, 21.0F * scale, ui::rgba(ui::kTextSecondary),
-        "在线谱面目录未在此构建中启用");
+    ui::drawTextCentered(drawList, ImVec2(gridOrigin.x + panelWidth * 0.5F,
+                                gridOrigin.y + panelHeight * 0.42F),
+        kStateTextSize * unit, ui::rgba(ui::kTextPrimary),
+        context.libraryTab == 1 ? "暂无上架谱面" : "暂无未上架谱面");
   }
   ImGui::EndChild();
   ImGui::PopStyleColor();
 
-  // Action column.
-  const float actionWidth = 78.0F * scale;
-  const float actionHeight = 48.0F * scale;
-  const float actionRight = size.width - actionWidth;
-  const float actionBottom = size.height - 8.0F * scale;
-  const auto drawAction = [&](const char* id, const char* asset, float bottomOffset,
-                              const char* tooltip) {
-    const std::uint64_t texture = assetTexture(context, asset, 96);
-    return ui::iconButton(id, texture,
-        ImVec2(actionRight, actionBottom - bottomOffset - actionHeight), ImVec2(actionWidth,
-            actionHeight),
-        tooltip, false, true, true);
+  // Vertical icon column in the bottom-right corner.
+  const auto sideIcon = [&](const char* id, const char* asset, float bottomOffset,
+                            const char* tooltip) {
+    const ImVec2 topLeft = point(ui::kListCanvasWidth - kBackWidth,
+        ui::kListCanvasHeight - bottomOffset - kBackHeight - 8.0F);
+    return ui::cornerButton(id, topLeft, ImVec2(kBackWidth * unit, kBackHeight * unit), false,
+        assetTexture(context, asset, 96), nullptr, 18.0F * unit, tooltip);
   };
 
   if (context.libraryTab == 0) {
     if (!context.manageMode) {
-      if (drawAction("##manage", "res/edit.png", 58.0F * scale, "管理")) {
+      if (sideIcon("##library_manage", "res/edit.png", 58.0F, "管理")) {
         context.manageMode = true;
         context.selectedIds.clear();
       }
-      if (drawAction("##import", "res/import.png", 0.0F, "导入谱面包")) {
+      if (sideIcon("##library_import", "res/import.png", 0.0F, "导入谱面包")) {
         ImGui::OpenPopup("##import_popup");
       }
     } else {
-      if (drawAction("##delete", "res/delete.png", 116.0F * scale, "删除选中")) {
+      if (sideIcon("##library_delete", "res/delete.png", 116.0F, "删除选中")) {
         if (context.selectedIds.empty()) {
           notify(context, "未选择谱面");
         } else {
           ImGui::OpenPopup("##delete_popup");
         }
       }
-      if (drawAction("##select_all", "res/all.png", 58.0F * scale, "全选")) {
+      if (sideIcon("##library_select_all", "res/all.png", 58.0F, "全选")) {
         std::vector<std::string> visibleIds;
         for (const auto& record : context.library.records()) {
           if (matchesSearch(record, context.searchQuery)) visibleIds.push_back(record.id);
@@ -257,7 +331,7 @@ void drawLibraryScreen(AppContext& context) {
           context.selectedIds = std::move(visibleIds);
         }
       }
-      if (drawAction("##cancel_manage", "res/cancel.png", 0.0F, "取消")) {
+      if (sideIcon("##library_cancel_manage", "res/cancel.png", 0.0F, "取消")) {
         context.manageMode = false;
         context.selectedIds.clear();
       }

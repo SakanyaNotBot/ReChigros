@@ -1,12 +1,41 @@
 #include "rechigros/app/ScreenCommon.hpp"
 #include "rechigros/app/Screens.hpp"
 #include "rechigros/app/UiStyle.hpp"
+#include "rechigros/app/UiWidgets.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <string>
 
 namespace rechigros::app {
 namespace {
+
+// Every position below is a design unit on the reference's 731x415 canvas.
+constexpr float kBackWidth = 78.0F;
+constexpr float kBackHeight = 48.0F;
+constexpr float kBackTop = 8.0F;
+constexpr float kTitleLeft = 0.0F;
+constexpr float kTitleTop = 82.0F;
+constexpr float kTitleWidth = 342.0F;
+constexpr float kTitleHeight = 56.0F;
+constexpr float kInfoLeft = 0.0F;
+constexpr float kInfoTop = 138.0F;
+constexpr float kInfoWidth = 318.0F;
+constexpr float kInfoHeight = 120.0F;
+constexpr float kChipBackLeft = 312.0F;
+constexpr float kChipBackTop = 82.0F;
+constexpr float kChipBackWidth = 116.0F;
+constexpr float kChipBackHeight = 56.0F;
+constexpr float kChipLeft = 316.0F;
+constexpr float kChipTop = 68.0F;
+constexpr float kChipWidth = 108.0F;
+constexpr float kChipHeight = 82.0F;
+constexpr float kScoreWidth = 376.0F;
+constexpr float kScoreHeight = 62.0F;
+constexpr float kScoreBottom = 56.0F;
+constexpr float kCoverAlpha = 0.34F;
+constexpr float kGradeSize = 44.0F;
 
 std::string orUnknown(const std::string& value) {
   return value.empty() ? "未知" : value;
@@ -25,125 +54,166 @@ void drawDetailScreen(AppContext& context) {
   if (!record) {
     ui::drawTextCentered(drawList, ImVec2(size.width * 0.5F, size.height * 0.5F),
         22.0F * scale, ui::rgba(ui::kTextSecondary), "谱面不存在或已删除");
-    if (backButton(context, "##detail_back", scale)) {
+    if (ui::cornerButton("##detail_back", ImVec2(0.0F, kBackTop * scale),
+            ImVec2(kBackWidth * scale, kBackHeight * scale), true,
+            assetTexture(context, "res/return.png", 96), nullptr, 20.0F * scale, "返回")) {
       navigateTo(context, Screen::Library);
     }
     ui::endFullscreenWindow();
     return;
   }
 
-  const auto point = [&](float x, float y) {
-    return designPosition(ImVec2(size.width, size.height), scale, x, y);
-  };
+  const ui::DesignCanvas canvas = ui::designCanvas(ImVec2(size.width, size.height),
+      ui::kDetailCanvasWidth, ui::kDetailCanvasHeight);
+  const float unit = canvas.scale;
+  const auto point = [&](float x, float y) { return ui::canvasPoint(canvas, x, y); };
+  const auto length = [&](float value) { return value * unit; };
 
-  // Background artwork with a dark scrim.
-  const std::uint64_t background = coverTexture(context, *record, 1024);
+  // Chart artwork as the page background, dimmed so the panels read against it.
+  const std::uint64_t background = coverTexture(context, *record, 1200);
   if (background != 0) {
     drawList->AddImage(static_cast<ImTextureID>(background), ImVec2(0.0F, 0.0F),
         ImVec2(size.width, size.height), ImVec2(0.0F, 0.0F), ImVec2(1.0F, 1.0F),
-        IM_COL32(255, 255, 255, 88));
+        IM_COL32(255, 255, 255, static_cast<int>(255.0F * kCoverAlpha)));
   }
   drawList->AddRectFilled(ImVec2(0.0F, 0.0F), ImVec2(size.width, size.height),
-      IM_COL32(0, 0, 0, 138));
+      ui::rgba(ui::kDetailCoverShade));
 
-  // Title panel.
-  const ImVec2 titleTopLeft = point(0.0F, 82.0F);
-  const ImVec2 titleSize(342.0F * scale, 56.0F * scale);
-  ui::drawPanel(drawList, titleTopLeft,
-      ImVec2(titleTopLeft.x + titleSize.x, titleTopLeft.y + titleSize.y),
-      titleSize.y * ui::kSkewRatio * 0.5F, IM_COL32(0, 0, 0, 184), IM_COL32(0, 0, 0, 0), 0.0F,
-      true, false);
-  char nameBuffer[200];
-  std::snprintf(nameBuffer, sizeof(nameBuffer), "%.48s", record->songName.c_str());
-  ui::drawText(drawList, ImVec2(titleTopLeft.x + 14.0F * scale,
-                        titleTopLeft.y + titleSize.y * 0.5F - 12.0F * scale),
-      22.0F * scale, ui::rgba(ui::kTextPrimary), nameBuffer);
-
-  // Difficulty chip.
-  const ImVec2 chipBackTopLeft = point(312.0F, 82.0F);
-  ui::drawPanel(drawList, chipBackTopLeft,
-      ImVec2(chipBackTopLeft.x + 116.0F * scale, chipBackTopLeft.y + 56.0F * scale),
-      56.0F * scale * ui::kSkewRatio, IM_COL32(0, 0, 0, 184), IM_COL32(0, 0, 0, 0), 0.0F, true,
-      false);
-  const ImVec2 chipTopLeft = point(316.0F, 68.0F);
-  const ImVec2 chipSize(108.0F * scale, 82.0F * scale);
-  ui::drawPanel(drawList, chipTopLeft, ImVec2(chipTopLeft.x + chipSize.x,
-                                          chipTopLeft.y + chipSize.y),
-      chipSize.y * ui::kSkewRatio * 0.5F, IM_COL32(255, 255, 255, 255), IM_COL32(0, 0, 0, 0), 0.0F,
-      true, false);
-  ui::drawTextCentered(drawList, ImVec2(chipTopLeft.x + chipSize.x * 0.5F,
-                               chipTopLeft.y + chipSize.y * 0.5F),
-      24.0F * scale, IM_COL32(5, 7, 10, 255), record->difficulty.c_str());
+  // Title plate, flush to the left edge.
+  const ImVec2 titleTopLeft = point(kTitleLeft, kTitleTop);
+  ui::skewQuad(drawList, titleTopLeft.x, titleTopLeft.y, titleTopLeft.x + length(kTitleWidth),
+      titleTopLeft.y + length(kTitleHeight), length(kTitleHeight) * ui::kSkewRatio,
+      ui::rgba(ui::kDetailTitlePanel));
+  {
+    char nameBuffer[200];
+    std::snprintf(nameBuffer, sizeof(nameBuffer), "%.48s", record->songName.c_str());
+    ui::drawClippedText(drawList,
+        ImVec2(titleTopLeft.x + length(14.0F),
+            titleTopLeft.y + (length(kTitleHeight) - 22.0F * unit) * 0.5F),
+        titleTopLeft,
+        ImVec2(titleTopLeft.x + length(kTitleWidth), titleTopLeft.y + length(kTitleHeight)),
+        22.0F * unit, ui::rgba(ui::kTextPrimary), nameBuffer);
+  }
 
   // Charter and composer rows.
-  const ImVec2 infoTopLeft = point(0.0F, 138.0F);
-  const ImVec2 infoSize(318.0F * scale, 120.0F * scale);
-  ui::drawPanel(drawList, infoTopLeft, ImVec2(infoTopLeft.x + infoSize.x,
-                                         infoTopLeft.y + infoSize.y),
-      infoSize.y * ui::kSkewRatio * 0.5F, IM_COL32(0, 0, 0, 122), IM_COL32(0, 0, 0, 0), 0.0F, true,
-      false);
-  const float rowLeft = infoTopLeft.x + 16.0F * scale;
-  const float rowTop = infoTopLeft.y + 12.0F * scale;
-  const char* labels[] = {"谱师", "曲师"};
-  const std::string values[] = {orUnknown(record->info.charter), orUnknown(record->info.composer)};
-  for (int index = 0; index < 2; ++index) {
-    const float offset = static_cast<float>(index) * 52.0F * scale;
-    ui::drawText(drawList, ImVec2(rowLeft, rowTop + offset), 14.0F * scale,
-        IM_COL32(184, 190, 200, 255), labels[index]);
-    ui::drawText(drawList, ImVec2(rowLeft, rowTop + offset + 18.0F * scale), 19.0F * scale,
-        ui::rgba(ui::kTextPrimary), values[index].c_str());
+  const ImVec2 infoTopLeft = point(kInfoLeft, kInfoTop);
+  ui::skewQuad(drawList, infoTopLeft.x, infoTopLeft.y, infoTopLeft.x + length(kInfoWidth),
+      infoTopLeft.y + length(kInfoHeight), length(kInfoHeight) * ui::kSkewRatio,
+      ui::rgba(ui::kDetailInfoPanel));
+  {
+    const char* labels[] = {"charter", "composer"};
+    const std::string values[] = {orUnknown(record->info.charter),
+        orUnknown(record->info.composer)};
+    const ImVec2 clipMin = infoTopLeft;
+    const ImVec2 clipMax(infoTopLeft.x + length(kInfoWidth), infoTopLeft.y + length(kInfoHeight));
+    for (int index = 0; index < 2; ++index) {
+      const float rowTop = infoTopLeft.y + length(8.0F)
+          + static_cast<float>(index) * length(56.0F);
+      const float left = infoTopLeft.x + length(14.0F);
+      ui::drawClippedText(drawList, ImVec2(left, rowTop), clipMin, clipMax, 15.0F * unit,
+          ui::rgba(0xB8FFFFFFU), labels[index]);
+      ui::drawClippedText(drawList, ImVec2(left, rowTop + length(18.0F)), clipMin, clipMax,
+          18.0F * unit, ui::rgba(ui::kTextPrimary),
+          ui::ellipsize(values[index], 18.0F * unit, length(kInfoWidth) - length(28.0F)));
+    }
   }
 
-  // Best score panel.
-  const ImVec2 scoreTopLeft = point(0.0F, 415.0F - 56.0F - 62.0F);
-  const ImVec2 scoreSize(376.0F * scale, 62.0F * scale);
-  ui::drawPanel(drawList, scoreTopLeft, ImVec2(scoreTopLeft.x + scoreSize.x,
-                                          scoreTopLeft.y + scoreSize.y),
-      scoreSize.y * ui::kSkewRatio * 0.5F, IM_COL32(0, 0, 0, 122), IM_COL32(0, 0, 0, 0), 0.0F,
-      true, false);
-  const float gradeSize = 44.0F * scale;
-  drawGradeImage(context, drawList,
-      ImVec2(scoreTopLeft.x + 16.0F * scale + gradeSize * 0.5F,
-          scoreTopLeft.y + scoreSize.y * 0.5F),
-      gradeSize, record->bestGradeIndex(), record->bestScore > 0 ? 1.0F : 0.35F);
-  const std::string scoreText = record->bestScore > 0 ? formatScore(record->bestScore) : "0000000";
-  ui::drawText(drawList, ImVec2(scoreTopLeft.x + 70.0F * scale,
-                        scoreTopLeft.y + scoreSize.y * 0.5F - 20.0F * scale),
-      36.0F * scale, ui::rgba(ui::kTextPrimary), scoreText.c_str());
-  const std::string accuracyText =
-      record->bestAcc >= 0 ? formatAccuracy(static_cast<double>(record->bestAcc) / 10000.0)
-                           : "--.--%";
-  drawTextRight(drawList, ImVec2(scoreTopLeft.x + 254.0F * scale + 96.0F * scale,
-                            scoreTopLeft.y + scoreSize.y - 20.0F * scale),
-      20.0F * scale, ui::rgba(ui::kTextSecondary), accuracyText.c_str());
+  // Difficulty chip: a dark backing plate behind a bright plate holding the label.
+  const ImVec2 chipBackTopLeft = point(kChipBackLeft, kChipBackTop);
+  ui::skewQuad(drawList, chipBackTopLeft.x, chipBackTopLeft.y,
+      chipBackTopLeft.x + length(kChipBackWidth), chipBackTopLeft.y + length(kChipBackHeight),
+      length(kChipBackHeight) * ui::kSkewRatio, ui::rgba(ui::kDetailTitlePanel));
+  const ImVec2 chipTopLeft = point(kChipLeft, kChipTop);
+  ui::skewQuad(drawList, chipTopLeft.x, chipTopLeft.y, chipTopLeft.x + length(kChipWidth),
+      chipTopLeft.y + length(kChipHeight), length(kChipHeight) * ui::kSkewRatio,
+      ui::rgba(0xFFFFFFFFU));
+  ui::drawTextCentered(drawList, ImVec2(chipTopLeft.x + length(kChipWidth) * 0.5F
+                                - length(kChipHeight) * ui::kSkewRatio * 0.5F,
+                              chipTopLeft.y + length(kChipHeight) * 0.5F),
+      20.0F * unit, IM_COL32(5, 7, 10, 255), record->difficulty.c_str());
 
-  // Corner controls.
-  if (backButton(context, "##detail_back", scale)) {
+  // Best score plate along the bottom-left.
+  const ImVec2 scoreTopLeft = point(0.0F, ui::kDetailCanvasHeight - kScoreBottom - kScoreHeight);
+  ui::skewQuad(drawList, scoreTopLeft.x, scoreTopLeft.y, scoreTopLeft.x + length(kScoreWidth),
+      scoreTopLeft.y + length(kScoreHeight), length(kScoreHeight) * ui::kSkewRatio,
+      ui::rgba(ui::kDetailInfoPanel));
+  {
+    const float gradeSize = length(kGradeSize);
+    const ImVec2 gradeCenter(scoreTopLeft.x + length(16.0F) + gradeSize * 0.5F,
+        scoreTopLeft.y + length(kScoreHeight) * 0.5F);
+    drawGradeImage(context, drawList, gradeCenter, gradeSize, record->bestGradeIndex(),
+        record->bestScore > 0 ? 1.0F : 0.68F);
+    const std::string scoreText = record->bestScore > 0 ? formatScore(record->bestScore)
+                                                        : "0000000";
+    ui::drawText(drawList, ImVec2(scoreTopLeft.x + length(70.0F),
+                            scoreTopLeft.y + length(kScoreHeight) * 0.5F - 20.0F * unit),
+        36.0F * unit, ui::rgba(ui::kTextPrimary), scoreText.c_str());
+    const std::string accuracyText = record->bestAcc >= 0
+        ? formatAccuracy(static_cast<double>(record->bestAcc) / 10000.0)
+        : "--.--%";
+    drawTextRight(drawList, ImVec2(scoreTopLeft.x + length(254.0F + 96.0F),
+                             scoreTopLeft.y + length(kScoreHeight) - length(12.0F)),
+        20.0F * unit, ui::rgba(ui::kTextSecondary), accuracyText.c_str());
+  }
+
+  // Corner controls: back, information, settings, and start (long press = practice).
+  if (ui::cornerButton("##detail_back", ImVec2(0.0F, kBackTop * scale),
+          ImVec2(kBackWidth * scale, kBackHeight * scale), true,
+          assetTexture(context, "res/return.png", 96), nullptr, 20.0F * scale, "返回")) {
     navigateTo(context, Screen::Library);
   }
-  const float iconWidth = 78.0F * scale;
-  const float iconHeight = 48.0F * scale;
-  if (ui::iconButton("##detail_info", assetTexture(context, "res/detail.png", 96),
-          ImVec2(size.width - iconWidth, 18.0F * scale), ImVec2(iconWidth, iconHeight), "详细信息",
-          false, true, true)) {
+  const ImVec2 cornerSize(kBackWidth * scale, kBackHeight * scale);
+  if (ui::cornerButton("##detail_info", ImVec2(size.width - cornerSize.x, 18.0F * scale),
+          cornerSize, false, assetTexture(context, "res/detail.png", 96), nullptr,
+          18.0F * scale, "详细信息")) {
     ImGui::OpenPopup("##detail_info_popup");
   }
-  if (ui::iconButton("##detail_settings", assetTexture(context, "res/settings.png", 96),
-          ImVec2(size.width - iconWidth, 88.0F * scale), ImVec2(iconWidth, iconHeight), "设置",
-          false, true, true)) {
+  if (ui::cornerButton("##detail_settings", ImVec2(size.width - cornerSize.x, 88.0F * scale),
+          cornerSize, false, assetTexture(context, "res/settings.png", 96), nullptr,
+          18.0F * scale, "设置")) {
     context.settingsTab = 0;
     context.settingsReturn = Screen::Detail;
     context.screen = Screen::Settings;
   }
-  if (ui::iconButton("##detail_start", assetTexture(context, "res/start.png", 96),
-          ImVec2(size.width - iconWidth, size.height - (58.0F + 48.0F) * scale),
-          ImVec2(iconWidth, iconHeight), "开始游戏", false, true, true)) {
-    startChart(context, false);
-  }
-  if (ui::iconButton("##detail_practice", assetTexture(context, "res/play.png", 96),
-          ImVec2(size.width - iconWidth, size.height - 48.0F * scale),
-          ImVec2(iconWidth, iconHeight), "练习模式", false, true, true)) {
-    startChart(context, true);
+
+  // Start button: a tap starts the chart, a long press starts practice.
+  {
+    const ImVec2 topLeft(size.width - cornerSize.x,
+        size.height - (58.0F + kBackHeight) * scale);
+    ImGui::SetCursorScreenPos(topLeft);
+    ImGui::InvisibleButton("##detail_start", cornerSize);
+    const bool hovered = ImGui::IsItemHovered();
+    static double pressStartSec = -1.0;
+    static bool practiceTriggered = false;
+    if (ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      if (pressStartSec < 0.0) {
+        pressStartSec = context.nowSec;
+        practiceTriggered = false;
+      } else if (!practiceTriggered && context.nowSec - pressStartSec > 0.45) {
+        practiceTriggered = true;
+        startChart(context, true);
+      }
+    } else if (ImGui::IsItemDeactivated()) {
+      if (pressStartSec >= 0.0 && !practiceTriggered) startChart(context, false);
+      pressStartSec = -1.0;
+      practiceTriggered = false;
+    }
+    // Plate drawn after the hit test so the press state can tint it.
+    const float skew = cornerSize.y * ui::kSkewRatio;
+    ui::skewQuad(drawList, topLeft.x, topLeft.y, topLeft.x + cornerSize.x,
+        topLeft.y + cornerSize.y, skew,
+        ui::rgba(hovered ? ui::kIconButtonFillHover : ui::kIconButtonFill));
+    const std::uint64_t icon = assetTexture(context, "res/start.png", 96);
+    const float glyph = std::min(cornerSize.x - skew, cornerSize.y) * 0.52F;
+    const ImVec2 center(topLeft.x + cornerSize.x * 0.5F - skew * 0.5F,
+        topLeft.y + cornerSize.y * 0.5F);
+    if (icon != 0) {
+      drawList->AddImage(static_cast<ImTextureID>(icon),
+          ImVec2(center.x - glyph * 0.5F, center.y - glyph * 0.5F),
+          ImVec2(center.x + glyph * 0.5F, center.y + glyph * 0.5F));
+    } else {
+      ui::drawTextCentered(drawList, center, 18.0F * scale, ui::rgba(ui::kTextPrimary), "开始");
+    }
   }
 
   // Detail information dialog.
