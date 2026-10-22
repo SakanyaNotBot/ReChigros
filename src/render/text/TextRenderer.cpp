@@ -9,7 +9,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <fstream>
+#include <vector>
 
 namespace rechigros::render::text {
 namespace {
@@ -22,6 +24,51 @@ constexpr float kPixelPadding = 1.0F;
 std::uint8_t coverageToAlpha(float coverage) {
   const float clamped = std::clamp(coverage, 0.0F, 1.0F);
   return static_cast<std::uint8_t>(clamped * 255.0F + 0.5F);
+}
+
+// Splits UTF-8 into code points. The font API addresses glyphs by code point; iterating
+// the bytes of a string instead would draw every continuation byte as its own missing
+// glyph, which turns one non-ASCII separator into a row of placeholder boxes.
+std::vector<std::uint32_t> decodeUtf8(const std::string& text) {
+  std::vector<std::uint32_t> codepoints;
+  codepoints.reserve(text.size());
+  std::size_t index = 0;
+  while (index < text.size()) {
+    const auto lead = static_cast<unsigned char>(text[index]);
+    std::uint32_t code = lead;
+    std::size_t length = 1;
+    if ((lead & 0x80U) == 0) {
+      code = lead;
+    } else if ((lead & 0xE0U) == 0xC0U) {
+      code = lead & 0x1FU;
+      length = 2;
+    } else if ((lead & 0xF0U) == 0xE0U) {
+      code = lead & 0x0FU;
+      length = 3;
+    } else if ((lead & 0xF8U) == 0xF0U) {
+      code = lead & 0x07U;
+      length = 4;
+    }
+    bool valid = length > 1 && index + length <= text.size();
+    for (std::size_t offset = 1; valid && offset < length; ++offset) {
+      const auto continuation = static_cast<unsigned char>(text[index + offset]);
+      if ((continuation & 0xC0U) != 0x80U) {
+        valid = false;
+        break;
+      }
+      code = (code << 6U) | (continuation & 0x3FU);
+    }
+    if (!valid) {
+      // A stray byte is drawn as itself rather than dropped, so a malformed string stays
+      // visible instead of silently shrinking.
+      codepoints.push_back(lead);
+      ++index;
+      continue;
+    }
+    codepoints.push_back(code);
+    index += length;
+  }
+  return codepoints;
 }
 } // namespace
 
@@ -64,15 +111,16 @@ float FontAtlas::measure(const std::string& text, float pixelSize) const {
   const float scale = stbtt_ScaleForPixelHeight(&fontInfo_->info, pixelSize);
   float width = 0.0F;
   int previous = 0;
-  for (const char character : text) {
+  for (const std::uint32_t character : decodeUtf8(text)) {
+    const int codepoint = static_cast<int>(character);
     int advance = 0;
     int leftSideBearing = 0;
-    stbtt_GetCodepointHMetrics(&fontInfo_->info, character, &advance, &leftSideBearing);
+    stbtt_GetCodepointHMetrics(&fontInfo_->info, codepoint, &advance, &leftSideBearing);
     const int kern = previous != 0
-        ? stbtt_GetCodepointKernAdvance(&fontInfo_->info, previous, character)
+        ? stbtt_GetCodepointKernAdvance(&fontInfo_->info, previous, codepoint)
         : 0;
     width += static_cast<float>(advance + kern) * scale;
-    previous = character;
+    previous = codepoint;
   }
   return width;
 }
@@ -89,6 +137,7 @@ std::unique_ptr<TextTexture> FontAtlas::rasterize(const std::string& text, float
   stbtt_GetFontVMetrics(&fontInfo_->info, &ascent, &descent, &lineGap);
 
   // First pass: advances and bounding box.
+  const auto codepoints = decodeUtf8(content);
   float penX = 0.0F;
   int previous = 0;
   float minX = 0.0F;
@@ -96,12 +145,13 @@ std::unique_ptr<TextTexture> FontAtlas::rasterize(const std::string& text, float
   float minY = 0.0F;
   float maxY = 0.0F;
   bool hasBounds = false;
-  for (const char character : content) {
+  for (const std::uint32_t character : codepoints) {
+    const int codepoint = static_cast<int>(character);
     int advance = 0;
     int leftSideBearing = 0;
-    stbtt_GetCodepointHMetrics(&fontInfo_->info, character, &advance, &leftSideBearing);
+    stbtt_GetCodepointHMetrics(&fontInfo_->info, codepoint, &advance, &leftSideBearing);
     const int kern = previous != 0
-        ? stbtt_GetCodepointKernAdvance(&fontInfo_->info, previous, character)
+        ? stbtt_GetCodepointKernAdvance(&fontInfo_->info, previous, codepoint)
         : 0;
     penX += static_cast<float>(kern) * scale;
 
@@ -109,7 +159,7 @@ std::unique_ptr<TextTexture> FontAtlas::rasterize(const std::string& text, float
     int y0 = 0;
     int x1 = 0;
     int y1 = 0;
-    stbtt_GetCodepointBitmapBox(&fontInfo_->info, character, scale, scale, &x0, &y0, &x1, &y1);
+    stbtt_GetCodepointBitmapBox(&fontInfo_->info, codepoint, scale, scale, &x0, &y0, &x1, &y1);
     if (x1 > x0 && y1 > y0) {
       const float glyphLeft = penX + static_cast<float>(x0);
       const float glyphRight = penX + static_cast<float>(x1);
@@ -129,7 +179,7 @@ std::unique_ptr<TextTexture> FontAtlas::rasterize(const std::string& text, float
       }
     }
     penX += static_cast<float>(advance) * scale;
-    previous = character;
+    previous = codepoint;
   }
 
   const float advanceWidth = penX;
@@ -151,12 +201,13 @@ std::unique_ptr<TextTexture> FontAtlas::rasterize(const std::string& text, float
   // Second pass: sample each glyph at subpixel offsets and accumulate coverage.
   penX = 0.0F;
   previous = 0;
-  for (const char character : content) {
+  for (const std::uint32_t character : codepoints) {
+    const int codepoint = static_cast<int>(character);
     int advance = 0;
     int leftSideBearing = 0;
-    stbtt_GetCodepointHMetrics(&fontInfo_->info, character, &advance, &leftSideBearing);
+    stbtt_GetCodepointHMetrics(&fontInfo_->info, codepoint, &advance, &leftSideBearing);
     const int kern = previous != 0
-        ? stbtt_GetCodepointKernAdvance(&fontInfo_->info, previous, character)
+        ? stbtt_GetCodepointKernAdvance(&fontInfo_->info, previous, codepoint)
         : 0;
     penX += static_cast<float>(kern) * scale;
 
@@ -164,7 +215,7 @@ std::unique_ptr<TextTexture> FontAtlas::rasterize(const std::string& text, float
     int y0 = 0;
     int x1 = 0;
     int y1 = 0;
-    stbtt_GetCodepointBitmapBox(&fontInfo_->info, character, scale, scale, &x0, &y0, &x1, &y1);
+    stbtt_GetCodepointBitmapBox(&fontInfo_->info, codepoint, scale, scale, &x0, &y0, &x1, &y1);
     const int glyphW = x1 - x0;
     const int glyphH = y1 - y0;
     if (glyphW > 0 && glyphH > 0) {
@@ -178,7 +229,7 @@ std::unique_ptr<TextTexture> FontAtlas::rasterize(const std::string& text, float
           const float shiftY = static_cast<float>(subY) / kSubpixelsY;
           std::vector<std::uint8_t> bitmap(static_cast<std::size_t>(glyphW) * glyphH, 0);
           stbtt_MakeCodepointBitmapSubpixel(&fontInfo_->info, bitmap.data(), glyphW, glyphH,
-              glyphW, scale, scale, shiftX, shiftY, character);
+              glyphW, scale, scale, shiftX, shiftY, codepoint);
           const int originX =
               static_cast<int>(std::lround(penX + static_cast<float>(x0) - minX + 1.0F));
           const int originY = static_cast<int>(std::lround(static_cast<float>(y0) - minY + 1.0F));
@@ -201,7 +252,7 @@ std::unique_ptr<TextTexture> FontAtlas::rasterize(const std::string& text, float
       }
     }
     penX += static_cast<float>(advance) * scale;
-    previous = character;
+    previous = codepoint;
   }
 
   std::vector<std::uint8_t> rgba(static_cast<std::size_t>(width) * height * 4, 0);

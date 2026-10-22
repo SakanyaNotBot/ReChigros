@@ -16,19 +16,20 @@
 | 语言/标准 | C++20 |
 | 依赖 | SDL2 2.30.11、OpenGL 3.3 Core / GLES 3.0、miniaudio、Dear ImGui、nlohmann/json、stb、miniz |
 | 构建 | CMake ≥3.15 + Ninja，`build.bat` 一键 |
-| 首方代码量 | 约 30,400 行 C++（参考 Java 约 40,000 行） |
-| Git | 主分支 `master`，最近提交 `9b0bc7d` |
-| 文档 | `MIGRATION.md`（模块状态，部分过时）、`docs/COVERAGE_AUDIT.md`（**权威**功能差距审计）、`docs/UI_PORTING_GUIDE.md`（界面移植规范） |
+| 首方代码量 | 约 33,600 行 C++（参考 Java 约 40,000 行） |
+| Git | 主分支 `master`，最近提交见 `git log --oneline -1` |
+| 文档 | `MIGRATION.md`（模块状态）、`docs/COVERAGE_AUDIT.md`（功能差距审计，已标注修复项）、`docs/UI_PORTING_GUIDE.md`（界面移植规范） |
 
 **方向**：把 Java 音游逐功能移植为跨平台 C++。功能与逻辑不得低于原项目，界面与参考设备的视觉逐屏一致。
 
-**状态摘要（2026-10-22）**：
+**状态摘要（2026-10-22 收尾）**：
 
-- 构建、六个测试套件、应用自检、渲染矩阵、应用循环、字体覆盖：**全部通过**。
-- 安卓游玩画面不呈现的问题：**已定位并修复，模拟器上已验证**（见第四节）。
+- 构建、七个测试套件、应用自检（30/30）、应用循环（11/11）、渲染矩阵（18 用例）、界面字形覆盖（231 字）、文件导入检查（30/30）、红区合成探针：**全部通过**。
+- 安卓游玩画面不呈现的问题：**已定位并修复，模拟器上已验证**（见第四节）；本轮界面工作后重新构建 APK 并复验。
 - 第九章红区（噪域）屏幕空间合成：**已完成并通过独立探针验证**（见第四节）。
-- 界面：已建立统一移植基础设施（字形栅格化、布局/控件层、截图工具），主界面已按设备截图逐像素对齐；其余界面（本地/在线列表、设置、谱面详情、结算、游玩 HUD/暂停/练习 HUD）正在按屏幕逐个移植。
-- 功能差距：`docs/COVERAGE_AUDIT.md` 的 S1 项是最重要的待办（回放模型、无头 JSON 谱面格式判定、`useAttachUiFix` 等）。
+- 界面：主界面、本地/在线/未上架列表（含滚动、搜索、管理、导入对话框）、四个设置页、校准页、谱面详情、结算页、游玩 HUD、暂停、恢复倒计时、练习面板与判定面板**均已按设备截图逐屏校准**。各屏残余差异集中在内置字体字形宽度、模糊近似与卡片封面重采样，元素位置基本在 0–3 px 内。
+- 文件导入：谱面包（压缩包/文件夹/散文件）、回放、皮肤资源包三条流程已实现并按参考文案提示；桌面/安卓系统选择器之外的导入逻辑有独立的批处理检查（`rechigros_import_check`，30 项）。
+- 功能：回放模型改为参考的判定条目模型（旧触控回放仍可读）、无头 JSON 谱面按普通格式解析、`useAttachUiFix` 生效、长按条按半拍爆发、难度文本 U+2002 规范化、舞台宽高比默认与清洗——`docs/COVERAGE_AUDIT.md` 的 S1 项已清零（详见该文「Fixed by task-11」表）。
 
 ---
 
@@ -52,11 +53,12 @@ MSVC 需要在 `cmd /c "call vcvars64.bat && ..."` 里调用，无 vswhere。
 ```powershell
 cd E:\ReChigros
 
-build.bat desktop Release          # 桌面构建 + 六个测试套件
+build.bat desktop Release          # 桌面构建 + 七个测试套件
 build.bat verify-app               # 应用端到端验证（隐藏窗口主循环 + 字体覆盖）
 build.bat verify-render            # 渲染矩阵（18 用例）
 build.bat android Release          # 安卓 APK
 build.bat verify-ios               # iOS 打包检查（不需要 macOS）
+build\desktop-release\src\app\rechigros_import_check.exe   # 导入流程批处理检查
 ```
 
 ### 单个界面截图（界面移植的核心工具）
@@ -71,7 +73,7 @@ build\desktop-release\src\app\ReChigros.exe `
 - `--screen` 取值：`home`、`library`、`library-online`、`library-manage`、`settings-video/audio/replay/more`、`detail`、`result`、`calibration`、`game`、`game-pause`、`game-practice`、`game-countdown`。
 - 可以带谱面选择器：`--screen detail:Message`、`--screen result:Hate`、`--screen game:Hate`（按曲名子串匹配）。
 - `--data-root build/capture-data` 已预置与参考设备完全相同的 8 个谱面包（名称/难度/封面一致），用于逐卡片对比。
-- `--fixed-delta` 让帧时钟固定为 1/60 秒，`--frames N` + `--capture-frame` 的截图可复现；`--capture-time T` 固定 GPU 背景动画时间（对比主界面时用 `--capture-time 4` 与 `build/ref/java_home.png` 对齐）。
+- `--fixed-delta` 让帧时钟固定为 1/60 秒，`--frames N` + `--capture-frame` 的截图可复现；`--capture-at-frame N` 指定截图发生在第 N 帧（游玩 HUD 要在开场动画之后截图时必用）；`--capture-time T` 固定 GPU 背景动画时间（主界面/设置页用 `--capture-time 4` 与参考截图对齐，其余界面先扫 0–30 秒找背景相位最接近的 T 再比较，否则整屏差异主要来自背景动画相位）。
 - 截图后与 `build/ref/java_*.png`（参考设备 1920x1080 截图，索引见 `build/ref/README.md`）比较；`build/tools/compare_screens.py` 输出总体/分区差异与对比拼图。
 
 ### 依赖下载

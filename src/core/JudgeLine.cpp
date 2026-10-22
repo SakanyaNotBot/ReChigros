@@ -83,7 +83,19 @@ void JudgeLine::resetCursors()noexcept{
 JudgeLine::State JudgeLine::fillState(double second,float aspect){
   if(second==lastStateTimeSec_)return lastState_; const auto beat=sec2beat(second); State state; double cx=0,cy=0;
   if(!eventLayers.empty()){
-    for(auto& layer:eventLayers){state.rotateDeg+=static_cast<float>(lineValue(beat,layer.judgeLineRotateEvents,layer.curRotate,0));cx+=lineValue(beat,layer.judgeLineMoveXEvents,layer.curMoveX,moveValue(beat,layer.judgeLineMoveEvents,layer.curMove1,0,false));cy+=lineValue(beat,layer.judgeLineMoveYEvents,layer.curMoveY,moveValue(beat,layer.judgeLineMoveEvents,layer.curMove2,0,true));state.alpha+=static_cast<float>(lineValue(beat,layer.judgeLineDisappearEvents,layer.curDisappear,0));}
+    for(auto& layer:eventLayers){
+      state.rotateDeg+=static_cast<float>(lineValue(beat,layer.judgeLineRotateEvents,layer.curRotate,0));
+      // A layer that carries either axis of the split move tracks resolves both axes from
+      // those tracks; the packed move events are only the fallback for layers without them.
+      const bool splitMove=!layer.judgeLineMoveXEvents.empty()||!layer.judgeLineMoveYEvents.empty();
+      const double lx=splitMove?lineValue(beat,layer.judgeLineMoveXEvents,layer.curMoveX,0.0)
+          :moveValue(beat,layer.judgeLineMoveEvents,layer.curMove1,0,false);
+      const double ly=splitMove?lineValue(beat,layer.judgeLineMoveYEvents,layer.curMoveY,0.0)
+          :moveValue(beat,layer.judgeLineMoveEvents,layer.curMove2,0,true);
+      if(std::isfinite(lx))cx+=lx;
+      if(std::isfinite(ly))cy+=ly;
+      state.alpha+=static_cast<float>(lineValue(beat,layer.judgeLineDisappearEvents,layer.curDisappear,0));
+    }
     state.yNorm=static_cast<float>(0.5-cy);state.xNorm=static_cast<float>(0.5+cx);
   }else{
     state.rotateDeg=static_cast<float>(lineValue(beat,judgeLineRotateEvents,curRotate_,0));state.xNorm=static_cast<float>(moveValue(beat,judgeLineMoveEvents,curMove1_,0.5,false));state.yNorm=static_cast<float>(moveValue(beat,judgeLineMoveEvents,curMove2_,0.5,true));state.alpha=static_cast<float>(lineValue(beat,judgeLineDisappearEvents,curDisappear_,0));cx=state.xNorm-0.5;cy=0.5-state.yNorm;

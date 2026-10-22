@@ -1,8 +1,11 @@
 #pragma once
 
+#include "rechigros/game/HoldBodyBurst.hpp"
+
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace rechigros::game { class Chart; class JudgementEngine; }
 
@@ -82,6 +85,11 @@ struct RenderFrameInput {
     float speed{1.0F};
     bool autoPlay{false};
   } practice;
+
+  // Hold-body hit bursts produced since the previous frame. The gameplay session owns the
+  // timing (one burst every half beat while a hold is active); the hit-effect pass draws one
+  // burst per entry at the position the hold occupies.
+  std::vector<game::HoldBodyBurst> holdBodyBursts;
 
   std::string songName;
   std::string levelName;

@@ -1,12 +1,13 @@
 #pragma once
 
+#include "rechigros/game/HoldBodyBurst.hpp"
 #include "rechigros/render/math/Mat4.hpp"
 
 #include <array>
 #include <cstdint>
 #include <vector>
 
-namespace rechigros::game { class Chart; }
+namespace rechigros::game { class Chart; class Note; }
 namespace rechigros::render::batch { class SpriteBatch; }
 namespace rechigros::render::gl { class Texture; }
 
@@ -89,6 +90,13 @@ public:
   void draw(batch::SpriteBatch& out, const math::Mat4& projection, gl::Texture& sheet,
       const gl::Texture& whiteTexture, double visualTimeSec) const;
 
+  // Spawns one burst for a held note's body, at the point where that note currently meets
+  // its judge line. The gameplay session supplies the bursts (one every half beat while a
+  // hold is active), so the timing loop lives there and this only reproduces the look.
+  void spawnHoldBody(game::Chart& chart, const game::HoldBodyBurst& burst,
+      double chartTimeSec, double visualTimeSec, float stageX, float stageY, float stageWidth,
+      float stageHeight, float noteWidth);
+
   [[nodiscard]] bool empty() const noexcept { return effects_.empty(); }
   [[nodiscard]] std::size_t size() const noexcept { return effects_.size(); }
 
@@ -101,6 +109,9 @@ private:
 
   void spawn(float x, float y, double startSec, float red, float green, float blue, float alpha,
       int parts, float lineRotDeg);
+  // Spawns a burst for one note at `startSec`, using the note's current line geometry.
+  void spawnBurstForNote(const game::Note& note, int judgement, double chartTimeSec,
+      double startSec, float stageX, float stageY, float stageWidth, float stageHeight);
 
   HitEffectStyle style_{};
   HitEffectSkin skin_{};

@@ -226,7 +226,9 @@ void drawTintedGlyph(ImDrawList* drawList, const ui::PxRect& rect, int shape, Im
   const float height = rect.max.y - rect.min.y;
   if (width <= 1.0F || height <= 1.0F) return;
   const ImVec2 center((rect.min.x + rect.max.x) * 0.5F, (rect.min.y + rect.max.y) * 0.5F);
-  const float radius = std::min(width, height) * 0.5F;
+  float radius = std::min(width, height) * 0.5F;
+  if (shape == 0) radius *= 0.78F; // restart ring is drawn smaller than its plate padding
+  if (shape == 1) radius *= 0.88F; // continue triangle
   switch (shape) {
     case 0: { // restart: a ring with an arrow head, opened on the right
       const float thickness = std::max(1.0F, radius * 0.22F);
@@ -319,17 +321,28 @@ void drawBlurredBackdrop(AppContext& context, ImDrawList* drawList, ImVec2 viewp
   if (textureWidth <= 0 || textureHeight <= 0) return;
 
   const float screenAspect = viewport.x / std::max(1.0F, viewport.y);
-  const float textureAspect = static_cast<float>(textureWidth) / static_cast<float>(textureHeight);
+  // The downscaled texture's aspect is rounded by its pixel size; the source artwork's own aspect
+  // is taken from the full resolution texture so the backdrop is cropped exactly like the
+  // reference's centre-crop.
+  float referenceAspect = static_cast<float>(textureWidth) / static_cast<float>(textureHeight);
+  const std::uint64_t fullTexture = resultCover(context, 2048);
+  if (fullTexture != 0) {
+    const int fullWidth = static_cast<int>(context.textures.width(fullTexture));
+    const int fullHeight = static_cast<int>(context.textures.height(fullTexture));
+    if (fullWidth > 0 && fullHeight > 0) {
+      referenceAspect = static_cast<float>(fullWidth) / static_cast<float>(fullHeight);
+    }
+  }
   float u0 = 0.0F;
   float v0 = 0.0F;
   float u1 = 1.0F;
   float v1 = 1.0F;
-  if (textureAspect > screenAspect) {
-    const float fraction = screenAspect / textureAspect;
+  if (referenceAspect > screenAspect) {
+    const float fraction = screenAspect / referenceAspect;
     u0 = (1.0F - fraction) * 0.5F;
     u1 = 1.0F - u0;
-  } else if (textureAspect < screenAspect) {
-    const float fraction = textureAspect / screenAspect;
+  } else if (referenceAspect < screenAspect) {
+    const float fraction = referenceAspect / screenAspect;
     v0 = (1.0F - fraction) * 0.5F;
     v1 = 1.0F - v0;
   }

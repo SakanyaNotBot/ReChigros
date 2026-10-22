@@ -153,57 +153,82 @@ void HitEffectField::update(game::Chart& chart, double chartTimeSec, double visu
     // Very late sweeps at load time must not produce bursts.
     if (note->sect > chartTimeSec + 0.5) continue;
 
-    const auto& line = *note->master;
-    const auto state = const_cast<game::JudgeLine&>(line).fillState(chartTimeSec, stageAspect);
-    const float lineX = stageX + state.xNorm * stageWidth;
-    const float lineY = stageY + state.yNorm * stageHeight;
-    const double radians = static_cast<double>(state.rotateDeg) * kPi / 180.0;
-    const float cosLine = static_cast<float>(std::cos(radians));
-    const float sinLine = static_cast<float>(std::sin(radians));
-    const float lineRotDeg = state.rotateDeg + (note->isAbove ? 0.0F : 180.0F);
-
-    // The burst sits on the judge line at the note's lane offset, lifted by the
-    // note's vertical offset the same way the note head is.
-    const float offsetX = static_cast<float>(note->positionX * game::PGR_WIDTH * stageWidth);
-    const float transYPx = static_cast<float>(note->yOffset * stageHeight);
-    const float dirX = note->isAbove ? sinLine : -sinLine;
-    const float dirY = note->isAbove ? -cosLine : cosLine;
-
-    const float x = lineX + offsetX * cosLine + transYPx * dirX;
-    const float y = lineY + offsetX * sinLine + transYPx * dirY;
-
     // The burst starts at the moment the note was judged on the visual clock, so a
     // slow frame or a playhead jump does not restart it.
     const double judgedAt = std::isfinite(note->judgeTimeSec) ? note->judgeTimeSec : note->sect;
     const double lag = std::max(0.0, (chartTimeSec - judgedAt) / speed);
-    const double startSec = visualTimeSec - lag;
-
-    float red = 0.0F;
-    float green = 0.0F;
-    float blue = 0.0F;
-    float alpha = 1.0F;
-    int parts = 4;
-    if (isPerfect(judgement)) {
-      red = skin_.perfectRed;
-      green = skin_.perfectGreen;
-      blue = skin_.perfectBlue;
-      alpha = skin_.perfectAlpha;
-      parts = 4;
-    } else {
-      red = skin_.goodRed;
-      green = skin_.goodGreen;
-      blue = skin_.goodBlue;
-      alpha = skin_.goodAlpha;
-      parts = 3;
-    }
-    // A per-note hit-effect tint overrides the skin colour entirely.
-    if (note->hasHitEffectTint) {
-      red = note->hitEffectR;
-      green = note->hitEffectG;
-      blue = note->hitEffectB;
-    }
-    spawn(x, y, startSec, red, green, blue, alpha, parts, lineRotDeg);
+    spawnBurstForNote(*note, judgement, chartTimeSec, visualTimeSec - lag, stageX, stageY,
+        stageWidth, stageHeight);
   }
+}
+
+void HitEffectField::spawnBurstForNote(const game::Note& note, int judgement,
+    double chartTimeSec, double startSec, float stageX, float stageY, float stageWidth,
+    float stageHeight) {
+  if (note.master == nullptr) return;
+  const float stageAspect = stageHeight > 1.0e-6F ? stageWidth / stageHeight : 16.0F / 9.0F;
+  const auto& line = *note.master;
+  const auto state = const_cast<game::JudgeLine&>(line).fillState(chartTimeSec, stageAspect);
+  const float lineX = stageX + state.xNorm * stageWidth;
+  const float lineY = stageY + state.yNorm * stageHeight;
+  const double radians = static_cast<double>(state.rotateDeg) * kPi / 180.0;
+  const float cosLine = static_cast<float>(std::cos(radians));
+  const float sinLine = static_cast<float>(std::sin(radians));
+  const float lineRotDeg = state.rotateDeg + (note.isAbove ? 0.0F : 180.0F);
+
+  // The burst sits on the judge line at the note's lane offset, lifted by the
+  // note's vertical offset the same way the note head is.
+  const float offsetX = static_cast<float>(note.positionX * game::PGR_WIDTH * stageWidth);
+  const float transYPx = static_cast<float>(note.yOffset * stageHeight);
+  const float dirX = note.isAbove ? sinLine : -sinLine;
+  const float dirY = note.isAbove ? -cosLine : cosLine;
+
+  const float x = lineX + offsetX * cosLine + transYPx * dirX;
+  const float y = lineY + offsetX * sinLine + transYPx * dirY;
+
+  float red = 0.0F;
+  float green = 0.0F;
+  float blue = 0.0F;
+  float alpha = 1.0F;
+  int parts = 4;
+  if (isPerfect(judgement)) {
+    red = skin_.perfectRed;
+    green = skin_.perfectGreen;
+    blue = skin_.perfectBlue;
+    alpha = skin_.perfectAlpha;
+    parts = 4;
+  } else {
+    red = skin_.goodRed;
+    green = skin_.goodGreen;
+    blue = skin_.goodBlue;
+    alpha = skin_.goodAlpha;
+    parts = 3;
+  }
+  // A per-note hit-effect tint overrides the skin colour entirely.
+  if (note.hasHitEffectTint) {
+    red = note.hitEffectR;
+    green = note.hitEffectG;
+    blue = note.hitEffectB;
+  }
+  spawn(x, y, startSec, red, green, blue, alpha, parts, lineRotDeg);
+}
+
+void HitEffectField::spawnHoldBody(game::Chart& chart, const game::HoldBodyBurst& burst,
+    double chartTimeSec, double visualTimeSec, float stageX, float stageY, float stageWidth,
+    float stageHeight, float noteWidth) {
+  noteWidth_ = noteWidth;
+  if (burst.noteIndex < 0
+      || static_cast<std::size_t>(burst.noteIndex) >= chart.allNotesSorted.size()) {
+    return;
+  }
+  const game::Note* note = chart.allNotesSorted[static_cast<std::size_t>(burst.noteIndex)];
+  if (note == nullptr) return;
+  // A body burst is drawn exactly like a head burst of the same judgement, at the position
+  // the hold occupies when the timer fires. Back-date it to the moment it happened so a
+  // long frame does not restart the animation.
+  const double lag = std::max(0.0, chartTimeSec - burst.timeSec);
+  spawnBurstForNote(*note, burst.perfect ? 0 : 1, chartTimeSec, visualTimeSec - lag, stageX,
+      stageY, stageWidth, stageHeight);
 }
 
 void HitEffectField::draw(batch::SpriteBatch& out, const math::Mat4& projection,

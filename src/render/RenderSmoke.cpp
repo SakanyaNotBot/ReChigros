@@ -50,6 +50,8 @@ struct Options {
   float scrollSpeed{1.0F};
   bool pauseMenu{false};
   float pauseElapsedSec{0.3F};
+  // Drops the hold-body bursts so a frame can be compared with and without them.
+  bool holdBodyBursts{true};
 };
 
 Options parseOptions(int argc, char** argv) {
@@ -94,6 +96,8 @@ Options parseOptions(int argc, char** argv) {
       options.pauseMenu = true;
     } else if (flag == "--pause-elapsed") {
       options.pauseElapsedSec = static_cast<float>(std::atof(next().c_str()));
+    } else if (flag == "--no-hold-bursts") {
+      options.holdBodyBursts = false;
     }
   }
   return options;
@@ -204,6 +208,10 @@ int main(int argc, char** argv) {
       input.keyScale = options.keyScale;
       input.mirrorX = options.mirrorX;
       input.scrollSpeed = options.scrollSpeed;
+      // Hold-body bursts produced while the session was driven to this chart time. The
+      // renderer draws one burst per entry, so a hold frame can be inspected headlessly.
+      input.holdBodyBursts = session.takeHoldBodyBursts();
+      if (!options.holdBodyBursts) input.holdBodyBursts.clear();
       if (options.pauseMenu) {
         input.pause.mode = rechigros::render::PauseMode::Menu;
         input.pause.elapsedSec = options.pauseElapsedSec;

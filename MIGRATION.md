@@ -56,14 +56,19 @@ Every gate below was executed on this machine and passed.
 | OfficialEase | done | curve evaluation ported |
 | PEC parser | done | offset, commands, visible-time walk, multi-BPM |
 | Chart library / UI screens | done | library, detail, game, result, calibration, settings, self-test |
-| Replay / settings persistence | done | round-trip asserted in the self-test |
+| Replay model | done | judgement entries (tap/drag/hold-press/hold-release/flick, keyed by note index) recorded from the judging path and re-applied on playback without synthesising touches, so a replay judges the same on any device and viewer settings stay display-only; timing metadata (early/late split, standard deviation, 19-bin offset histogram) saved and merged back for the settlement screen; legacy touch-sample files still read; asserted in `CoreTests` and `AppDataTests` |
+| Settings persistence | done | key/value file; load-time clamps for every playback setting, including the stage aspect (default 16:9, 0.5..5.0 clamp, 0 = follow the window) |
 | miniaudio engine | done | single-callback mixer, decoder, low-pass, playhead |
 | Hit effects | done | judgement-tinted spritesheet + debris; atlas grid and skin colours read from `respack.json` |
 | Skin layers | done | the selected skin directory is layered over the built-in pack; only the fields a skin specifies change |
 | Hold bodies | done | body slice cropped from the hold sheet using the `holdAtlas` heights |
 | Judge-line pass / note pass / background / HUD | done | visible in the render smoke output |
 | RPE parser | done | note/event/model parity; speed layers are kept per layer and also merged into one curve, asserted against the per-layer integration |
-| Official parser | in progress | format 1/3 move packing, note fields |
+| Official parser | done | format 1/3 move packing, block areas, note fields and event coverage; format-version normalisation asserted in `ChartParserTests` |
+| Plain JSON chart schema | done | a JSON object with none of the identifying headers binds by field name and keeps `formatVersion` at 0, so hold geometry takes the non-official branch; no official-parser coercions (bpm clamp, `isCover`/`invertRotation` defaults, packed coordinates, block areas); asserted in `ChartParserTests` |
+| `useAttachUiFix` from pack metadata | done | `info.yml`/`info.yaml`/`info.json` searched up to six levels above the chart and applied to the chart, nearest file wins; asserted in `ChartParserTests` |
+| Hold body feedback | done | per-hold half-beat burst timer, one burst per interval at the position the hold occupies, rendered through the existing hit-effect pass; asserted in `CoreTests` and covered by a render-smoke capture |
+| Difficulty label text | done | space runs collapse and become U+2002 EN SPACE, default label `SP Lv.?`; asserted in `AppDataTests` |
 | ChartLoader | done | format decided from a 64 KiB content prefix rather than the extension; `extra.json` effects and videos; `line.csv` per-line textures and scales; normalized digest |
 | Bad-judgement fly-out | done | a bad note leaves a fading copy of its head, tinted dark red, over half a second |
 | Note highlight sizing | done | highlight sheets are a different canvas size; the drawn width is corrected by their width ratio, asserted in `TransitionTests` |

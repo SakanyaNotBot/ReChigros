@@ -71,6 +71,30 @@ in a build/verification script; harmless but should be deleted and its script fi
 
 ---
 
+Status update: items #1, #8, #11 are FIXED by the interface/audit pass; items #2, #3, #4, #9,
+#10, #12 and #15 are FIXED; see the "Fixed" tables below. Items #5, #6 and #7 were fixed
+earlier in commit 9b0bc7d. Remaining open items are the refactors #13 and #14 (S3).
+
+### Fixed by the interface/audit pass
+
+| # | Sev | Gap | Fix and evidence |
+| --- | --- | --- | --- |
+| 1 | S1 | Practice judgement-window sliders have no effect | `JudgementEngine::calculate` reads `practiceOverrideActive()`/`practiceWindows_` for tap and hold perfect/good, `judgeWindowForNote`/`lateMissLimitForNote` route through `tapPerfectWindow`/`tapGoodWindow`, and `GameplaySession` uses them for classification, spatial falloff, detection and late-miss. `CoreTests` practice-window case, app loop `practice-window` check |
+| 8 | S2 | Mixed move layers interpolate differently | `JudgeLine::fillState` resolves a layer's move from the split X/Y tracks whenever either is present and falls back to the packed move events only for layers without them, matching the reference branch. `ChartParserTests`, render matrix |
+| 11 | S2 | `judgeWindowSec(NOTE_HOLD)` ignored the practice override | `JudgementEngine::judgeWindowForNote(NOTE_HOLD)` returns `tapGoodWindow()`, which applies the practice override; used by the judging and settlement paths |
+
+### Fixed by task-11
+
+| # | Sev | Gap | Fix and evidence |
+| --- | --- | --- | --- |
+| 2 | S1 | Replay model incompatible | Judgement-entry model ported: `game::ReplayJudgement` + recording in `GameplaySession::commitNote`/`recordHoldPress`, playback in `applyReplayEntries`; v2 file format `{t,ni,j,ts}` with reference field names, legacy touch files still read; recorded modes are display-only on playback. `CoreTests`, `AppDataTests`, app round trip 3/3 exact match |
+| 3 | S1 | Header-less JSON forced to official 3 | New `PlainChartParser` (ChartLoader routes `JsonObject` to it): `formatVersion` stays 0, no bpm clamp, `isCover`/`invertRotation` keep plain defaults, coordinates not re-packed, no block areas. `ChartParserTests` |
+| 4 | S1 | `useAttachUiFix` never applied | `ChartLoader::applyAttachUiFixFlag` searches six parent levels for info.yml/yaml/json and applies the flag; nearest file wins. `ChartParserTests` |
+| 9 | S2 | Hold body feedback missing | `Note::holdFxTimerSec` timer in `GameplaySession::updateHoldBodyBursts` (half-beat interval, one burst per crossing, timer reset while the note has not started); bursts flow through `RenderFrameInput` to the hit-effect pass. `CoreTests` + capture |
+| 10 | S2 | Difficulty label normalisation | `InfoFile::normalizeDifficultyText` collapses ASCII space runs then emits U+2002; default label uses an en space. `AppDataTests` |
+| 12 | S2 | Replay metadata lost | `ReplayMeta` carries `goodEarly/goodLate/stdDevMs/judgementOffsetBins`; saved on record and used by `mergeReplayPlaybackResult` (recorded stats win, live histogram replaces saved when non-empty). `AppDataTests` |
+| 15 | S2 | Default play-field aspect differs | `Settings::aspectRatio` defaults to 16:9 and is sanitised on load (0 = follow window, 0.5..5.0 clamp, corrupt → 16:9). `AppDataTests` |
+
 ## 2. Chart parsing
 
 ### 2.1 Format detection and loader wiring

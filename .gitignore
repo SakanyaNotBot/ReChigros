@@ -26,3 +26,7 @@ xcuserdata/
 *.exp
 *.lib
 *.exe
+
+# Scratch data written by the test executables
+/test-scratch/
+/import-check-data/

@@ -1,8 +1,0 @@
-{
-        "formatVersion": 3,
-        "judgeLineList": [
-          { "bpm": 120.0, "notesAbove": [], "notesBelow": [], "speedEvents": [],
-            "judgeLineMoveEvents": [], "judgeLineRotateEvents": [],
-            "judgeLineDisappearEvents": [] }
-        ]
-      }

@@ -779,6 +779,13 @@ void GameRenderer::Impl::drawHitEffects(const scene::StageLayout& layout,
   hitEffects.update(*chart, input.chartTimeSec, input.visualTimeSec, layout.stage.x,
       layout.stage.y, layout.stage.width, layout.stage.height, noteWidth,
       input.practice.enabled ? input.practice.speed : 1.0F);
+  // Hold-body bursts are timed by the gameplay session, so they are added after the
+  // judgement-driven bursts. They use the same geometry as a head burst, at the position
+  // the hold currently occupies.
+  for (const auto& burst : input.holdBodyBursts) {
+    hitEffects.spawnHoldBody(*chart, burst, input.chartTimeSec, input.visualTimeSec,
+        layout.stage.x, layout.stage.y, layout.stage.width, layout.stage.height, noteWidth);
+  }
   hitEffects.draw(batch, layout.projection(), *hitFx, textures.white(), input.visualTimeSec);
 }
 
