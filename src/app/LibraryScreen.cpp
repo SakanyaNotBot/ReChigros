@@ -1,4 +1,5 @@
 #include "rechigros/app/ScreenCommon.hpp"
+#include "rechigros/platform/FileDialog.hpp"
 #include "rechigros/app/Screens.hpp"
 #include "rechigros/app/UiStyle.hpp"
 #include "rechigros/app/UiWidgets.hpp"
@@ -72,7 +73,6 @@ struct TabAnimation {
 };
 
 TabAnimation g_chartTabAnimation;
-TabAnimation g_settingsTabAnimation;
 
 // Draws one 16:9 chart card: cover, shade, difficulty, best score, name, and the
 // selection plate used while managing the library.
@@ -198,13 +198,11 @@ void drawLibraryScreen(AppContext& context) {
 
   // Tab strip: local charts first, then the two catalogue tabs.
   context.libraryTab = std::clamp(context.libraryTab, 0, 2);
-  const ui::DesignCanvas tabCanvas = canvas;
   const float tabProgress = g_chartTabAnimation.progress(context.nowSec);
   const int previousTab = g_chartTabAnimation.from;
   const int pressedTab = ui::tabStrip("##library_tabs", point(kTabsLeft, kTabsTop),
       kTabsWidth * unit, kTabsHeight * unit, context.libraryTab, previousTab, tabProgress,
       kChartTabs, 3, 18.0F * unit);
-  (void)tabCanvas;
   if (pressedTab >= 0 && pressedTab != context.libraryTab) {
     g_chartTabAnimation.begin(pressedTab, context.nowSec);
     context.libraryTab = pressedTab;
@@ -376,6 +374,36 @@ void drawLibraryScreen(AppContext& context) {
     ImGui::SetWindowFontScale(scale);
     ImGui::TextUnformatted("导入谱面包 (.zip)");
     ImGui::TextDisabled("也可以直接把 zip 文件拖入窗口");
+    // The platform picker is the way in on a packaged build: it hands back a readable copy
+    // of whatever the user chose, without the application needing broad storage access.
+    if (rechigros::platform::FileDialog::available()) {
+      if (ImGui::Button("选择文件…", ImVec2(150.0F * scale, 38.0F * scale))) {
+        const auto chosen = rechigros::platform::FileDialog::openChartPackage();
+        if (!chosen.empty()) {
+          try {
+            const auto result = context.library.importZip(chosen);
+            notify(context, result.imported ? "已导入谱面" : "谱面包已在库中");
+            ImGui::CloseCurrentPopup();
+          } catch (const std::exception& exception) {
+            notify(context, std::string("导入失败: ") + exception.what());
+          }
+        }
+      }
+      ImGui::SameLine();
+      if (ImGui::Button("选择文件夹…", ImVec2(160.0F * scale, 38.0F * scale))) {
+        const auto chosen = rechigros::platform::FileDialog::openChartFolder();
+        if (!chosen.empty()) {
+          try {
+            const auto result = context.library.importDirectory(chosen);
+            notify(context, result.imported ? "已导入谱面" : "谱面已在库中");
+            ImGui::CloseCurrentPopup();
+          } catch (const std::exception& exception) {
+            notify(context, std::string("导入失败: ") + exception.what());
+          }
+        }
+      }
+      ImGui::TextDisabled("选择后会把这个谱面复制到应用内");
+    }
     static char pathBuffer[512] = {};
     ImGui::SetNextItemWidth(480.0F * scale);
     ImGui::InputText("##import_path", pathBuffer, sizeof(pathBuffer));

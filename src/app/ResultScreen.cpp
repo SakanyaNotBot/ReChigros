@@ -171,16 +171,22 @@ void drawResultScreen(AppContext& context) {
     }
     char songBuffer[160];
     std::snprintf(songBuffer, sizeof(songBuffer), "%.48s", context.play.songName.c_str());
-    ui::drawClippedText(drawList,
-        ImVec2(topLeft.x + length(26.0F), topLeft.y + height - length(52.0F)),
-        topLeft, ImVec2(topLeft.x + width, topLeft.y + height), 30.0F * unit,
-        IM_COL32(255, 255, 255, 255),
-        ui::ellipsize(songBuffer, 30.0F * unit, width - length(50.0F)));
+    // Song name and difficulty share the caption row near the bottom of the illustration.
+    // The judgement board overlaps the lower right of the frame, so the caption row is kept
+    // in the clear band above it and both labels are clipped to that band.
+    const float captionTop = topLeft.y + height - length(54.0F);
+    const ImVec2 captionClipMin(topLeft.x, captionTop - length(2.0F));
+    const ImVec2 captionClipMax(topLeft.x + width, captionTop + length(34.0F));
     const std::string difficulty = context.play.difficulty;
-    const ImVec2 extent = ui::measureText(difficulty.c_str(), 18.0F * unit);
-    ui::drawText(drawList, ImVec2(topLeft.x + width - length(26.0F) - extent.x,
-                            topLeft.y + height - length(40.0F)),
-        18.0F * unit, IM_COL32(255, 255, 255, 255), difficulty.c_str());
+    const float difficultyWidth = length(120.0F);
+    const float songWidth = length(310.0F) - length(26.0F + 16.0F);
+    ui::drawClippedText(drawList, ImVec2(topLeft.x + length(26.0F), captionTop), captionClipMin,
+        captionClipMax, 30.0F * unit, IM_COL32(255, 255, 255, 255),
+        ui::ellipsize(songBuffer, 30.0F * unit, songWidth));
+    // Fixed offset inside the frame: the caption band ends before the judgement board.
+    ui::drawClippedText(drawList, ImVec2(topLeft.x + length(310.0F), captionTop + length(12.0F)),
+        captionClipMin, captionClipMax, 18.0F * unit, IM_COL32(255, 255, 255, 255),
+        ui::ellipsize(difficulty, 18.0F * unit, difficultyWidth));
   }
 
   // Upper board: score and grade.
@@ -210,30 +216,37 @@ void drawResultScreen(AppContext& context) {
     ui::drawPanel(drawList, topLeft, ImVec2(topLeft.x + width, topLeft.y + height), height * skew,
         ui::rgba(ui::kDetailInfoPanel), IM_COL32(255, 255, 255, 90), 1.0F);
 
+    // Three columns across the board. Each value is clipped to its own column so a long
+    // deviation figure can never run into the accuracy beside it.
+    const float comboLeft = topLeft.x + length(26.0F);
+    const float comboWidth = length(104.0F);
+    const float stdLeft = topLeft.x + length(118.0F);
+    const float stdWidth = length(100.0F);
+    const float accLeft = topLeft.x + length(224.0F);
+    const float accWidth = length(120.0F);
+
     char comboBuffer[32];
     std::snprintf(comboBuffer, sizeof(comboBuffer), "%d", result.maxCombo);
-    ui::drawText(drawList, ImVec2(topLeft.x + length(26.0F), topLeft.y + length(6.0F)),
-        28.0F * unit, IM_COL32(255, 255, 255, 255), comboBuffer);
-    ui::drawText(drawList, ImVec2(topLeft.x + length(26.0F), topLeft.y + length(42.0F)),
+    ui::drawText(drawList, ImVec2(comboLeft, topLeft.y + length(6.0F)),
+        28.0F * unit, IM_COL32(255, 255, 255, 255),
+        ui::ellipsize(comboBuffer, 28.0F * unit, comboWidth).c_str());
+    ui::drawText(drawList, ImVec2(comboLeft, topLeft.y + length(42.0F)),
         11.0F * unit, IM_COL32(204, 255, 255, 255), "MAX COMBO");
 
     char deviationBuffer[48];
     std::snprintf(deviationBuffer, sizeof(deviationBuffer), "%.3f ms", result.stdDevMs);
-    const ImVec2 devExtent = ui::measureText(deviationBuffer, 24.0F * unit);
-    ui::drawText(drawList, ImVec2(topLeft.x + length(122.0F + 62.0F) - devExtent.x * 0.5F,
-                            topLeft.y + length(7.0F)),
-        24.0F * unit, IM_COL32(255, 255, 255, 255), deviationBuffer);
-    ui::drawTextCentered(drawList, ImVec2(topLeft.x + length(122.0F + 62.0F),
-                                    topLeft.y + length(42.0F + 7.0F)),
+    ui::drawTextCentered(drawList, ImVec2(stdLeft + stdWidth * 0.5F, topLeft.y + length(7.0F + 12.0F)),
+        24.0F * unit, IM_COL32(255, 255, 255, 255),
+        ui::ellipsize(deviationBuffer, 24.0F * unit, stdWidth).c_str());
+    ui::drawTextCentered(drawList, ImVec2(stdLeft + stdWidth * 0.5F, topLeft.y + length(42.0F + 7.0F)),
         11.0F * unit, IM_COL32(204, 255, 255, 255), "STD DEVIATION");
 
     const std::string accuracyText = formatAccuracy(result.accuracy);
-    const ImVec2 accExtent = ui::measureText(accuracyText.c_str(), 28.0F * unit);
-    ui::drawText(drawList, ImVec2(topLeft.x + width - length(26.0F) - accExtent.x,
-                            topLeft.y + length(6.0F)),
-        28.0F * unit, IM_COL32(255, 255, 255, 255), accuracyText.c_str());
-    ui::drawText(drawList, ImVec2(topLeft.x + width - length(26.0F) - length(64.0F),
-                            topLeft.y + length(42.0F)),
+    const std::string shortAccuracy = ui::ellipsize(accuracyText, 28.0F * unit, accWidth);
+    const ImVec2 accExtent = ui::measureText(shortAccuracy.c_str(), 28.0F * unit);
+    ui::drawText(drawList, ImVec2(accLeft + accWidth - accExtent.x, topLeft.y + length(6.0F)),
+        28.0F * unit, IM_COL32(255, 255, 255, 255), shortAccuracy.c_str());
+    ui::drawText(drawList, ImVec2(accLeft + accWidth - length(64.0F), topLeft.y + length(42.0F)),
         11.0F * unit, IM_COL32(204, 255, 255, 255), "ACCURACY");
   }
 

@@ -241,6 +241,8 @@ public final class MainActivity extends SDLActivity {
     private static final int REQUEST_PICKER = 0x51D1;
 
     private static MainActivity instance;
+    // Which picker the pending request asked for, so its answer can be read correctly.
+    private static int pendingPickerMode = PICKER_FILE;
 
     @Override
     protected void onResume() {
@@ -270,6 +272,7 @@ public final class MainActivity extends SDLActivity {
                     intent.setType("*/*");
                 }
                 intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                pendingPickerMode = mode;
                 activity.startActivityForResult(intent, REQUEST_PICKER);
             } catch (RuntimeException error) {
                 Log.e(TAG, "Unable to open the document picker", error);
@@ -281,19 +284,94 @@ public final class MainActivity extends SDLActivity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != REQUEST_PICKER) return;
+        final int pickerMode = pendingPickerMode;
         if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
         final Uri uri = data.getData();
         // Reading the document touches the disk, so it runs off the UI thread.
         new Thread(() -> {
             try {
-                File imported = copyContentUri(uri);
-                final String path = isZip(imported) ? extractChartArchive(imported).getAbsolutePath()
-                        : imported.getAbsolutePath();
-                SDLActivity.onNativeDropFile(path);
+                final String path;
+                if (pickerMode == PICKER_FOLDER) {
+                    path = copyDocumentTree(uri);
+                } else {
+                    File imported = copyContentUri(uri);
+                    path = isZip(imported) ? extractChartArchive(imported).getAbsolutePath()
+                            : imported.getAbsolutePath();
+                }
+                if (path != null) SDLActivity.onNativeDropFile(path);
             } catch (IOException error) {
                 Log.e(TAG, "Unable to read the chosen document", error);
             }
         }).start();
+    }
+
+    // Copies a whole document tree into the import cache and returns the root it wrote.
+    // The system grants read access to the chosen tree only, so every file has to be pulled
+    // through the resolver rather than opened from a path.
+    private String copyDocumentTree(Uri treeUri) throws IOException {
+        File root = new File(getCacheDir(), "incoming");
+        if (!root.isDirectory() && !root.mkdirs()) throw new IOException("Cannot create import cache");
+        File output = new File(root, System.currentTimeMillis() + "_folder");
+        if (!output.mkdirs()) throw new IOException("Cannot create the import folder");
+        long[] budget = new long[]{MAX_UNPACKED_BYTES};
+        final int copied = copyTreeRecursive(treeUri, output, budget, 0);
+        if (copied <= 0) throw new IOException("The chosen folder holds no readable files");
+        return output.getAbsolutePath();
+    }
+
+    private int copyTreeRecursive(Uri parentUri, File target, long[] budget, int depth)
+            throws IOException {
+        if (depth > 8) return 0;
+        final int copied;
+        try {
+            copied = copyChildren(parentUri, target, budget, depth);
+        } catch (RuntimeException error) {
+            throw new IOException("Unable to read the chosen folder", error);
+        }
+        return copied;
+    }
+
+    private int copyChildren(Uri parentUri, File target, long[] budget, int depth)
+            throws IOException {
+        int copied = 0;
+        try (android.database.Cursor cursor = getContentResolver().query(parentUri,
+                new String[]{android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                        android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                        android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE},
+                null, null, null)) {
+            if (cursor == null) return 0;
+            while (cursor.moveToNext() && copied < MAX_ARCHIVE_ENTRIES) {
+                final String documentId = cursor.getString(0);
+                final String name = cursor.getString(1);
+                final String mime = cursor.getString(2);
+                if (documentId == null) continue;
+                final Uri childUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(
+                        parentUri, documentId);
+                if (android.provider.DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
+                    File child = new File(target, sanitizeFileName(name == null ? "dir" : name));
+                    if (!child.mkdirs() && !child.isDirectory()) continue;
+                    copied += copyChildren(childUri, child, budget, depth + 1);
+                    continue;
+                }
+                try (InputStream input = getContentResolver().openInputStream(childUri)) {
+                    if (input == null) continue;
+                    File child = new File(target, sanitizeFileName(name == null ? "file" : name));
+                    try (FileOutputStream output = new FileOutputStream(child)) {
+                        byte[] buffer = new byte[64 * 1024];
+                        int count;
+                        while ((count = input.read(buffer)) != -1) {
+                            budget[0] -= count;
+                            if (budget[0] < 0) {
+                                throw new IOException("The chosen folder is too large");
+                            }
+                            output.write(buffer, 0, count);
+                        }
+                    }
+                    ++copied;
+                }
+            }
+        }
+        return copied;
     }
     private static void deleteRecursively(File file) {
         File[] children = file.listFiles();
