@@ -18,7 +18,6 @@ namespace {
 using Json = nlohmann::json;
 
 constexpr char kNormalSpace = ' ';
-constexpr char kEnSpace[] = "\xE2\x80\x82";
 
 std::string toLower(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(),
@@ -422,7 +421,7 @@ std::string inferDifficultyPrefix(const std::filesystem::path& chartFile) {
 
 std::string buildDifficultyLabel(const ChartInfo& info, const std::filesystem::path& chartFile) {
   if (!info.level.empty()) return normalizeDifficultyText(info.level);
-  if (info.difficulty.empty()) return std::string("SP") + kEnSpace + "Lv.?";
+  if (info.difficulty.empty()) return std::string("SP Lv.?");
   const std::string trimmed = normalizeDifficultyText(trimDifficultyWhitespace(info.difficulty));
   if (trimmed.find_first_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
           != std::string::npos
