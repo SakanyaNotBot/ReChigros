@@ -421,8 +421,9 @@ int Application::run() {
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     // The capture happens after the interface pass, so the saved frame shows the
-    // composed result (GPU backdrop or its fallback) exactly as presented.
-    if (app_->screen != Screen::Game) captureFramebufferIfRequested();
+    // composed result (GPU backdrop or its fallback) exactly as presented. Gameplay is
+    // included so a run can be inspected without depending on the presentation path.
+    captureFramebufferIfRequested();
     SDL_GL_SwapWindow(window_);
   }
 
