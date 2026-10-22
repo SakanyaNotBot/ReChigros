@@ -453,21 +453,22 @@ int Application::run() {
       continue;
     }
 
-    // Plain gameplay frames draw their HUD through the renderer, so they do not need an
-    // immediate-mode frame at all. Menus, dialogs, toasts and debug text still do.
-    const bool imguiFrame = !(imguiSkipIdle_ && gameplayImGuiIdle());
-    if (imguiFrame) {
-      ImGui_ImplOpenGL3_NewFrame();
-      ImGui_ImplSDL2_NewFrame();
-      ImGui::NewFrame();
-    }
-
     syncWindowMetrics();
     pollGpuTimer();
     beginGpuTimer();
 
     if (app_->screen == Screen::Game) {
       gameUpdate(*app_, delta);
+    }
+
+    // The decision is made after the update: a gameplay frame can change screen (result
+    // transition) or open a menu, and this flag must never suppress a frame that will draw
+    // an interface.
+    const bool imguiFrame = !(imguiSkipIdle_ && gameplayImGuiIdle());
+    if (imguiFrame) {
+      ImGui_ImplOpenGL3_NewFrame();
+      ImGui_ImplSDL2_NewFrame();
+      ImGui::NewFrame();
     }
 
     if (app_->screen == Screen::Game) {
