@@ -171,3 +171,19 @@ These are out of scope on purpose. Each was checked against the reference before
 | Storyboard video layer | The reference plays videos through a platform video pipeline (a surface-backed external texture) that only exists on the mobile platform. No bundled content uses it: there is no `videos` entry in any packaged file, and the video files in the reference tree are capture footage, not shipped assets. Supporting it would mean adding a full video decoder for content nobody ships. The chart model still parses the video entries, so a later port only has to add the decoder. |
 | Online chart catalogue | The browser feature depends on third-party hosting services. It is deliberately a placeholder so the application never calls an unverified endpoint on the user's behalf. |
 | Mobile-only UI toolkit | The reference draws its screens with native widgets. This port draws equivalent screens with an immediate-mode UI toolkit instead, so the widget classes have no C++ counterpart by design; the feature they represent does exist. |
+
+## 第二轮反馈修复记录（游玩画面与资源包）
+
+| 项 | 状态 | 说明 |
+| --- | --- | --- |
+| 背景解析与模糊 | done | 游玩背景取自谱面插画，经 scene/BackgroundBlur 降采样 + 可分离模糊（对应参考 createBackgroundBlur），并按开场/结束的透明度曲线绘制；不再固定使用内置背景图 |
+| 舞台与两侧模糊遮罩 | done | 舞台矩形按设置宽高比与 min(目标, 窗口) 规则计算；舞台不满屏时绘制黑隙 + 模糊插画侧栏 + 0.7 侧边压暗（对应 drawOfficialSideColumnsOverlay）；HUD 相对舞台布局 |
+| 开场动画 | done | 1083 ms 音频缓冲、装饰判定线按采样曲线展开并保持 10 帧、真实判定线在进入游玩前隐藏、HUD 按 40 帧进入曲线 |
+| 结尾动画 | done | 以实机参考帧为准：无舞台缩放；HUD 淡出后全屏模糊过渡到结算页，并隐藏非判定线元素 |
+| 暂停 HUD | done | 暂停背景模糊包含 HUD 的冻结帧，模糊强度、计数数字（80 px em）与暂停图标位置按实机帧校准 |
+| 自行添加的判定文字 | removed | 删除屏幕中央 PERFECT/GOOD/BAD/MISS 与底部 ±ms 文本（参考不存在） |
+| 判定偏移指示器 | done | 扇形刻度盘（红/黄/绿区间、中心刻度、三层标记辉光、指针缓动、长按头标记），自动/回放时抑制，几何与参考手动游玩帧误差 ≤3 px |
+| FPS 计数 | done | 移至参考位置（左下 "N FPS"，12 dp，0.5 透明底板） |
+| 歌曲信息解析 | done | 与参考 11 字段、别名、类型强制、包检测顺序与回退一致；难度 EN SPACE 规范化；旧 GBK 文本回退解码（桌面） |
+| 资源包（皮肤）配置 | done | SkinConfig 全字段解析/合并/校验，皮肤贴图优先回退内置资源，判定线颜色/透明度、hit_fx 缩放/时长/旋转/着色、粒子开关、长条样式生效，选择或导入后下一局应用 |
+| 渲染性能 | improving | 官方谱面解析并行化、prepareRuntime 并行 + 单调 floor 游标、红区窗口化推进、块掩码顶点复用；--frame-stats 采样；设备端继续压缩与参考的帧率差距 |

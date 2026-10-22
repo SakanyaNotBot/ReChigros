@@ -147,6 +147,23 @@ void addQuadSelectFlippable(batch::SpriteBatch& out, float centerX, float center
       u0, v0, u1, v1, textureSelect);
 }
 
+// First index in a time-sorted per-type note list whose note time is at or after `limitSec`.
+// Scanning can then skip the notes whose fade window has already closed.
+template <typename NoteAt>
+std::size_t firstNoteAtOrAfter(NoteAt noteAt, std::size_t count, double limitSec) {
+  std::size_t low = 0;
+  std::size_t high = count;
+  while (low < high) {
+    const std::size_t middle = low + (high - low) / 2;
+    if (noteAt(middle).sect < limitSec) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+  return low;
+}
+
 } // namespace
 
 void computeVisibleRange(float lineX, float lineY, float cosLine, float sinLine, bool revealActive,
@@ -271,7 +288,25 @@ void buildHeadBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
     if (!frame.renderable || !frame.noteValid) continue;
     if (frame.hideNotes && !reveal) continue;
 
-    for (const auto& note : line.notes) {
+    // Notes of one type are kept time-sorted by the runtime preparation, so this pass visits
+    // only its own type and starts after the entries whose fade window has already closed.
+    const std::vector<game::Note*>* typedNotes = nullptr;
+    if (line.notesByType.size() > static_cast<std::size_t>(noteType)) {
+      typedNotes = &line.notesByType[static_cast<std::size_t>(noteType)];
+    }
+    const std::size_t typedCount =
+        typedNotes != nullptr ? typedNotes->size() : line.notes.size();
+    const auto noteAt = [&](std::size_t index) -> const game::Note& {
+      return typedNotes != nullptr ? *(*typedNotes)[index] : line.notes[index];
+    };
+    const double bpm = frame.bpm > 0.0 ? frame.bpm : 120.0;
+    const double beatScale = static_cast<double>(game::PGR_HEIGHT) * (kBeatSeconds / bpm) *
+        static_cast<double>(params.stageHeight);
+    const std::size_t firstNote = firstNoteAtOrAfter(noteAt, typedCount,
+        params.chartTimeSec - static_cast<double>(params.missFadeWindow));
+
+    for (std::size_t noteIndex = firstNote; noteIndex < typedCount; ++noteIndex) {
+      const auto& note = noteAt(noteIndex);
       if (note.isHold || note.type != noteType) continue;
       if ((note.morebets == 1) != highlightVariant) continue;
       if (isAnyJudgement(note.judgeResult)) continue;
@@ -290,12 +325,19 @@ void buildHeadBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
 
       const bool above = note.isAbove;
       const double speed = note.speed * static_cast<double>(params.scrollSpeed);
-      const double bpm = frame.bpm > 0.0 ? frame.bpm : 120.0;
-      const double baseFpD = (note.floorPosition - frame.floorPosition) *
-          static_cast<double>(game::PGR_HEIGHT) * (kBeatSeconds / bpm) *
-          static_cast<double>(params.stageHeight) * speed;
+      const double baseFpD = (note.floorPosition - frame.floorPosition) * beatScale * speed;
       const auto baseFpPx = static_cast<float>(baseFpD);
       const float transYPx = note.yOffset * params.stageHeight;
+      // Without a y control curve and a per-note y offset the position used by the final cull
+      // is exactly the cheap floor offset, so notes clearly outside the visible range can be
+      // rejected before evaluating the control curves. Revealed hidden notes are the only
+      // case that draws something outside the range.
+      if (!reveal && line.noteYControls.empty() && note.yOffset == 0.0F) {
+        if (baseFpPx < frame.visibleMin - frame.visiblePad
+            || baseFpPx > frame.visibleMax + frame.visiblePad) {
+          continue;
+        }
+      }
       const float controlHeight =
           controlHeightFromBasePx(baseFpPx, note.yOffset, speed, stageAspect, params.stageHeight);
       const float yControl = evalControl(line, kControlY, controlHeight);
@@ -431,7 +473,27 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
     if (!frame.renderable || !frame.noteValid) continue;
     if (frame.hideNotes && !reveal) continue;
 
-    for (const auto& note : line.notes) {
+    // Holds are kept in the hold-type list, sorted by start time. A hold can only still be
+    // on screen when it started at most `maxHoldDurationSec` before the current time.
+    const std::vector<game::Note*>* typedNotes = nullptr;
+    if (line.notesByType.size() > static_cast<std::size_t>(game::NOTE_HOLD)) {
+      typedNotes = &line.notesByType[static_cast<std::size_t>(game::NOTE_HOLD)];
+    }
+    const std::size_t typedCount =
+        typedNotes != nullptr ? typedNotes->size() : line.notes.size();
+    const auto noteAt = [&](std::size_t index) -> const game::Note& {
+      return typedNotes != nullptr ? *(*typedNotes)[index] : line.notes[index];
+    };
+    const std::size_t firstNote = typedNotes != nullptr
+        ? firstNoteAtOrAfter(noteAt, typedCount,
+              params.chartTimeSec - line.maxHoldDurationSec)
+        : 0U;
+    const double bpm = frame.bpm > 0.0 ? frame.bpm : 120.0;
+    const double beatScale = static_cast<double>(game::PGR_HEIGHT) * (kBeatSeconds / bpm) *
+        static_cast<double>(params.stageHeight);
+
+    for (std::size_t noteIndex = firstNote; noteIndex < typedCount; ++noteIndex) {
+      const auto& note = noteAt(noteIndex);
       if (!note.isHold) continue;
       if ((note.morebets == 1) != highlightVariant) continue;
       if (note.holdEndTime < params.chartTimeSec) continue;
@@ -449,12 +511,31 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
       const double speed = (note.useOfficialSpeed ? 1.0 : note.speed) *
           static_cast<double>(params.scrollSpeed);
       const double speedForBody = speed;
-      const double bpm = frame.bpm > 0.0 ? frame.bpm : 120.0;
-      const double baseFpD = (note.floorPosition - frame.floorPosition) *
-          static_cast<double>(game::PGR_HEIGHT) * (kBeatSeconds / bpm) *
-          static_cast<double>(params.stageHeight) * speed;
+      const double baseFpD = (note.floorPosition - frame.floorPosition) * beatScale * speed;
       const auto baseFpPx = static_cast<float>(baseFpD);
       const float transYPx = note.yOffset * params.stageHeight;
+      // Same fast cull as the head pass: with no y control curve and no y offset the head and
+      // tail positions are plain floor offsets, so a hold entirely outside the visible range
+      // can be rejected before evaluating the control curves or the collapse animation.
+      if (!reveal && line.noteYControls.empty() && note.yOffset == 0.0F
+          && note.sect > params.chartTimeSec) {
+        float tailFastFp = baseFpPx;
+        if (note.useOfficialSpeed) {
+          tailFastFp = baseFpPx
+              + static_cast<float>(note.holdLength * params.stageHeight * speedForBody);
+        } else if (isFinite(note.holdEndFloorPosition)
+            && std::abs(note.holdEndFloorPosition - note.floorPosition) > 1.0e-9) {
+          const double tailBaseFpD = (note.holdEndFloorPosition - frame.floorPosition) *
+              beatScale * speedForBody;
+          tailFastFp = static_cast<float>(tailBaseFpD);
+        }
+        const float lowest = std::min(baseFpPx, tailFastFp);
+        const float highest = std::max(baseFpPx, tailFastFp);
+        if (highest < frame.visibleMin - frame.visiblePad
+            || lowest > frame.visibleMax + frame.visiblePad) {
+          continue;
+        }
+      }
       const float controlHeight =
           controlHeightFromBasePx(baseFpPx, note.yOffset, speed, stageAspect, params.stageHeight);
       const float yControl = evalControl(line, kControlY, controlHeight);

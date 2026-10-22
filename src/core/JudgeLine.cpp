@@ -139,13 +139,17 @@ void Chart::prepareRuntime(){
     // one cursor instead of binary-searching on every note. This is the incremental form the
     // reference uses for its runtime preparation.
     int speedIndex=0,holdEndIndex=0;std::vector<int> speedLayerIndices,holdEndLayerIndices;
+    line.notesByType.assign(8,{});
+    line.maxHoldDurationSec=0.0;
     for(auto& note:line.notes){
       note.master=&line;note.isHold=note.type==NOTE_HOLD;note.clicked=false;
+      if(note.type>=0&&note.type<8)line.notesByType[static_cast<std::size_t>(note.type)].push_back(&note);
       note.floorPosition=EventUtils::floorPositionMonotonic(note.time,line.speedEvents,line.speedEventLayers,speedIndex,speedLayerIndices);
       note.sect=line.beat2sec(note.time);note.secht=line.beat2sec(note.holdTime);note.holdEndTime=note.sect+note.secht;note.useOfficialSpeed=official;
       if(note.isHold){
         if(official){note.holdEndFloorPosition=note.floorPosition+note.holdTime*note.speed*PGR_HEIGHT;note.holdLength=note.holdTime*note.speed*PGR_HEIGHT*(PGR_BEAT/line.bpm);}
         else{const auto endFloor=EventUtils::floorPositionMonotonic(note.time+note.holdTime,line.speedEvents,line.speedEventLayers,holdEndIndex,holdEndLayerIndices);note.holdEndFloorPosition=endFloor;note.holdLength=(endFloor-note.floorPosition)*note.speed*PGR_HEIGHT*(PGR_BEAT/line.bpm);}
+        line.maxHoldDurationSec=std::max(line.maxHoldDurationSec,note.secht);
       }else{note.holdEndFloorPosition=note.floorPosition;note.holdLength=0;}
       ++out.simultaneous[static_cast<long long>(std::llround(note.sect*1'000'000.0))];out.allNotes.push_back(&note);
       if(!note.isFake)out.visibleNotes.push_back(&note);

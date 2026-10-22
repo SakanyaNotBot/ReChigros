@@ -22,14 +22,17 @@
 
 **方向**：把 Java 音游逐功能移植为跨平台 C++。功能与逻辑不得低于原项目，界面与参考设备的视觉逐屏一致。
 
-**状态摘要（2026-10-22 收尾）**：
+**状态摘要（2026-10-22 第二轮反馈收尾）**：
 
-- 构建、七个测试套件、应用自检（30/30）、应用循环（11/11）、渲染矩阵（18 用例）、界面字形覆盖（231 字）、文件导入检查（30/30）、红区合成探针：**全部通过**。
-- 安卓游玩画面不呈现的问题：**已定位并修复，模拟器上已验证**（见第四节）；本轮界面工作后重新构建 APK 并复验。
+- 构建、八个测试套件、应用自检（30/30）、应用循环（11/11）、渲染矩阵（19 用例，含两个皮肤用例）、界面字形覆盖、文件导入检查（30/30）、红区合成探针：**全部通过**。
+- 安卓游玩画面不呈现的问题：**已定位并修复，模拟器上已验证**（见第四节）；APK 已用当前源码重新构建并在雷电模拟器上复验。
 - 第九章红区（噪域）屏幕空间合成：**已完成并通过独立探针验证**（见第四节）。
-- 界面：主界面、本地/在线/未上架列表（含滚动、搜索、管理、导入对话框）、四个设置页、校准页、谱面详情、结算页、游玩 HUD、暂停、恢复倒计时、练习面板与判定面板**均已按设备截图逐屏校准**。各屏残余差异集中在内置字体字形宽度、模糊近似与卡片封面重采样，元素位置基本在 0–3 px 内。
-- 文件导入：谱面包（压缩包/文件夹/散文件）、回放、皮肤资源包三条流程已实现并按参考文案提示；桌面/安卓系统选择器之外的导入逻辑有独立的批处理检查（`rechigros_import_check`，30 项）。
-- 功能：回放模型改为参考的判定条目模型（旧触控回放仍可读）、无头 JSON 谱面按普通格式解析、`useAttachUiFix` 生效、长按条按半拍爆发、难度文本 U+2002 规范化、舞台宽高比默认与清洗——`docs/COVERAGE_AUDIT.md` 的 S1 项已清零（详见该文「Fixed by task-11」表）。
+- 界面：主界面、列表/搜索/管理/导入、四个设置页、校准页、谱面详情、结算页、游玩 HUD、暂停、恢复倒计时、练习面板与判定面板均已按设备截图逐屏校准，元素位置基本在 0–3 px 内。
+- **第二轮反馈的游玩画面修复**：背景改为按谱面插画解析并经过模糊层；舞台按设置宽高比计算，两侧为固定模糊侧栏（参考 `drawOfficialSideColumnsOverlay` 行为）；开场按参考节奏重排（1083 ms 音频缓冲、装饰判定线曲线、HUD 进入）；结尾按参考构建行为（无舞台缩放，HUD 淡出后全屏模糊过渡）；暂停背景模糊与计数数字（80 px em）按实机帧校准；**删除了自行添加的屏幕中央 "PERFECT/GOOD/BAD/MISS" 文字与底部 "±ms" 文字**，改为参考的判定偏移指示器（扇形刻度盘 + 指针）。FPS 读数移到参考位置。
+- **歌曲信息与资源包**：`info.txt/yml/json` 解析按参考 `FieldInfo` 字段集、别名、类型强制与包检测顺序完全对齐（参考只有 11 个字段，未额外发明）；`SkinConfig` 全套字段（判定线/音符颜色、hit_fx 缩放/时长/旋转/着色、粒子、长条样式、贴图覆盖与回退顺序）已移植并生效，导入/选择皮肤后下一局即应用。旧编码（GBK）文本与压缩包内文件名在桌面端自动回退解码。
+- **性能**：官方谱面解析并行化（680–870 ms → 302–350 ms）、`prepareRuntime` 并行 + 单调 floor 游标（6.5 → 2.6–3.3 ms）、红区推进改为窗口化（0.184 → 0.0057 ms/帧，32×）、`--frame-stats` 帧时间采样、块掩码顶点复用；设备端仍在继续压缩与参考的差距（参考约 145 fps，端口基线约 134 fps，第二轮优化进行中）。
+- 文件导入：谱面包（压缩包/文件夹/散文件）、回放、皮肤资源包三条流程已实现并按参考文案提示；`rechigros_import_check` 30 项检查通过。
+- 功能：回放判定条目模型、无头 JSON 谱面按普通格式解析、`useAttachUiFix` 生效、长按条半拍爆发、难度文本 U+2002 规范化、实践判定窗口贯通、舞台宽高比默认与清洗——`docs/COVERAGE_AUDIT.md` 的 S1/S2 项已清零（余 S3 重构项 #13/#14 已在性能工作中大部分处理）。
 
 ---
 
@@ -55,7 +58,7 @@ cd E:\ReChigros
 
 build.bat desktop Release          # 桌面构建 + 七个测试套件
 build.bat verify-app               # 应用端到端验证（隐藏窗口主循环 + 字体覆盖）
-build.bat verify-render            # 渲染矩阵（18 用例）
+build.bat verify-render            # 渲染矩阵（19 用例，含皮肤用例）
 build.bat android Release          # 安卓 APK
 build.bat verify-ios               # iOS 打包检查（不需要 macOS）
 build\desktop-release\src\app\rechigros_import_check.exe   # 导入流程批处理检查
@@ -70,11 +73,12 @@ build\desktop-release\src\app\ReChigros.exe `
   --capture-frame E:\ReChigros\build\shots\cpp_library.png
 ```
 
-- `--screen` 取值：`home`、`library`、`library-online`、`library-manage`、`settings-video/audio/replay/more`、`detail`、`result`、`calibration`、`game`、`game-pause`、`game-practice`、`game-countdown`。
+- `--screen` 取值：`home`、`library`、`library-online`、`library-manage`、`settings-video/audio/replay/more`、`detail`、`result`、`calibration`、`game`、`game-pause`、`game-practice`、`game-practice-pause`、`game-countdown`。
 - 可以带谱面选择器：`--screen detail:Message`、`--screen result:Hate`、`--screen game:Hate`（按曲名子串匹配）。
 - `--data-root build/capture-data` 已预置与参考设备完全相同的 8 个谱面包（名称/难度/封面一致），用于逐卡片对比。
-- `--fixed-delta` 让帧时钟固定为 1/60 秒，`--frames N` + `--capture-frame` 的截图可复现；`--capture-at-frame N` 指定截图发生在第 N 帧（游玩 HUD 要在开场动画之后截图时必用）；`--capture-time T` 固定 GPU 背景动画时间（主界面/设置页用 `--capture-time 4` 与参考截图对齐，其余界面先扫 0–30 秒找背景相位最接近的 T 再比较，否则整屏差异主要来自背景动画相位）。
-- 截图后与 `build/ref/java_*.png`（参考设备 1920x1080 截图，索引见 `build/ref/README.md`）比较；`build/tools/compare_screens.py` 输出总体/分区差异与对比拼图。
+- `--fixed-delta` 让帧时钟固定为 1/60 秒，`--frames N` + `--capture-frame` 的截图可复现；`--capture-at-frame N` 指定截图发生在第 N 帧（游玩 HUD 要在开场动画之后截图时必用）；`--capture-time T` 固定 GPU 背景动画时间（主界面/设置页用 `--capture-time 4` 与参考截图对齐，其余界面先扫 0–30 秒找背景相位最接近的 T 再比较，否则整屏差异主要来自背景动画相位）；`--aspect 1.0` 让游玩界面按窄舞台渲染（复现两侧固定模糊侧栏）。
+- `--frame-stats path.csv` 记录每帧的实际间隔与交换前 CPU 时间，并在结束时打印 `FRAME-STATS ... p95/p99/max over16/over33/over100` 摘要；桌面与安卓（intent args）都可用，是判断卡顿来源的主要手段。
+- 截图后与 `build/ref/java_*.png`（参考设备 1920x1080 截图，索引见 `build/ref/README.md`）比较；动画类对比素材在 `build/ref-video/`（开场、暂停、倒计时、结算过渡、判定偏移指示器手动游玩、窄舞台侧栏，含逐帧 PNG 与 README 索引）；`build/tools/compare_screens.py` 输出总体/分区差异与对比拼图。
 
 ### 依赖下载
 

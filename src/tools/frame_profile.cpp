@@ -19,6 +19,8 @@
 #include "rechigros/game/JudgementEngine.hpp"
 #include "rechigros/render/GameRenderer.hpp"
 #include "rechigros/render/fx/BlockOverlay.hpp"
+#include "rechigros/render/fx/HitEffect.hpp"
+#include "rechigros/render/scene/NoteBatch.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -413,6 +415,50 @@ void runMicroBenchmarks(const Options& options, rechigros::game::Chart& chart) {
                  }
                })
             << "ms (" << chart.blockAreaList.size() << " zones)\n";
+  {
+    // One frame's worth of note passes (hold + every head type, both highlight variants),
+    // built against synthetic line frames so the batch builders can be timed in isolation.
+    std::vector<rechigros::render::scene::LineFrame> frames(chart.judgeLineList.size());
+    for (auto& frame : frames) {
+      frame.valid = true;
+      frame.renderable = true;
+      frame.noteValid = true;
+      frame.visibleMin = -2000.0F;
+      frame.visibleMax = 2000.0F;
+      frame.visiblePad = 200.0F;
+      frame.bpm = 120.0;
+      frame.floorPosition = 0.0;
+      frame.x = static_cast<float>(options.width) * 0.5F;
+      frame.y = static_cast<float>(options.height) * 0.5F;
+    }
+    std::vector<int> order;
+    order.reserve(chart.judgeLineList.size());
+    for (std::size_t index = 0; index < chart.judgeLineList.size(); ++index) {
+      order.push_back(static_cast<int>(index));
+    }
+    rechigros::render::scene::NotePassParams params;
+    params.chartTimeSec = options.startTimeSec;
+    params.stageWidth = static_cast<float>(options.width);
+    params.stageHeight = static_cast<float>(options.height);
+    params.noteWidthBase = 60.0F;
+    params.cullBounds = {-1000.0F, -1000.0F, 4000.0F, 3000.0F};
+    const auto uv = rechigros::render::scene::buildHoldUv(256, 64, 64);
+    rechigros::render::batch::SpriteBatch batch;
+    const auto runNotePasses = [&]() {
+      for (int highlight = 0; highlight < 2; ++highlight) {
+        batch.begin();
+        rechigros::render::scene::buildHoldBatch(batch, frames, order, chart,
+            highlight == 1, 128.0F, 256.0F, uv, false, false, false, 0.0F, 0.0F, params);
+        for (const int type : {1, 2, 4}) {
+          batch.begin();
+          rechigros::render::scene::buildHeadBatch(batch, frames, order, chart, type,
+              highlight == 1, 128.0F, 256.0F, params);
+        }
+      }
+    };
+    std::cout << "micro noteBatches=" << timeIt(20, runNotePasses) << "ms (8 passes, "
+              << chart.allNotesSorted.size() << " notes)\n";
+  }
   std::cout << "micro noteScan="
             << timeIt(20, [&chart]() {
                  std::size_t visible = 0;
@@ -509,6 +555,70 @@ void runMicroBenchmarks(const Options& options, rechigros::game::Chart& chart) {
               << "ms blockAdvanceWindowed=" << windowedMs
               << "ms match=" << (same ? 1 : 0) << " (" << chart.blockAreaList.size()
               << " zones)\n";
+  }
+  {
+    // Session update and hit-effect bookkeeping over 600 real frames of the chart, which is
+    // the per-frame gameplay cost that runs on the device beside the draw passes.
+    rechigros::game::GameplaySession session;
+    session.setViewport({static_cast<float>(options.width), static_cast<float>(options.height),
+        16.0F / 9.0F, 1.0F, 380.0F});
+    session.setChart(&chart);
+    session.setAutoplay(true);
+    rechigros::render::fx::HitEffectField effects;
+    constexpr int kFrames = 600;
+    constexpr float kDelta = 1.0F / 60.0F;
+    double time = options.startTimeSec;
+    session.update(time, kDelta);
+    effects.update(chart, time, time, 0.0F, 0.0F, static_cast<float>(options.width),
+        static_cast<float>(options.height), 60.0F);
+    const auto sessionStart = Clock::now();
+    for (int frame = 0; frame < kFrames; ++frame) {
+      time += static_cast<double>(kDelta);
+      session.update(time, kDelta);
+      session.takeSoundEvents();
+    }
+    const double sessionMs = millisecondsSince(sessionStart) / static_cast<double>(kFrames);
+    const auto effectStart = Clock::now();
+    for (int frame = 0; frame < kFrames; ++frame) {
+      const double effectTime = options.startTimeSec + static_cast<double>(frame) * kDelta;
+      effects.update(chart, effectTime, effectTime, 0.0F, 0.0F,
+          static_cast<float>(options.width), static_cast<float>(options.height), 60.0F);
+    }
+    const double effectMs = millisecondsSince(effectStart) / static_cast<double>(kFrames);
+    std::cout << "micro sessionUpdate=" << sessionMs << "ms hitEffectsUpdate=" << effectMs
+              << "ms (session blocks=" << session.blocks().size()
+              << " total=" << millisecondsSince(sessionStart) << "ms)\n";
+  }
+  {
+    // Draw cost of the red-zone overlay for a burst of simultaneously visible zones, which
+    // is where the device CPU correlates with the number of live zones.
+    constexpr int kZones = 20;
+    std::vector<rechigros::game::OfficialBlock> zones(static_cast<std::size_t>(kZones));
+    for (int index = 0; index < kZones; ++index) {
+      auto& zone = zones[static_cast<std::size_t>(index)];
+      zone.bottomLeftX = 0.05F + 0.01F * static_cast<float>(index % 6);
+      zone.bottomLeftY = 0.10F;
+      zone.topRightX = 0.35F + 0.02F * static_cast<float>(index % 5);
+      zone.topRightY = 0.90F;
+      zone.appearTime = 0.0F;
+      zone.enableTime = 0.0F;
+      zone.disableTime = 1.0e9F;
+      zone.disappearTime = 1.0e9F;
+    }
+    rechigros::render::fx::BlockOverlay overlay;
+    rechigros::render::batch::SpriteBatch batch;
+    const float stageWidth = static_cast<float>(options.width);
+    const float stageHeight = static_cast<float>(options.height);
+    overlay.updateAll(zones, static_cast<float>(options.startTimeSec), 1.0F / 60.0F, 0.0F,
+        0.0F, stageWidth, stageHeight);
+    const auto drawPass = [&]() {
+      batch.begin();
+      for (const auto& zone : zones) {
+        overlay.draw(zone, static_cast<float>(options.startTimeSec), batch);
+      }
+    };
+    std::cout << "micro zoneDraw20=" << timeIt(50, drawPass) << "ms ("
+              << kZones << " active zones)\n";
   }
   std::cout << "micro eventSamplePerLine="
             << timeIt(20, [&chart]() {

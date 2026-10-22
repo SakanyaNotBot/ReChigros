@@ -100,3 +100,15 @@ if(RECHIGROS_BUILD_APP)
   rechigros_track_headers(rechigros_render)
   rechigros_track_headers(ReChigros)
 endif()
+
+# Tools, diagnostics and test executables are linked against the same headers, so they need
+# the same dependency. Without it a header layout change leaves a stale object in a tool or
+# test binary and it corrupts memory at run time (a crash in a previously working test).
+foreach(extraTarget IN ITEMS
+    rechigros_render_smoke rechigros_block_probe rechigros_frame_profile
+    rechigros_import_check
+    rechigros_core_tests rechigros_chart_tests rechigros_platform_tests rechigros_audio_tests
+    rechigros_transition_tests rechigros_level_effect_tests rechigros_app_data_tests
+    rechigros_skin_tests)
+  rechigros_track_headers(${extraTarget})
+endforeach()

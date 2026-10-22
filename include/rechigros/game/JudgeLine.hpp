@@ -50,6 +50,13 @@ public:
   std::vector<LineEvent> judgeLineRotateEvents, judgeLineDisappearEvents;
   std::vector<MoveEvent> judgeLineMoveEvents;
   std::vector<Note> notesAbove, notesBelow, notes;
+  // Per-type note index (indexed by note type), each list sorted by time. Built by the chart
+  // runtime preparation: the note renderer visits only the requested type and starts at the
+  // first note that can still be on screen, instead of scanning every note several times a
+  // frame. `maxHoldDurationSec` bounds how early a hold can have started and still reach
+  // beyond the current chart time.
+  std::vector<std::vector<Note*>> notesByType;
+  double maxHoldDurationSec{};
   int zOrder{}, attachUiElementId{}, father{-1};
   bool isCover{}, rotateWithFather{}, invertRotation{true};
   std::string texture, text;

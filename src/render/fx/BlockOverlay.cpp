@@ -5,6 +5,7 @@
 #include "rechigros/render/gl/Texture.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace rechigros::render::fx {
@@ -212,9 +213,11 @@ int BlockOverlay::draw(const game::OfficialBlock& block, float chartTimeSec,
   const float bottom = block.centerY + height * 0.5F;
   const float edgeWidth = std::max(1.5F, smaller * 0.012F);
 
-  // Edge height and per-column horizontal displacement.
-  std::vector<float> edgeY(static_cast<std::size_t>(columns) + 1, bottom);
-  std::vector<float> displaceX(static_cast<std::size_t>(columns) + 1, 0.0F);
+  // Edge height and per-column horizontal displacement. The columns are bounded, so both
+  // scratch arrays live on the stack: a burst of zones must not allocate once per zone.
+  std::array<float, kMaximumColumns + 1> edgeY{};
+  std::array<float, kMaximumColumns + 1> displaceX{};
+  for (int column = 0; column <= columns; ++column) edgeY[static_cast<std::size_t>(column)] = bottom;
   const float cell = std::max(1.0F, smaller * 0.22F);
   const float falloff = std::max(4.0F, smaller * 0.06F);
   for (int column = 0; column <= columns; ++column) {
