@@ -39,17 +39,22 @@ public final class MainActivity extends SDLActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        Intent intent = getIntent();
-        if (intent != null) {
+        // The activity has to be attached before a document can be resolved, so the incoming
+        // chart is prepared after the base class has run, not before.
+        super.onCreate(savedInstanceState);
+        final Intent intent = getIntent();
+        if (intent == null || intent.getData() == null) return;
+        if (!Intent.ACTION_VIEW.equals(intent.getAction())) return;
+        new Thread(() -> {
             try {
-                String path = prepareIncomingIntent(intent);
-                if (path != null) intent.setData(Uri.fromFile(new File(path)));
+                final String path = prepareIncomingIntent(intent);
+                if (path != null) runOnUiThread(() -> SDLActivity.onNativeDropFile(path));
             } catch (IOException error) {
                 Log.e(TAG, "Unable to prepare incoming chart", error);
-                intent.setData(null);
+                runOnUiThread(() -> Toast.makeText(this,
+                        "Cannot import chart: " + error.getMessage(), Toast.LENGTH_LONG).show());
             }
-        }
-        super.onCreate(savedInstanceState);
+        }).start();
     }
 
     @Override
