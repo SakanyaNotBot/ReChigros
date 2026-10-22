@@ -185,18 +185,22 @@ void drawDetailScreen(AppContext& context) {
     const bool hovered = ImGui::IsItemHovered();
     static double pressStartSec = -1.0;
     static bool practiceTriggered = false;
-    if (ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-      if (pressStartSec < 0.0) {
-        pressStartSec = context.nowSec;
-        practiceTriggered = false;
-      } else if (!practiceTriggered && context.nowSec - pressStartSec > 0.45) {
-        practiceTriggered = true;
-        startChart(context, true);
-      }
-    } else if (ImGui::IsItemDeactivated()) {
-      if (pressStartSec >= 0.0 && !practiceTriggered) startChart(context, false);
+    if (ImGui::IsItemActivated()) {
+      // The press is timed from the moment the button is taken, so a press and release that
+      // land inside one frame still counts as a tap instead of being dropped.
+      pressStartSec = context.nowSec;
+      practiceTriggered = false;
+    }
+    if (ImGui::IsItemActive() && !practiceTriggered && pressStartSec >= 0.0 &&
+        context.nowSec - pressStartSec > 0.45) {
+      practiceTriggered = true;
+      startChart(context, true);
+    }
+    if (ImGui::IsItemDeactivated()) {
+      const bool wasTap = pressStartSec >= 0.0 && !practiceTriggered;
       pressStartSec = -1.0;
       practiceTriggered = false;
+      if (wasTap) startChart(context, false);
     }
     // Plate drawn after the hit test so the press state can tint it.
     const float skew = cornerSize.y * ui::kSkewRatio;

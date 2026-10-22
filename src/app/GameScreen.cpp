@@ -9,6 +9,8 @@
 #include "rechigros/render/GameRenderer.hpp"
 #include "rechigros/render/scene/StageLayout.hpp"
 
+#include <SDL_log.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -424,6 +426,7 @@ bool gameEnter(AppContext& context) {
     if (!context.play.musicFile.empty() && context.audio->loadMusic(context.play.musicFile)) {
       game.musicLoaded = true;
       game.musicDurationSec = context.audio->getMusicDurationSeconds();
+      (void)0;
     }
   }
 

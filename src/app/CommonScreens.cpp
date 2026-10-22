@@ -7,6 +7,7 @@
 #include "rechigros/platform/FileSystem.hpp"
 
 #include <SDL.h>
+#include <SDL_log.h>
 
 #include <algorithm>
 #include <cmath>
@@ -163,7 +164,6 @@ void AppContext::seedBundledSample() {
         std::string("sample/") + name);
     if (!path.empty()) materialised.push_back(path);
   }
-  SDL_Log("seed: materialised %zu of %zu files", materialised.size(), std::size(kFiles));
   if (materialised.size() == std::size(kFiles)) {
     // The library imports a folder, so the copies are gathered into one.
     const auto staging = dataRoot / "sample-staging";
@@ -173,10 +173,8 @@ void AppContext::seedBundledSample() {
           std::filesystem::copy_options::overwrite_existing, error);
     }
     try {
-      const auto imported = library.importDirectory(staging);
-      SDL_Log("seed: imported=%d", imported.imported ? 1 : 0);
-    } catch (const std::exception& error2) {
-      SDL_Log("seed: import failed: %s", error2.what());
+      (void)library.importDirectory(staging);
+    } catch (const std::exception&) {
       // A malformed example must not stop the interface from starting.
     }
     std::filesystem::remove_all(staging, error);
