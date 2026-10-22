@@ -5,6 +5,7 @@
 #include "rechigros/app/Screens.hpp"
 #include "rechigros/app/UiStyle.hpp"
 #include "rechigros/audio/AudioEngine.hpp"
+#include "rechigros/platform/AssetManager.hpp"
 #include "rechigros/platform/FileSystem.hpp"
 #include "rechigros/render/GameRenderer.hpp"
 #include "rechigros/render/gl/Gl.hpp"
@@ -184,9 +185,12 @@ bool Application::initialize() {
       1.0F, 2.0F);
   const float fontDensity = interfaceScale;
   {
-    const auto fontPath = platform::assetRoot() / "res" / "font.ttf";
+    // A packaged build keeps its assets inside the package rather than on disk, so the
+    // font is materialised to a readable path first.
+    const auto fontPath =
+        platform::AssetManager::materialize(platform::assetRoot(), "res/font.ttf");
     ImFont* font = nullptr;
-    if (platform::fileExists(fontPath)) {
+    if (!fontPath.empty() && platform::fileExists(fontPath)) {
       ImFontConfig config;
       // Rasterise denser without changing the reported metrics, so the layout keeps its
       // design sizes while the glyph texture carries more detail.
