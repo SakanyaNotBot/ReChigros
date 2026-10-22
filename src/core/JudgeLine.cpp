@@ -123,6 +123,10 @@ float JudgeLine::calcNoteControl(float height,int type,float fallback)const noex
 void Chart::updateUiTransform(int id,float x,float y,float r,float sx,float sy,float alpha){uiTransforms[id]={x,y,r,sx,sy,alpha};}
 void Chart::prepareRuntime(){
   allNotesSorted.clear();clickEffectsSorted.clear();chartEndTimeSec=0;
+  // The block runtime is part of the authored chart and may have been replaced since the
+  // last preparation, so the lazily built window index restarts here.
+  blockWindowOrder_.clear();blockWindowActive_.clear();blockWindowCursor_=0;
+  blockWindowTimeSec_=-1.0e300;blockWindowReady_=false;
   const bool official=formatVersion>0;
   for(std::size_t i=0;i<judgeLineList.size();++i){auto& line=*judgeLineList[i];line.index=static_cast<int>(i);line.bpmTimeline=bpmTimeline;line.resolveFather(judgeLineList);}
   // Per-line runtime data, assembled on a worker thread and merged afterwards in chart order
@@ -194,4 +198,29 @@ void Chart::prepareRuntime(){
   const auto connectNear=[](std::vector<Note*>& notes){std::stable_sort(notes.begin(),notes.end(),[](const Note*a,const Note*b){return a->sect<b->sect;});for(std::size_t i=0;i<notes.size();++i)for(std::size_t j=i+1;j<notes.size()&&notes[j]->sect-notes[i]->sect<=0.01;++j)notes[i]->nearNotes.push_back(notes[j]);};connectNear(flicks);connectNear(tapHolds);
 }
 void Chart::resetRuntime()noexcept{for(auto& line:judgeLineList){line->resetCursors();for(auto& note:line->notes){note.clicked=false;note.judgeResult=-1;note.judgeDiffSec=0;note.judgeTimeSec=std::numeric_limits<double>::quiet_NaN();note.preJudge=false;note.dragPrimed=false;note.holdActive=false;note.holdPerfect=false;note.holdPreJudge=false;note.holdFxActive=false;note.holdUpTimeSec=std::numeric_limits<double>::infinity();note.holdDiffSec=0;note.holdFxTimerSec=0.0;note.holdStatus=0;note.holdBroken=false;note.safeFrame=0;note.isJudged=false;note.badTimeMs=0;note.scored=false;note.statOffset=0;note.offsetIndicatorShown=false;note.judgementDetailOffsetRecorded=false;note.frameCount=0;}}}
+
+bool Chart::hasLiveBlock(double time) const noexcept {
+  if(blockAreaList.empty())return false;
+  if(!blockWindowReady_||time<blockWindowTimeSec_){
+    // First query, or a seek backwards: rebuild the appear-time order and the active set.
+    blockWindowOrder_.resize(blockAreaList.size());
+    for(std::size_t index=0;index<blockWindowOrder_.size();++index)blockWindowOrder_[index]=index;
+    std::stable_sort(blockWindowOrder_.begin(),blockWindowOrder_.end(),[this](std::size_t first,std::size_t second){return blockAreaList[first].appearTime<blockAreaList[second].appearTime;});
+    blockWindowActive_.clear();blockWindowCursor_=0;blockWindowReady_=true;
+  }else if(time==blockWindowTimeSec_){
+    return !blockWindowActive_.empty();
+  }
+  const float chartTime=static_cast<float>(time);
+  while(blockWindowCursor_<blockWindowOrder_.size()
+      &&blockAreaList[blockWindowOrder_[blockWindowCursor_]].appearTime<=chartTime){
+    blockWindowActive_.push_back(blockWindowOrder_[blockWindowCursor_]);
+    ++blockWindowCursor_;
+  }
+  std::erase_if(blockWindowActive_,[this,chartTime](std::size_t index){
+    const auto& zone=blockAreaList[index];
+    return chartTime<zone.appearTime||chartTime>=zone.disappearTime;
+  });
+  blockWindowTimeSec_=time;
+  return !blockWindowActive_.empty();
+}
 } // namespace rechigros::game

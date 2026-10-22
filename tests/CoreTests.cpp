@@ -411,5 +411,40 @@ int main(){
     require(stable, "repeated preparation produces identical note values");
   }
 
+  // --- block window query matches a full scan ---------------------------------
+  {
+    Chart blockChart;
+    const auto addZone = [&blockChart](float appear, float disappear) {
+      OfficialBlock zone;
+      zone.appearTime = appear;
+      zone.disappearTime = disappear;
+      blockChart.blockAreaList.push_back(zone);
+    };
+    addZone(0.0F, 1.0F);
+    addZone(0.5F, 2.5F);
+    addZone(1.2F, 1.8F);
+    addZone(2.4F, 3.0F);
+    addZone(5.0F, 6.0F);
+    for (double time = 0.0; time <= 6.5; time += 0.05) {
+      // The query compares the chart time as float against the float zone window, exactly
+      // like the renderer does, so the reference scan below uses the same precision.
+      const float chartTime = static_cast<float>(time);
+      bool expected = false;
+      for (const auto& zone : blockChart.blockAreaList) {
+        if (chartTime >= zone.appearTime && chartTime < zone.disappearTime) {
+          expected = true;
+          break;
+        }
+      }
+      require(blockChart.hasLiveBlock(time) == expected,
+          "the block window query matches a full scan");
+    }
+    // A seek backwards must rebuild the window instead of reporting stale state.
+    require(blockChart.hasLiveBlock(2.5), "a zone is live in the middle of the chart");
+    require(blockChart.hasLiveBlock(0.1), "a backwards seek re-evaluates the window");
+    require(!blockChart.hasLiveBlock(4.0), "a gap between zones reports no live block");
+    require(!Chart{}.hasLiveBlock(1.0), "a chart without zones never reports a live block");
+  }
+
   std::cout<<"All ReChigros core tests passed\n";return 0;
 }

@@ -43,5 +43,17 @@ public:
   void updateUiTransform(int id,float x,float y,float rotation,float sx,float sy,float alpha);
   void prepareRuntime();
   void resetRuntime() noexcept;
+
+  // True when at least one red zone is inside its appear/disappear window at `time`. A
+  // chapter chart can author more than ten thousand zones while a handful are live, so the
+  // query keeps a sorted index and an active set instead of rescanning the authored list.
+  [[nodiscard]] bool hasLiveBlock(double time) const noexcept;
+
+private:
+  mutable std::vector<std::size_t> blockWindowOrder_;
+  mutable std::vector<std::size_t> blockWindowActive_;
+  mutable std::size_t blockWindowCursor_{};
+  mutable double blockWindowTimeSec_{-1.0e300};
+  mutable bool blockWindowReady_{};
 };
 }

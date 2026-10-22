@@ -24,6 +24,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -43,6 +44,31 @@ std::filesystem::path pathFromUtf8(const char* value) {
   while (*value) utf8.push_back(static_cast<char8_t>(static_cast<unsigned char>(*value++)));
   return std::filesystem::path(utf8);
 }
+
+#ifdef RECHIGROS_GLES
+// GLES has no core timer query: the elapsed-time query is an extension whose entry points
+// have to be resolved at run time. The desktop path uses the core GL 3.3 query directly.
+#ifndef GL_TIME_ELAPSED_EXT
+#define GL_TIME_ELAPSED_EXT 0x88BF
+#endif
+#ifndef GL_GPU_DISJOINT_EXT
+#define GL_GPU_DISJOINT_EXT 0x8FBB
+#endif
+struct GpuTimerApi {
+  void (*genQueries)(int, unsigned int*){};
+  void (*deleteQueries)(int, const unsigned int*){};
+  void (*beginQuery)(unsigned int, unsigned int){};
+  void (*endQuery)(unsigned int){};
+  void (*getQueryObjectuiv)(unsigned int, unsigned int, unsigned int*){};
+  void (*getQueryObjectui64v)(unsigned int, unsigned int, unsigned long long*){};
+  bool available{};
+};
+
+GpuTimerApi& gpuTimerApi() {
+  static GpuTimerApi api;
+  return api;
+}
+#endif
 
 } // namespace
 
@@ -116,6 +142,16 @@ Application::Application(int argc, char** argv) {
       if (index + 1 < argc && argv[index + 1] != nullptr) {
         dataRootOverride_ = pathFromUtf8(argv[++index]);
       }
+    } else if (argument == "--swap-interval") {
+      // Present pacing experiment: 0 disables vsync, 1 keeps the normal pacing, -1 selects
+      // adaptive vsync where the platform supports it.
+      if (index + 1 < argc && argv[index + 1] != nullptr) {
+        swapInterval_ = std::atoi(argv[++index]);
+      }
+    } else if (argument == "--no-imgui-skip") {
+      imguiSkipIdle_ = false;
+    } else if (argument == "--imgui-skip") {
+      imguiSkipIdle_ = true;
     } else if (argument == "--screen") {
       if (index + 1 < argc && argv[index + 1] != nullptr) {
         screenSetup_ = argv[++index];
@@ -215,7 +251,11 @@ bool Application::initialize() {
   // Reported for a device bring-up run: the driver and language strings decide which
   // shading features can be relied on.
   render::gl::logContextInfo();
-  SDL_GL_SetSwapInterval(1);
+  SDL_GL_SetSwapInterval(swapInterval_);
+  appliedSwapInterval_ = SDL_GL_GetSwapInterval();
+  std::cout << "present: swap interval requested=" << swapInterval_
+            << " applied=" << appliedSwapInterval_ << '\n';
+  initGpuTimer();
 
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
@@ -378,7 +418,9 @@ int Application::run() {
   if (!initialize()) return 1;
   bool running = true;
   const auto frequency = SDL_GetPerformanceFrequency();
+  runFrequency_ = frequency;
   auto previous = SDL_GetPerformanceCounter();
+  runStartCounter_ = previous;
   double elapsed = 0.0;
 
   while (running) {
@@ -411,11 +453,18 @@ int Application::run() {
       continue;
     }
 
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplSDL2_NewFrame();
-    ImGui::NewFrame();
+    // Plain gameplay frames draw their HUD through the renderer, so they do not need an
+    // immediate-mode frame at all. Menus, dialogs, toasts and debug text still do.
+    const bool imguiFrame = !(imguiSkipIdle_ && gameplayImGuiIdle());
+    if (imguiFrame) {
+      ImGui_ImplOpenGL3_NewFrame();
+      ImGui_ImplSDL2_NewFrame();
+      ImGui::NewFrame();
+    }
 
     syncWindowMetrics();
+    pollGpuTimer();
+    beginGpuTimer();
 
     if (app_->screen == Screen::Game) {
       gameUpdate(*app_, delta);
@@ -423,7 +472,7 @@ int Application::run() {
 
     if (app_->screen == Screen::Game) {
       gameRender(*app_);
-      drawGameOverlay(*app_);
+      if (imguiFrame) drawGameOverlay(*app_);
     } else {
       glBindFramebuffer(GL_FRAMEBUFFER, 0);
       glViewport(0, 0, app_->drawableWidth, app_->drawableHeight);
@@ -455,7 +504,7 @@ int Application::run() {
       }
       drawCurrentScreen();
     }
-    drawToast(*app_);
+    if (imguiFrame) drawToast(*app_);
 
     if (app_->quitRequested) running = false;
 
@@ -468,8 +517,9 @@ int Application::run() {
     }
 
     // A focused text field needs the platform text input running, otherwise the on-screen
-    // keyboard never appears and no character events are produced.
-    const bool wantsText = ImGui::GetIO().WantTextInput;
+    // keyboard never appears and no character events are produced. Without an immediate-mode
+    // frame there cannot be a focused field.
+    const bool wantsText = imguiFrame && ImGui::GetIO().WantTextInput;
     if (wantsText != textInputActive_) {
       if (wantsText) {
         SDL_StartTextInput();
@@ -479,21 +529,35 @@ int Application::run() {
       textInputActive_ = wantsText;
     }
 
-    ImGui::Render();
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    if (imguiFrame) {
+      ImGui::Render();
+      ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    }
+    endGpuTimer();
     // The capture happens after the interface pass, so the saved frame shows the
     // composed result (GPU backdrop or its fallback) exactly as presented. Gameplay is
     // included so a run can be inspected without depending on the presentation path.
     captureFramebufferIfRequested();
     // The frame's own work ends here; the swap waits for presentation, so the two times
-    // together separate a slow frame from a stalled compositor.
+    // together separate a slow frame from a stalled compositor. The swap itself is timed
+    // separately: on a present-bound device the wait happens there, not in the frame.
     const auto preSwapCounter = SDL_GetPerformanceCounter();
     const double cpuMs = static_cast<double>(preSwapCounter - counter) * 1000.0
         / static_cast<double>(frequency);
     SDL_GL_SwapWindow(window_);
+    const auto postSwapCounter = SDL_GetPerformanceCounter();
+    const double swapMs = static_cast<double>(postSwapCounter - preSwapCounter) * 1000.0
+        / static_cast<double>(frequency);
     if (!frameStatsPath_.empty() && frameSamples_.size() < 2000000) {
-      frameSamples_.push_back(
-          {intervalMs, cpuMs, static_cast<int>(app_->screen), app_->nowSec});
+      FrameSample sample;
+      sample.intervalMs = intervalMs;
+      sample.cpuMs = cpuMs;
+      sample.screen = static_cast<int>(app_->screen);
+      sample.nowSec = app_->nowSec;
+      sample.swapMs = swapMs;
+      sample.wallSec = static_cast<double>(postSwapCounter - runStartCounter_)
+          / static_cast<double>(runFrequency_);
+      frameSamples_.push_back(sample);
     }
   }
 
@@ -709,11 +773,17 @@ void Application::writeFrameStats() const {
   }
   std::vector<double> intervals;
   std::vector<double> cpu;
+  std::vector<double> swap;
+  std::vector<double> gpu;
   intervals.reserve(frameSamples_.size());
   cpu.reserve(frameSamples_.size());
+  swap.reserve(frameSamples_.size());
+  gpu.reserve(frameSamples_.size());
   for (const FrameSample& sample : frameSamples_) {
     intervals.push_back(sample.intervalMs);
     cpu.push_back(sample.cpuMs);
+    swap.push_back(sample.swapMs);
+    gpu.push_back(sample.gpuMs);
   }
   const auto percentile = [](std::vector<double> values, double fraction) {
     std::sort(values.begin(), values.end());
@@ -744,11 +814,12 @@ void Application::writeFrameStats() const {
   }
   std::ofstream csv(frameStatsPath_);
   if (csv) {
-    csv << "index,interval_ms,cpu_ms,screen,now_sec\n";
+    csv << "index,interval_ms,cpu_ms,screen,now_sec,gpu_ms,swap_ms,wall_sec\n";
     for (std::size_t index = 0; index < frameSamples_.size(); ++index) {
       const FrameSample& sample = frameSamples_[index];
       csv << index << ',' << sample.intervalMs << ',' << sample.cpuMs << ','
-          << sample.screen << ',' << sample.nowSec << '\n';
+          << sample.screen << ',' << sample.nowSec << ',' << sample.gpuMs << ','
+          << sample.swapMs << ',' << sample.wallSec << '\n';
     }
   }
   std::cout << "FRAME-STATS frames=" << frameSamples_.size()
@@ -761,6 +832,162 @@ void Application::writeFrameStats() const {
             << " cpu mean=" << mean(cpu)
             << " cpu p99=" << percentile(cpu, 0.99)
             << " path=" << frameStatsPath_.string() << '\n';
+  double worstSwap = 0.0;
+  for (const double value : swap) worstSwap = std::max(worstSwap, value);
+  double worstGpu = 0.0;
+  bool anyGpu = false;
+  for (const double value : gpu) {
+    worstGpu = std::max(worstGpu, value);
+    if (value > 0.0) anyGpu = true;
+  }
+  std::cout << "FRAME-STATS-PRESENT frames=" << frameSamples_.size()
+            << " swap mean=" << mean(swap) << " p95=" << percentile(swap, 0.95)
+            << " p99=" << percentile(swap, 0.99) << " max=" << worstSwap
+            << " gpu " << (anyGpu ? "" : "unavailable ") << "mean=" << mean(gpu)
+            << " p95=" << percentile(gpu, 0.95) << " p99=" << percentile(gpu, 0.99)
+            << " max=" << worstGpu
+            << " swap_interval=" << appliedSwapInterval_ << '\n';
+}
+
+bool Application::gameplayImGuiIdle() const {
+  if (!app_ || app_->screen != Screen::Game) return false;
+  const GameRuntime& game = app_->game;
+  if (!game.loaded || game.finished) return false;
+  if (game.pause != GameRuntime::Pause::None) return false;
+  if (game.debugOverlay || app_->settings.showDebugInfo) return false;
+  if (!app_->toastText.empty() && app_->nowSec <= app_->toastDeadlineSec) return false;
+  return true;
+}
+
+void Application::initGpuTimer() {
+  gpuTimerSupported_ = false;
+  gpuQueries_[0] = 0;
+  gpuQueries_[1] = 0;
+  gpuActiveSlot_ = -1;
+  gpuSlotFrame_[0] = -1;
+  gpuSlotFrame_[1] = -1;
+  if (frameStatsPath_.empty()) return;
+#ifdef RECHIGROS_GLES
+  auto& api = gpuTimerApi();
+  api.genQueries = reinterpret_cast<decltype(api.genQueries)>(
+      SDL_GL_GetProcAddress("glGenQueriesEXT"));
+  api.deleteQueries = reinterpret_cast<decltype(api.deleteQueries)>(
+      SDL_GL_GetProcAddress("glDeleteQueriesEXT"));
+  api.beginQuery = reinterpret_cast<decltype(api.beginQuery)>(
+      SDL_GL_GetProcAddress("glBeginQueryEXT"));
+  api.endQuery = reinterpret_cast<decltype(api.endQuery)>(
+      SDL_GL_GetProcAddress("glEndQueryEXT"));
+  api.getQueryObjectuiv = reinterpret_cast<decltype(api.getQueryObjectuiv)>(
+      SDL_GL_GetProcAddress("glGetQueryObjectuivEXT"));
+  api.getQueryObjectui64v = reinterpret_cast<decltype(api.getQueryObjectui64v)>(
+      SDL_GL_GetProcAddress("glGetQueryObjectui64vEXT"));
+  api.available = api.genQueries != nullptr && api.deleteQueries != nullptr
+      && api.beginQuery != nullptr && api.endQuery != nullptr
+      && api.getQueryObjectuiv != nullptr;
+  if (!api.available) return;
+  const auto* extensions = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
+  if (extensions == nullptr || std::strstr(extensions, "GL_EXT_disjoint_timer_query") == nullptr) {
+    api.available = false;
+    return;
+  }
+  api.genQueries(2, gpuQueries_);
+#else
+  if (!render::gl::contextAvailable()) return;
+  glGenQueries(2, gpuQueries_);
+#endif
+  gpuTimerSupported_ = gpuQueries_[0] != 0 && gpuQueries_[1] != 0;
+  if (gpuTimerSupported_) std::cout << "present: gpu timer queries enabled\n";
+}
+
+void Application::shutdownGpuTimer() noexcept {
+  if (!gpuTimerSupported_) return;
+#ifdef RECHIGROS_GLES
+  auto& api = gpuTimerApi();
+  if (api.deleteQueries != nullptr && (gpuQueries_[0] != 0 || gpuQueries_[1] != 0)) {
+    api.deleteQueries(2, gpuQueries_);
+  }
+#else
+  if (gpuQueries_[0] != 0 || gpuQueries_[1] != 0) glDeleteQueries(2, gpuQueries_);
+#endif
+  gpuQueries_[0] = 0;
+  gpuQueries_[1] = 0;
+  gpuTimerSupported_ = false;
+  gpuActiveSlot_ = -1;
+  gpuSlotFrame_[0] = -1;
+  gpuSlotFrame_[1] = -1;
+}
+
+void Application::beginGpuTimer() {
+  if (!gpuTimerSupported_ || gpuQueries_[0] == 0) return;
+  // Alternate the two queries. If the chosen slot still holds a pending result the GPU is
+  // more than one frame behind, so this frame is left untimed instead of stalling or
+  // reusing an active query.
+  const int slot = gpuNextSlot_;
+  gpuNextSlot_ = (gpuNextSlot_ + 1) % 2;
+  if (gpuSlotFrame_[slot] >= 0) {
+    gpuActiveSlot_ = -1;
+    return;
+  }
+  gpuActiveSlot_ = slot;
+  gpuSlotFrame_[slot] = static_cast<int>(frameSamples_.size());
+#ifdef RECHIGROS_GLES
+  gpuTimerApi().beginQuery(GL_TIME_ELAPSED_EXT, gpuQueries_[slot]);
+#else
+  glBeginQuery(GL_TIME_ELAPSED, gpuQueries_[slot]);
+#endif
+}
+
+void Application::endGpuTimer() {
+  if (!gpuTimerSupported_ || gpuActiveSlot_ < 0 || gpuQueries_[gpuActiveSlot_] == 0) return;
+#ifdef RECHIGROS_GLES
+  gpuTimerApi().endQuery(GL_TIME_ELAPSED_EXT);
+#else
+  glEndQuery(GL_TIME_ELAPSED);
+#endif
+  gpuActiveSlot_ = -1;
+}
+
+void Application::pollGpuTimer() {
+  if (!gpuTimerSupported_) return;
+  for (int slot = 0; slot < 2; ++slot) {
+    const int sample = gpuSlotFrame_[slot];
+    if (sample < 0 || gpuQueries_[slot] == 0) continue;
+    unsigned int available = 0;
+#ifdef RECHIGROS_GLES
+    gpuTimerApi().getQueryObjectuiv(gpuQueries_[slot], GL_QUERY_RESULT_AVAILABLE, &available);
+#else
+    glGetQueryObjectuiv(gpuQueries_[slot], GL_QUERY_RESULT_AVAILABLE, &available);
+#endif
+    if (available == 0) continue;
+    unsigned long long nanoseconds = 0;
+#ifdef RECHIGROS_GLES
+    auto& api = gpuTimerApi();
+    GLint disjoint = 0;
+    glGetIntegerv(GL_GPU_DISJOINT_EXT, &disjoint);
+    if (disjoint != 0) {
+      gpuSlotFrame_[slot] = -1;
+      continue;
+    }
+    if (api.getQueryObjectui64v != nullptr) {
+      unsigned long long value = 0;
+      api.getQueryObjectui64v(gpuQueries_[slot], GL_QUERY_RESULT, &value);
+      nanoseconds = value;
+    } else {
+      unsigned int value = 0;
+      api.getQueryObjectuiv(gpuQueries_[slot], GL_QUERY_RESULT, &value);
+      nanoseconds = value;
+    }
+#else
+    unsigned long long value = 0;
+    glGetQueryObjectui64v(gpuQueries_[slot], GL_QUERY_RESULT, &value);
+    nanoseconds = value;
+#endif
+    if (sample < static_cast<int>(frameSamples_.size())) {
+      frameSamples_[static_cast<std::size_t>(sample)].gpuMs =
+          static_cast<double>(nanoseconds) / 1.0e6;
+    }
+    gpuSlotFrame_[slot] = -1;
+  }
 }
 
 void Application::captureFramebufferIfRequested() {
@@ -1005,6 +1232,7 @@ void Application::updateAudioFromSettings() {
 
 void Application::shutdown() noexcept {
   ui::fontCache().shutdown();
+  if (context_ != nullptr) shutdownGpuTimer();
   if (app_ != nullptr) {
     app_->quitRequested = true;
     commitSettings(*app_);

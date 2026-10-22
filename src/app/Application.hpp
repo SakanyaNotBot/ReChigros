@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <cstdint>
 
 struct SDL_Window;
 using SDL_GLContext = void*;
@@ -47,6 +48,16 @@ private:
   void captureFramebufferIfRequested();
   // Writes the collected frame pacing samples and prints their distribution.
   void writeFrameStats() const;
+  // True when the gameplay frame has no immediate-mode interface on top of it: no pause
+  // menu, practice panel, dialog, toast or debug text. The gameplay HUD is drawn by the
+  // renderer, so those frames do not need an ImGui pass at all.
+  [[nodiscard]] bool gameplayImGuiIdle() const;
+  // Present-path diagnostics: an optional GPU timer query and the swap timing columns.
+  void initGpuTimer();
+  void shutdownGpuTimer() noexcept;
+  void pollGpuTimer();
+  void beginGpuTimer();
+  void endGpuTimer();
 
   SDL_Window* window_{};
   SDL_GLContext context_{};
@@ -78,8 +89,30 @@ private:
     double cpuMs{};
     int screen{};
     double nowSec{};
+    // Present-path diagnostics: time spent inside the buffer swap, GPU time for the frame
+    // (from a timer query, zero when unsupported) and wall-clock seconds at swap return.
+    double swapMs{};
+    double gpuMs{};
+    double wallSec{};
   };
   std::vector<FrameSample> frameSamples_;
+  // --swap-interval N: present pacing experiment; negative selects adaptive vsync.
+  int swapInterval_{1};
+  // Skips the immediate-mode frame for plain gameplay frames (default on; --no-imgui-skip
+  // turns it off for an A/B run).
+  bool imguiSkipIdle_{true};
+  // GPU timer query state: two queries rotate so the previous frame's result can be read
+  // without stalling. Zero when the platform has no timer query support.
+  bool gpuTimerSupported_{false};
+  unsigned int gpuQueries_[2]{};
+  int gpuActiveSlot_{-1};
+  int gpuNextSlot_{};
+  // Sample index each query slot belongs to; -1 when the slot is idle.
+  int gpuSlotFrame_[2]{-1, -1};
+  // Swap interval the driver actually applied, for the frame-stats summary.
+  int appliedSwapInterval_{0};
+  std::uint64_t runStartCounter_{};
+  unsigned long long runFrequency_{1};
   // Diagnostic mode: reports the graphics driver strings once and every pass that sets
   // a GL error. Off unless the run asks for it.
   bool glDebug_{};
