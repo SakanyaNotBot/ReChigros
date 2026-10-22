@@ -50,13 +50,21 @@ bool iconButton(const char* id, std::uint64_t texture, ImVec2 topLeft, ImVec2 si
 void beginFullscreenWindow(const char* id);
 void endFullscreenWindow();
 
-// Colour constants shared by the screens.
-constexpr std::uint32_t kTextPrimary = 0xF4FFFFFFU;
-constexpr std::uint32_t kTextSecondary = 0xCFFFFFFFU;
-constexpr std::uint32_t kTextMuted = 0xB8FFFFFFU;
-constexpr std::uint32_t kPanelFill = 0x9A222A35U;
-constexpr std::uint32_t kPanelBorder = 0x96FFFFFFU;
-constexpr std::uint32_t kAccent = 0xFFD3624FU;
+// Colour constants shared by the screens. The values mirror the interface palette so every
+// surface, border and text tone matches the artwork it sits on.
+constexpr std::uint32_t kTextPrimary = 0xFFF3F7FBU;
+constexpr std::uint32_t kTextSecondary = 0xFFA9B4C2U;
+constexpr std::uint32_t kTextMuted = 0xFF758294U;
+constexpr std::uint32_t kPanelFill = 0xE61B222DU;
+constexpr std::uint32_t kPanelFillHigh = 0xF0232B38U;
+constexpr std::uint32_t kPanelPressed = 0xFF303B49U;
+constexpr std::uint32_t kPanelBorder = 0xFF2F3B4AU;
+constexpr std::uint32_t kPanelBorderStrong = 0xFF4A5A6EU;
+constexpr std::uint32_t kAccent = 0xFF56D6C9U;
+constexpr std::uint32_t kAccentAlt = 0xFF86A7C7U;
+constexpr std::uint32_t kDanger = 0xFFFF6B7AU;
+constexpr std::uint32_t kTopBar = 0xF00F141BU;
+constexpr std::uint32_t kChip = 0xFF1F2A35U;
 constexpr std::uint32_t kGradePerfect = 0xFFFEFFA9U;
 constexpr std::uint32_t kGradeCombo = 0xFFA2EEFFU;
 
