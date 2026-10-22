@@ -11,7 +11,7 @@
 namespace rechigros::app {
 namespace {
 
-// Every position below is a design unit on the reference's 731x415 canvas.
+// Every position below is a design unit on the 731x415 canvas.
 constexpr float kBackWidth = 78.0F;
 constexpr float kBackHeight = 48.0F;
 constexpr float kBackTop = 8.0F;

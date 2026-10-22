@@ -168,7 +168,7 @@ bool drawChartCard(AppContext& context, const ChartRecord& record, ImVec2 topLef
   return clicked;
 }
 
-// The three chart tabs the reference shows above the grid.
+// The three chart tabs shown above the grid.
 const char* const kChartTabs[] = {"本地", "上架", "未上架"};
 
 } // namespace
@@ -180,7 +180,7 @@ void drawLibraryScreen(AppContext& context) {
   ImDrawList* drawList = ImGui::GetWindowDrawList();
   ui::drawBackdrop(drawList, ImVec2(size.width, size.height), context.nowSec);
 
-  // Everything is laid out on the reference's design canvas so the proportions hold
+  // Everything is laid out on one design canvas so the proportions hold
   // at any window size.
   const ui::DesignCanvas canvas = ui::designCanvas(ImVec2(size.width, size.height),
       ui::kListCanvasWidth, ui::kListCanvasHeight);

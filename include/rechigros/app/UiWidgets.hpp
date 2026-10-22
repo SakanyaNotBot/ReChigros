@@ -10,10 +10,10 @@
 #include <string>
 
 // Reusable interface pieces shared by the screens. Every metric is expressed in the
-// reference design units so a layout keeps its proportions at any window size.
+// design units so a layout keeps its proportions at any window size.
 namespace rechigros::app::ui {
 
-// Spacing tokens taken from the reference layout, in design units.
+// Spacing tokens of the shared layout, in design units.
 constexpr float kToolbarHeight = 56.0F;
 constexpr float kTabBarHeight = 48.0F;
 constexpr float kScreenMargin = 16.0F;
@@ -25,9 +25,9 @@ constexpr float kSearchWidth = 172.0F;
 constexpr float kSearchHeight = 36.0F;
 constexpr float kCornerButtonWidth = 78.0F;
 constexpr float kCornerButtonHeight = 48.0F;
-// Aspect ratio of every list thumbnail; the reference draws covers 16:9.
+// Aspect ratio of every list thumbnail; covers are drawn 16:9.
 constexpr float kCoverAspect = 16.0F / 9.0F;
-// Design canvas used by the list screens, matching the reference's 16:9 dp space.
+// Design canvas used by the list screens, a 16:9 space.
 constexpr float kListCanvasWidth = 1097.0F;
 constexpr float kListCanvasHeight = 617.0F;
 // Design canvas used by the detail screen.
@@ -55,7 +55,7 @@ struct DesignCanvas {
 }
 
 // Draws a parallelogram whose bottom edge is shifted left by `skew`, the shape the
-// reference uses for its panels and tab plates.
+// shared panels and tab plates use.
 inline void skewQuad(ImDrawList* drawList, float leftTop, float top, float rightTop, float bottom,
     float skew, ImU32 fill, ImU32 border = 0, float borderWidth = 0.0F) {
   if (drawList == nullptr || bottom <= top || rightTop <= leftTop) return;
@@ -117,7 +117,7 @@ inline void drawClippedText(ImDrawList* drawList, ImVec2 position, ImVec2 clipMi
 }
 
 // Scrolling marquee for a single-line label that does not fit its box, mirroring the
-// horizontal drift the reference applies to long chart names.
+// horizontal drift applied to long chart names.
 inline void drawMarqueeText(ImDrawList* drawList, ImVec2 position, float maxWidth, float size,
     ImU32 color, const std::string& text, double timeSec) {
   if (drawList == nullptr || text.empty() || maxWidth <= 0.0F) return;
@@ -150,8 +150,8 @@ inline int tabStrip(const char* id, ImVec2 topLeft, float width, float height, i
   const float barTop = height * 0.14F;
   const float barBottom = height * 0.86F;
 
-  // Slice centres and widths within the bar. Three-tab strips use the reference's
-  // uneven slices; other counts share the width evenly.
+  // Slice centres and widths within the bar. Three-tab strips use uneven slices;
+  // other counts share the width evenly.
   const float threeCenters[3] = {0.22F, 0.50F, 0.78F};
   const float threeWidths[3] = {0.23F, 0.23F, 0.29F};
   const auto centerFor = [count, &threeCenters](int index) {
@@ -209,7 +209,7 @@ inline int tabStrip(const char* id, ImVec2 topLeft, float width, float height, i
 }
 
 // Slanted corner control: a flat plate with a bright leading edge, carrying either an
-// icon texture or a short text label. The plate is the shape the reference uses for
+// icon texture or a short text label. The plate is the shape used for
 // every corner action.
 inline bool cornerButton(const char* id, ImVec2 topLeft, ImVec2 size, bool leadingEdgeOnLeft,
     std::uint64_t texture, const char* label, float textSize, const char* tooltip = nullptr) {

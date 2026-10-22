@@ -1,4 +1,4 @@
-﻿#include "rechigros/app/ScreenCommon.hpp"
+#include "rechigros/app/ScreenCommon.hpp"
 #include "rechigros/app/Screens.hpp"
 #include "rechigros/app/UiStyle.hpp"
 #include "rechigros/app/UiWidgets.hpp"
@@ -11,7 +11,7 @@
 namespace rechigros::app {
 namespace {
 
-// Every position below is a design unit on the reference's 960x540 settlement canvas.
+// Every position below is a design unit on the 960x540 settlement canvas.
 constexpr float kCanvasWidth = 960.0F;
 constexpr float kCanvasHeight = 540.0F;
 constexpr float kIllustrationLeft = 53.0F;

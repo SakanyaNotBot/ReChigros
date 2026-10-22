@@ -92,7 +92,7 @@ std::string currentSkinName(AppContext& context) {
   return context.settings.selectedSkin;
 }
 
-// Places the next row on the slanted content band. The reference shifts each row by
+// Places the next row on the slanted content band. Each row is shifted by
 // `base - slope * y`, so the left edge follows the backdrop's 15 degree edge; deriving
 // it from the row's own screen position keeps it correct while scrolling.
 struct RowLayout {
@@ -120,7 +120,7 @@ void sectionHeading(const char* title, float scale, ImVec2 viewport) {
   ImGui::Dummy(ImVec2(1.0F, kSectionHeadingHeight * scale));
 }
 
-// Horizontal slider with the reference's track and thumb. Returns true while dragging.
+// Horizontal slider with a filled track and round thumb. Returns true while dragging.
 bool sliderControl(const char* id, ImVec2 topLeft, float width, float height, float from, float to,
     float* value, float scale) {
   ImGui::SetCursorScreenPos(topLeft);
@@ -151,7 +151,7 @@ bool sliderControl(const char* id, ImVec2 topLeft, float width, float height, fl
   return active;
 }
 
-// Rounded pill switch matching the reference toggles.
+// Rounded pill switch used by the boolean rows.
 bool switchControl(const char* id, ImVec2 topLeft, float width, float height, bool* value) {
   ImGui::SetCursorScreenPos(topLeft);
   ImGui::InvisibleButton(id, ImVec2(width, height));

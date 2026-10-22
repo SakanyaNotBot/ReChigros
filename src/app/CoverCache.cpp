@@ -1,5 +1,7 @@
 #include "rechigros/app/CoverCache.hpp"
 
+#include "rechigros/platform/AssetManager.hpp"
+#include "rechigros/platform/FileSystem.hpp"
 #include "rechigros/render/gl/Gl.hpp"
 
 #include <stb_image.h>
@@ -106,7 +108,14 @@ std::uint64_t TextureCache::load(const std::string& key, const std::filesystem::
   int width = 0;
   int height = 0;
   int channels = 0;
-  unsigned char* pixels = stbi_load(path.string().c_str(), &width, &height, &channels, 4);
+  // A packaged build keeps its images inside the package, so they are read through the
+  // asset layer rather than opened as files.
+  const auto bytes = platform::AssetManager::readBinary(platform::assetRoot(),
+      path.lexically_relative(platform::assetRoot()).generic_string());
+  unsigned char* pixels = bytes.empty()
+      ? stbi_load(path.string().c_str(), &width, &height, &channels, 4)
+      : stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), &width, &height,
+            &channels, 4);
   if (pixels == nullptr) return 0;
   int finalWidth = width;
   int finalHeight = height;
