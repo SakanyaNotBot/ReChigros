@@ -186,4 +186,4 @@ These are out of scope on purpose. Each was checked against the reference before
 | FPS 计数 | done | 移至参考位置（左下 "N FPS"，12 dp，0.5 透明底板） |
 | 歌曲信息解析 | done | 与参考 11 字段、别名、类型强制、包检测顺序与回退一致；难度 EN SPACE 规范化；旧 GBK 文本回退解码（桌面） |
 | 资源包（皮肤）配置 | done | SkinConfig 全字段解析/合并/校验，皮肤贴图优先回退内置资源，判定线颜色/透明度、hit_fx 缩放/时长/旋转/着色、粒子开关、长条样式生效，选择或导入后下一局应用 |
-| 渲染性能 | improving | 官方谱面解析并行化、prepareRuntime 并行 + 单调 floor 游标、红区窗口化推进、块掩码顶点复用；--frame-stats 采样；设备端继续压缩与参考的帧率差距 |
+| 渲染性能 | done | 官方谱面解析并行化（680–870 → 302–350 ms）、`prepareRuntime` 并行 + 单调 floor 游标（6.5 → 2.6–3.3 ms）、note 按类型时间窗遍历（4–6×）、红区推进窗口化（32×）+ 掩码顶点复用、会话侧红区遍历移除；`--frame-stats` 帧采样；桌面稳态 CPU 6.05 → 4.97 ms/帧；设备安静 A/B：interval 5.31 → 5.27 ms、CPU 4.62 → 4.51 ms、p99 8.54 → 8.48 ms、0 帧 >33 ms；与参考呈现节奏 5.81 vs 5.22 ms（剩余约 10% 在呈现路径，下一轮定位） |

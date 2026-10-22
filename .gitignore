@@ -30,3 +30,11 @@ xcuserdata/
 # Scratch data written by the test executables
 /test-scratch/
 /import-check-data/
+
+# Local delivery artifacts copied out of the disposable build tree
+/artifacts/
+
+
+# Device performance A/B evidence kept outside the build tree
+/perf-final/
+
