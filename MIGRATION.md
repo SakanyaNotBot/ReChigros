@@ -25,8 +25,10 @@ Every gate below was executed on this machine and passed.
 | Render smoke | `rechigros_render_smoke.exe --chart …` | writes a 1280x720 PNG |
 | Render input coverage | `build.bat verify-render` | eighteen cases: every renderer input and effect path measurably changes the frame |
 | Application loop | `build.bat verify-app` | nine hidden-window runs: gameplay, result, pause cycle, replay record/playback with an exact match, and the autoplay, challenge, practice and mirror modes |
+| Interface font coverage | `build.bat verify-app` | every one of the 233 non-Latin characters the screens can draw has a glyph in the shipped font |
 | One-click build | `build.bat desktop` | configures, builds and runs the test suite from a clean tree |
-| Android APK | `gradlew :app:assembleDebug` | `app-debug.apk`, 3 ABIs, 103 assets, v2 signed |
+| Android APK | `gradlew :app:assemble` | `app-release.apk`, 3 ABIs, v2 signed |
+| Android on device | install on an emulator | library, chart detail, gameplay and result all reachable; the bundled example chart runs to a result |
 | iOS packaging | `build.bat verify-ios` | 47 checks pass |
 
 ## Area status
@@ -94,6 +96,24 @@ size, so text the layout draws at about 1.7x is rendered from glyphs built for t
 instead of magnified ones. Horizontal oversampling is reduced to one, which keeps the denser
 glyphs inside half the atlas memory the old settings needed. The in-game HUD rasterises each
 string at its final on-screen pixel size and draws it one-to-one, so it needs no correction.
+
+## Packaged builds
+
+A build that ships its assets inside a package cannot open them as files, and three separate
+things depend on that difference:
+
+- **Images** are read through the asset layer and decoded from memory. Opening them by path
+  silently yields nothing, which is how the character art, icons and covers all disappeared
+  on device while working on the desktop.
+- **The interface font** is materialised to a readable path before the atlas is built.
+  Without that the atlas falls back to an ASCII-only font and every non-Latin character draws
+  as a placeholder.
+- **The example chart** is copied into the library on first run, because the library folder
+  lives in private storage the package cannot address.
+
+Importing uses the platform document picker, which grants access to the chosen files without
+the application holding broad storage permission. A chosen folder is copied recursively
+through the document resolver, since the grant covers the tree rather than a path.
 
 ## Notes
 

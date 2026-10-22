@@ -678,7 +678,18 @@ if ($Target -eq 'verify-app') {
     Write-Step 'Application loop'
     & (Join-Path $PSScriptRoot 'verify-app-loop.ps1') -App $app `
         -Chart 'tests\fixtures\plain.json' -Work (Join-Path $directory 'app-loop')
-    exit $LASTEXITCODE
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    # Every character the interface can draw must have a glyph, otherwise it renders as an
+    # empty box on a screen nobody looked at.
+    Write-Step 'Interface font coverage'
+    $python = Get-Command python -ErrorAction SilentlyContinue
+    if ($python) {
+      & $python.Source (Join-Path $PSScriptRoot 'check-font-coverage.py')
+      exit $LASTEXITCODE
+    }
+    Write-Warning 'python is not available; the font coverage check was skipped'
+    exit 0
 }
 
 if ($Target -eq 'verify-render') {
