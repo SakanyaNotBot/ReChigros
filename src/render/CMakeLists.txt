@@ -7,6 +7,7 @@ add_library(rechigros_render STATIC
   gl/ShaderProgram.cpp
   gl/GlDebug.cpp
   asset/TextureCache.cpp
+  skin/SkinConfig.cpp
   batch/SpriteBatch.cpp
   text/TextRenderer.cpp
   fx/BloomPass.cpp
@@ -19,6 +20,7 @@ add_library(rechigros_render STATIC
   fx/KaleidoBackdropPass.cpp
   fx/PauseBackdropPass.cpp
   fx/PrprChain.cpp
+  scene/BackgroundBlur.cpp
   scene/StageLayout.cpp
   scene/LinePass.cpp
   scene/NoteBatch.cpp

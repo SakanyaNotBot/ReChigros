@@ -20,6 +20,7 @@
 #include "rechigros/render/fx/HitEffect.hpp"
 #include "rechigros/render/fx/PauseBackdropPass.hpp"
 #include "rechigros/render/scene/PauseBackdrop.hpp"
+#include "rechigros/render/scene/BackgroundBlur.hpp"
 #include "rechigros/render/fx/PrprChain.hpp"
 #include "rechigros/render/math/Mat4.hpp"
 #include "rechigros/render/scene/HudPass.hpp"
@@ -27,8 +28,10 @@
 #include "rechigros/render/scene/NoteBatch.hpp"
 #include "rechigros/render/scene/StageLayout.hpp"
 #include "rechigros/render/scene/Transition.hpp"
+#include "rechigros/render/skin/SkinConfig.hpp"
 #include "rechigros/render/text/TextRenderer.hpp"
 #include "rechigros/platform/AssetManager.hpp"
+#include "rechigros/platform/FileSystem.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -88,6 +91,7 @@ struct GameRenderer::Impl {
     blockComposite.release();
     // The overlay passes own GL programs; release them with the rest of the resources.
     pauseBackdrop.release();
+  backgroundBlur.release();
     dsGrid.release();
     kaleido.release();
     sceneFbo.reset();
@@ -106,6 +110,7 @@ struct GameRenderer::Impl {
     holdBodies[0] = holdBodies[1] = nullptr;
     hitFx = nullptr;
     hudArtwork.pause = hudArtwork.timerLine = hudArtwork.noteRing = nullptr;
+    hudArtwork.hitOffsetArrow = nullptr;
     effectGlitchMap = effectGlitchDogMap = effectWireNoise = effectDisplaceMap = nullptr;
     blockDisplaceMap = blockSparkMap = blockNoiseMap = nullptr;
     headTextureList.clear();
@@ -124,6 +129,7 @@ struct GameRenderer::Impl {
   gl::Framebuffer pongFbo;
   fx::HitEffectField hitEffects;
   fx::PauseBackdropPass pauseBackdrop;
+  scene::BackgroundBlur backgroundBlur;
   fx::BlockOverlay blockOverlay;
   // Replaces the finished frame inside a red zone; the inline silhouettes are skipped
   // while it is active so the two paths never draw the same zone twice.
@@ -143,6 +149,8 @@ struct GameRenderer::Impl {
   bool holdCompact{};
   fx::HitEffectStyle hitStyle;
   fx::HitEffectSkin hitSkin;
+  // Fully resolved material values from the built-in pack and the selected skin layer.
+  skin::ResolvedMaterials skinMaterials;
   std::filesystem::path skinDirectory;
   double blockUpdateLastSec{};
   fx::DsGridPass dsGrid;
@@ -156,6 +164,7 @@ struct GameRenderer::Impl {
 
   // Gameplay textures, resolved once per asset root.
   gl::Texture* background{};
+  gl::Texture* defaultBackground{};
   gl::Texture* noteHeads[5][2]{};
   gl::Texture* holdTextures[2]{};
   gl::Texture* holdBodies[2]{};
@@ -174,6 +183,7 @@ struct GameRenderer::Impl {
     gl::Texture* pause{};
     gl::Texture* timerLine{};
     gl::Texture* noteRing{};
+    gl::Texture* hitOffsetArrow{};
   } hudArtwork;
 
   game::Chart* loadedChart{};
@@ -188,21 +198,27 @@ struct GameRenderer::Impl {
   void loadGameplayTextures();
   // Applies the built-in resource pack, then the selected skin layer on top.
   void applyResPackSettings();
-  // Layers one JSON material table over the current settings. Only present fields change.
-  void applyResPackLayer(const nlohmann::json& root);
-  gl::Texture* cropHoldBody(const char* sheetPath, int tailSlice, int headSlice);
+  // Loads a texture the skin may override: the skin directory's file first, then the
+  // built-in asset. Returns null when neither can be decoded.
+  gl::Texture* loadSkinAwareTexture(const char* fileName, const char* assetFallback);
+  // Same fallback order, but decodes the image so it can be cropped before upload.
+  asset::Image loadSkinAwareImage(
+      const char* fileName, const char* assetFallback, std::string& cacheKey);
+  gl::Texture* cropHoldBody(
+      const char* fileName, const char* assetFallback, int tailSlice, int headSlice);
   // Re-slices the hold sheet from the current material settings. The pack and a skin may
   // change the slice sizes, so this runs again whenever those settings change.
   void refreshHoldSheet();
   void prepareForChart(game::Chart* chart);
-  void drawBackgroundPass(const scene::StageLayout& layout, float artworkAlpha, float dimAlpha);
+  void drawBackgroundPass(const scene::StageLayout& layout, float artworkAlpha, float dimAlpha,
+      float sideArtworkAlpha, float sideDimAlpha, bool opening);
   void drawLinePass(const RenderFrameInput& input, game::Chart* chart,
       const game::JudgementEngine* judgement, const scene::StageLayout& layout);
   void drawNotePasses(const scene::StageLayout& layout, const RenderFrameInput& input,
       game::Chart* chart);
   void drawHitEffects(const scene::StageLayout& layout, const RenderFrameInput& input, game::Chart* chart);
   void drawHudPass(const RenderFrameInput& input, const scene::StageLayout& layout,
-      game::Chart* chart);
+      game::Chart* chart, const game::JudgementEngine* judgement);
   // Draws the objects a level effect adds to the scene itself, which are separate from the
   // storyboard post-processing chain.
   void drawLevelEffectObjects(game::Chart* chart, const RenderFrameInput& input,
@@ -216,22 +232,26 @@ struct GameRenderer::Impl {
 };
 
 void GameRenderer::Impl::loadGameplayTextures() {
-  background = textures.loadAsset("res/background.jpg");
-  noteHeads[kNoteTypeTap][0] = textures.loadAsset("res/click.png");
-  noteHeads[kNoteTypeTap][1] = textures.loadAsset("res/click_mh.png");
-  noteHeads[kNoteTypeDrag][0] = textures.loadAsset("res/drag.png");
-  noteHeads[kNoteTypeDrag][1] = textures.loadAsset("res/drag_mh.png");
-  noteHeads[kNoteTypeFlick][0] = textures.loadAsset("res/flick.png");
-  noteHeads[kNoteTypeFlick][1] = textures.loadAsset("res/flick_mh.png");
-  holdTextures[0] = textures.loadAsset("res/hold.png");
-  holdTextures[1] = textures.loadAsset("res/hold_mh.png");
+  defaultBackground = textures.loadAsset("res/background.jpg");
+  background = defaultBackground;
+  // A selected skin replaces the note, hold and hit-effect artwork with files of the same
+  // names in its directory; everything it does not ship keeps the built-in asset.
+  noteHeads[kNoteTypeTap][0] = loadSkinAwareTexture("click.png", "res/click.png");
+  noteHeads[kNoteTypeTap][1] = loadSkinAwareTexture("click_mh.png", "res/click_mh.png");
+  noteHeads[kNoteTypeDrag][0] = loadSkinAwareTexture("drag.png", "res/drag.png");
+  noteHeads[kNoteTypeDrag][1] = loadSkinAwareTexture("drag_mh.png", "res/drag_mh.png");
+  noteHeads[kNoteTypeFlick][0] = loadSkinAwareTexture("flick.png", "res/flick.png");
+  noteHeads[kNoteTypeFlick][1] = loadSkinAwareTexture("flick_mh.png", "res/flick_mh.png");
+  holdTextures[0] = loadSkinAwareTexture("hold.png", "res/hold.png");
+  holdTextures[1] = loadSkinAwareTexture("hold_mh.png", "res/hold_mh.png");
   noteHeads[kNoteTypeHold][0] = holdTextures[0];
   noteHeads[kNoteTypeHold][1] = holdTextures[1];
-  hitFx = textures.loadAsset("res/hit_fx.png");
+  hitFx = loadSkinAwareTexture("hit_fx.png", "res/hit_fx.png");
   // HUD artwork; a missing file makes the corresponding widget fall back to a flat quad.
   hudArtwork.pause = textures.loadAsset("res/pause.png");
   hudArtwork.timerLine = textures.loadAsset("res/timerLine.png");
   hudArtwork.noteRing = textures.loadAsset("res/NoteRing.png");
+  hudArtwork.hitOffsetArrow = textures.loadAsset("res/arrow.png");
   // A highlight sheet is a different canvas size from its normal counterpart, so the drawn
   // width is corrected by the ratio of the two sheets to keep the note the same size.
   for (int type = 0; type < 5; ++type) {
@@ -246,6 +266,7 @@ void GameRenderer::Impl::loadGameplayTextures() {
     }
   }
   pauseBackdrop.prepare(assets);
+  backgroundBlur.prepare();
   dsGrid.prepare(assets);
   kaleido.prepare(assets);
 
@@ -312,8 +333,23 @@ void GameRenderer::Impl::refreshHoldSheet() {
     // own pair. `buildHoldUv` and the body crop must agree on the same two numbers.
     const int tailSlice = holdTailSlice[highlight];
     const int headSlice = holdHeadSlice[highlight];
-    const char* sheetPath = highlight == 1 ? "res/hold_mh.png" : "res/hold.png";
-    holdBodies[highlight] = cropHoldBody(sheetPath, tailSlice, headSlice);
+    const char* sheetName = highlight == 1 ? "hold_mh.png" : "hold.png";
+    const char* assetFallback = highlight == 1 ? "res/hold_mh.png" : "res/hold.png";
+    const char* bodyName = highlight == 1 ? "hold_body_mh.png" : "hold_body.png";
+
+    // A skin may ship a ready-made body strip; otherwise the body is the middle slice of
+    // the same (skin or built-in) hold sheet.
+    holdBodies[highlight] = nullptr;
+    if (!skinDirectory.empty()) {
+      const auto bodyPath = skin::resolveSkinFile(skinDirectory, bodyName);
+      if (!bodyPath.empty()) {
+        holdBodies[highlight] = textures.loadFile(bodyPath);
+        if (holdBodies[highlight] != nullptr) holdBodies[highlight]->setWrapRepeat(false, true);
+      }
+    }
+    if (holdBodies[highlight] == nullptr) {
+      holdBodies[highlight] = cropHoldBody(sheetName, assetFallback, tailSlice, headSlice);
+    }
     if (holdTextures[highlight] != nullptr) {
       holdUv[highlight] =
           scene::buildHoldUv(holdTextures[highlight]->height(), tailSlice, headSlice);
@@ -321,11 +357,53 @@ void GameRenderer::Impl::refreshHoldSheet() {
   }
 }
 
-gl::Texture* GameRenderer::Impl::cropHoldBody(const char* sheetPath, int tailSlice,
-    int headSlice) {
-  const auto bytes = platform::AssetManager::readBinary(assets, sheetPath);
-  if (bytes.empty()) return nullptr;
-  asset::Image sheet = asset::decodeImageMemory(bytes.data(), bytes.size());
+asset::Image GameRenderer::Impl::loadSkinAwareImage(
+    const char* fileName, const char* assetFallback, std::string& cacheKey) {
+  cacheKey.clear();
+  if (!skinDirectory.empty()) {
+    const auto skinPath = skin::resolveSkinFile(skinDirectory, fileName);
+    if (!skinPath.empty()) {
+      const auto bytes = platform::readBinaryFile(skinPath);
+      if (!bytes.empty()) {
+        asset::Image image = asset::decodeImageMemory(bytes.data(), bytes.size());
+        if (image.valid()) {
+          cacheKey = skinPath.generic_string();
+          return image;
+        }
+      }
+    }
+  }
+  if (assetFallback != nullptr) {
+    const auto bytes = platform::AssetManager::readBinary(assets, assetFallback);
+    if (!bytes.empty()) {
+      asset::Image image = asset::decodeImageMemory(bytes.data(), bytes.size());
+      if (image.valid()) {
+        cacheKey = assetFallback;
+        return image;
+      }
+    }
+  }
+  return asset::Image{};
+}
+
+gl::Texture* GameRenderer::Impl::loadSkinAwareTexture(
+    const char* fileName, const char* assetFallback) {
+  if (!skinDirectory.empty()) {
+    const auto skinPath = skin::resolveSkinFile(skinDirectory, fileName);
+    if (!skinPath.empty()) {
+      // A skin file that exists but cannot be decoded falls back to the built-in asset,
+      // matching the reference texture resolver.
+      if (gl::Texture* texture = textures.loadFile(skinPath)) return texture;
+    }
+  }
+  if (assetFallback == nullptr) return nullptr;
+  return textures.loadAsset(assetFallback);
+}
+
+gl::Texture* GameRenderer::Impl::cropHoldBody(
+    const char* fileName, const char* assetFallback, int tailSlice, int headSlice) {
+  std::string cacheKey;
+  const asset::Image sheet = loadSkinAwareImage(fileName, assetFallback, cacheKey);
   if (!sheet.valid()) return nullptr;
 
   const int bodyTop = std::max(0, tailSlice);
@@ -337,109 +415,48 @@ gl::Texture* GameRenderer::Impl::cropHoldBody(const char* sheetPath, int tailSli
   body.width = sheet.width;
   body.height = bodyHeight;
   body.pixels.resize(rowBytes * static_cast<std::size_t>(bodyHeight));
-  const auto* source = sheet.pixels.data() +
-      static_cast<std::size_t>(bodyTop) * rowBytes;
+  const auto* source = sheet.pixels.data() + static_cast<std::size_t>(bodyTop) * rowBytes;
   std::copy_n(source, body.pixels.size(), body.pixels.data());
 
   // The body is tiled vertically along the hold, so it repeats in T only.
-  auto* texture = textures.loadPixels(std::string("holdbody:") + sheetPath, std::move(body));
+  auto* texture = textures.loadPixels(std::string("holdbody:") + cacheKey, std::move(body));
   if (texture != nullptr) texture->setWrapRepeat(false, true);
   return texture;
 }
 
 void GameRenderer::Impl::applyResPackSettings() {
-  // `res/respack.json` carries the atlas grids and the note colour overrides. Every
-  // field is optional, so a missing or malformed file leaves the defaults in place.
-  const auto bytes = platform::AssetManager::readBinary(assets, "res/respack.json");
-  if (!bytes.empty()) {
-    const auto root = nlohmann::json::parse(bytes.begin(), bytes.end(), nullptr, false);
-    if (!root.is_discarded() && root.is_object()) applyResPackLayer(root);
-  }
-  // A selected skin may override any subset of the same fields.
-  if (!skinDirectory.empty()) {
-    for (const char* name : {"respack.json", "skin.json"}) {
-      const auto path = skinDirectory / name;
-      std::ifstream input(path, std::ios::binary);
-      if (!input) continue;
-      std::ostringstream buffer;
-      buffer << input.rdbuf();
-      const auto text = buffer.str();
-      if (text.empty()) continue;
-      const auto root = nlohmann::json::parse(text, nullptr, false);
-      if (root.is_discarded() || !root.is_object()) continue;
-      applyResPackLayer(root);
-      break;
-    }
-  }
-}
+  // The built-in pack provides the base layer. A selected skin replaces the tuning fields it
+  // declares and keeps the pack's atlas grids where it leaves them out, which is exactly the
+  // reference merge rule for the two layers.
+  const skin::SkinConfig pack = skin::loadBuiltInPack(assets);
+  std::optional<skin::SkinConfig> selection;
+  if (!skinDirectory.empty()) selection = skin::loadSkinConfig(skinDirectory);
+  skinMaterials = skin::resolveMaterials(pack, selection ? &*selection : nullptr);
 
-void GameRenderer::Impl::applyResPackLayer(const nlohmann::json& root) {
-  // Every field is optional: only the ones present in this layer change, so a skin can
-  // override one value and inherit the rest from the built-in pack.
-  if (const auto it = root.find("hitFx"); it != root.end() && it->is_array() && it->size() >= 2) {
-    hitAtlas.columns = std::max(1, it->at(0).get<int>());
-    hitAtlas.rows = std::max(1, it->at(1).get<int>());
-  }
-  if (const auto it = root.find("hitFxScale"); it != root.end() && it->is_number()) {
-    hitStyle.sizeScale = it->get<float>();
-  }
-  if (const auto it = root.find("hitFxDuration"); it != root.end() && it->is_number()) {
-    hitStyle.duration = it->get<float>();
-  }
-  if (const auto it = root.find("hitFxRotate"); it != root.end() && it->is_boolean()) {
-    hitStyle.rotateSheet = it->get<bool>();
-  }
-  if (const auto it = root.find("hitFxTinted"); it != root.end() && it->is_boolean()) {
-    hitStyle.tinted = it->get<bool>();
-  }
-  // The pack can turn the debris particles off entirely, under either spelling.
-  if (const auto it = root.find("hideParticles"); it != root.end() && it->is_boolean()) {
-    hitStyle.showParticles = !it->get<bool>();
-  }
-  if (const auto it = root.find("showParticles"); it != root.end() && it->is_boolean()) {
-    hitStyle.showParticles = it->get<bool>();
-  }
+  holdTailSlice[0] = std::max(0, skinMaterials.holdAtlas[0]);
+  holdHeadSlice[0] = std::max(0, skinMaterials.holdAtlas[1]);
+  holdTailSlice[1] = std::max(0, skinMaterials.holdAtlasMH[0]);
+  holdHeadSlice[1] = std::max(0, skinMaterials.holdAtlasMH[1]);
+  holdRepeat = skinMaterials.holdRepeat;
+  holdKeepHead = skinMaterials.holdKeepHead;
+  holdCompact = skinMaterials.holdCompact;
 
-  // Hold slicing and body behaviour. Each array is one sheet's pair of slice sizes, in the
-  // order the sheet stacks them: tail first, then head. The plain sheet feeds variant 0 and
-  // the highlight sheet feeds variant 1.
-  const auto readSlices = [&root](
-                              const char* key, int& tailSlice, int& headSlice) {
-    const auto it = root.find(key);
-    if (it == root.end() || !it->is_array() || it->size() < 2) return;
-    if ((*it)[0].is_number()) {
-      tailSlice = std::max(0, static_cast<int>((*it)[0].get<double>()));
-    }
-    if ((*it)[1].is_number()) {
-      headSlice = std::max(0, static_cast<int>((*it)[1].get<double>()));
-    }
-  };
-  readSlices("holdAtlas", holdTailSlice[0], holdHeadSlice[0]);
-  readSlices("holdAtlasMH", holdTailSlice[1], holdHeadSlice[1]);
-  if (const auto it = root.find("holdRepeat"); it != root.end() && it->is_boolean()) {
-    holdRepeat = it->get<bool>();
-  }
-  if (const auto it = root.find("holdKeepHead"); it != root.end() && it->is_boolean()) {
-    holdKeepHead = it->get<bool>();
-  }
-  if (const auto it = root.find("holdCompact"); it != root.end() && it->is_boolean()) {
-    holdCompact = it->get<bool>();
-  }
+  hitAtlas.columns = std::max(1, skinMaterials.hitFx[0]);
+  hitAtlas.rows = std::max(1, skinMaterials.hitFx[1]);
+  hitStyle.sizeScale = skinMaterials.hitFxScale;
+  hitStyle.duration = skinMaterials.hitFxDuration;
+  hitStyle.rotateSheet = skinMaterials.hitFxRotate;
+  hitStyle.tinted = skinMaterials.hitFxTinted;
+  hitStyle.showParticles = !skinMaterials.hideParticles;
 
-  // Colours may be a three-component array plus a separate alpha, or four components.
-  const auto readColour = [&root](const char* key, float& red, float& green, float& blue,
-                              float& alpha) {
-    const auto it = root.find(key);
-    if (it == root.end() || !it->is_array() || it->size() < 3) return;
-    red = it->at(0).get<float>();
-    green = it->at(1).get<float>();
-    blue = it->at(2).get<float>();
-    if (it->size() >= 4) alpha = it->at(3).get<float>();
-  };
-  readColour("colorPerfect", hitSkin.perfectRed, hitSkin.perfectGreen, hitSkin.perfectBlue,
-      hitSkin.perfectAlpha);
-  readColour("colorGood", hitSkin.goodRed, hitSkin.goodGreen, hitSkin.goodBlue,
-      hitSkin.goodAlpha);
+  hitSkin.perfectRed = skinMaterials.perfect.red;
+  hitSkin.perfectGreen = skinMaterials.perfect.green;
+  hitSkin.perfectBlue = skinMaterials.perfect.blue;
+  hitSkin.perfectAlpha = skinMaterials.perfect.alpha;
+  hitSkin.goodRed = skinMaterials.good.red;
+  hitSkin.goodGreen = skinMaterials.good.green;
+  hitSkin.goodBlue = skinMaterials.good.blue;
+  hitSkin.goodAlpha = skinMaterials.good.alpha;
 
   hitEffects.setAtlas(hitAtlas);
   hitEffects.setStyle(hitStyle);
@@ -460,89 +477,124 @@ void GameRenderer::Impl::prepareForChart(game::Chart* chart) {
 
 scene::LineTint GameRenderer::Impl::lineTintFor(const RenderFrameInput& input,
     const game::JudgementEngine* judgement) const {
-  scene::LineTint tint;
-  if (!input.apfcIndicator || judgement == nullptr) return tint;
+  // The skin's note colour overrides the plain-line colour; with the AP/FC indicator enabled
+  // the same colours replace the indicator's perfect/good tones, while a run that has lost a
+  // note always shows the plain white line.
+  const auto perfectTint = [this]() {
+    return skinMaterials.perfectFromSkin
+        ? scene::LineTint{skinMaterials.perfect.red, skinMaterials.perfect.green,
+              skinMaterials.perfect.blue, skinMaterials.perfect.alpha}
+        : scene::LineTint{1.0F, 1.0F, 1.0F, 1.0F};
+  };
+  if (!input.apfcIndicator) return perfectTint();
+  const auto goodTint = [this]() {
+    return skinMaterials.goodFromSkin
+        ? scene::LineTint{skinMaterials.good.red, skinMaterials.good.green,
+              skinMaterials.good.blue, skinMaterials.good.alpha}
+        : scene::LineTint{162.0F / 255.0F, 238.0F / 255.0F, 1.0F, 1.0F};
+  };
+  if (judgement == nullptr) return perfectTint();
   const auto& counts = judgement->counts();
-  const int good = counts[1];
-  const int bad = counts[2];
-  const int miss = counts[3];
-  if (bad + miss > 0) {
-    tint = {1.0F, 1.0F, 1.0F, 1.0F};
-  } else if (good > 0) {
-    // Full-combo indicator colour.
-    tint = {162.0F / 255.0F, 238.0F / 255.0F, 1.0F, 1.0F};
-  } else {
-    // All-perfect indicator colour.
-    tint = {254.0F / 255.0F, 1.0F, 169.0F / 255.0F, 1.0F};
-  }
-  return tint;
+  if (counts[2] + counts[3] > 0) return scene::LineTint{1.0F, 1.0F, 1.0F, 1.0F};
+  if (counts[1] > 0) return goodTint();
+  return skinMaterials.perfectFromSkin
+      ? perfectTint()
+      : scene::LineTint{254.0F / 255.0F, 1.0F, 169.0F / 255.0F, 1.0F};
 }
 
 void GameRenderer::Impl::drawBackgroundPass(const scene::StageLayout& layout, float artworkAlpha,
-    float dimAlpha) {
+    float dimAlpha, float sideArtworkAlpha, float sideDimAlpha, bool opening) {
   const auto& stage = layout.stage;
   const auto projection = layout.projection();
 
-  // Side columns first, so the play field paints over the inner edges.
+  // The reference never shows the raw artwork during gameplay: the play field and the
+  // fixed side panels both sample a downscaled, heavily blurred copy. During the opening
+  // the blur may not exist yet, and the reference falls back to a flat dark field there.
+  const gl::Texture* blurTexture =
+      background != nullptr ? backgroundBlur.ensure(width, height, background) : nullptr;
+  const gl::Texture* artworkTexture = blurTexture != nullptr
+      ? blurTexture
+      : (opening ? nullptr : background);
+
+  // Draws `texture` so it covers the given destination rectangle, restricted to `clip`.
+  // The sprite batch has no scissor support, so the visible part is emitted as one quad
+  // whose UVs are mapped back onto the cover-cropped source rectangle.
+  const auto drawCover = [&](const gl::Texture& texture, float destinationX, float destinationY,
+                             float destinationWidth, float destinationHeight, float alpha,
+                             const math::Rect& clip) {
+    if (alpha <= 0.001F || destinationWidth <= 0.5F || destinationHeight <= 0.5F) return;
+    const float textureAspect = static_cast<float>(texture.width()) /
+        std::max(1.0F, static_cast<float>(texture.height()));
+    const float destinationAspect = destinationWidth / std::max(1.0F, destinationHeight);
+    float drawWidth = destinationWidth;
+    float drawHeight = destinationHeight;
+    if (textureAspect > destinationAspect) {
+      drawWidth = destinationHeight * textureAspect;
+    } else {
+      drawHeight = destinationWidth / textureAspect;
+    }
+    const float drawX = destinationX + (destinationWidth - drawWidth) * 0.5F;
+    const float drawY = destinationY + (destinationHeight - drawHeight) * 0.5F;
+    const float left = std::max(drawX, clip.left());
+    const float top = std::max(drawY, clip.top());
+    const float right = std::min(drawX + drawWidth, clip.right());
+    const float bottom = std::min(drawY + drawHeight, clip.bottom());
+    if (right <= left + 0.5F || bottom <= top + 0.5F) return;
+    const float u0 = (left - drawX) / drawWidth;
+    const float u1 = (right - drawX) / drawWidth;
+    const float v0 = (top - drawY) / drawHeight;
+    const float v1 = (bottom - drawY) / drawHeight;
+    batch.begin();
+    batch.addQuadTopLeft(left, top, right - left, bottom - top, 1.0F, 1.0F, 1.0F, alpha, u0, v0,
+        u1, v1);
+    batch.flush(projection, texture, nullptr);
+  };
+  const auto drawSolid = [&](const math::Rect& rect, float alpha) {
+    if (alpha <= 0.001F || rect.empty()) return;
+    batch.begin();
+    batch.addQuadTopLeft(rect.x, rect.y, rect.width, rect.height, 0.0F, 0.0F, 0.0F, alpha, 0.0F,
+        0.0F, 1.0F, 1.0F);
+    batch.flush(projection, textures.white(), nullptr);
+  };
+
+  // Fixed side columns: the reference draws the blurred artwork clipped to each band and
+  // then a fixed dark overlay, independent of the background-dim setting. The areas above
+  // and below the play field inside a band stay black.
   if (layout.hasSideBlanks) {
     const float leftWidth = std::max(0.0F, stage.x);
     const float rightX = std::min(layout.viewWidth, stage.right());
     const float rightWidth = std::max(0.0F, layout.viewWidth - rightX);
     const auto drawColumn = [&](float x, float columnWidth) {
       if (columnWidth <= 0.5F) return;
-      batch.addQuadTopLeft(x, stage.y, columnWidth, stage.height, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F,
-          0.0F, 1.0F, 1.0F);
-      if (dimAlpha > 0.001F) {
-        batch.addQuadTopLeft(x, stage.y, columnWidth, stage.height, 0.0F, 0.0F, 0.0F, dimAlpha, 0.0F,
-            0.0F, 1.0F, 1.0F);
+      const math::Rect band{x, stage.y, columnWidth, stage.height};
+      if (artworkTexture != nullptr && sideArtworkAlpha > 0.001F) {
+        // The blurred texture already holds the full-view cover crop; the band shows the
+        // corresponding slice of the same full-width background.
+        drawCover(*artworkTexture, 0.0F, stage.y, layout.viewWidth, stage.height,
+            sideArtworkAlpha, band);
       }
-      if (stage.y > 0.5F) {
-        batch.addQuadTopLeft(x, 0.0F, columnWidth, stage.y, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F,
-            1.0F, 1.0F);
-      }
-      const float bottom = stage.bottom();
-      if (bottom < layout.viewHeight - 0.5F) {
-        batch.addQuadTopLeft(x, bottom, columnWidth, layout.viewHeight - bottom, 0.0F, 0.0F, 0.0F,
-            1.0F, 0.0F, 0.0F, 1.0F, 1.0F);
-      }
+      drawSolid(band, sideDimAlpha);
     };
-    batch.begin();
+    if (stage.y > 0.5F) {
+      drawSolid(math::Rect{0.0F, 0.0F, leftWidth, stage.y}, 1.0F);
+      drawSolid(math::Rect{rightX, 0.0F, rightWidth, stage.y}, 1.0F);
+    }
+    const float bottom = stage.bottom();
+    if (bottom < layout.viewHeight - 0.5F) {
+      drawSolid(math::Rect{0.0F, bottom, leftWidth, layout.viewHeight - bottom}, 1.0F);
+      drawSolid(math::Rect{rightX, bottom, rightWidth, layout.viewHeight - bottom}, 1.0F);
+    }
     drawColumn(0.0F, leftWidth);
     drawColumn(rightX, rightWidth);
-    batch.flush(projection, textures.white(), nullptr);
   }
 
-  batch.begin();
-  if (background == nullptr || artworkAlpha <= 0.001F) {
-    batch.addQuadTopLeft(stage.x, stage.y, stage.width, stage.height, 0.0F, 0.0F, 0.0F, 1.0F,
-        0.0F, 0.0F, 1.0F, 1.0F);
-    if (dimAlpha > 0.001F) {
-      batch.addQuadTopLeft(stage.x, stage.y, stage.width, stage.height, 0.0F, 0.0F, 0.0F, dimAlpha,
-          0.0F, 0.0F, 1.0F, 1.0F);
-    }
-    batch.flush(projection, textures.white(), nullptr);
-    return;
+  // Play field backdrop: the artwork is drawn with the intro/outro transmission over the
+  // black clear, then the stage dim overlay covers it.
+  if (artworkTexture != nullptr) {
+    drawCover(*artworkTexture, 0.0F, stage.y, layout.viewWidth, stage.height, artworkAlpha,
+        stage);
   }
-
-  // Cover the play field while preserving the artwork aspect ratio.
-  const float textureAspect = background->aspect();
-  const float stageAspect = stage.width / std::max(1.0F, stage.height);
-  float drawWidth = stage.width;
-  float drawHeight = stage.height;
-  if (textureAspect > stageAspect) {
-    drawWidth = stage.height * textureAspect;
-  } else {
-    drawHeight = stage.width / textureAspect;
-  }
-  const float drawX = stage.x + (stage.width - drawWidth) * 0.5F;
-  const float drawY = stage.y + (stage.height - drawHeight) * 0.5F;
-  batch.addQuadTopLeft(drawX, drawY, drawWidth, drawHeight, 1.0F, 1.0F, 1.0F, artworkAlpha, 0.0F,
-      0.0F, 1.0F, 1.0F);
-  if (dimAlpha > 0.001F) {
-    batch.addQuadTopLeft(stage.x, stage.y, stage.width, stage.height, 0.0F, 0.0F, 0.0F, dimAlpha,
-        0.0F, 0.0F, 1.0F, 1.0F);
-  }
-  batch.flush(projection, *background, nullptr);
+  drawSolid(stage, dimAlpha);
 }
 
 void GameRenderer::Impl::drawLinePass(const RenderFrameInput& input, game::Chart* chart,
@@ -552,8 +604,9 @@ void GameRenderer::Impl::drawLinePass(const RenderFrameInput& input, game::Chart
   const bool official = chart->formatVersion > 0;
   batch.begin();
 
-  if (input.transition.inIntro && input.transition.introLineScale < 0.999F) {
-    // The opening draws a single decorative line that grows from the centre.
+  if (input.transition.inIntro) {
+    // The opening draws a single decorative line that grows from the centre, then holds
+    // fully expanded until gameplay starts; the chart's own lines stay hidden.
     scene::drawIntroLine(batch, layout, official, input.transition.introLineScale, 1.0F,
         indicatorTint);
     batch.flush(projection, textures.white(), nullptr);
@@ -594,7 +647,12 @@ void GameRenderer::Impl::drawLinePass(const RenderFrameInput& input, game::Chart
         ? layout.stage.height * scene::LINE_WIDTH_OFFICIAL * frame.scaleY
         : layout.stage.height * scene::LINE_WIDTH_EDITOR * frame.scaleY;
 
-    scene::LineTint tint = indicatorTint;
+    // The skin/indicator colour applies only to a plain line: a line with a colour event
+    // uses the event colour, and a line that draws a texture or storyboard text keeps the
+    // default white tint instead of the indicator colour.
+    const bool plainLine =
+        !frame.hasColorEvent && line.texture.empty() && !frame.hasTextEvents;
+    scene::LineTint tint = plainLine ? indicatorTint : scene::LineTint{};
     if (frame.hasColorEvent) {
       tint.red = frame.colorR;
       tint.green = frame.colorG;
@@ -602,8 +660,9 @@ void GameRenderer::Impl::drawLinePass(const RenderFrameInput& input, game::Chart
     }
     // A storyboard line with a texture draws the texture instead of the plain quad;
     // a line with text events draws its resolved text. Both keep the anchor and the
-    // line rotation.
-    if (!frame.hasTextEvents && !line.texture.empty()) {
+    // line rotation. The reference hides these storyboard elements during the exit
+    // animation, leaving only the plain lines to collapse.
+    if (!input.transition.inOutro && !frame.hasTextEvents && !line.texture.empty()) {
       // A GIF line texture advances frames with the visual clock, or pins a frame when a
       // GIF event supplies a position.
       asset::AnimatedTexture* animated = asset::TextureCache::isGifPath(line.texture)
@@ -642,7 +701,7 @@ void GameRenderer::Impl::drawLinePass(const RenderFrameInput& input, game::Chart
           continue;
         }
       }
-    } else if (!frame.hasTextEvents && !frame.text.empty()) {
+    } else if (!input.transition.inOutro && !frame.hasTextEvents && !frame.text.empty()) {
       // Text is rasterised at 50 units in the 1350-wide authoring space, then scaled to
       // the stage; a multi-line string scales so each line keeps the full size.
       const float fontBaseSize = layout.stage.width * (50.0F / 1350.0F);
@@ -790,7 +849,8 @@ void GameRenderer::Impl::drawHitEffects(const scene::StageLayout& layout,
 }
 
 void GameRenderer::Impl::drawHudPass(const RenderFrameInput& input,
-    const scene::StageLayout& layout, game::Chart* chart) {
+    const scene::StageLayout& layout, game::Chart* chart,
+    const game::JudgementEngine* judgement) {
   scene::HudValues values;
   values.score = input.hud.score;
   values.combo = input.hud.combo;
@@ -807,6 +867,8 @@ void GameRenderer::Impl::drawHudPass(const RenderFrameInput& input,
   values.outroProgress = input.hud.outroProgress;
   values.visualTimeSec = input.hud.visualTimeSec;
   values.pauseRingAgeSec = input.hud.pauseRingAgeSec;
+  values.fps = input.hud.fps;
+  values.showFps = input.hud.showFps;
 
   // Attach-UI: a chart may animate individual HUD widgets with judge lines. The line
   // evaluation for this frame already produced their state, so the HUD only needs to
@@ -840,12 +902,44 @@ void GameRenderer::Impl::drawHudPass(const RenderFrameInput& input,
     }
   }
 
+  // Judgement offset indicator state for this frame. The engine keeps the marks and the
+  // pointer easing; the HUD only mirrors them (the update call also expires old marks and
+  // starts the pointer's return-to-centre, which is presentation state).
+  scene::HudHitOffset hitOffset;
+  hitOffset.mode = input.hud.hitOffsetIndicatorMode;
+  hitOffset.suppressed = input.hud.hitOffsetSuppressed;
+  if (judgement != nullptr) {
+    auto& indicator = const_cast<game::HitOffsetIndicator&>(judgement->indicator());
+    indicator.update(input.hud.visualTimeSec);
+    hitOffset.perfectWindowSec = static_cast<float>(judgement->tapPerfectWindow());
+    hitOffset.goodWindowSec = static_cast<float>(judgement->tapGoodWindow());
+    hitOffset.badWindowSec = static_cast<float>(judgement->windows().bad);
+    hitOffset.pointerAngleDeg = indicator.pointerAngleDeg();
+    hitOffset.text = indicator.latestText();
+    hitOffset.textAlpha = indicator.latestTextAlpha(input.hud.visualTimeSec);
+    hitOffset.textJudgement = static_cast<int>(indicator.latestJudgement());
+    for (const auto& mark : indicator.marks()) {
+      if (hitOffset.markCount >= static_cast<int>(hitOffset.marks.size())) break;
+      if (!mark.active) continue;
+      const float age = game::HitOffsetIndicator::markAge(input.hud.visualTimeSec, mark);
+      if (age < 0.0F || age >= 1.0F) continue;
+      auto& destination = hitOffset.marks[static_cast<std::size_t>(hitOffset.markCount)];
+      destination.active = true;
+      destination.angleDeg = mark.angleDeg;
+      destination.judgement = static_cast<int>(mark.judgement);
+      destination.age = age;
+      ++hitOffset.markCount;
+    }
+  }
+
   scene::HudColors colors;
-  scene::HudTextures textures;
-  textures.pause = hudArtwork.pause;
-  textures.timerLine = hudArtwork.timerLine;
-  textures.noteRing = hudArtwork.noteRing;
-  scene::drawHud(batch, text, layout, values, colors, textures, transforms, 1.0F,
+  scene::HudTextures hudTextures;
+  hudTextures.pause = hudArtwork.pause;
+  hudTextures.timerLine = hudArtwork.timerLine;
+  hudTextures.noteRing = hudArtwork.noteRing;
+  hudTextures.hitOffsetArrow = hudArtwork.hitOffsetArrow;
+  hudTextures.white = &textures.white();
+  scene::drawHud(batch, text, layout, values, colors, hudTextures, transforms, hitOffset, 1.0F,
       layout.projection());
 }
 
@@ -889,6 +983,7 @@ void GameRenderer::resize(int width, int height) noexcept {
   impl_->pingFbo.resize(impl_->width, impl_->height);
   impl_->pongFbo.resize(impl_->width, impl_->height);
   impl_->blockComposite.resize(impl_->width, impl_->height);
+  impl_->backgroundBlur.invalidate();
 }
 
 void GameRenderer::Impl::drawLevelEffectObjects(game::Chart* chart,
@@ -991,9 +1086,12 @@ void GameRenderer::Impl::drawLevelEffectObjects(game::Chart* chart,
 
 void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* chart,
     const game::JudgementEngine* judgement, unsigned int targetFbo, bool applyEffects) {
-  const scene::StageLayout layout =
-      scene::computeStageLayout(static_cast<float>(width), static_cast<float>(height),
-          16.0F / 9.0F, false);
+  // The play field keeps the reference aspect rule: a positive target aspect is honoured,
+  // otherwise the official 16:9 stage is fitted into the viewport and clamped so it is
+  // never wider than the window.
+  const float targetAspect = input.aspectRatio > 0.0F ? input.aspectRatio : 16.0F / 9.0F;
+  const scene::StageLayout layout = scene::computeStageLayout(
+      static_cast<float>(width), static_cast<float>(height), targetAspect, false);
 
   // The screen-space composite resamples the finished frame inside a red zone, so it
   // needs that frame as a texture while it writes into the caller's target. Any frame
@@ -1036,7 +1134,9 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
 
   // The opening rides the decorative line's growth from INTRO_START_BRIGHTNESS down to
   // the gameplay transmission; the exit walks everything to the result page's level.
-  const bool introStarted = !input.transition.inIntro;
+  // The play field is only shown once the opening has begun, so the intro alpha ramp is
+  // always live: line scale zero means the very first frame of the opening.
+  const bool introStarted = true;
   const float introMix = input.transition.inIntro
       ? scene::introDimProgress(input.transition.introLineScale,
             chart != nullptr && chart->formatVersion > 0)
@@ -1045,7 +1145,11 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       input.backgroundDim, input.transition.inOutro, input.transition.outroElapsedSec);
   const float dimAlpha = scene::backgroundDimAlpha(introStarted, introMix, input.backgroundDim,
       input.transition.inOutro, input.transition.outroElapsedSec);
-  drawBackgroundPass(layout, artworkAlpha, dimAlpha);
+  const float sideArtworkAlpha = scene::sideArtworkAlpha(introStarted, introMix);
+  const float sideDimAlpha = scene::sideDimAlpha(introStarted, introMix, input.transition.inOutro,
+      input.transition.outroElapsedSec);
+  const bool opening = !introStarted || input.transition.introLineScale < 0.999F;
+  drawBackgroundPass(layout, artworkAlpha, dimAlpha, sideArtworkAlpha, sideDimAlpha, opening);
   gl::logErrors("scene.background");
 
   // A level effect may draw its own objects between the backdrop and the play field.
@@ -1093,7 +1197,7 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       }
       gl::logErrors("scene.blocks");
     }
-    drawHitEffects(layout, input, chart);
+    if (!input.transition.inOutro) drawHitEffects(layout, input, chart);
     gl::logErrors("scene.hitEffects");
   }
 
@@ -1119,7 +1223,7 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
     }
     // 2) The HUD belongs to the finished frame: the composite tears it with the rest.
     if (input.hud.visible && chart != nullptr) {
-      drawHudPass(input, layout, chart);
+      drawHudPass(input, layout, chart, judgement);
       hudInsideScene = true;
       gl::logErrors("scene.hud");
     }
@@ -1158,7 +1262,7 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
   // the composite path it was drawn into the scene instead, because it is part of the
   // frame the zones tear.
   if (input.hud.visible && chart != nullptr && !hudInsideScene) {
-    drawHudPass(input, layout, chart);
+    drawHudPass(input, layout, chart, judgement);
   }
   gl::logErrors("scene.hud");
 
@@ -1208,22 +1312,20 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
 
 void GameRenderer::setSkinDirectory(const std::filesystem::path& skinDirectory) {
   if (impl_ == nullptr) return;
-  // Reset the resolved material settings to their defaults before re-applying, so clearing
-  // a skin really restores the built-in look instead of keeping the skin's overrides.
-  impl_->hitAtlas = fx::HitEffectAtlas{};
-  impl_->hitStyle = fx::HitEffectStyle{};
-  impl_->hitSkin = fx::HitEffectSkin{};
-  impl_->holdTailSlice[0] = 50;
-  impl_->holdTailSlice[1] = 50;
-  impl_->holdHeadSlice[0] = 52;
-  impl_->holdHeadSlice[1] = 95;
-  impl_->holdRepeat = false;
-  impl_->holdKeepHead = false;
-  impl_->holdCompact = false;
   impl_->skinDirectory = skinDirectory;
-  impl_->applyResPackSettings();
-  // The slice sizes may have changed, so the hold sheet has to be cut again.
-  impl_->refreshHoldSheet();
+  // Re-resolve the material settings and reload the gameplay textures: the selected skin
+  // may replace any texture, and loading from the defaults also clears the previous skin's
+  // values, so an empty path restores the built-in look.
+  impl_->loadGameplayTextures();
+}
+
+void GameRenderer::setBackgroundImage(const std::filesystem::path& image) {
+  if (impl_ == nullptr || !impl_->initialized) return;
+  gl::Texture* loaded =
+      image.empty() ? nullptr : impl_->textures.loadFile(image);
+  impl_->background = loaded != nullptr ? loaded : impl_->defaultBackground;
+  // The backdrop blur is built from the artwork, so it has to be rebuilt for the new image.
+  impl_->backgroundBlur.invalidate();
 }
 
 void GameRenderer::render(const RenderFrameInput& input, game::Chart* chart,
@@ -1262,11 +1364,13 @@ bool GameRenderer::renderOffscreen(const RenderFrameInput& input, game::Chart* c
   impl_->prepareForChart(chart);
 
   const scene::StageLayout layout =
-      scene::computeStageLayout(static_cast<float>(width), static_cast<float>(height), 16.0F / 9.0F,
+      scene::computeStageLayout(static_cast<float>(width), static_cast<float>(height), input.aspectRatio > 0.0F ? input.aspectRatio : 16.0F / 9.0F,
           false);
   // The opening rides the decorative line's growth from INTRO_START_BRIGHTNESS down to
   // the gameplay transmission; the exit walks everything to the result page's level.
-  const bool introStarted = !input.transition.inIntro;
+  // The play field is only shown once the opening has begun, so the intro alpha ramp is
+  // always live: line scale zero means the very first frame of the opening.
+  const bool introStarted = true;
   const float introMix = input.transition.inIntro
       ? scene::introDimProgress(input.transition.introLineScale, chart != nullptr &&
             chart->formatVersion > 0)

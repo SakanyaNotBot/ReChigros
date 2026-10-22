@@ -34,6 +34,8 @@ struct RenderFrameInput {
   bool mirrorX{false};
   // 1 means a fully black play field.
   float backgroundDim{0.0F};
+  // Play-field aspect ratio; zero follows the official 16:9 stage.
+  float aspectRatio{0.0F};
   bool challengeMode{false};
   // Colours plain judge lines by the best judgement so far.
   bool apfcIndicator{false};
@@ -78,6 +80,13 @@ struct RenderFrameInput {
     double pauseRingAgeSec{-1.0};
     // Optional catch-up animation of the score and accuracy readouts.
     bool scoreJumpEffect{false};
+    // Judgement offset indicator setting (0 disabled, 1 sector dial, 2 line) and the
+    // autoplay/replay suppression flag of its display.
+    int hitOffsetIndicatorMode{0};
+    bool hitOffsetSuppressed{false};
+    // Frame-rate readout of the HUD.
+    bool showFps{false};
+    float fps{0.0F};
   } hud;
 
   struct PracticeState {
@@ -108,6 +117,9 @@ public:
   // subset of the material settings; fields it leaves out keep the built-in value. Passing
   // an empty path clears the skin and restores the built-in values.
   void setSkinDirectory(const std::filesystem::path& skinDirectory);
+  // Selects the chart illustration used as the play-field backdrop (and for the fixed side
+  // panels). An empty or unreadable path keeps the built-in backdrop.
+  void setBackgroundImage(const std::filesystem::path& image);
   void shutdown() noexcept;
   void resize(int width, int height) noexcept;
 

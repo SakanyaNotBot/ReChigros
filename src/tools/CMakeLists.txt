@@ -7,3 +7,13 @@ target_link_libraries(rechigros_block_probe PRIVATE
 if(TARGET SDL2::SDL2main)
   target_link_libraries(rechigros_block_probe PRIVATE SDL2::SDL2main)
 endif()
+
+# Frame-time profile: drives a chart through the real renderer and reports the per-frame
+# distribution, so performance work has a repeatable before/after gate.
+add_executable(rechigros_frame_profile frame_profile.cpp)
+target_include_directories(rechigros_frame_profile PRIVATE "${PROJECT_SOURCE_DIR}/include")
+target_link_libraries(rechigros_frame_profile PRIVATE
+  rechigros_render rechigros_chart rechigros_core rechigros_platform ${RECHIGROS_SDL_TARGET})
+if(TARGET SDL2::SDL2main)
+  target_link_libraries(rechigros_frame_profile PRIVATE SDL2::SDL2main)
+endif()

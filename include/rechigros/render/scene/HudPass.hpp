@@ -79,6 +79,9 @@ struct HudValues {
   double visualTimeSec{};
   // Seconds since the pause button was last touched; negative when idle.
   double pauseRingAgeSec{-1.0F};
+  // Frame-rate readout (reference: bottom-left "N FPS" plate).
+  float fps{};
+  bool showFps{false};
 };
 
 struct HudColors {
@@ -92,6 +95,35 @@ struct HudTextures {
   const gl::Texture* pause{};
   const gl::Texture* timerLine{};
   const gl::Texture* noteRing{};
+  // Pointer glyph of the judgement offset dial.
+  const gl::Texture* hitOffsetArrow{};
+  // Solid white texture used by the dial's line primitives.
+  const gl::Texture* white{};
+};
+
+// Judgement-offset indicator state for the current frame, mirrored from the judgement
+// engine. The reference shows one of two shapes: a 60-degree dial (sector) or a
+// horizontal line; both accumulate short-lived per-judgement marks and a pointer.
+struct HudHitOffsetMark {
+  bool active{};
+  float angleDeg{};
+  int judgement{};
+  float age{};
+};
+
+struct HudHitOffset {
+  // 0 disabled, 1 sector dial, 2 horizontal line.
+  int mode{};
+  bool suppressed{}; // autoplay or a non-replay run never shows it
+  float perfectWindowSec{0.080F};
+  float goodWindowSec{0.180F};
+  float badWindowSec{0.220F};
+  float pointerAngleDeg{};
+  std::string text;
+  float textAlpha{};
+  int textJudgement{};
+  std::array<HudHitOffsetMark, 64> marks{};
+  int markCount{};
 };
 
 // Draws the in-game HUD exactly where the play field's HUD canvas places it: pause
@@ -100,6 +132,7 @@ struct HudTextures {
 // whole overlay. Each string owns its own texture, so quads are flushed per string.
 void drawHud(batch::SpriteBatch& batch, text::TextRenderer& text, const StageLayout& layout,
     const HudValues& values, const HudColors& colors, const HudTextures& textures,
-    const HudTransforms& transforms, float alpha, const math::Mat4& projection);
+    const HudTransforms& transforms, const HudHitOffset& hitOffset, float alpha,
+    const math::Mat4& projection);
 
 } // namespace rechigros::render::scene

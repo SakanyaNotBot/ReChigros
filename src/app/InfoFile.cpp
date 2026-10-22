@@ -133,11 +133,55 @@ bool isDifficultyEdgeWhitespace(char character) {
   return character == ' ' || std::isspace(static_cast<unsigned char>(character)) != 0;
 }
 
+// Codepoints the reference trims from a difficulty label: ASCII whitespace, the en space it
+// normalises labels to, and the Unicode space separators Character.isWhitespace() accepts.
+bool isDifficultySpaceCodePoint(std::uint32_t code) {
+  if (code == ' ' || (code >= 0x09U && code <= 0x0DU) || (code >= 0x1CU && code <= 0x1FU)) {
+    return true;
+  }
+  return code == 0x1680U || code == 0x2002U || code == 0x2028U || code == 0x2029U ||
+      code == 0x205FU || code == 0x3000U;
+}
+
+std::size_t nextCodePointLength(const std::string& text, std::size_t index) {
+  const auto lead = static_cast<unsigned char>(text[index]);
+  if ((lead & 0x80U) == 0) return 1;
+  if ((lead & 0xE0U) == 0xC0U && index + 1 < text.size()) return 2;
+  if ((lead & 0xF0U) == 0xE0U && index + 2 < text.size()) return 3;
+  if ((lead & 0xF8U) == 0xF0U && index + 3 < text.size()) return 4;
+  return 1;
+}
+
+std::uint32_t decodeCodePoint(const std::string& text, std::size_t index, std::size_t length) {
+  if (length <= 1) return static_cast<unsigned char>(text[index]);
+  std::uint32_t code = 0;
+  switch (length) {
+    case 2: code = static_cast<unsigned char>(text[index]) & 0x1FU; break;
+    case 3: code = static_cast<unsigned char>(text[index]) & 0x0FU; break;
+    default: code = static_cast<unsigned char>(text[index]) & 0x07U; break;
+  }
+  for (std::size_t offset = 1; offset < length; ++offset) {
+    code = (code << 6U) | (static_cast<unsigned char>(text[index + offset]) & 0x3FU);
+  }
+  return code;
+}
+
 std::string trimDifficultyWhitespace(const std::string& text) {
   std::size_t begin = 0;
+  while (begin < text.size()) {
+    const std::size_t length = nextCodePointLength(text, begin);
+    if (!isDifficultySpaceCodePoint(decodeCodePoint(text, begin, length))) break;
+    begin += length;
+  }
   std::size_t end = text.size();
-  while (begin < end && isDifficultyEdgeWhitespace(text[begin])) ++begin;
-  while (end > begin && isDifficultyEdgeWhitespace(text[end - 1])) --end;
+  while (end > begin) {
+    // Step back to the start of the last codepoint so multi-byte spaces are trimmed too.
+    std::size_t start = end - 1;
+    while (start > begin && (static_cast<unsigned char>(text[start]) & 0xC0U) == 0x80U) --start;
+    const std::size_t length = end - start;
+    if (!isDifficultySpaceCodePoint(decodeCodePoint(text, start, length))) break;
+    end = start;
+  }
   return text.substr(begin, end - begin);
 }
 
@@ -217,15 +261,18 @@ void assignFromKeyValues(ChartInfo& info, const std::unordered_map<std::string, 
   const auto find = [&lower](std::initializer_list<const char*> keys) {
     for (const char* key : keys) {
       const auto iterator = lower.find(key);
-      if (iterator != lower.end() && !isBlank(iterator->second)) return iterator->second;
+      if (iterator != lower.end() && !iterator->second.empty()) return iterator->second;
     }
     return std::string{};
   };
 
-  info.name = find({"name", "songname", "title"});
-  info.music = find({"music", "song", "audio"});
-  info.chart = find({"chart", "chartpath"});
-  info.illustration = find({"illustration", "image", "picture", "bg", "background"});
+  // The key sets are the reference key/value reader's alias table, reproduced exactly: it is
+  // deliberately narrower than the JSON reader's, so a key the reference ignores must not
+  // change a label here either.
+  info.name = find({"name"});
+  info.music = find({"music", "song"});
+  info.chart = find({"chart"});
+  info.illustration = find({"illustration", "image", "picture"});
   info.level = normalizeDifficultyText(find({"level"}));
   info.difficulty = normalizeDifficultyText(find({"difficulty", "diff"}));
   info.composer = find({"composer", "artist", "musician"});
@@ -257,19 +304,28 @@ void assignFromKeyValues(ChartInfo& info, const std::unordered_map<std::string, 
 }
 
 std::unordered_map<std::string, std::string> readKeyValueLines(const std::vector<std::string>& lines,
-    bool skipFirstComment) {
+    bool keyValueText) {
   std::unordered_map<std::string, std::string> values;
-  bool first = true;
+  bool firstPhysicalLine = true;
   for (const auto& line : lines) {
     std::string trimmed = line;
     const auto firstNonSpace = trimmed.find_first_not_of(" \t\r");
-    if (firstNonSpace == std::string::npos) continue;
-    trimmed = trimmed.substr(firstNonSpace);
-    if (skipFirstComment && first) {
-      first = false;
-      if (!trimmed.empty() && trimmed.front() == '#') continue;
+    if (firstNonSpace == std::string::npos) {
+      // The reference key/value text reader consumes its "first line" flag on the first
+      // physical line even when that line is empty.
+      if (keyValueText) firstPhysicalLine = false;
+      continue;
     }
-    if (!trimmed.empty() && trimmed.front() == '#') continue;
+    trimmed = trimmed.substr(firstNonSpace);
+    if (keyValueText) {
+      // Only the first physical line may be a comment; later lines are parsed as entries.
+      if (firstPhysicalLine) {
+        firstPhysicalLine = false;
+        if (trimmed.front() == '#') continue;
+      }
+    } else if (trimmed.front() == '#') {
+      continue;
+    }
     const auto separator = trimmed.find(':');
     if (separator == std::string::npos || separator == 0) continue;
     std::string key = trimmed.substr(0, separator);
@@ -316,27 +372,120 @@ ChartInfo readCsv(const std::filesystem::path& file) {
   return info;
 }
 
+// Jackson's JsonNode.asText() for value nodes: strings verbatim, integers in decimal,
+// floating point numbers in their plain JSON spelling, booleans as "true"/"false".
+// Container and null nodes have no text representation.
+std::string jsonValueText(const Json& node) {
+  if (node.is_string()) return node.get<std::string>();
+  if (node.is_boolean()) return node.get<bool>() ? "true" : "false";
+  if (node.is_number()) return node.dump();
+  return {};
+}
+
+// Quotes unquoted object field names, the relaxed syntax the reference JSON mapper
+// enables. Only called after the strict parser rejected the document.
+std::string quoteUnquotedFieldNames(const std::string& text) {
+  struct Range {
+    std::size_t begin;
+    std::size_t end;
+  };
+  std::vector<Range> ranges;
+  bool inString = false;
+  bool escaped = false;
+  std::size_t previousSignificant = std::string::npos;
+  std::size_t index = 0;
+  while (index < text.size()) {
+    const char character = text[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (character == '\\') {
+        escaped = true;
+      } else if (character == '"') {
+        inString = false;
+      }
+      previousSignificant = index;
+      ++index;
+      continue;
+    }
+    if (character == '"') {
+      inString = true;
+      previousSignificant = index;
+      ++index;
+      continue;
+    }
+    const bool afterOpening = previousSignificant != std::string::npos
+        && (text[previousSignificant] == '{' || text[previousSignificant] == ',');
+    const bool identifierStart = (character >= 'A' && character <= 'Z')
+        || (character >= 'a' && character <= 'z') || character == '_' || character == '$';
+    if (afterOpening && identifierStart) {
+      std::size_t end = index + 1;
+      while (end < text.size()) {
+        const char next = text[end];
+        const bool identifier =
+            (next >= 'A' && next <= 'Z') || (next >= 'a' && next <= 'z')
+            || (next >= '0' && next <= '9') || next == '_' || next == '$';
+        if (!identifier) break;
+        ++end;
+      }
+      std::size_t after = end;
+      while (after < text.size()
+          && (text[after] == ' ' || text[after] == '\t' || text[after] == '\r'
+              || text[after] == '\n')) {
+        ++after;
+      }
+      if (after < text.size() && text[after] == ':') {
+        ranges.push_back(Range{index, end});
+        previousSignificant = after;
+        index = after;
+        continue;
+      }
+    }
+    if (character != ' ' && character != '\t' && character != '\r' && character != '\n') {
+      previousSignificant = index;
+    }
+    ++index;
+  }
+  if (ranges.empty()) return text;
+  std::string out;
+  out.reserve(text.size() + ranges.size() * 2);
+  std::size_t cursor = 0;
+  for (const auto& range : ranges) {
+    out.append(text, cursor, range.begin - cursor);
+    out.push_back('"');
+    out.append(text, range.begin, range.end - range.begin);
+    out.push_back('"');
+    cursor = range.end;
+  }
+  out.append(text, cursor, text.size() - cursor);
+  return out;
+}
+
+// Parses an object document, retrying with quoted field names for the relaxed syntax.
+Json parseJsonObject(const std::string& content) {
+  Json root = Json::parse(content, nullptr, false);
+  if (root.is_discarded()) {
+    const std::string quoted = quoteUnquotedFieldNames(content);
+    if (quoted != content) root = Json::parse(quoted, nullptr, false);
+  }
+  if (root.is_discarded() || !root.is_object()) return Json::object();
+  return root;
+}
+
 ChartInfo readJsonInfo(const std::filesystem::path& file) {
   ChartInfo info;
   const auto content = platform::readTextFile(file);
   if (content.empty()) return info;
-  const Json root = Json::parse(content, nullptr, false);
-  if (root.is_discarded() || !root.is_object()) return info;
+  const Json root = parseJsonObject(content);
+  if (root.empty()) return info;
 
   const auto getString = [&root](std::initializer_list<const char*> keys) -> std::string {
     for (const char* key : keys) {
       const auto iterator = root.find(key);
       if (iterator == root.end() || iterator->is_null()) continue;
-      if (iterator->is_string()) {
-        const auto value = iterator->get<std::string>();
-        if (!value.empty()) return value;
-      } else if (iterator->is_number_integer()) {
-        return std::to_string(iterator->get<long long>());
-      } else if (iterator->is_number_float()) {
-        return std::to_string(iterator->get<double>());
-      } else if (iterator->is_boolean()) {
-        return iterator->get<bool>() ? "true" : "false";
-      }
+      if (iterator->is_array() || iterator->is_object()) continue;
+      const std::string value = jsonValueText(*iterator);
+      if (!value.empty()) return value;
     }
     return {};
   };
@@ -352,11 +501,14 @@ ChartInfo readJsonInfo(const std::filesystem::path& file) {
   info.charter = getString({"charter", "Charter", "designer", "Designer"});
   info.illustrator = getString({"illustrator", "Illustrator"});
 
+  // The reference integer reader accepts numeric nodes (truncating fractions) and textual
+  // node values; a value it cannot parse falls through to the next alias.
   for (const char* key : {"chartOffsetMs", "chart_offset_ms", "chartOffset", "offsetMs"}) {
     const auto iterator = root.find(key);
-    if (iterator == root.end()) continue;
-    if (iterator->is_number_integer()) {
-      info.chartOffsetMs = iterator->get<int>();
+    if (iterator == root.end() || iterator->is_null()) continue;
+    if (iterator->is_number()) {
+      const double number = iterator->get<double>();
+      info.chartOffsetMs = static_cast<int>(std::clamp(number, -2147483648.0, 2147483647.0));
       info.hasChartOffset = true;
       break;
     }
@@ -369,13 +521,37 @@ ChartInfo readJsonInfo(const std::filesystem::path& file) {
       }
     }
   }
+  // The reference boolean reader accepts booleans, numbers (non-zero is true) and the
+  // textual forms "true"/"1"/"false"/"0".
   for (const char* key : {"useAttachUiFix", "use_attach_ui_fix"}) {
     const auto iterator = root.find(key);
-    if (iterator == root.end()) continue;
+    if (iterator == root.end() || iterator->is_null()) continue;
     if (iterator->is_boolean()) {
       info.useAttachUiFix = iterator->get<bool>();
       info.hasUseAttachUiFix = true;
       break;
+    }
+    if (iterator->is_number()) {
+      info.useAttachUiFix = !(iterator->get<double>() == 0.0);
+      info.hasUseAttachUiFix = true;
+      break;
+    }
+    if (iterator->is_string()) {
+      std::string text = iterator->get<std::string>();
+      const auto first = text.find_first_not_of(" \t\r\n");
+      const auto last = text.find_last_not_of(" \t\r\n");
+      if (first == std::string::npos) continue;
+      text = toLower(text.substr(first, last - first + 1));
+      if (text == "true" || text == "1") {
+        info.useAttachUiFix = true;
+        info.hasUseAttachUiFix = true;
+        break;
+      }
+      if (text == "false" || text == "0") {
+        info.useAttachUiFix = false;
+        info.hasUseAttachUiFix = true;
+        break;
+      }
     }
   }
   return info;
@@ -385,10 +561,9 @@ std::string getNestedString(const Json& object, std::initializer_list<const char
   for (const char* key : keys) {
     const auto iterator = object.find(key);
     if (iterator == object.end() || iterator->is_null()) continue;
-    if (iterator->is_string()) {
-      const auto value = iterator->get<std::string>();
-      if (!value.empty()) return value;
-    }
+    if (iterator->is_array() || iterator->is_object()) continue;
+    const std::string value = jsonValueText(*iterator);
+    if (!value.empty()) return value;
   }
   return {};
 }
@@ -476,8 +651,8 @@ ChartInfo readInfoFromChartFile(const std::filesystem::path& chartFile) {
   if (toLower(chartFile.extension().string()) != ".json") return info;
   const auto content = platform::readTextFile(chartFile);
   if (content.empty()) return info;
-  const Json root = Json::parse(content, nullptr, false);
-  if (root.is_discarded() || !root.is_object()) return info;
+  const Json root = parseJsonObject(content);
+  if (root.empty()) return info;
   const Json* meta = nullptr;
   for (const char* key : {"META", "meta", "Meta"}) {
     const auto iterator = root.find(key);

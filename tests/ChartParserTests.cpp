@@ -789,6 +789,104 @@ int main() {
     std::filesystem::remove(packRoot / "info.yml");
   }
 
+  {
+    // The parallel official parser slices the two large arrays out of the document text and
+    // parses them on a worker pool. A generated chart above the size threshold exercises the
+    // slicing path; every parsed value must equal the regular parser's.
+    std::string jsonText;
+    jsonText.reserve(2U << 20U);
+    jsonText += R"({"formatVersion":3,"offset":0.125,"judgeLineList":[)";
+    constexpr int kLineCount = 80;
+    constexpr int kNotesPerLine = 250;
+    for (int lineIndex = 0; lineIndex < kLineCount; ++lineIndex) {
+      if (lineIndex > 0) jsonText += ',';
+      jsonText += R"({"bpm":120.0,"speedEvents":[{"startTime":0,"endTime":100000,"value":1,"endValue":1}],)";
+      jsonText += R"("judgeLineRotateEvents":[{"startTime":0,"endTime":1,"start":0,"end":45}],)";
+      jsonText += R"("judgeLineMoveEvents":[{"startTime":0,"endTime":1,"start":0.5,"end":0.3},)";
+      jsonText += R"({"startTime":1,"endTime":2,"start":0.3,"end":0.7}],)";
+      jsonText += R"("notesAbove":[)";
+      for (int note = 0; note < kNotesPerLine; ++note) {
+        if (note > 0) jsonText += ',';
+        jsonText += R"({"type":1,"time":)" + std::to_string(static_cast<double>(note) * 0.05)
+            + R"(,"positionX":0.25,"speed":1.0})";
+      }
+      jsonText += R"(],"notesBelow":[)";
+      for (int note = 0; note < kNotesPerLine; note += 10) {
+        if (note > 0) jsonText += ',';
+        jsonText += R"({"type":2,"time":)" + std::to_string(static_cast<double>(note) * 0.05)
+            + R"(,"holdTime":0.5,"positionX":0.75,"speed":1.5})";
+      }
+      jsonText += "]}";
+    }
+    jsonText += R"(],"blockAreaList":[)";
+    for (int blockIndex = 0; blockIndex < 3; ++blockIndex) {
+      if (blockIndex > 0) jsonText += ',';
+      jsonText += R"({"topRightPercentage":[0.9,0.9],"bottomLeftPercentage":[0.1,0.1],)";
+      jsonText += R"("appearTime":)" + std::to_string(blockIndex)
+          + R"(,"enableTime":1.0,"disableTime":2.0,"disappearTime":3.0,"isSubtract":false,)";
+      jsonText += R"("rotateEvents":[{"anchor":[0.5,0.5],"time":0,"easeType":1,"rotation":10}],)";
+      jsonText += R"("moveEvents":[{"endPosition":[0.6,0.4],"time":0,"easeTypeX":1,"easeTypeY":1}],)";
+      jsonText += R"("scaleEvents":[{"anchor":[0.5,0.5],"time":0,"easeTypeX":1,"easeTypeY":1,"scale":[1.2,0.8]}]})";
+    }
+    jsonText += "]}";
+    require(jsonText.size() > (1U << 20U), "the generated chart crosses the parallel threshold");
+    const auto sequential = rechigros::chart::OfficialChartParser::parse(
+        std::string_view(jsonText));
+    const auto parallel = rechigros::chart::OfficialChartParser::parseParallel(
+        std::string_view(jsonText), 4);
+    require(parallel.formatVersion == sequential.formatVersion, "parallel formatVersion matches");
+    require(close(parallel.offset, sequential.offset), "parallel offset matches");
+    require(parallel.judgeLineList.size() == sequential.judgeLineList.size(),
+        "parallel line count matches");
+    require(parallel.blockAreaList.size() == sequential.blockAreaList.size(),
+        "parallel block count matches");
+    require(parallel.allNotesSorted.size() == sequential.allNotesSorted.size(),
+        "parallel note count matches");
+    require(close(parallel.chartEndTimeSec, sequential.chartEndTimeSec),
+        "parallel chart end matches");
+    for (std::size_t lineIndex = 0; lineIndex < sequential.judgeLineList.size(); ++lineIndex) {
+      const auto& expected = *sequential.judgeLineList[lineIndex];
+      const auto& actual = *parallel.judgeLineList[lineIndex];
+      require(close(expected.bpm, actual.bpm), "parallel line bpm matches");
+      require(expected.speedEvents.size() == actual.speedEvents.size(),
+          "parallel line speed event count matches");
+      require(expected.judgeLineRotateEvents.size() == actual.judgeLineRotateEvents.size(),
+          "parallel line rotate event count matches");
+      require(expected.notes.size() == actual.notes.size(), "parallel line note count matches");
+      for (std::size_t noteIndex = 0; noteIndex < expected.notes.size(); ++noteIndex) {
+        const auto& expectedNote = expected.notes[noteIndex];
+        const auto& actualNote = actual.notes[noteIndex];
+        require(expectedNote.type == actualNote.type, "parallel note type matches");
+        require(expectedNote.isAbove == actualNote.isAbove, "parallel note side matches");
+        require(close(expectedNote.time, actualNote.time), "parallel note time matches");
+        require(close(expectedNote.holdTime, actualNote.holdTime),
+            "parallel note hold time matches");
+        require(close(expectedNote.positionX, actualNote.positionX),
+            "parallel note position matches");
+        require(close(expectedNote.floorPosition, actualNote.floorPosition),
+            "parallel note floor position matches");
+        require(close(expectedNote.sect, actualNote.sect), "parallel note beat matches");
+      }
+    }
+    for (std::size_t blockIndex = 0; blockIndex < sequential.blockAreaList.size();
+         ++blockIndex) {
+      const auto& expected = sequential.blockAreaList[blockIndex];
+      const auto& actual = parallel.blockAreaList[blockIndex];
+      require(close(expected.topRightX, actual.topRightX), "parallel block right matches");
+      require(close(expected.bottomLeftY, actual.bottomLeftY), "parallel block bottom matches");
+      require(close(expected.appearTime, actual.appearTime), "parallel block appear matches");
+      require(close(expected.disappearTime, actual.disappearTime),
+          "parallel block disappear matches");
+      require(expected.isSubtract == actual.isSubtract, "parallel block subtract flag matches");
+      require(expected.rotateEvents.size() == actual.rotateEvents.size(),
+          "parallel block rotate event count matches");
+      require(expected.moveEvents.size() == actual.moveEvents.size(),
+          "parallel block move event count matches");
+      require(expected.scaleEvents.size() == actual.scaleEvents.size(),
+          "parallel block scale event count matches");
+    }
+  }
+
   std::cout << "All ReChigros chart parser tests passed\n";
   return 0;
 }

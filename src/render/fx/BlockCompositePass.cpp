@@ -285,9 +285,10 @@ void BlockCompositePass::rasteriseMasks(const std::vector<BlockMaskQuad>& maskAQ
   glBlendEquation(GL_FUNC_ADD);
   glBlendFunc(GL_ONE, GL_ONE);
 
-  std::vector<float> vertices;
-  const std::size_t firstA = vertices.size();
+  auto& vertices = maskVertices_;
+  vertices.clear();
   vertices.reserve(maskAQuads.size() * 6U * 6U + maskBQuads.size() * 6U * 6U);
+  const std::size_t firstA = vertices.size();
   for (const auto& quad : maskAQuads) appendQuad(vertices, quad, width_, height_);
   const std::size_t firstB = vertices.size();
   for (const auto& quad : maskBQuads) appendQuad(vertices, quad, width_, height_);

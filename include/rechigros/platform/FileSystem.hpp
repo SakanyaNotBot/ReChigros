@@ -23,6 +23,14 @@ void setAssetRootOverride(const std::filesystem::path& root);
 [[nodiscard]] std::string readTextFile(const std::filesystem::path& path);
 [[nodiscard]] std::vector<std::uint8_t> readBinaryFile(const std::filesystem::path& path);
 
+// Whether the bytes form valid UTF-8. Archive entry names and old package metadata may
+// carry the legacy Chinese code page instead, which no UTF-8 decoder accepts.
+[[nodiscard]] bool isValidUtf8(std::string_view bytes);
+// Returns UTF-8 text: valid UTF-8 passes through, otherwise the bytes are decoded from the
+// legacy Chinese code page when the platform can do so (the original bytes are returned
+// when no decoder is available).
+[[nodiscard]] std::string decodeLegacyText(std::string_view bytes);
+
 bool writeTextFile(const std::filesystem::path& path, std::string_view content);
 bool writeBinaryFile(const std::filesystem::path& path, const std::vector<std::uint8_t>& content);
 

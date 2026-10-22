@@ -24,6 +24,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <system_error>
@@ -98,6 +99,12 @@ Application::Application(int argc, char** argv) {
       // frame, which is what a screen comparison of a late gameplay state needs.
       if (index + 1 < argc && argv[index + 1] != nullptr) {
         captureAtFrame_ = std::max(0, std::atoi(argv[++index]));
+      }
+    } else if (argument == "--frame-stats") {
+      // Records the wall interval and the pre-swap time of every frame, which separates a
+      // slow renderer from a stalled presentation path.
+      if (index + 1 < argc && argv[index + 1] != nullptr) {
+        frameStatsPath_ = pathFromUtf8(argv[++index]);
       }
     } else if (argument == "--data-root") {
       if (index + 1 < argc && argv[index + 1] != nullptr) {
@@ -370,6 +377,10 @@ int Application::run() {
 
   while (running) {
     const auto counter = SDL_GetPerformanceCounter();
+    // The raw interval is measured before the fixed-step override, so pacing samples keep
+    // their meaning in deterministic runs too.
+    const double intervalMs = static_cast<double>(counter - previous) * 1000.0
+        / static_cast<double>(frequency);
     float delta = static_cast<float>(static_cast<double>(counter - previous)
         / static_cast<double>(frequency));
     previous = counter;
@@ -468,9 +479,19 @@ int Application::run() {
     // composed result (GPU backdrop or its fallback) exactly as presented. Gameplay is
     // included so a run can be inspected without depending on the presentation path.
     captureFramebufferIfRequested();
+    // The frame's own work ends here; the swap waits for presentation, so the two times
+    // together separate a slow frame from a stalled compositor.
+    const auto preSwapCounter = SDL_GetPerformanceCounter();
+    const double cpuMs = static_cast<double>(preSwapCounter - counter) * 1000.0
+        / static_cast<double>(frequency);
     SDL_GL_SwapWindow(window_);
+    if (!frameStatsPath_.empty() && frameSamples_.size() < 2000000) {
+      frameSamples_.push_back(
+          {intervalMs, cpuMs, static_cast<int>(app_->screen), app_->nowSec});
+    }
   }
 
+  writeFrameStats();
   commitSettings(*app_);
   if (!recordReplayPath_.empty() && app_ != nullptr) {
     // A saved replay records what the run scored, not the values it started with.
@@ -672,6 +693,68 @@ void Application::printBatchSummary() {
                 << " miss=" << result.miss << " total=" << result.totalNotes << '\n';
     }
   }
+}
+
+void Application::writeFrameStats() const {
+  if (frameStatsPath_.empty()) return;
+  if (frameSamples_.empty()) {
+    std::cout << "FRAME-STATS empty\n";
+    return;
+  }
+  std::vector<double> intervals;
+  std::vector<double> cpu;
+  intervals.reserve(frameSamples_.size());
+  cpu.reserve(frameSamples_.size());
+  for (const FrameSample& sample : frameSamples_) {
+    intervals.push_back(sample.intervalMs);
+    cpu.push_back(sample.cpuMs);
+  }
+  const auto percentile = [](std::vector<double> values, double fraction) {
+    std::sort(values.begin(), values.end());
+    if (values.empty()) return 0.0;
+    const auto index = static_cast<std::size_t>(
+        std::clamp(fraction, 0.0, 1.0) * static_cast<double>(values.size() - 1));
+    return values[index];
+  };
+  const auto mean = [](const std::vector<double>& values) {
+    if (values.empty()) return 0.0;
+    double sum = 0.0;
+    for (const double value : values) sum += value;
+    return sum / static_cast<double>(values.size());
+  };
+  std::size_t over16 = 0;
+  std::size_t over33 = 0;
+  std::size_t over100 = 0;
+  double worst = 0.0;
+  for (const double value : intervals) {
+    if (value > 16.7) ++over16;
+    if (value > 33.3) ++over33;
+    if (value > 100.0) ++over100;
+    worst = std::max(worst, value);
+  }
+  if (!frameStatsPath_.parent_path().empty()) {
+    std::error_code error;
+    std::filesystem::create_directories(frameStatsPath_.parent_path(), error);
+  }
+  std::ofstream csv(frameStatsPath_);
+  if (csv) {
+    csv << "index,interval_ms,cpu_ms,screen,now_sec\n";
+    for (std::size_t index = 0; index < frameSamples_.size(); ++index) {
+      const FrameSample& sample = frameSamples_[index];
+      csv << index << ',' << sample.intervalMs << ',' << sample.cpuMs << ','
+          << sample.screen << ',' << sample.nowSec << '\n';
+    }
+  }
+  std::cout << "FRAME-STATS frames=" << frameSamples_.size()
+            << " interval mean=" << mean(intervals)
+            << " p50=" << percentile(intervals, 0.50)
+            << " p95=" << percentile(intervals, 0.95)
+            << " p99=" << percentile(intervals, 0.99)
+            << " max=" << worst
+            << " over16=" << over16 << " over33=" << over33 << " over100=" << over100
+            << " cpu mean=" << mean(cpu)
+            << " cpu p99=" << percentile(cpu, 0.99)
+            << " path=" << frameStatsPath_.string() << '\n';
 }
 
 void Application::captureFramebufferIfRequested() {

@@ -14,6 +14,7 @@
 #include "rechigros/render/gl/Gl.hpp"
 #include "rechigros/render/gl/Texture.hpp"
 #include "rechigros/render/scene/StageLayout.hpp"
+#include "rechigros/render/scene/Transition.hpp"
 
 #include <SDL_log.h>
 
@@ -30,8 +31,9 @@ namespace {
 
 using game::GameplaySession;
 
-constexpr double kIntroAudioStartSec = 0.35;
-constexpr double kIntroEndSec = 0.45;
+constexpr double kIntroLineDurationSec = 55.0 / 60.0;
+// The music is released when the opening buffer ends (reference INTRO_AUDIO_DELAY_MS).
+constexpr double kIntroEndSec = 1.083;
 constexpr double kOutroDurationSec = 1.7;
 // The HUD start and exit tweens are 40 frames long, like the play field's.
 constexpr double kHudIntroDurationSec = 40.0 / 60.0;
@@ -136,19 +138,6 @@ void applyPracticeSeek(AppContext& context, double targetChartTime) {
   if (context.audio != nullptr && game.musicLoaded) context.audio->seek(game.playheadSec);
   game.chartTimeSec = target;
   game.lastCounts[0] = game.lastCounts[1] = game.lastCounts[2] = game.lastCounts[3] = 0;
-  game.popupJudgement = -1;
-}
-
-void updateJudgementPopup(GameRuntime& game) {
-  const auto& counts = game.session.judgement().counts();
-  for (int index = 0; index < 4; ++index) {
-    if (counts[index] > game.lastCounts[index]) {
-      game.popupJudgement = index;
-      game.popupAgeSec = 0.0;
-    }
-    game.lastCounts[index] = counts[index];
-  }
-  if (game.popupJudgement >= 0) game.popupAgeSec += game.frameDeltaSec;
 }
 
 void dispatchRecordedTouches(AppContext& context) {
@@ -1248,7 +1237,10 @@ void drawCountdownDigits(AppContext& context, ImDrawList* drawList, const GameSt
   constexpr double durationSec = 3.0;
   if (elapsed >= durationSec) return;
   const float uiScale = std::max(0.001F, stage.height / 1080.0F);
-  const float textPx = std::max(1.0F, 120.0F * uiScale);
+  // The deployed reference build draws the countdown digit at an 80 px em size; the
+  // current source constant (120) does not match the shipped frames (measured ink 56 px
+  // tall, i.e. 80 px em), so the shipped size is used here.
+  const float textPx = std::max(1.0F, 80.0F * uiScale);
   const float centerX = stage.left + stage.width * 0.5F;
   const float centerY = stage.top + stage.height * 0.5F;
   constexpr float barStep = 216.0F;
@@ -1383,6 +1375,8 @@ bool gameEnter(AppContext& context) {
       if (std::filesystem::is_directory(candidate, error)) skinDirectory = candidate;
     }
     context.renderer->setSkinDirectory(skinDirectory);
+    // The play field uses the chart's own illustration as its (blurred) backdrop.
+    context.renderer->setBackgroundImage(context.play.bgFile);
   }
   context.game = GameRuntime{};
   auto& game = context.game;
@@ -1517,18 +1511,18 @@ void gameUpdate(AppContext& context, float frameDeltaSec) {
     return;
   }
 
-  // Intro: draw the opening line, start the music, then hand over to gameplay.
+  // Intro: the decorative judge line expands for 55 frames and holds for 10; the music is
+  // released exactly at the end of that buffer so gameplay starts at chart time zero.
   if (game.inIntro) {
     game.introElapsedSec += delta;
-    if (!game.inOutro && context.audio != nullptr && game.musicLoaded
-        && !context.audio->isPlaying() && game.introElapsedSec >= kIntroAudioStartSec) {
-      startAudio(context, true);
-    }
     if (game.introElapsedSec >= kIntroEndSec) {
       game.inIntro = false;
-      if (context.audio == nullptr || !game.musicLoaded) {
+      if (context.audio != nullptr && game.musicLoaded) {
+        startAudio(context, true);
+      } else {
         game.playheadSec = 0.0;
       }
+      game.visualTimeSec = 0.0;
     } else {
       return;
     }
@@ -1585,7 +1579,6 @@ void gameUpdate(AppContext& context, float frameDeltaSec) {
   for (const int type : game.session.takeSoundEvents()) {
     if (context.audio != nullptr) context.audio->triggerSoundEffect(type);
   }
-  updateJudgementPopup(game);
 
   bool ended = false;
   if (context.audio != nullptr && game.musicLoaded) {
@@ -1618,6 +1611,7 @@ void gameRender(AppContext& context) {
   input.scrollSpeed = game.scrollSpeed;
   input.mirrorX = game.mirrorX;
   input.backgroundDim = context.settings.backgroundDim;
+  input.aspectRatio = context.settings.aspectRatio;
   input.challengeMode = game.challenge;
   input.apfcIndicator = context.settings.apfcIndicator;
   switch (game.pause) {
@@ -1632,8 +1626,11 @@ void gameRender(AppContext& context) {
     default: input.pause.mode = render::PauseMode::None; break;
   }
   input.transition.inIntro = game.inIntro;
+  // The decorative line follows the reference's 55-frame expansion curve; it stays
+  // fully expanded through the hold and disappears when gameplay starts.
   input.transition.introLineScale = game.inIntro
-      ? static_cast<float>(std::clamp(game.introElapsedSec / kIntroEndSec, 0.0, 1.0))
+      ? render::scene::introLineScale(static_cast<float>(
+            std::clamp(game.introElapsedSec / kIntroLineDurationSec, 0.0, 1.0)))
       : 1.0F;
   input.transition.inOutro = game.inOutro;
   input.transition.outroElapsedSec = static_cast<float>(game.outroElapsedSec);
@@ -1656,22 +1653,23 @@ void gameRender(AppContext& context) {
   input.hud.scoreJumpEffect = context.settings.scoreJumpEffect;
   input.hud.comboLabel = game.replayPlayback ? "REPLAY"
       : (game.practice ? "PRACTICE" : (game.autoplay ? "AUTOPLAY" : "COMBO"));
+  // The judgement offset indicator is a manual-play readout; autoplay runs and a replay
+  // without recorded judgements never show it (the reference suppresses them the same way).
+  input.hud.hitOffsetIndicatorMode = std::clamp(context.settings.hitOffsetIndicatorMode, 0, 2);
+  input.hud.hitOffsetSuppressed = game.autoplay && !game.replayPlayback;
+  input.hud.showFps = context.settings.showFps;
+  input.hud.fps = context.fps;
   input.hud.visualTimeSec = game.visualTimeSec;
   if (gPauseRingStartSec >= 0.0 && context.nowSec - gPauseRingStartSec >= 1.0) {
     gPauseRingStartSec = -1.0;
   }
   input.hud.pauseRingAgeSec =
       gPauseRingStartSec >= 0.0 ? context.nowSec - gPauseRingStartSec : -1.0;
-  // The HUD start tween keeps running across the intro boundary: the intro ends before
-  // the 40-frame curve has finished, and the chart clock continues it.
-  if (game.inIntro) {
-    input.hud.introProgress = static_cast<float>(
-        std::clamp(game.introElapsedSec / kHudIntroDurationSec, 0.0, 1.0));
-  } else {
-    input.hud.introProgress = static_cast<float>(
-        std::clamp((kIntroEndSec + std::max(0.0, game.chartTimeSec)) / kHudIntroDurationSec,
-            0.0, 1.0));
-  }
+  // The HUD start tween runs over the first 40 frames of the opening and is finished
+  // before gameplay starts.
+  input.hud.introProgress = game.inIntro
+      ? static_cast<float>(std::clamp(game.introElapsedSec / kHudIntroDurationSec, 0.0, 1.0))
+      : 1.0F;
   input.hud.outroProgress = game.inOutro
       ? static_cast<float>(std::clamp(game.outroElapsedSec / kHudOutroDurationSec, 0.0, 1.0))
       : 0.0F;
@@ -1688,43 +1686,11 @@ void gameRender(AppContext& context) {
 void drawGameOverlay(AppContext& context) {
   auto& game = context.game;
   if (!game.loaded) return;
-  const auto size = viewportSize();
-  const float scale = layoutScale();
   ImDrawList* drawList = ImGui::GetBackgroundDrawList();
 
-  if (game.popupJudgement >= 0 && game.popupAgeSec < 0.7) {
-    static const char* kLabels[4] = {"PERFECT", "GOOD", "BAD", "MISS"};
-    static const ImU32 kColors[4] = {IM_COL32(254, 255, 169, 255), IM_COL32(162, 238, 255, 255),
-        IM_COL32(224, 162, 255, 255), IM_COL32(255, 142, 142, 255)};
-    const float alpha = static_cast<float>(std::clamp(1.0 - game.popupAgeSec / 0.7, 0.0, 1.0));
-    const int index = std::clamp(game.popupJudgement, 0, 3);
-    const ImU32 color = (kColors[index] & 0x00FFFFFFU)
-        | (static_cast<ImU32>(alpha * 255.0F) << IM_COL32_A_SHIFT);
-    ui::drawTextCentered(drawList, ImVec2(size.width * 0.5F, size.height * 0.40F),
-        40.0F * scale, color, kLabels[index]);
-  }
-
-  // Hit offset indicator text.
-  const auto& judgement = game.session.judgement();
-  const float indicatorAlpha =
-      judgement.indicator().latestTextAlpha(game.visualTimeSec);
-  if (indicatorAlpha > 0.01F && context.settings.hitOffsetIndicatorMode != 0) {
-    const auto& text = judgement.indicator().latestText();
-    if (!text.empty()) {
-      const ImU32 color = IM_COL32(255, 255, 255,
-          static_cast<int>(std::clamp(indicatorAlpha, 0.0F, 1.0F) * 235.0F));
-      ui::drawTextCentered(drawList, ImVec2(size.width * 0.5F, size.height * 0.86F),
-          22.0F * scale, color, text.c_str());
-    }
-  }
-
+  // The reference gameplay screen has no centre judgement label and no raw offset text:
+  // the judgement offset indicator drawn by the renderer HUD is the only feedback.
   if (game.debugOverlay || context.settings.showDebugInfo) drawDebugOverlay(context, drawList);
-  if (context.settings.showFps) {
-    char fpsBuffer[32];
-    std::snprintf(fpsBuffer, sizeof(fpsBuffer), "FPS %.1f", static_cast<double>(context.fps));
-    drawTextRight(drawList, ImVec2(size.width - 16.0F * scale, 20.0F * scale), 17.0F * scale,
-        ui::rgba(0xFFFFFFFFU), fpsBuffer);
-  }
 
   if (game.pause != GameRuntime::Pause::None) {
     drawPauseOverlay(context);

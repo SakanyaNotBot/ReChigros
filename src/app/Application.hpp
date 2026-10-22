@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 
 struct SDL_Window;
 using SDL_GLContext = void*;
@@ -44,6 +45,8 @@ private:
   void updateBatchMode();
   void printBatchSummary();
   void captureFramebufferIfRequested();
+  // Writes the collected frame pacing samples and prints their distribution.
+  void writeFrameStats() const;
 
   SDL_Window* window_{};
   SDL_GLContext context_{};
@@ -65,6 +68,16 @@ private:
   // Captures at an explicit frame instead of the per-screen default wait.
   int captureAtFrame_{-1};
   double captureTimeSec_{-1.0};
+  // Per-frame pacing samples: the wall interval between frames and the time spent before
+  // the buffer swap. Written as CSV when the run ends, which is how stutters are measured.
+  std::filesystem::path frameStatsPath_;
+  struct FrameSample {
+    double intervalMs{};
+    double cpuMs{};
+    int screen{};
+    double nowSec{};
+  };
+  std::vector<FrameSample> frameSamples_;
   // Diagnostic mode: reports the graphics driver strings once and every pass that sets
   // a GL error. Off unless the run asks for it.
   bool glDebug_{};

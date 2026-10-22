@@ -117,6 +117,9 @@ private:
   gl::ShaderProgram maskProgram_;
   unsigned int maskVao_{};
   unsigned int maskVbo_{};
+  // Reused between frames: a chapter-level chart can hand over dozens of quads per frame
+  // and allocating the vertex staging buffer each time would churn the heap mid-frame.
+  std::vector<float> maskVertices_;
   gl::Framebuffer maskFbo_[2];
   gl::Framebuffer compose_;
   gl::Framebuffer ping_[2];

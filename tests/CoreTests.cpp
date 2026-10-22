@@ -318,5 +318,98 @@ int main(){
     require(replayBursts>0,"a replayed hold still produces body feedback");
   }
 
+  // --- runtime preparation: incremental floor cursor and parallel per-line pass -----
+  {
+    // A large chart takes the parallel per-line path; every derived value must still equal a
+    // direct binary-search floor lookup, so the speed-up cannot change the timing maths.
+    Chart runtimeChart;
+    runtimeChart.formatVersion = 3;
+    runtimeChart.bpmTimeline = std::make_shared<BpmTimeline>(
+        std::vector<double>{0.0}, std::vector<double>{120.0}, std::vector<double>{0.0});
+    constexpr int kLineCount = 4;
+    constexpr int kNotesPerLine = 260;
+    for (int lineIndex = 0; lineIndex < kLineCount; ++lineIndex) {
+      auto line = std::make_unique<JudgeLine>();
+      line->bpm = 120.0;
+      SpeedEvent first;
+      first.startTime = 0.0;
+      first.endTime = 4.0;
+      first.value = 1.0;
+      first.endValue = 1.0;
+      line->speedEvents.push_back(first);
+      SpeedEvent second;
+      second.startTime = 4.0;
+      second.endTime = 1000.0;
+      second.value = 2.5;
+      second.endValue = 2.5;
+      line->speedEvents.push_back(second);
+      // A layered line exercises the per-layer cursor; the plain speed list stays empty so
+      // the layered sum is the only contribution.
+      if (lineIndex == 0) {
+        std::vector<SpeedEvent> layer;
+        SpeedEvent layerEvent;
+        layerEvent.startTime = 0.0;
+        layerEvent.endTime = 1000.0;
+        layerEvent.value = 0.5;
+        layerEvent.endValue = 0.5;
+        layer.push_back(layerEvent);
+        line->speedEventLayers.push_back(layer);
+      }
+      for (int noteIndex = 0; noteIndex < kNotesPerLine; ++noteIndex) {
+        Note note;
+        note.type = noteIndex % 9 == 0 ? NOTE_HOLD : NOTE_TAP;
+        note.time = static_cast<double>(noteIndex) * 0.05;
+        note.holdTime = note.type == NOTE_HOLD ? 0.3 : 0.0;
+        note.positionX = 0.25;
+        note.speed = 1.0;
+        note.isAbove = true;
+        line->notesAbove.push_back(note);
+      }
+      runtimeChart.judgeLineList.push_back(std::move(line));
+    }
+    runtimeChart.prepareRuntime();
+    require(runtimeChart.allNotesSorted.size() == kLineCount * kNotesPerLine,
+        "every note reaches the sorted list");
+    for (const auto& lineOwner : runtimeChart.judgeLineList) {
+      const auto& line = *lineOwner;
+      for (const auto& note : line.notes) {
+        const double expectedFloor = EventUtils::getFloorPosition(note.time,
+            line.speedEvents, line.speedEventLayers);
+        require(std::abs(note.floorPosition - expectedFloor) <= 1e-9,
+            "the incremental floor cursor matches the binary-search lookup");
+        const double expectedSect = line.beat2sec(note.time);
+        require(std::abs(note.sect - expectedSect) <= 1e-12, "the note beat matches");
+        if (note.isHold) {
+          // Official charts derive the hold end from the speed multiplier; the plain format
+          // walks the speed events, which is the path the cursor touches here.
+          const double expectedEndFloor = runtimeChart.formatVersion > 0
+              ? note.floorPosition + note.holdTime * note.speed * PGR_HEIGHT
+              : EventUtils::getFloorPosition(note.time + note.holdTime, line.speedEvents,
+                    line.speedEventLayers);
+          require(std::abs(note.holdEndFloorPosition - expectedEndFloor) <= 1e-9,
+              "the hold end floor matches the binary-search lookup");
+        }
+      }
+    }
+    // Running the preparation again must produce exactly the same values: the parallel
+    // per-line pass merges results in chart order rather than completion order.
+    std::vector<double> firstFloors;
+    std::vector<double> firstSects;
+    for (const auto* note : runtimeChart.allNotesSorted) firstFloors.push_back(note->floorPosition);
+    for (const auto* note : runtimeChart.allNotesSorted) firstSects.push_back(note->sect);
+    runtimeChart.prepareRuntime();
+    require(runtimeChart.allNotesSorted.size() == firstFloors.size(),
+        "repeated preparation keeps the note count");
+    bool stable = true;
+    for (std::size_t index = 0; index < firstFloors.size(); ++index) {
+      if (runtimeChart.allNotesSorted[index]->floorPosition != firstFloors[index]
+          || runtimeChart.allNotesSorted[index]->sect != firstSects[index]) {
+        stable = false;
+        break;
+      }
+    }
+    require(stable, "repeated preparation produces identical note values");
+  }
+
   std::cout<<"All ReChigros core tests passed\n";return 0;
 }

@@ -404,6 +404,72 @@ int main() {
     require(maskA.empty() && maskB.empty(), "a zone too small to be seen is not rasterised");
   }
 
+  // --- windowed block advancing matches the whole-list pass ---------------------
+  {
+    using rechigros::game::OfficialBlock;
+    using rechigros::render::fx::BlockOverlay;
+
+    constexpr float kScreenWidth = 1920.0F;
+    constexpr float kScreenHeight = 1080.0F;
+    // A zone list spread over the whole chart: most entries are outside their window at any
+    // given time. The windowed update must equal a pass that visits every entry.
+    std::vector<OfficialBlock> zones;
+    for (int index = 0; index < 40; ++index) {
+      OfficialBlock zone;
+      const float slot = static_cast<float>(index) * 1.5F;
+      zone.bottomLeftX = 0.05F + 0.01F * static_cast<float>(index % 5);
+      zone.bottomLeftY = 0.2F;
+      zone.topRightX = 0.30F + 0.01F * static_cast<float>(index % 7);
+      zone.topRightY = 0.8F;
+      zone.appearTime = slot;
+      zone.enableTime = slot + 0.75F;
+      zone.disableTime = slot + 2.0F;
+      zone.disappearTime = slot + 3.0F;
+      zone.isSubtract = (index % 6) == 0;
+      OfficialBlock::MoveEvent move;
+      move.time = slot;
+      move.posX = 0.4F;
+      move.posY = 0.5F;
+      zone.moveEvents.push_back(move);
+      zones.push_back(zone);
+    }
+
+    std::vector<OfficialBlock> reference = zones;
+    const auto referenceUpdateAll = [&](float timeSec, float deltaSec) {
+      for (auto& block : reference) {
+        if (timeSec < block.appearTime || timeSec >= block.disappearTime) {
+          block.resetRuntime();
+          continue;
+        }
+        block.update(timeSec, 0.0F, 0.0F, kScreenWidth, kScreenHeight, deltaSec);
+      }
+    };
+
+    BlockOverlay overlay;
+    constexpr float kStep = 1.0F / 60.0F;
+    bool matched = true;
+    for (float timeSec = 0.0F; timeSec < 60.0F; timeSec += kStep) {
+      referenceUpdateAll(timeSec, kStep);
+      overlay.updateAll(zones, timeSec, kStep, 0.0F, 0.0F, kScreenWidth, kScreenHeight);
+      for (std::size_t index = 0; index < zones.size(); ++index) {
+        const auto& expected = reference[index];
+        const auto& actual = zones[index];
+        if (expected.visible != actual.visible || expected.active != actual.active
+            || !close(expected.centerX, actual.centerX, 1e-3)
+            || !close(expected.centerY, actual.centerY, 1e-3)
+            || !close(expected.halfW, actual.halfW, 1e-3)
+            || !close(expected.halfH, actual.halfH, 1e-3)
+            || expected.phase(timeSec) != actual.phase(timeSec)
+            || !close(expected.showProgress(), actual.showProgress(), 1e-3)) {
+          matched = false;
+          break;
+        }
+      }
+      if (!matched) break;
+    }
+    require(matched, "windowed block advancing matches the whole-list pass");
+  }
+
   if (g_failures != 0) {
     std::cerr << g_failures << " transition test(s) failed\n";
     return 1;

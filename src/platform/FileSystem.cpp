@@ -7,12 +7,20 @@
 #endif
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
 #include <mutex>
 #include <string>
 #include <system_error>
+
+#if defined(_WIN32)
+#include <windows.h>
+#elif !defined(__ANDROID__) && __has_include(<iconv.h>)
+#include <iconv.h>
+#define RECHIGROS_HAS_ICONV 1
+#endif
 
 namespace rechigros::platform {
 namespace {
@@ -95,10 +103,102 @@ std::filesystem::path executablePath() {
   return result;
 }
 
+bool isValidUtf8(std::string_view bytes) {
+  std::size_t index = 0;
+  while (index < bytes.size()) {
+    const auto lead = static_cast<unsigned char>(bytes[index]);
+    std::size_t length = 0;
+    std::uint32_t code = 0;
+    if (lead < 0x80U) {
+      ++index;
+      continue;
+    }
+    if ((lead & 0xE0U) == 0xC0U) {
+      length = 2;
+      code = lead & 0x1FU;
+    } else if ((lead & 0xF0U) == 0xE0U) {
+      length = 3;
+      code = lead & 0x0FU;
+    } else if ((lead & 0xF8U) == 0xF0U) {
+      length = 4;
+      code = lead & 0x07U;
+    } else {
+      return false;
+    }
+    if (index + length > bytes.size()) return false;
+    for (std::size_t offset = 1; offset < length; ++offset) {
+      const auto continuation = static_cast<unsigned char>(bytes[index + offset]);
+      if ((continuation & 0xC0U) != 0x80U) return false;
+      code = (code << 6U) | (continuation & 0x3FU);
+    }
+    // Reject overlong forms, surrogate halves and out-of-range values.
+    const std::uint32_t minimum = length == 2 ? 0x80U : (length == 3 ? 0x800U : 0x10000U);
+    if (code < minimum || code > 0x10FFFFU || (code >= 0xD800U && code <= 0xDFFFU)) {
+      return false;
+    }
+    index += length;
+  }
+  return true;
+}
+
+std::string decodeLegacyText(std::string_view bytes) {
+  const std::string original(bytes);
+  if (isValidUtf8(bytes)) return original;
+#if defined(_WIN32)
+  if (bytes.empty()) return original;
+  const int wideLength = MultiByteToWideChar(936, 0, bytes.data(),
+      static_cast<int>(bytes.size()), nullptr, 0);
+  if (wideLength <= 0) return original;
+  std::wstring wide(static_cast<std::size_t>(wideLength), L'\0');
+  if (MultiByteToWideChar(936, 0, bytes.data(), static_cast<int>(bytes.size()),
+          wide.data(), wideLength) != wideLength) {
+    return original;
+  }
+  const int utf8Length = WideCharToMultiByte(CP_UTF8, 0, wide.data(), wideLength, nullptr, 0,
+      nullptr, nullptr);
+  if (utf8Length <= 0) return original;
+  std::string utf8(static_cast<std::size_t>(utf8Length), '\0');
+  if (WideCharToMultiByte(CP_UTF8, 0, wide.data(), wideLength, utf8.data(), utf8Length,
+          nullptr, nullptr) != utf8Length) {
+    return original;
+  }
+  return utf8;
+#elif defined(__ANDROID__)
+  // The platform's iconv implementation is not available on every supported API level, so
+  // the original bytes are kept instead of risking a wrong decoding.
+  return original;
+#elif defined(RECHIGROS_HAS_ICONV)
+  iconv_t converter = iconv_open("UTF-8", "GBK");
+  if (converter == reinterpret_cast<iconv_t>(-1)) return original;
+  std::string result;
+  result.reserve(bytes.size() * 2);
+  char* input = const_cast<char*>(bytes.data());
+  std::size_t inputLeft = bytes.size();
+  char buffer[4096];
+  while (inputLeft > 0) {
+    char* output = buffer;
+    std::size_t outputLeft = sizeof(buffer);
+    const std::size_t converted = iconv(converter, &input, &inputLeft, &output, &outputLeft);
+    result.append(buffer, sizeof(buffer) - outputLeft);
+    if (converted == static_cast<std::size_t>(-1)) {
+      if (errno == E2BIG) continue;
+      iconv_close(converter);
+      return original;
+    }
+  }
+  iconv_close(converter);
+  return result.empty() ? original : result;
+#else
+  return original;
+#endif
+}
+
 std::string readTextFile(const std::filesystem::path& path) {
   std::ifstream input(path, std::ios::binary);
   if (!input) return {};
-  return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+  const std::string bytes{std::istreambuf_iterator<char>(input),
+      std::istreambuf_iterator<char>()};
+  return decodeLegacyText(bytes);
 }
 
 std::vector<std::uint8_t> readBinaryFile(const std::filesystem::path& path) {

@@ -958,4 +958,22 @@ double floorPositionMonotonic(double time, const std::vector<SpeedEvent>& events
   return fpEnd + v1 * elapsed;
 }
 
+double floorPositionMonotonic(double time, const std::vector<SpeedEvent>& events,
+    const std::vector<std::vector<SpeedEvent>>& layers, int& index,
+    std::vector<int>& layerIndices) noexcept {
+  if (!layers.empty()) {
+    if (layerIndices.size() < layers.size()) layerIndices.resize(layers.size(), 0);
+    double sum = 0.0;
+    bool any = false;
+    for (std::size_t layerIndex = 0; layerIndex < layers.size(); ++layerIndex) {
+      const auto& layer = layers[layerIndex];
+      if (layer.empty()) continue;
+      sum += floorPositionMonotonic(time, layer, layerIndices[layerIndex]);
+      any = true;
+    }
+    if (any) return sum;
+  }
+  return floorPositionMonotonic(time, events, index);
+}
+
 } // namespace rechigros::game::EventUtils

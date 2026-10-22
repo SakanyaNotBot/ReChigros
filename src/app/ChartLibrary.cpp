@@ -39,6 +39,15 @@ std::filesystem::path resolveRelative(const std::filesystem::path& root,
     const std::string& relativePath) {
   if (relativePath.empty()) return {};
   std::string cleaned = relativePath;
+  while (!cleaned.empty() && (cleaned.back() == ' ' || cleaned.back() == '\t' ||
+                                 cleaned.back() == '\r' || cleaned.back() == '\n')) {
+    cleaned.pop_back();
+  }
+  while (!cleaned.empty() && (cleaned.front() == ' ' || cleaned.front() == '\t' ||
+                                 cleaned.front() == '\r' || cleaned.front() == '\n')) {
+    cleaned.erase(cleaned.begin());
+  }
+  if (cleaned.empty()) return {};
   std::replace(cleaned.begin(), cleaned.end(), '\\', '/');
   while (!cleaned.empty() && cleaned.front() == '/') cleaned.erase(cleaned.begin());
   while (cleaned.rfind("./", 0) == 0) cleaned.erase(0, 2);
@@ -58,6 +67,78 @@ std::filesystem::path chooseShortestPath(const std::vector<std::filesystem::path
   }
   return best;
 }
+
+// Chooses the candidate closest to a preferred directory. The reference importer returns the
+// first file in archive order that lives beside the metadata file and only then falls back to
+// the first candidate anywhere; extraction order is not preserved by the platform listing, so
+// the stable (sorted) order stands in for it.
+std::filesystem::path choosePreferredPath(const std::vector<std::filesystem::path>& files,
+    const std::filesystem::path& preferDirectory) {
+  if (files.empty()) return {};
+  if (!preferDirectory.empty()) {
+    for (const auto& file : files) {
+      if (file.parent_path() == preferDirectory) return file;
+    }
+  }
+  return files.front();
+}
+
+bool looksLikeChartJson(const std::string& head) {
+  if (head.empty()) return false;
+  const bool judgeLines = head.find("\"judgeLineList\"") != std::string::npos
+      || head.find("\"JudgeLineList\"") != std::string::npos;
+  if (!judgeLines) return false;
+  return head.find("\"formatVersion\"") != std::string::npos
+      || head.find("\"BPMList\"") != std::string::npos
+      || head.find("\"META\"") != std::string::npos
+      || head.find("\"RPEVersion\"") != std::string::npos;
+}
+
+bool looksLikeEditorChartText(const std::string& head) {
+  if (head.empty()) return false;
+  const std::string lowered = toLower(head);
+  return lowered.rfind("bp ", 0) == 0 || lowered.find("\nbp ") != std::string::npos
+      || lowered.find("\ncv ") != std::string::npos || lowered.find("\ncp ") != std::string::npos
+      || lowered.find("\ncm ") != std::string::npos || lowered.find("\nn1 ") != std::string::npos
+      || lowered.find("\nn2 ") != std::string::npos || lowered.find("\nn3 ") != std::string::npos
+      || lowered.find("\nn4 ") != std::string::npos;
+}
+
+bool isLikelyChartFile(const std::filesystem::path& file) {
+  if (!platform::fileExists(file)) return false;
+  const std::string extension = toLower(file.extension().string());
+  if (extension == ".json") return looksLikeChartJson(readHead(file, 64 * 1024));
+  if (extension == ".pec" || extension == ".rpe") return true;
+  return looksLikeEditorChartText(readHead(file, 32 * 1024));
+}
+
+std::filesystem::path findPackChart(const std::filesystem::path& root,
+    const std::filesystem::path& preferDirectory) {
+  std::vector<std::filesystem::path> found;
+  for (const auto& file : listRegularFiles(root)) {
+    if (isLikelyChartFile(file)) found.push_back(file);
+  }
+  return choosePreferredPath(found, preferDirectory);
+}
+
+std::filesystem::path findPackAudio(const std::filesystem::path& root,
+    const std::filesystem::path& preferDirectory) {
+  std::vector<std::filesystem::path> found;
+  for (const auto& file : listRegularFiles(root)) {
+    if (isAudioCandidate(file)) found.push_back(file);
+  }
+  return choosePreferredPath(found, preferDirectory);
+}
+
+std::filesystem::path findPackImage(const std::filesystem::path& root,
+    const std::filesystem::path& preferDirectory) {
+  std::vector<std::filesystem::path> found;
+  for (const auto& file : listRegularFiles(root)) {
+    if (isImageCandidate(file)) found.push_back(file);
+  }
+  return choosePreferredPath(found, preferDirectory);
+}
+
 
 std::filesystem::path findInfoFile(const std::filesystem::path& root) {
   const auto canonical = root / "info.json";
@@ -185,6 +266,7 @@ DetectedPack detectPack(const std::filesystem::path& root,
     return toLower(file.filename().string());
   };
 
+  // First pass: match the conventional file names.
   for (const auto& file : extracted) {
     const std::string name = baseName(file);
     if (pack.infoFile.empty() && isInfoName(name)) pack.infoFile = file;
@@ -203,77 +285,112 @@ DetectedPack detectPack(const std::filesystem::path& root,
     }
   }
 
+  // Second pass: any file with a matching extension.
   for (const auto& file : extracted) {
     if (pack.musicFile.empty() && isAudioCandidate(file)) pack.musicFile = file;
     if (pack.bgFile.empty() && isImageCandidate(file)) pack.bgFile = file;
     if (pack.infoFile.empty() && isInfoName(baseName(file))) pack.infoFile = file;
   }
 
-  if (pack.chartFile.empty() || !isChartCandidate(pack.chartFile)) {
+  // Third pass: detect the chart from its content. Metadata and replay files are never
+  // charts even when their payload looks similar.
+  if (pack.chartFile.empty() || !isLikelyChartFile(pack.chartFile)) {
     pack.chartFile.clear();
     for (const auto& file : extracted) {
       const std::string name = baseName(file);
-      if (name == "info.json" || name == "respack.json" || name == "info.yml"
-          || name == "info.yaml" || name == "info.txt" || name == "info.csv") {
+      if (name == "info.json" || name == "extra.json" || name == "respack.json"
+          || name == "replay.json") {
         continue;
       }
-      if (isChartCandidate(file) || toLower(file.extension().string()) == ".pec") {
+      if (isLikelyChartFile(file)) {
         pack.chartFile = file;
         break;
       }
     }
   }
 
+  // Resolve the references the metadata file declares; when a declared path does not exist,
+  // look for the file by name and then for any matching file beside the metadata file.
+  bool infoHasBg = false;
   if (!pack.infoFile.empty()) {
     const auto info = readInfoFile(pack.infoFile);
     const auto infoDir = pack.infoFile.parent_path();
+
     const auto chartFromInfo = resolveRelative(infoDir, info.chart);
     if (!chartFromInfo.empty() && platform::fileExists(chartFromInfo)
-        && isChartCandidate(chartFromInfo)) {
+        && isLikelyChartFile(chartFromInfo)) {
       pack.chartFile = chartFromInfo;
     } else if (!chartFromInfo.empty() && !platform::fileExists(chartFromInfo)) {
-      const auto byName = findByInfoName(root, info.chart, isChartCandidate);
-      if (!byName.empty()) {
-        pack.chartFile = byName;
-      } else {
-        const auto byExtension = findChartFile(infoDir);
-        if (!byExtension.empty()) pack.chartFile = byExtension;
-      }
+      auto found = findByInfoName(root, info.chart, isLikelyChartFile);
+      if (found.empty()) found = findPackChart(root, infoDir);
+      if (!found.empty()) pack.chartFile = found;
     }
 
     const auto musicFromInfo = resolveRelative(infoDir, info.music);
     if (!musicFromInfo.empty() && platform::fileExists(musicFromInfo)) {
       pack.musicFile = musicFromInfo;
     } else if (!musicFromInfo.empty()) {
-      const auto byName = findByInfoName(root, info.music, isAudioCandidate);
-      if (!byName.empty()) pack.musicFile = byName;
+      auto found = findByInfoName(root, info.music, isAudioCandidate);
+      if (found.empty()) found = findPackAudio(root, infoDir);
+      if (!found.empty()) pack.musicFile = found;
     }
 
     const auto bgFromInfo = resolveRelative(infoDir, info.illustration);
     if (!bgFromInfo.empty() && platform::fileExists(bgFromInfo)) {
       pack.bgFile = bgFromInfo;
+      infoHasBg = true;
     } else if (!bgFromInfo.empty()) {
-      const auto byName = findByInfoName(root, info.illustration, isImageCandidate);
-      if (!byName.empty()) pack.bgFile = byName;
+      auto found = findByInfoName(root, info.illustration, isImageCandidate);
+      if (found.empty()) found = findPackImage(root, infoDir);
+      if (!found.empty()) {
+        pack.bgFile = found;
+        infoHasBg = true;
+      }
     }
   }
 
-  if (!pack.chartFile.empty()) {
+  // Chart-embedded metadata fills the background (unless the metadata file declared one) and
+  // a missing music track.
+  if (!pack.chartFile.empty() && isLikelyChartFile(pack.chartFile)) {
     const auto meta = readInfoFromChartFile(pack.chartFile);
     const auto chartDir = pack.chartFile.parent_path();
-    const auto bgFromMeta = resolveRelative(chartDir, meta.illustration);
-    if (pack.bgFile.empty() && !bgFromMeta.empty() && platform::fileExists(bgFromMeta)) {
-      pack.bgFile = bgFromMeta;
+
+    if (!infoHasBg) {
+      const auto bgFromMeta = resolveRelative(chartDir, meta.illustration);
+      if (!bgFromMeta.empty() && platform::fileExists(bgFromMeta)) {
+        pack.bgFile = bgFromMeta;
+      } else if (!bgFromMeta.empty()) {
+        auto found = findByInfoName(root, meta.illustration, isImageCandidate);
+        if (found.empty()) found = findPackImage(root, chartDir);
+        if (!found.empty()) pack.bgFile = found;
+      } else {
+        auto found = findPackImage(root, chartDir);
+        if (!found.empty()) pack.bgFile = found;
+      }
     }
-    const auto musicFromMeta = resolveRelative(chartDir, meta.music);
-    if (pack.musicFile.empty() && !musicFromMeta.empty() && platform::fileExists(musicFromMeta)) {
-      pack.musicFile = musicFromMeta;
+
+    if (pack.musicFile.empty() || !platform::fileExists(pack.musicFile)) {
+      const auto musicFromMeta = resolveRelative(chartDir, meta.music);
+      if (!musicFromMeta.empty() && platform::fileExists(musicFromMeta)) {
+        pack.musicFile = musicFromMeta;
+      } else if (!musicFromMeta.empty()) {
+        auto found = findByInfoName(root, meta.music, isAudioCandidate);
+        if (found.empty()) found = findPackAudio(root, chartDir);
+        if (!found.empty()) pack.musicFile = found;
+      }
     }
   }
 
-  if (pack.chartFile.empty()) pack.chartFile = findChartFile(root);
-  if (pack.musicFile.empty()) pack.musicFile = findAudioFile(root);
-  if (pack.bgFile.empty()) pack.bgFile = findImageFile(root);
+  // Final safety net: scan everything once more, preferring files at the package root.
+  if (pack.chartFile.empty() || !isLikelyChartFile(pack.chartFile)) {
+    pack.chartFile = findPackChart(root, root);
+  }
+  if (pack.musicFile.empty() || !platform::fileExists(pack.musicFile)) {
+    pack.musicFile = findPackAudio(root, root);
+  }
+  if (pack.bgFile.empty() || !platform::fileExists(pack.bgFile)) {
+    pack.bgFile = findPackImage(root, root);
+  }
   return pack;
 }
 

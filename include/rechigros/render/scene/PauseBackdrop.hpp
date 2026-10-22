@@ -16,7 +16,7 @@ inline constexpr float RESUME_BACKDROP_ALPHA_FADE_END_SEC = 2.25F;
 // Separable blur iterations applied to the frozen scene behind the pause menu. The
 // reference backdrop is a wide, clearly readable smear rather than a light soften, so the
 // repeated small-radius kernel is run enough times to reach that width.
-inline constexpr int PAUSE_SCENE_BLUR_ITERATIONS = 12;
+inline constexpr int PAUSE_SCENE_BLUR_ITERATIONS = 6;
 
 // Interpolates a uniformly spaced key table with a cubic Hermite using the supplied
 // in/out slopes. `times` may be non-uniform; the search tolerates that.

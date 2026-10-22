@@ -58,6 +58,7 @@ if(TARGET rechigros_platform)
   add_executable(rechigros_app_data_tests
     AppDataTests.cpp
     ../src/app/InfoFile.cpp
+    ../src/app/ChartLibrary.cpp
     ../src/app/Settings.cpp
     ../src/app/Replay.cpp)
   target_include_directories(rechigros_app_data_tests PRIVATE
@@ -68,6 +69,21 @@ if(TARGET rechigros_platform)
     rechigros_core rechigros_platform nlohmann_json_headers)
   if(NOT ANDROID AND NOT IOS)
     add_test(NAME rechigros_app_data_tests COMMAND rechigros_app_data_tests)
+  endif()
+endif()
+
+# Resource-pack / skin material configuration: parsing, defaults and merge rules. The
+# module is headless, so the same source compiles into the render library and this suite.
+if(TARGET rechigros_platform)
+  add_executable(rechigros_skin_tests
+    SkinConfigTests.cpp
+    ../src/render/skin/SkinConfig.cpp)
+  target_include_directories(rechigros_skin_tests PRIVATE
+    "${PROJECT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(rechigros_skin_tests PRIVATE rechigros_platform nlohmann_json_headers)
+  if(NOT ANDROID AND NOT IOS)
+    add_test(NAME rechigros_skin_tests COMMAND rechigros_skin_tests)
   endif()
 endif()
 

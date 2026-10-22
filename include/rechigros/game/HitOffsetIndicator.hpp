@@ -20,6 +20,7 @@ public:
   void addHit(double diffSec, Judgement judgement, double nowSec, double badWindowSec);
   void update(double nowSec) noexcept;
   [[nodiscard]] float latestTextAlpha(double nowSec) const noexcept;
+  [[nodiscard]] Judgement latestJudgement() const noexcept { return latestJudgement_; }
   [[nodiscard]] float pointerAngleDeg() const noexcept { return pointerAngleDeg_; }
   [[nodiscard]] const std::vector<Mark>& marks() const noexcept { return marks_; }
   [[nodiscard]] const std::string& latestText() const noexcept { return latestText_; }
@@ -42,5 +43,6 @@ private:
   bool returningToCenter_{};
   std::string latestText_;
   double latestTextStartSec_{-std::numeric_limits<double>::infinity()};
+  Judgement latestJudgement_{Judgement::Perfect};
 };
 }

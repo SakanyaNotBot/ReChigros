@@ -622,7 +622,9 @@ std::unique_ptr<game::Chart> ChartLoader::loadFromFile(const std::filesystem::pa
   game::Chart chart;
   switch (format) {
     case ChartFormat::Official:
-      chart = OfficialChartParser::parse(std::string_view(content));
+      // The large arrays carry nearly all of a dense chart's bytes, so they are parsed on a
+      // worker pool; small documents take the regular path inside parseParallel.
+      chart = OfficialChartParser::parseParallel(std::string_view(content));
       break;
     case ChartFormat::Rpe:
       chart = RpeChartParser::parse(content, path.parent_path());

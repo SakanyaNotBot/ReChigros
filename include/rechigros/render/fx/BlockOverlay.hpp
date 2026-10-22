@@ -3,6 +3,8 @@
 #include "rechigros/render/fx/BlockCompositePass.hpp"
 
 #include <array>
+#include <cstddef>
+#include <limits>
 #include <vector>
 
 namespace rechigros::game { class OfficialBlock; }
@@ -84,8 +86,26 @@ public:
       batch::SpriteBatch& target, const math::Mat4& projection, const gl::Texture& white) const;
 
 private:
+  // Windowed view of a block list. Charts can author more than ten thousand zones while only
+  // a handful are live at any instant, so the overlay keeps the list sorted by appear time
+  // and remembers which entries are currently inside their window. Every frame then advances
+  // only the live entries instead of the whole authored list.
+  struct BlockWindow {
+    const void* data{};
+    std::size_t size{};
+    std::vector<std::size_t> order;
+    std::vector<std::size_t> active;
+    std::vector<std::size_t> released;
+    std::size_t cursor{};
+    double lastTimeSec{std::numeric_limits<double>::lowest()};
+  };
+
+  void rebuildWindow(const std::vector<game::OfficialBlock>& blocks, float chartTimeSec) const;
+  void advanceWindow(const std::vector<game::OfficialBlock>& blocks, float chartTimeSec) const;
   void drawVisible(const std::vector<game::OfficialBlock>& blocks, float chartTimeSec,
       batch::SpriteBatch& target, const math::Mat4& projection, const gl::Texture& white) const;
+
+  mutable BlockWindow window_;
 };
 
 } // namespace rechigros::render::fx

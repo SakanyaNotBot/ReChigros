@@ -48,6 +48,11 @@ double getFloorPosition(double time, const JudgeLine& line) noexcept;
 
 // Sequential-time variant that reuses `index` as a hint and keeps it updated.
 double floorPositionMonotonic(double time, const std::vector<SpeedEvent>& events, int& index) noexcept;
+// Layered variant: sums the per-layer monotonic evaluation, with one cursor per layer. The
+// result is identical to getFloorPosition(time, events, layers).
+double floorPositionMonotonic(double time, const std::vector<SpeedEvent>& events,
+    const std::vector<std::vector<SpeedEvent>>& layers, int& index,
+    std::vector<int>& layerIndices) noexcept;
 
 } // namespace EventUtils
 } // namespace rechigros::game

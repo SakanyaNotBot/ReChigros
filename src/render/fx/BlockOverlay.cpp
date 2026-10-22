@@ -76,17 +76,74 @@ BlockOverlay::Style BlockOverlay::styleFor(int phase, bool subtract, float fade)
   return style;
 }
 
+void BlockOverlay::rebuildWindow(const std::vector<game::OfficialBlock>& blocks,
+    float chartTimeSec) const {
+  window_.data = blocks.data();
+  window_.size = blocks.size();
+  window_.order.resize(blocks.size());
+  for (std::size_t index = 0; index < blocks.size(); ++index) window_.order[index] = index;
+  std::stable_sort(window_.order.begin(), window_.order.end(),
+      [&blocks](std::size_t first, std::size_t second) {
+        return blocks[first].appearTime < blocks[second].appearTime;
+      });
+  window_.active.clear();
+  window_.released.clear();
+  window_.cursor = 0;
+  // A jump in time can leave arbitrary runtime state behind, so the whole list returns to
+  // its reset state and the live entries below start their animation again.
+  auto& mutableBlocks = const_cast<std::vector<game::OfficialBlock>&>(blocks);
+  for (auto& block : mutableBlocks) block.resetRuntime();
+  while (window_.cursor < window_.order.size()
+      && blocks[window_.order[window_.cursor]].appearTime <= chartTimeSec) {
+    window_.active.push_back(window_.order[window_.cursor]);
+    ++window_.cursor;
+  }
+  std::sort(window_.active.begin(), window_.active.end());
+  window_.lastTimeSec = chartTimeSec;
+}
+
+void BlockOverlay::advanceWindow(const std::vector<game::OfficialBlock>& blocks,
+    float chartTimeSec) const {
+  if (window_.data != blocks.data() || window_.size != blocks.size()
+      || chartTimeSec < window_.lastTimeSec) {
+    rebuildWindow(blocks, chartTimeSec);
+    return;
+  }
+  if (chartTimeSec == window_.lastTimeSec) return;
+  window_.lastTimeSec = chartTimeSec;
+  // Entries become live in appear-time order, so the cursor only moves forward.
+  bool added = false;
+  while (window_.cursor < window_.order.size()
+      && blocks[window_.order[window_.cursor]].appearTime <= chartTimeSec) {
+    window_.active.push_back(window_.order[window_.cursor]);
+    ++window_.cursor;
+    added = true;
+  }
+  if (added) std::sort(window_.active.begin(), window_.active.end());
+  // Entries that leave their window return to the reset state, exactly like a pass that
+  // visits every authored entry would leave them.
+  auto& mutableBlocks = const_cast<std::vector<game::OfficialBlock>&>(blocks);
+  window_.released.clear();
+  std::erase_if(window_.active, [&mutableBlocks, chartTimeSec, this](std::size_t index) {
+    const auto& block = mutableBlocks[index];
+    if (chartTimeSec < block.appearTime || chartTimeSec >= block.disappearTime) {
+      this->window_.released.push_back(index);
+      return true;
+    }
+    return false;
+  });
+  for (const std::size_t index : window_.released) mutableBlocks[index].resetRuntime();
+}
+
 void BlockOverlay::updateAll(std::vector<game::OfficialBlock>& blocks, float chartTimeSec,
     float deltaTimeSec, float stageX, float stageY, float stageWidth, float stageHeight) const {
   if (blocks.empty()) return;
-  // Cheap phase cull before the (much more expensive) event evaluation: a chapter-level
-  // chart can carry more than ten thousand zones and only a few are on screen at a time.
-  for (auto& block : blocks) {
-    if (chartTimeSec < block.appearTime || chartTimeSec >= block.disappearTime) {
-      block.resetRuntime();
-      continue;
-    }
-    block.update(chartTimeSec, stageX, stageY, stageWidth, stageHeight, deltaTimeSec);
+  // Only the zones inside their appear/disappear window need their event evaluation run;
+  // a chapter-level chart can author more than ten thousand entries while a handful are
+  // live at any instant.
+  advanceWindow(blocks, chartTimeSec);
+  for (const std::size_t index : window_.active) {
+    blocks[index].update(chartTimeSec, stageX, stageY, stageWidth, stageHeight, deltaTimeSec);
   }
 }
 
@@ -98,7 +155,9 @@ void BlockOverlay::collectMaskQuads(const std::vector<game::OfficialBlock>& bloc
   // the second holds the subtract layer (R, and B while the zone is ready) plus the ready
   // highlight in G. Overlapping subtract zones add, and the composite's gate then turns a
   // doubly written texel into a hole instead of a visible zone.
-  for (const auto& block : blocks) {
+  advanceWindow(blocks, chartTimeSec);
+  for (const std::size_t index : window_.active) {
+    const auto& block = blocks[index];
     if (!block.visible) continue;
     if (block.halfW * 2.0F <= kMinimumMaskExtent || block.halfH * 2.0F <= kMinimumMaskExtent) {
       continue;
@@ -261,10 +320,12 @@ int BlockOverlay::draw(const game::OfficialBlock& block, float chartTimeSec,
 void BlockOverlay::drawVisible(const std::vector<game::OfficialBlock>& blocks,
     float chartTimeSec, batch::SpriteBatch& target, const math::Mat4& projection,
     const gl::Texture& white) const {
-  // Chapter-level charts can carry more than ten thousand zones, so the batch is flushed in
-  // chunks instead of being sized for the worst case.
+  // Only the zones inside their window are candidates; `updateAll` has already refreshed
+  // that small list. The batch is still flushed in chunks because a burst of zones can be
+  // live at once and the batch has a fixed capacity.
   constexpr int kFlushThreshold = batch::MAX_BATCH_SPRITES / 2;
-  for (const auto& block : blocks) {
+  for (const std::size_t index : window_.active) {
+    const auto& block = blocks[index];
     if (!block.visible) continue;
     if (target.size() >= kFlushThreshold) {
       target.flush(projection, white, nullptr);

@@ -1,4 +1,5 @@
 #include "rechigros/platform/Archive.hpp"
+#include "rechigros/platform/FileSystem.hpp"
 
 #include <miniz.h>
 
@@ -51,7 +52,9 @@ bool readExact(std::ifstream& stream, void* buffer, std::size_t size) {
 // that would escape the extraction root.
 bool normaliseEntryName(const std::string& raw, std::string& out) {
   if (raw.empty()) return false;
-  std::string name = raw;
+  // Names written by older packagers carry the legacy Chinese code page. They are decoded
+  // so the extracted file names match the paths the package metadata refers to.
+  std::string name = decodeLegacyText(raw);
   std::replace(name.begin(), name.end(), '\\', '/');
   if (name.find('\0') != std::string::npos) return false;
 

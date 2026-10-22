@@ -339,6 +339,318 @@ void updateDisplayValues(const HudValues& values, int& scoreOut, int& accuracyHu
   scoreOut = displayScore;
   accuracyHundredthsOut = std::clamp(hundredths, 0, 10000);
 }
+
+// Judgement offset dial colours, matching the reference HUD constants.
+constexpr float kOffsetGreenR = 0.42F;constexpr float kOffsetGreenG = 1.00F;
+constexpr float kOffsetGreenB = 0.36F;
+constexpr float kOffsetYellowR = 1.00F;
+constexpr float kOffsetYellowG = 0.86F;
+constexpr float kOffsetYellowB = 0.28F;
+constexpr float kOffsetRedR = 1.00F;
+constexpr float kOffsetRedG = 0.36F;
+constexpr float kOffsetRedB = 0.31F;
+constexpr float kOffsetMaxAngleDeg = 60.0F;
+
+float offsetMarkFadeOut(float progress) {
+  const float inverse = 1.0F - std::clamp(progress, 0.0F, 1.0F);
+  return inverse * inverse;
+}
+
+// One reference layout step in pixels: density 1.75 on a 1080-tall viewport.
+float referenceDp(const StageLayout& layout) {
+  return 1.75F * std::max(0.2F, layout.viewHeight / 1080.0F);
+}
+
+// Adds one glow-stroked segment to the accumulated line batch. The three widths and the
+// falloff alphas mirror the reference's three-layer stroke.
+void addOffsetStroke(batch::SpriteBatch& batch, float x0, float y0, float x1, float y1,
+    float width, float dp, float red, float green, float blue, float alpha) {
+  if (!(alpha > 0.0F)) return;
+  const float antiAlias = std::max(1.0F, dp * 0.45F);
+  batch.addLine(x0, y0, x1, y1, width + antiAlias * 2.0F, red, green, blue, alpha * 0.10F);
+  batch.addLine(x0, y0, x1, y1, width + antiAlias, red, green, blue, alpha * 0.18F);
+  batch.addLine(x0, y0, x1, y1, width, red, green, blue, alpha * 0.88F);
+}
+
+float offsetPointX(float cx, float angleDeg, float radius) {
+  const float radians = angleDeg * 3.14159265358979323846F / 180.0F;
+  return cx + std::sin(radians) * radius;
+}
+
+float offsetPointY(float baseY, float angleDeg, float radius) {
+  const float radians = angleDeg * 3.14159265358979323846F / 180.0F;
+  return baseY - std::cos(radians) * radius;
+}
+
+void addOffsetArc(batch::SpriteBatch& batch, float cx, float baseY, float radius,
+    float startAngle, float endAngle, float width, float dp, float red, float green, float blue,
+    float alpha) {
+  if (endAngle <= startAngle || !(alpha > 0.0F)) return;
+  const int steps = std::max(3, static_cast<int>(std::ceil((endAngle - startAngle) / 2.0F)));
+  float previousX = offsetPointX(cx, startAngle, radius);
+  float previousY = offsetPointY(baseY, startAngle, radius);
+  for (int index = 1; index <= steps; ++index) {
+    const float t = static_cast<float>(index) / static_cast<float>(steps);
+    const float angle = startAngle + (endAngle - startAngle) * t;
+    const float x = offsetPointX(cx, angle, radius);
+    const float y = offsetPointY(baseY, angle, radius);
+    addOffsetStroke(batch, previousX, previousY, x, y, width, dp, red, green, blue, alpha);
+    previousX = x;
+    previousY = y;
+  }
+}
+
+void addOffsetRadial(batch::SpriteBatch& batch, float cx, float baseY, float angleDeg,
+    float innerRadius, float outerRadius, float width, float dp, float red, float green, float blue,
+    float alpha) {
+  addOffsetStroke(batch, offsetPointX(cx, angleDeg, innerRadius),
+      offsetPointY(baseY, angleDeg, innerRadius), offsetPointX(cx, angleDeg, outerRadius),
+      offsetPointY(baseY, angleDeg, outerRadius), width, dp, red, green, blue, alpha);
+}
+
+void offsetColour(int judgement, float& red, float& green, float& blue) {
+  if (judgement == 1) {
+    red = kOffsetYellowR;
+    green = kOffsetYellowG;
+    blue = kOffsetYellowB;
+  } else if (judgement == 2) {
+    red = kOffsetRedR;
+    green = kOffsetRedG;
+    blue = kOffsetRedB;
+  } else {
+    red = kOffsetGreenR;
+    green = kOffsetGreenG;
+    blue = kOffsetGreenB;
+  }
+}
+
+// Draws one texture with its top-left corner at (left, top), without any HUD transform.
+void drawTextureTopLeftUntransformed(batch::SpriteBatch& batch, const gl::Texture& texture,
+    float left, float top, float width, float height, float red, float green, float blue,
+    float alpha, const math::Mat4& projection) {
+  if (!(alpha > 0.001F) || width <= 0.0F || height <= 0.0F) return;
+  batch.begin();
+  batch.addQuad(left + width * 0.5F, top + height * 0.5F, width, height, 0.0F,
+      std::clamp(red, 0.0F, 1.0F), std::clamp(green, 0.0F, 1.0F), std::clamp(blue, 0.0F, 1.0F),
+      std::clamp(alpha, 0.0F, 1.0F), 0.0F, 0.0F, 1.0F, 1.0F);
+  batch.flush(projection, texture, nullptr);
+}
+
+// Centre-anchored texture draw, used by the pointer glyph.
+void drawTextureCentred(batch::SpriteBatch& batch, const gl::Texture& texture, float centerX,
+    float centerY, float width, float height, float rotationDeg, float red, float green, float blue,
+    float alpha, const math::Mat4& projection) {
+  if (!(alpha > 0.001F) || width <= 0.0F || height <= 0.0F) return;
+  batch.begin();
+  batch.addQuad(centerX, centerY, width, height, rotationDeg, red, green, blue, alpha, 0.0F, 0.0F,
+      1.0F, 1.0F);
+  batch.flush(projection, texture, nullptr);
+}
+
+// Draws the offset indicator readout, positioned like the reference's text textures.
+void drawOffsetText(batch::SpriteBatch& batch, text::TextRenderer& text,
+    const HudHitOffset& hitOffset, float centerX, float centerY, float textPx, float alpha,
+    const math::Mat4& projection) {
+  if (hitOffset.text.empty() || !(alpha > 0.001F) || textPx <= 0.0F) return;
+  auto* glyphs = text.get(hitOffset.text, textPx, false);
+  if (glyphs == nullptr || glyphs->width <= 0 || glyphs->height <= 0) return;
+  float red = 1.0F;
+  float green = 1.0F;
+  float blue = 1.0F;
+  offsetColour(hitOffset.textJudgement, red, green, blue);
+  const float width = static_cast<float>(glyphs->width);
+  const float height = static_cast<float>(glyphs->height);
+  const float left = centerX - width * 0.5F;
+  const float top = centerY - height * 0.5F;
+  // The reference bakes a soft drop shadow into this label; a translucent offset copy
+  // gives the same readability on the dark play field.
+  drawTextureTopLeftUntransformed(batch, glyphs->texture, left, top + std::max(1.0F, textPx * 0.05F),
+      width, height, 0.0F, 0.0F, 0.0F, alpha * 0.35F, projection);
+  drawTextureTopLeftUntransformed(batch, glyphs->texture, left, top, width, height, red, green, blue,
+      alpha, projection);
+}
+
+// The judgement offset dial / line, ported from the reference HUD pass.
+void drawHitOffsetIndicator(batch::SpriteBatch& batch, text::TextRenderer& text,
+    const StageLayout& layout, const HudHitOffset& hitOffset, float hudAlpha,
+    const HudTextures& textures, const math::Mat4& projection) {
+  if (hitOffset.mode == 0 || hitOffset.suppressed || !(hudAlpha > 0.001F)) return;
+  const float viewWidth = layout.viewWidth;
+  const float viewHeight = layout.viewHeight;
+  if (viewWidth <= 0.0F || viewHeight <= 0.0F) return;
+
+  const float dp = referenceDp(layout);
+  const float alpha = hudAlpha * 0.68F;
+  if (alpha <= 0.001F) return;
+
+  const float meterWidth = std::clamp(viewWidth * 0.18F, dp * 120.0F, dp * 190.0F);
+  const float radius = meterWidth * 0.5F;
+  const float centerX = viewWidth * 0.5F;
+  const float arcWidth = std::max(dp * 1.6F, meterWidth * 0.012F);
+  constexpr float pi = 3.14159265358979323846F;
+  const float maxAngleRad = kOffsetMaxAngleDeg * pi / 180.0F;
+  const float endpointCos = std::cos(maxAngleRad);
+  const float endpointSin = std::sin(maxAngleRad);
+  const float lineHalfWidth = radius * endpointSin;
+  const float arcHeight = radius * (1.0F - endpointCos);
+  const float arrowRadius = radius - dp * 9.0F;
+
+  // Pointer glyph metrics; the reference accounts for its footprint when placing the
+  // dial so it never runs off the bottom edge.
+  float arrowWidth = std::clamp(meterWidth * 0.095F, dp * 12.0F, dp * 17.0F);
+  float arrowHeight = arrowWidth;
+  const bool hasArrow = textures.hitOffsetArrow != nullptr && textures.hitOffsetArrow->valid() &&
+      textures.hitOffsetArrow->width() > 0 && textures.hitOffsetArrow->height() > 0;
+  if (hasArrow) {
+    arrowHeight = arrowWidth * static_cast<float>(textures.hitOffsetArrow->height()) /
+        std::max(1.0F, static_cast<float>(textures.hitOffsetArrow->width()));
+  }
+
+  const float perfectAngle = std::clamp(
+      static_cast<float>(hitOffset.perfectWindowSec / std::max(0.001F, hitOffset.badWindowSec)) *
+          kOffsetMaxAngleDeg, 0.0F, kOffsetMaxAngleDeg);
+  const float goodAngle = std::clamp(
+      static_cast<float>(hitOffset.goodWindowSec / std::max(0.001F, hitOffset.badWindowSec)) *
+          kOffsetMaxAngleDeg, perfectAngle, kOffsetMaxAngleDeg);
+
+  const bool lineMode = hitOffset.mode == 2;
+  const bool canDraw = textures.white != nullptr && textures.white->valid();
+  if (lineMode) {
+    const float bottomSafety = (hasArrow ? arrowHeight : 0.0F) + dp * 5.0F;
+    const float lineY = viewHeight - bottomSafety;
+    const float half = lineHalfWidth;
+    const float perfectX = std::clamp(
+        static_cast<float>(hitOffset.perfectWindowSec /
+            std::max(0.001F, hitOffset.badWindowSec)) * half, 0.0F, half);
+    const float goodX = std::clamp(
+        static_cast<float>(hitOffset.goodWindowSec /
+            std::max(0.001F, hitOffset.badWindowSec)) * half, perfectX, half);
+    if (canDraw) {
+      batch.begin();
+      // The line variant uses the same red/yellow/green bands as the dial, mirrored about
+      // the centre.
+      addOffsetStroke(batch, centerX - half, lineY, centerX - goodX, lineY, arcWidth, dp,
+          kOffsetRedR, kOffsetRedG, kOffsetRedB, alpha);
+      addOffsetStroke(batch, centerX - goodX, lineY, centerX - perfectX, lineY, arcWidth, dp,
+          kOffsetYellowR, kOffsetYellowG, kOffsetYellowB, alpha);
+      addOffsetStroke(batch, centerX - perfectX, lineY, centerX + perfectX, lineY, arcWidth, dp,
+          kOffsetGreenR, kOffsetGreenG, kOffsetGreenB, alpha);
+      addOffsetStroke(batch, centerX + perfectX, lineY, centerX + goodX, lineY, arcWidth, dp,
+          kOffsetYellowR, kOffsetYellowG, kOffsetYellowB, alpha);
+      addOffsetStroke(batch, centerX + goodX, lineY, centerX + half, lineY, arcWidth, dp,
+          kOffsetRedR, kOffsetRedG, kOffsetRedB, alpha);
+      addOffsetStroke(batch, centerX, lineY - dp * 4.0F, centerX, lineY + dp * 4.0F,
+          std::max(dp * 0.8F, arcWidth * 0.55F), dp, 1.0F, 1.0F, 1.0F, alpha * 0.7F);
+      for (int index = 0; index < hitOffset.markCount; ++index) {
+        const auto& mark = hitOffset.marks[static_cast<std::size_t>(index)];
+        if (!mark.active || mark.age < 0.0F || mark.age >= 1.0F) continue;
+        const float markAlpha = offsetMarkFadeOut(mark.age) * hudAlpha;
+        if (markAlpha <= 0.001F) continue;
+        float red = 0.0F;
+        float green = 0.0F;
+        float blue = 0.0F;
+        offsetColour(mark.judgement, red, green, blue);
+        const float fraction = std::clamp(mark.angleDeg / kOffsetMaxAngleDeg, -1.0F, 1.0F);
+        const float x = centerX + fraction * half;
+        addOffsetStroke(batch, x, lineY - dp * 3.0F, x, lineY + dp * 4.0F, arcWidth * 2.5F, dp,
+            red, green, blue, markAlpha * 0.16F);
+        addOffsetStroke(batch, x, lineY - dp * 3.0F, x, lineY + dp * 4.0F, arcWidth * 1.45F, dp,
+            red, green, blue, markAlpha * 0.34F);
+        addOffsetStroke(batch, x, lineY - dp * 3.0F, x, lineY + dp * 4.0F, arcWidth * 0.7F, dp,
+            red, green, blue, markAlpha * 0.9F);
+      }
+      batch.flush(projection, *textures.white, nullptr);
+    }
+    if (hasArrow) {
+      const float fraction = std::clamp(hitOffset.pointerAngleDeg / kOffsetMaxAngleDeg, -1.0F, 1.0F);
+      const float x = centerX + fraction * half;
+      drawTextureCentred(batch, *textures.hitOffsetArrow, x, lineY + dp * 3.0F + arrowHeight * 0.5F,
+          arrowWidth, arrowHeight, 0.0F, 1.0F, 1.0F, 1.0F, hudAlpha * 0.82F, projection);
+    }
+    const float textSize = std::clamp(meterWidth * 0.075F, dp * 9.0F, dp * 13.0F);
+    drawOffsetText(batch, text, hitOffset, centerX, lineY - dp * 12.0F, textSize,
+        hitOffset.textAlpha * hudAlpha * 0.85F, projection);
+    return;
+  }
+
+  // Sector dial.
+  const float arrowBelowArc = endpointCos * std::max(0.0F, radius - arrowRadius);
+  const float arrowHalfBounds = 0.5F * std::sqrt(arrowWidth * arrowWidth +
+      arrowHeight * arrowHeight);
+  const float bottomSafety = hasArrow
+      ? std::max(dp * 3.0F, arrowBelowArc + arrowHalfBounds + dp * 2.0F)
+      : dp * 3.0F;
+  const float baseY = viewHeight - arcHeight - bottomSafety + radius;
+  if (canDraw) {
+    batch.begin();
+    addOffsetArc(batch, centerX, baseY, radius, -kOffsetMaxAngleDeg, -goodAngle, arcWidth, dp,
+        kOffsetRedR, kOffsetRedG, kOffsetRedB, alpha);
+    addOffsetArc(batch, centerX, baseY, radius, -goodAngle, -perfectAngle, arcWidth, dp,
+        kOffsetYellowR, kOffsetYellowG, kOffsetYellowB, alpha);
+    addOffsetArc(batch, centerX, baseY, radius, -perfectAngle, perfectAngle, arcWidth, dp,
+        kOffsetGreenR, kOffsetGreenG, kOffsetGreenB, alpha);
+    addOffsetArc(batch, centerX, baseY, radius, perfectAngle, goodAngle, arcWidth, dp,
+        kOffsetYellowR, kOffsetYellowG, kOffsetYellowB, alpha);
+    addOffsetArc(batch, centerX, baseY, radius, goodAngle, kOffsetMaxAngleDeg, arcWidth, dp,
+        kOffsetRedR, kOffsetRedG, kOffsetRedB, alpha);
+    addOffsetRadial(batch, centerX, baseY, 0.0F, radius - dp * 6.0F, radius + dp * 6.0F,
+        std::max(dp * 0.8F, meterWidth * 0.005F), dp, 1.0F, 1.0F, 1.0F, alpha * 0.7F);
+    for (int index = 0; index < hitOffset.markCount; ++index) {
+      const auto& mark = hitOffset.marks[static_cast<std::size_t>(index)];
+      if (!mark.active || mark.age < 0.0F || mark.age >= 1.0F) continue;
+      const float markAlpha = offsetMarkFadeOut(mark.age) * hudAlpha;
+      if (markAlpha <= 0.001F) continue;
+      float red = 0.0F;
+      float green = 0.0F;
+      float blue = 0.0F;
+      offsetColour(mark.judgement, red, green, blue);
+      addOffsetRadial(batch, centerX, baseY, mark.angleDeg, radius - dp * 3.0F, radius + dp * 4.0F,
+          arcWidth * 2.5F, dp, red, green, blue, markAlpha * 0.16F);
+      addOffsetRadial(batch, centerX, baseY, mark.angleDeg, radius - dp * 3.0F, radius + dp * 4.0F,
+          arcWidth * 1.45F, dp, red, green, blue, markAlpha * 0.34F);
+      addOffsetRadial(batch, centerX, baseY, mark.angleDeg, radius - dp * 3.0F, radius + dp * 4.0F,
+          arcWidth * 0.7F, dp, red, green, blue, markAlpha * 0.9F);
+    }
+    batch.flush(projection, *textures.white, nullptr);
+  }
+  if (hasArrow) {
+    // The pointer rides the inner arrow radius, not the arc itself.
+    drawTextureCentred(batch, *textures.hitOffsetArrow,
+        offsetPointX(centerX, hitOffset.pointerAngleDeg, arrowRadius),
+        offsetPointY(baseY, hitOffset.pointerAngleDeg, arrowRadius), arrowWidth, arrowHeight,
+        hitOffset.pointerAngleDeg, 1.0F, 1.0F, 1.0F, hudAlpha * 0.82F, projection);
+  }
+  // The shipped reference dial has no numeric readout under the arc; the raw offset text
+  // was a port-only addition and is intentionally not drawn here.
+  (void)text;
+}
+
+// Reference frame-rate readout: bottom-left "N FPS" on a half-transparent plate.
+void drawFpsCounter(batch::SpriteBatch& batch, text::TextRenderer& text, const StageLayout& layout,
+    const HudValues& values, float hudAlpha, const HudTextures& textures,
+    const math::Mat4& projection) {
+  if (!values.showFps || !(hudAlpha > 0.001F)) return;
+  const float dp = referenceDp(layout);
+  const float textPx = dp * 12.0F;
+  const int fps = std::max(0, static_cast<int>(std::lround(values.fps)));
+  const std::string label = std::to_string(fps) + " FPS";
+  auto* glyphs = text.get(label, textPx, false);
+  if (glyphs == nullptr || glyphs->width <= 0 || glyphs->height <= 0) return;
+  const float width = static_cast<float>(glyphs->width);
+  const float height = static_cast<float>(glyphs->height);
+  const float left = layout.stage.x + dp * 4.0F;
+  const float top = std::max(layout.stage.y + dp * 2.0F,
+      layout.stage.y + layout.stage.height - dp * 2.0F - height);
+  if (textures.white != nullptr && textures.white->valid()) {
+    batch.begin();
+    batch.addQuad(left - dp * 4.0F + (width + dp * 8.0F) * 0.5F,
+        top - dp * 2.0F + (height + dp * 4.0F) * 0.5F, width + dp * 8.0F, height + dp * 4.0F, 0.0F,
+        0.0F, 0.0F, 0.0F, 0.5F * hudAlpha, 0.0F, 0.0F, 1.0F, 1.0F);
+    batch.flush(projection, *textures.white, nullptr);
+  }
+  drawTextureTopLeftUntransformed(batch, glyphs->texture, left, top, width, height, 1.0F, 1.0F,
+      1.0F, hudAlpha, projection);
+}
 } // namespace
 
 float hudUnit(const StageLayout& layout) noexcept {
@@ -356,7 +668,8 @@ float hudY(const StageLayout& layout, float uiY) noexcept {
 
 void drawHud(batch::SpriteBatch& batch, text::TextRenderer& text, const StageLayout& layout,
     const HudValues& values, const HudColors& colors, const HudTextures& textures,
-    const HudTransforms& transforms, float alpha, const math::Mat4& projection) {
+    const HudTransforms& transforms, const HudHitOffset& hitOffset, float alpha,
+    const math::Mat4& projection) {
   if (!(alpha > 0.001F) || !text.ready()) return;
 
   HudCanvas canvas{layout};
@@ -550,6 +863,9 @@ void drawHud(batch::SpriteBatch& batch, text::TextRenderer& text, const StageLay
           colors.textG, colors.textB, textAlpha, projection);
     }
   }
+
+  drawHitOffsetIndicator(batch, text, layout, hitOffset, alpha, textures, projection);
+  drawFpsCounter(batch, text, layout, values, alpha, textures, projection);
 }
 
 } // namespace rechigros::render::scene

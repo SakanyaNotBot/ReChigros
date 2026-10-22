@@ -244,6 +244,21 @@ void runChecks() {
       "portable join");
   require(joinPortable(scratch, "single.txt") == scratch / "single.txt", "portable join single");
 
+  // Legacy encodings: valid UTF-8 passes through untouched, while a byte string that is not
+  // UTF-8 is treated as the legacy Chinese code page (bytes "测试" in GBK).
+  require(isValidUtf8("plain ascii"), "ascii is valid UTF-8");
+  require(isValidUtf8("\xe6\xb5\x8b\xe8\xaf\x95"), "UTF-8 text is valid");
+  require(!isValidUtf8("\xb2\xe2\xca\xd4"), "legacy text is not valid UTF-8");
+  require(decodeLegacyText("plain ascii") == "plain ascii", "valid text untouched");
+  require(decodeLegacyText("\xe6\xb5\x8b\xe8\xaf\x95") == "\xe6\xb5\x8b\xe8\xaf\x95",
+      "UTF-8 text untouched");
+#if defined(_WIN32)
+  require(decodeLegacyText("\xb2\xe2\xca\xd4") == "\xe6\xb5\x8b\xe8\xaf\x95",
+      "legacy code page decoded on this platform");
+#else
+  require(!decodeLegacyText("\xb2\xe2\xca\xd4").empty(), "legacy text keeps a best-effort result");
+#endif
+
   const auto listedFiles = listFiles(outputDir);
   require(listedFiles.size() == 6, "recursive listing");
   require(std::is_sorted(listedFiles.begin(), listedFiles.end()), "listing is sorted");

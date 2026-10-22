@@ -2,6 +2,7 @@
 // clamping and replay serialisation. These units are deliberately free of any interface
 // or GPU dependency, so they run headless like the rest of the suites.
 
+#include "rechigros/app/ChartLibrary.hpp"
 #include "rechigros/app/InfoFile.hpp"
 #include "rechigros/app/Replay.hpp"
 #include "rechigros/app/Settings.hpp"
@@ -13,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -289,12 +291,271 @@ void testReplayPlaybackResultMerge() {
   require(empty.score == 1, "a replay without a saved histogram keeps its statistics");
 }
 
+namespace {
+
+// A minimal official-format chart with a META block; the chart detector keys on the
+// judge-line list plus the format version, exactly like the reference importer.
+std::string chartJson(const std::string& name, const std::string& level,
+    const std::string& background, const std::string& music, bool withMeta = true) {
+  std::ostringstream out;
+  out << R"({"formatVersion":3,"offset":0,)";
+  if (withMeta) {
+    out << R"("META":{"songName":")" << name << R"(","level":")" << level
+        << R"(","background":")" << background << R"(","music":")" << music << R"("},)";
+  }
+  out << R"("judgeLineList":[{"bpm":120.0,"notesAbove":[],"notesBelow":[],
+"speedEvents":[{"startTime":0,"endTime":100000.0,"value":1.0,"endValue":1.0}],
+"judgeLineMoveEvents":[],"judgeLineRotateEvents":[],"judgeLineDisappearEvents":[]}]})";
+  return out.str();
+}
+
+void requireEqual(const std::string& actual, const std::string& expected, const char* what) {
+  require(actual == expected, std::string(what) + " (got '" + actual + "')");
+}
+
+// The metadata reader's field set, alias table and value coercions follow the reference
+// readers: the key/value formats (yml/yaml/txt/csv) use the narrower alias table, the JSON
+// document uses the wider one, and typed fields accept the same scalar forms.
+void testInfoFileFormats() {
+  using namespace rechigros::app;
+  const auto directory = rechigros::test::scratchDirectory("app-data-info");
+  const std::string en = kEnSpace;
+
+  // Key/value metadata: every alias of the reference key/value reader.
+  writeText(directory / "info.yml",
+      "# pack metadata\n"
+      "name: YAML Song\n"
+      "song: hidden-music.ogg\n"
+      "chart: charts/main.json\n"
+      "picture: art.png\n"
+      "level: IN 15\n"
+      "artist: Composer\n"
+      "designer: Charter\n"
+      "illustrator: Illustrator\n"
+      "chart_offset_ms: -120\n"
+      "use_attach_ui_fix: 1\n"
+      "music_volume: 10\n");
+  const auto yaml = readInfoFile(directory / "info.yml");
+  requireEqual(yaml.name, "YAML Song", "yml name alias");
+  requireEqual(yaml.music, "hidden-music.ogg", "yml song alias for music");
+  requireEqual(yaml.chart, "charts/main.json", "yml chart");
+  requireEqual(yaml.illustration, "art.png", "yml picture alias for illustration");
+  requireEqual(yaml.level, std::string("IN") + en + "15", "yml level is normalised");
+  requireEqual(yaml.composer, "Composer", "yml artist alias for composer");
+  requireEqual(yaml.charter, "Charter", "yml designer alias for charter");
+  requireEqual(yaml.illustrator, "Illustrator", "yml illustrator");
+  require(yaml.hasChartOffset && yaml.chartOffsetMs == -120, "yml offset alias is read");
+  require(yaml.hasUseAttachUiFix && yaml.useAttachUiFix, "yml attach-ui flag is read");
+  require(yaml.difficulty.empty(), "an unknown key does not fill difficulty");
+
+  // The key/value reader must not accept the JSON-only aliases: a pack that relies on one
+  // has to fall back exactly like the reference does.
+  writeText(directory / "narrow.yml",
+      "title: Title\nsongName: SongName\naudio: a.ogg\nbg: b.png\nchartPath: c.json\n");
+  const auto narrow = readInfoFile(directory / "narrow.yml");
+  require(narrow.name.empty(), "yml title is not a name alias");
+  require(narrow.music.empty(), "yml audio is not a music alias");
+  require(narrow.illustration.empty(), "yml bg is not an illustration alias");
+  require(narrow.chart.empty(), "yml chartPath is not a chart alias");
+
+  // YAML comments are skipped on any line; the unknown extension parses as YAML.
+  writeText(directory / "info.yaml", "# one\n# two\nname: Commented\n");
+  requireEqual(readInfoFile(directory / "info.yaml").name, "Commented",
+      "yaml comments are skipped");
+  writeText(directory / "info.data", "name: Fallback\n");
+  requireEqual(readInfoFile(directory / "info.data").name, "Fallback",
+      "an unknown extension parses like yaml");
+
+  // Key/value text only treats the first physical line as a possible comment.
+  writeText(directory / "info.txt", "name: Text Song\n# composer: Hidden\nmusic: text.ogg\n");
+  const auto text = readInfoFile(directory / "info.txt");
+  requireEqual(text.name, "Text Song", "txt name");
+  requireEqual(text.music, "text.ogg", "txt music");
+  require(text.composer.empty(), "txt comment lines are not metadata");
+  writeText(directory / "csv-info.csv",
+      "name,music,chart,illustration,level\nCSV Song,csv.ogg,csv.json,csv.png,15\n");
+  const auto csv = readInfoFile(directory / "csv-info.csv");
+  requireEqual(csv.name, "CSV Song", "csv name column");
+  requireEqual(csv.music, "csv.ogg", "csv music column");
+  requireEqual(csv.chart, "csv.json", "csv chart column");
+  requireEqual(csv.illustration, "csv.png", "csv illustration column");
+  requireEqual(csv.level, "15", "csv level column");
+
+  // JSON metadata: wider alias table (JSON-only names are accepted here).
+  writeText(directory / "info.json",
+      R"({"songName":"JSON Song","Chart":"json-chart.json","audio":"json.ogg",
+"Image":"json.png","Level":"AT 16","Artist":"JComposer","Designer":"JCharter",
+"Illustrator":"JIllustrator","chart_offset_ms":12.9,"use_attach_ui_fix":1})");
+  const auto json = readInfoFile(directory / "info.json");
+  requireEqual(json.name, "JSON Song", "json songName alias");
+  requireEqual(json.chart, "json-chart.json", "json Chart alias");
+  requireEqual(json.music, "json.ogg", "json audio alias");
+  requireEqual(json.illustration, "json.png", "json Image alias");
+  requireEqual(json.level, std::string("AT") + en + "16", "json level is normalised");
+  requireEqual(json.composer, "JComposer", "json Artist alias");
+  requireEqual(json.charter, "JCharter", "json Designer alias");
+  requireEqual(json.illustrator, "JIllustrator", "json Illustrator alias");
+  require(json.hasChartOffset && json.chartOffsetMs == 12,
+      "a fractional json offset truncates like the reference integer reader");
+  require(json.hasUseAttachUiFix && json.useAttachUiFix, "a numeric attach-ui flag is true");
+
+  // Value nodes become text for string fields, exactly like the reference string reader.
+  writeText(directory / "numeric.json", R"({"name":12345,"composer":true,"illustrator":1.5})");
+  const auto numeric = readInfoFile(directory / "numeric.json");
+  requireEqual(numeric.name, "12345", "an integer name becomes its decimal text");
+  requireEqual(numeric.composer, "true", "a boolean composer becomes true/false text");
+  requireEqual(numeric.illustrator, "1.5", "a floating illustrator keeps its plain spelling");
+
+  // Typed fields accept textual forms and fall through to the next alias when unparseable.
+  writeText(directory / "typed.json",
+      R"({"useAttachUiFix":"false","chartOffsetMs":"bad","offsetMs":-7})");
+  const auto typed = readInfoFile(directory / "typed.json");
+  require(typed.hasChartOffset && typed.chartOffsetMs == -7,
+      "an unparseable offset falls through to the next alias");
+  require(typed.hasUseAttachUiFix && !typed.useAttachUiFix, "a textual boolean flag is read");
+
+  // The reference JSON reader enables unquoted field names; the port accepts them too.
+  writeText(directory / "loose.json", "{name: \"Loose\", music: \"loose.ogg\", level: \"IN 12\"}");
+  const auto loose = readInfoFile(directory / "loose.json");
+  requireEqual(loose.name, "Loose", "unquoted field names are accepted");
+  requireEqual(loose.music, "loose.ogg", "unquoted field names keep the alias table");
+  requireEqual(loose.level, std::string("IN") + en + "12", "unquoted level is normalised");
+
+  // Chart-embedded metadata fills the same fields, with the same value coercions.
+  writeText(directory / "meta-chart.json",
+      chartJson("Meta Song", "15", "bg.png", "meta.ogg"));
+  const auto meta = readInfoFromChartFile(directory / "meta-chart.json");
+  requireEqual(meta.name, "Meta Song", "chart META songName");
+  requireEqual(meta.level, "15", "a numeric chart META level becomes text");
+  requireEqual(meta.illustration, "bg.png", "chart META background");
+  requireEqual(meta.music, "meta.ogg", "chart META music");
+
+  // The canonical writer round-trips every field it stores.
+  ChartInfo written;
+  written.name = "Written";
+  written.chart = "c.json";
+  written.music = "m.ogg";
+  written.illustration = "i.png";
+  written.level = "IN 14";
+  written.difficulty = "14";
+  written.composer = "C";
+  written.charter = "Ch";
+  written.illustrator = "I";
+  written.chartOffsetMs = 33;
+  written.hasChartOffset = true;
+  require(writeInfoJson(directory / "written.json", written), "canonical metadata is written");
+  const auto reread = readInfoFile(directory / "written.json");
+  requireEqual(reread.name, "Written", "canonical name round trip");
+  requireEqual(reread.chart, "c.json", "canonical chart round trip");
+  requireEqual(reread.music, "m.ogg", "canonical music round trip");
+  requireEqual(reread.illustration, "i.png", "canonical illustration round trip");
+  requireEqual(reread.composer, "C", "canonical composer round trip");
+  require(reread.hasChartOffset && reread.chartOffsetMs == 33, "canonical offset round trip");
+}
+
+void testChartLibraryPackDetection() {
+  using namespace rechigros::app;
+  const auto work = rechigros::test::scratchDirectory("app-data-packs");
+  const auto packs = work / "packs";
+  std::error_code error;
+  std::filesystem::create_directories(packs, error);
+  const auto makeFile = [&error](const std::filesystem::path& path, const std::string& content) {
+    std::filesystem::create_directories(path.parent_path(), error);
+    writeText(path, content);
+  };
+  // Nested layout with metadata in the pack root and assets in subdirectories.
+  const auto alpha = packs / "alpha";
+  makeFile(alpha / "info.yml",
+      "name: Alpha\nchart: data/chart.json\nmusic: audio/song.ogg\n"
+      "illustration: art/cover.png\nlevel: IN 13\nchart_offset_ms: 42\n");
+  makeFile(alpha / "data" / "chart.json",
+      chartJson("Alpha", "13", "art/cover.png", "audio/song.ogg"));
+  makeFile(alpha / "audio" / "song.ogg", "OggS");
+  makeFile(alpha / "art" / "cover.png", "PNG");
+  // References that do not match the extracted file names resolve through the fallback
+  // scans (the shape a percent-encoded archive produces after extraction).
+  const auto beta = packs / "beta";
+  makeFile(beta / "info.yml",
+      "name: Beta\nchart: song v2.json\nmusic: music v2.ogg\nillustration: cover art.png\n");
+  makeFile(beta / "song%20v2.json", chartJson("Beta", "14", "cover%20art.png", "music%20v2.ogg"));
+  makeFile(beta / "music%20v2.ogg", "OggS");
+  makeFile(beta / "cover%20art.png", "PNG");
+  // No metadata file: the chart's own META block supplies the labels.
+  const auto gamma = packs / "gamma";
+  makeFile(gamma / "beat.json", chartJson("Gamma", "15", "image.png", "theme.ogg"));
+  makeFile(gamma / "theme.ogg", "OggS");
+  makeFile(gamma / "image.png", "PNG");
+  // Missing illustration and music: the reference only indexes complete packs.
+  const auto delta = packs / "delta";
+  makeFile(delta / "info.yml", "name: Delta\nchart: delta.json\n");
+  makeFile(delta / "delta.json", chartJson("Delta", "12", "", ""));
+  ChartLibrary library(packs, work / "scores.txt");
+  const auto alphaRecord = library.loadRecord("alpha");
+  require(alphaRecord.has_value(), "a nested pack loads");
+  if (alphaRecord) {
+    requireEqual(alphaRecord->songName, "Alpha", "nested pack name");
+    require(alphaRecord->chartOffsetMs == 42, "nested pack offset");
+    require(alphaRecord->complete(), "a nested pack with every asset is complete");
+    requireEqual(alphaRecord->chartFile.filename().string(), "chart.json",
+        "nested pack chart is resolved from the metadata path");
+    requireEqual(alphaRecord->musicFile.filename().string(), "song.ogg",
+        "nested pack music is resolved from the metadata path");
+    requireEqual(alphaRecord->bgFile.filename().string(), "cover.png",
+        "nested pack illustration is resolved from the metadata path");
+    // The canonical metadata file is written into the pack root with relative paths.
+    require(std::filesystem::exists(alpha / "info.json"), "canonical metadata is written");
+    std::ifstream canonical(alpha / "info.json", std::ios::binary);
+    std::stringstream buffer;
+    buffer << canonical.rdbuf();
+    const std::string content = buffer.str();
+    require(content.find("data/chart.json") != std::string::npos,
+        "canonical metadata stores the chart relative to the pack");
+  }
+  const auto betaRecord = library.loadRecord("beta");
+  require(betaRecord.has_value(), "a pack with mismatched references still loads");
+  if (betaRecord) {
+    requireEqual(betaRecord->chartFile.filename().string(), "song%20v2.json",
+        "a mismatched chart reference falls back to content detection");
+    requireEqual(betaRecord->musicFile.filename().string(), "music%20v2.ogg",
+        "a mismatched music reference falls back to the audio scan");
+    requireEqual(betaRecord->bgFile.filename().string(), "cover%20art.png",
+        "a mismatched illustration reference falls back to the image scan");
+    require(betaRecord->complete(), "the fallback-resolved pack is complete");
+  }
+
+  const auto gammaRecord = library.loadRecord("gamma");
+  require(gammaRecord.has_value(), "a pack without metadata loads");
+  if (gammaRecord) {
+    requireEqual(gammaRecord->songName, "Gamma", "the chart META supplies the song name");
+    require(std::filesystem::exists(gamma / "info.json"),
+        "metadata is materialised for a pack without an info file");
+  }
+
+  const auto deltaRecord = library.loadRecord("delta");
+  require(deltaRecord.has_value(), "an incomplete pack still yields a record");
+  if (deltaRecord) {
+    require(!deltaRecord->complete(), "a pack without music/illustration is incomplete");
+  }
+  const auto& records = library.records(true);
+  bool sawDelta = false;
+  bool sawAlpha = false;
+  for (const auto& record : records) {
+    if (record.id == "delta") sawDelta = true;
+    if (record.id == "alpha") sawAlpha = true;
+  }
+  require(!sawDelta, "incomplete packs stay out of the indexed list");
+  require(sawAlpha, "complete packs appear in the indexed list");
+}
+
+} // namespace
+
 int main() {
   testDifficultyNormalisation();
   testSettingsAspectRatio();
   testReplaySerialisation();
   testReplayPlaybackResultMerge();
-
+  testInfoFileFormats();
+  testChartLibraryPackDetection();
   if (g_failures != 0) {
     std::cerr << g_failures << " application data test(s) failed\n";
     return 1;

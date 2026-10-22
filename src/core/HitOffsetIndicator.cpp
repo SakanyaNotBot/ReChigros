@@ -8,7 +8,10 @@
 
 namespace rechigros::game {
 HitOffsetIndicator::HitOffsetIndicator(std::size_t count) : marks_(std::max<std::size_t>(1, count)) {}
-void HitOffsetIndicator::reset() noexcept { *this = HitOffsetIndicator(marks_.size()); }
+void HitOffsetIndicator::reset() noexcept {
+  *this = HitOffsetIndicator(marks_.size());
+  latestJudgement_ = Judgement::Perfect;
+}
 void HitOffsetIndicator::addHit(double diff, Judgement judgement, double now, double badWindow) {
   update(now);
   const auto angle = angleForDiff(diff,badWindow);
@@ -17,6 +20,7 @@ void HitOffsetIndicator::addHit(double diff, Judgement judgement, double now, do
   pointerMoveStartAngleDeg_=pointerAngleDeg_; pointerMoveTargetAngleDeg_=angle;
   pointerMoveStartSec_=now; pointerMoveDurationSec_=MOVE_DURATION_SEC; lastHitSec_=now;
   returningToCenter_=false; latestText_=formatOffsetMs(diff); latestTextStartSec_=now;
+  latestJudgement_=judgement;
 }
 void HitOffsetIndicator::update(double now) noexcept {
   if(!returningToCenter_ && now-lastHitSec_>=RETURN_DELAY_SEC && std::abs(pointerMoveTargetAngleDeg_)>0.01F){

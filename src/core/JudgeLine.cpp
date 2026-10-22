@@ -5,8 +5,10 @@
 #include "rechigros/game/GameConstants.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <random>
+#include <thread>
 #include <unordered_map>
 
 namespace rechigros::game {
@@ -121,23 +123,65 @@ float JudgeLine::calcNoteControl(float height,int type,float fallback)const noex
 void Chart::updateUiTransform(int id,float x,float y,float r,float sx,float sy,float alpha){uiTransforms[id]={x,y,r,sx,sy,alpha};}
 void Chart::prepareRuntime(){
   allNotesSorted.clear();clickEffectsSorted.clear();chartEndTimeSec=0;
-  std::vector<Note*> allNotes;
-  std::unordered_map<long long,int> simultaneous;
   const bool official=formatVersion>0;
   for(std::size_t i=0;i<judgeLineList.size();++i){auto& line=*judgeLineList[i];line.index=static_cast<int>(i);line.bpmTimeline=bpmTimeline;line.resolveFather(judgeLineList);}
-  for(auto& lineOwner:judgeLineList){
-    auto& line=*lineOwner;line.normalize();line.mergeNotes();
+  // Per-line runtime data, assembled on a worker thread and merged afterwards in chart order
+  // so the final note order does not depend on scheduling.
+  struct LineRuntimeData{
+    std::vector<Note*> allNotes;
+    std::vector<Note*> visibleNotes;
+    std::unordered_map<long long,int> simultaneous;
+    double maxEndSec{};
+  };
+  const auto prepareLine=[](JudgeLine& line,bool official,LineRuntimeData& out){
+    line.normalize();line.mergeNotes();
+    // Note times are sorted, so the floor-position lookup walks the speed events forward with
+    // one cursor instead of binary-searching on every note. This is the incremental form the
+    // reference uses for its runtime preparation.
+    int speedIndex=0,holdEndIndex=0;std::vector<int> speedLayerIndices,holdEndLayerIndices;
     for(auto& note:line.notes){
       note.master=&line;note.isHold=note.type==NOTE_HOLD;note.clicked=false;
-      note.floorPosition=EventUtils::getFloorPosition(note.time,line.speedEvents,line.speedEventLayers);
+      note.floorPosition=EventUtils::floorPositionMonotonic(note.time,line.speedEvents,line.speedEventLayers,speedIndex,speedLayerIndices);
       note.sect=line.beat2sec(note.time);note.secht=line.beat2sec(note.holdTime);note.holdEndTime=note.sect+note.secht;note.useOfficialSpeed=official;
       if(note.isHold){
         if(official){note.holdEndFloorPosition=note.floorPosition+note.holdTime*note.speed*PGR_HEIGHT;note.holdLength=note.holdTime*note.speed*PGR_HEIGHT*(PGR_BEAT/line.bpm);}
-        else{const auto endFloor=EventUtils::getFloorPosition(note.time+note.holdTime,line.speedEvents,line.speedEventLayers);note.holdEndFloorPosition=endFloor;note.holdLength=(endFloor-note.floorPosition)*note.speed*PGR_HEIGHT*(PGR_BEAT/line.bpm);}
+        else{const auto endFloor=EventUtils::floorPositionMonotonic(note.time+note.holdTime,line.speedEvents,line.speedEventLayers,holdEndIndex,holdEndLayerIndices);note.holdEndFloorPosition=endFloor;note.holdLength=(endFloor-note.floorPosition)*note.speed*PGR_HEIGHT*(PGR_BEAT/line.bpm);}
       }else{note.holdEndFloorPosition=note.floorPosition;note.holdLength=0;}
-      ++simultaneous[static_cast<long long>(std::llround(note.sect*1'000'000.0))];allNotes.push_back(&note);
-      if(!note.isFake)allNotesSorted.push_back(&note);chartEndTimeSec=std::max(chartEndTimeSec,note.isHold?note.holdEndTime:note.sect);
+      ++out.simultaneous[static_cast<long long>(std::llround(note.sect*1'000'000.0))];out.allNotes.push_back(&note);
+      if(!note.isFake)out.visibleNotes.push_back(&note);
+      out.maxEndSec=std::max(out.maxEndSec,note.isHold?note.holdEndTime:note.sect);
     }
+  };
+  std::size_t noteCount=0;
+  for(const auto& line:judgeLineList)if(line)noteCount+=line->notesAbove.size()+line->notesBelow.size();
+  std::vector<LineRuntimeData> results(judgeLineList.size());
+  const unsigned cores=std::max(1U,std::thread::hardware_concurrency());
+  const bool parallel=cores>=2&&judgeLineList.size()>=2&&noteCount>=800;
+  if(parallel){
+    std::atomic<std::size_t> nextLine{0};
+    const unsigned workers=std::min<unsigned>(cores,static_cast<unsigned>(judgeLineList.size()));
+    std::vector<std::thread> threads;threads.reserve(workers);
+    for(unsigned worker=0;worker<workers;++worker){
+      threads.emplace_back([&](){
+        for(;;){
+          const auto index=nextLine.fetch_add(1);
+          if(index>=judgeLineList.size())break;
+          auto& line=*judgeLineList[index];
+          prepareLine(line,official,results[index]);
+        }
+      });
+    }
+    for(auto& thread:threads)thread.join();
+  }else{
+    for(std::size_t index=0;index<judgeLineList.size();++index)prepareLine(*judgeLineList[index],official,results[index]);
+  }
+  std::vector<Note*> allNotes;
+  std::unordered_map<long long,int> simultaneous;
+  for(auto& result:results){
+    allNotes.insert(allNotes.end(),result.allNotes.begin(),result.allNotes.end());
+    allNotesSorted.insert(allNotesSorted.end(),result.visibleNotes.begin(),result.visibleNotes.end());
+    chartEndTimeSec=std::max(chartEndTimeSec,result.maxEndSec);
+    for(const auto& entry:result.simultaneous)simultaneous[entry.first]+=entry.second;
   }
   for(auto* note:allNotes)note->morebets=simultaneous[static_cast<long long>(std::llround(note->sect*1'000'000.0))]>1?1:0;
   std::stable_sort(allNotesSorted.begin(),allNotesSorted.end(),[](const Note*a,const Note*b){return a->sect<b->sect;});for(std::size_t i=0;i<allNotesSorted.size();++i)allNotesSorted[i]->sortedIndex=static_cast<int>(i);

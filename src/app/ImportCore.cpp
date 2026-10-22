@@ -342,7 +342,10 @@ SkinImportOutcome importSkinPackage(const std::filesystem::path& archive,
       if (name != "skin.json" && name != "info.yml" && name != "info.yaml") continue;
       const auto bytes = platform::readArchiveEntry(archive, entry.name);
       if (bytes.empty()) continue;
-      const std::string text(bytes.begin(), bytes.end());
+      // Skin metadata may carry the legacy code page; decode it like every other metadata
+      // document so the display name is not mojibake.
+      const std::string text = platform::decodeLegacyText(
+          std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
       displayName = skinNameFromConfig(text, name == "skin.json");
       if (!displayName.empty()) break;
     }
