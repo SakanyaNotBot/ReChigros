@@ -520,7 +520,14 @@ void gameUpdate(AppContext& context, float frameDeltaSec) {
   }
 
   if (context.audio != nullptr && game.musicLoaded) {
-    game.playheadSec = context.audio->cursorSeconds();
+    // The chart advances with the music. A stream that has stopped or stalled would freeze
+    // the chart at one position, so the frame clock takes over whenever the music is not
+    // actually running, which keeps the chart moving at the right pace.
+    if (context.audio->isPlaying()) {
+      game.playheadSec = context.audio->cursorSeconds();
+    } else {
+      game.playheadSec += delta;
+    }
   } else {
     game.playheadSec += delta;
   }
