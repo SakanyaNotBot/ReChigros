@@ -1,0 +1,10 @@
+{
+  "name": "Example Chart",
+  "composer": "ReChigros",
+  "charter": "ReChigros",
+  "illustrator": "ReChigros",
+  "level": "SP Lv.1",
+  "difficulty": "SP",
+  "music": "chart.wav",
+  "illustration": "cover.jpg"
+}

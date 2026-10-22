@@ -121,6 +121,10 @@ struct PlayOverrides {
 struct AppContext {
   explicit AppContext(std::filesystem::path dataRoot);
 
+  // Copies the example chart that ships with the build into the library, once. A packaged
+  // build cannot read its own assets as files, so without this the library starts empty.
+  void seedBundledSample();
+
   std::filesystem::path dataRoot;
   std::filesystem::path settingsFile;
   Settings settings;

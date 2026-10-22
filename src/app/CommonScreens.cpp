@@ -3,6 +3,7 @@
 #include "rechigros/app/ScreenCommon.hpp"
 #include "rechigros/app/Screens.hpp"
 #include "rechigros/app/UiStyle.hpp"
+#include "rechigros/platform/AssetManager.hpp"
 #include "rechigros/platform/FileSystem.hpp"
 
 #include <SDL.h>
@@ -10,6 +11,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
+#include <vector>
 #include <string>
 
 namespace rechigros::app {
@@ -141,6 +144,45 @@ AppContext::AppContext(std::filesystem::path root)
   std::filesystem::create_directories(dataRoot, error);
   (void)settings.load(settingsFile);
   calibration.offsetMs = static_cast<float>(settings.audioOffsetMs);
+  seedBundledSample();
+}
+
+void AppContext::seedBundledSample() {
+  // A build that keeps its assets inside the package has no way to reach the library
+  // folder, so the bundled example is copied out once. The marker file records that the
+  // copy happened, so a user who deletes the example does not get it back.
+  const auto marker = dataRoot / "sample-seeded";
+  std::error_code error;
+  if (std::filesystem::is_regular_file(marker, error)) return;
+  const auto& assets = platform::assetRoot();
+  // The example needs a chart, its description, an audio track and cover artwork.
+  const char* const kFiles[] = {"chart.json", "info.json", "chart.wav", "cover.jpg"};
+  std::vector<std::filesystem::path> materialised;
+  for (const char* name : kFiles) {
+    const auto path = platform::AssetManager::materialize(assets,
+        std::string("sample/") + name);
+    if (!path.empty()) materialised.push_back(path);
+  }
+  SDL_Log("seed: materialised %zu of %zu files", materialised.size(), std::size(kFiles));
+  if (materialised.size() == std::size(kFiles)) {
+    // The library imports a folder, so the copies are gathered into one.
+    const auto staging = dataRoot / "sample-staging";
+    std::filesystem::create_directories(staging, error);
+    for (const auto& source : materialised) {
+      std::filesystem::copy_file(source, staging / source.filename(),
+          std::filesystem::copy_options::overwrite_existing, error);
+    }
+    try {
+      const auto imported = library.importDirectory(staging);
+      SDL_Log("seed: imported=%d", imported.imported ? 1 : 0);
+    } catch (const std::exception& error2) {
+      SDL_Log("seed: import failed: %s", error2.what());
+      // A malformed example must not stop the interface from starting.
+    }
+    std::filesystem::remove_all(staging, error);
+  }
+  std::ofstream writeMarker(marker);
+  writeMarker << "1\n";
 }
 
 void commitSettings(AppContext& context) {
