@@ -9,6 +9,10 @@ inline constexpr float PAUSE_BACKDROP_FADE_IN_SEC = 0.25F;
 inline constexpr float PAUSE_BACKDROP_VIBRANCY = 1.0F;
 inline constexpr float PAUSE_BACKDROP_BRIGHTNESS = 0.45F;
 inline constexpr float PAUSE_BACKDROP_FLATTEN = -0.125F;
+// Brightness of the HUD redrawn over the graded pause backdrop. The grade dims the frozen
+// HUD far below what the reference shows, so the live values are drawn again at this
+// fraction of their normal alpha.
+inline constexpr float PAUSE_HUD_DIM = 0.27F;
 inline constexpr float RESUME_BACKDROP_BRIGHTNESS_DURATION_SEC = 2.0F;
 inline constexpr float RESUME_BACKDROP_FLATTEN_DURATION_SEC = 2.5F;
 inline constexpr float RESUME_BACKDROP_ALPHA_FADE_START_SEC = 1.5F;

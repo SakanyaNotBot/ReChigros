@@ -1303,6 +1303,16 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       pauseBackdrop.draw(pauseBlurA.color(), pauseBlurB, pauseBlurA, targetFbo, alpha,
           scene::PAUSE_BACKDROP_VIBRANCY, brightness, flatten);
       bindDefaultBlend();
+      // The graded backdrop crushes the frozen HUD to almost black, while the reference
+      // keeps it readable at roughly a third of its brightness over the graded frame.
+      // Drawing it again dimmed afterwards restores that; the countdown deliberately
+      // shows the field without the HUD, so it is excluded here.
+      if (input.pause.mode == PauseMode::Menu && input.hud.visible && chart != nullptr) {
+        RenderFrameInput dimmed = input;
+        dimmed.hud.alpha = input.hud.alpha * scene::PAUSE_HUD_DIM;
+        drawHudPass(dimmed, layout, chart, judgement);
+        bindDefaultBlend();
+      }
       gl::logErrors("scene.pauseBackdrop");
     }
   }
