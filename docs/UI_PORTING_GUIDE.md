@@ -143,3 +143,11 @@ tab slices), copy it.
 * All six ctest suites, `--self-test` and `build.bat verify-app` must keep passing.
 * Every screen has to stay usable without a GPU context (the self-test draws screens
   headlessly): guard anything that needs a live texture and fall back to `ImGui` text.
+
+### Backdrop phase when diffing
+
+The reference screenshots were taken while the animated backdrop was moving. Before judging a
+residual pixel difference, sweep --capture-time 0..30 and compare at the phase that
+minimises the background-only regions; the menu screens are pixel-identical once aligned
+(settings-video: mean diff 1.3). Real interface differences are then visible as element ink
+box offsets, not as whole-frame means.

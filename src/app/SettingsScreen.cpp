@@ -962,16 +962,6 @@ void drawSwitch(const DrawContext& draw, const Block& block, float left, float t
   const float thumbX = bodyX + m.dp(31.0F) * progress;
   skewedBlock(draw.drawList, thumbX, bodyY, m.dp(35.0F), bodyHeight,
       bodyHeight * kToggleSkewFactor, ui::argb(0xFFFFFFFFU));
-  if (progress > 0.01F) {
-    const int alpha = static_cast<int>(std::lround(255.0F * progress));
-    const ImU32 checkColor = IM_COL32(255, 255, 255, std::clamp(alpha, 0, 255));
-    const float stroke = m.dp(1.5F);
-    const ImVec2 p0(bodyX + m.dp(13.0F), bodyY + m.dp(13.0F));
-    const ImVec2 p1(bodyX + m.dp(17.0F), bodyY + m.dp(17.0F));
-    const ImVec2 p2(bodyX + m.dp(24.0F), bodyY + m.dp(8.0F));
-    draw.drawList->AddLine(p0, p1, checkColor, stroke);
-    draw.drawList->AddLine(p1, p2, checkColor, stroke);
-  }
 }
 
 void drawEdit(const DrawContext& draw, const Block& block, float left, float top) {

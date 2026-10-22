@@ -6,9 +6,13 @@
 
 #include "rechigros/audio/AudioEngine.hpp"
 #include "rechigros/chart/ChartLoader.hpp"
+#include "rechigros/platform/AssetManager.hpp"
 #include "rechigros/platform/FileSystem.hpp"
 #include "rechigros/game/GameConstants.hpp"
 #include "rechigros/render/GameRenderer.hpp"
+#include "rechigros/render/asset/TextureCache.hpp"
+#include "rechigros/render/gl/Gl.hpp"
+#include "rechigros/render/gl/Texture.hpp"
 #include "rechigros/render/scene/StageLayout.hpp"
 
 #include <SDL_log.h>
@@ -17,7 +21,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <string>
+#include <unordered_map>
 
 namespace rechigros::app {
 namespace {
@@ -414,8 +420,9 @@ void drawPanelText(ImDrawList* drawList, std::string_view text, const GameStageP
   if (align == 1) left = x - textureWidth * scale * 0.5F;
   if (align == 2) left = x - textureWidth * scale;
   const float top = centerY - heightPx * 0.5F;
-  drawTextRun(drawList, run, left + pad * scale + std::floor(run.inkLeft) * scale,
-      top + pad * scale + std::floor(run.inkTop) * scale, scale, color);
+  // The glyph run starts at the texture's padding inset, like the reference canvas draw
+  // that places the text origin one pad step inside the bitmap.
+  drawTextRun(drawList, run, left + pad * scale, top + pad * scale, scale, color);
 }
 
 // Countdown digit: drawn at its natural pixel size, centred on the given point.
@@ -440,19 +447,53 @@ void drawCountdownDigit(ImDrawList* drawList, std::string_view text, float textP
   drawTextRun(drawList, run, inkX, inkY, 1.0F, IM_COL32(255, 255, 255, baseAlpha));
 }
 
-// Pause button icon plate: the reference draws its 200x200 icon artwork stretched to the
-// button rect. A missing texture falls back to a plain geometric glyph.
+// The pause icon artwork stores the shape in its alpha channel with a dark RGB payload, so
+// it has to be recoloured to pure white before it is tinted. The screen keeps its own
+// uploads for that: the shared image cache preserves the source pixels.
+std::uint64_t whiteIconTexture(const char* relativePath) {
+  static std::unordered_map<std::string, std::unique_ptr<rechigros::render::gl::Texture>> cache;
+  static std::unordered_map<std::string, bool> failed;
+  const std::string key = relativePath;
+  if (const auto found = cache.find(key); found != cache.end()) {
+    return found->second->id();
+  }
+  if (failed.find(key) != failed.end()) return 0;
+  if (!rechigros::render::gl::contextAvailable()) return 0;
+  const auto bytes = platform::AssetManager::readBinary(platform::assetRoot(), relativePath);
+  if (bytes.empty()) {
+    failed[key] = true;
+    return 0;
+  }
+  auto image = rechigros::render::asset::decodeImageMemory(bytes.data(), bytes.size());
+  if (!image.valid()) {
+    failed[key] = true;
+    return 0;
+  }
+  rechigros::render::asset::forceWhite(image);
+  auto texture = std::make_unique<rechigros::render::gl::Texture>();
+  if (!texture->uploadRgba(image.width, image.height, image.pixels.data())) {
+    failed[key] = true;
+    return 0;
+  }
+  texture->setFilter(true);
+  const auto id = texture->id();
+  cache.emplace(key, std::move(texture));
+  return id;
+}
+
+// Pause button icon plate: the reference draws its icon artwork stretched to the button
+// rect with the pixels forced to white. A missing texture falls back to a plain geometric
+// glyph.
 void drawPauseIcon(AppContext& context, ImDrawList* drawList, const char* asset,
     float x, float y, float width, float height, float alpha, int fallbackKind) {
   const ImU32 tint = IM_COL32(255, 255, 255,
       static_cast<int>(std::clamp(alpha, 0.0F, 1.0F) * 255.0F));
-  const std::uint64_t texture = assetTexture(context, asset);
-  if (texture != 0) {
-    ui::drawImage(drawList, ui::PxRect{ImVec2(x, y), ImVec2(x + width, y + height)}, texture,
-        context.textures.width(texture), context.textures.height(texture), ui::ImageFit::Fill, tint);
+  if (const std::uint64_t texture = whiteIconTexture(asset); texture != 0) {
+    drawList->AddImage(static_cast<ImTextureID>(texture), ImVec2(x, y), ImVec2(x + width, y + height),
+        ImVec2(0.0F, 0.0F), ImVec2(1.0F, 1.0F), tint);
     return;
   }
-  const ImU32 black = IM_COL32(0, 0, 0, static_cast<int>(std::clamp(alpha, 0.0F, 1.0F) * 120.0F));
+  (void)context;
   const float pad = width * 0.25F;
   const float left = x + pad;
   const float right = x + width - pad;
@@ -482,7 +523,6 @@ void drawPauseIcon(AppContext& context, ImDrawList* drawList, const char* asset,
       break;
     }
   }
-  (void)black;
 }
 
 // Pause button geometry, mirroring the reference's stage-fraction layout.
@@ -1296,16 +1336,6 @@ void drawPauseOverlay(AppContext& context) {
 }
 
 
-void drawCountdown(AppContext& context, ImDrawList* drawList) {
-  auto& game = context.game;
-  const auto size = viewportSize();
-  const float scale = layoutScale();
-  char buffer[8];
-  std::snprintf(buffer, sizeof(buffer), "%d", std::max(1, game.countdown));
-  ui::drawTextCentered(drawList, ImVec2(size.width * 0.5F, size.height * 0.45F), 90.0F * scale,
-      IM_COL32(255, 255, 255, 235), buffer);
-}
-
 } // namespace
 
 bool gameEnter(AppContext& context) {
@@ -1634,10 +1664,8 @@ void drawGameOverlay(AppContext& context) {
         ui::rgba(0xFFFFFFFFU), fpsBuffer);
   }
 
-  if (game.pause == GameRuntime::Pause::Menu) {
+  if (game.pause != GameRuntime::Pause::None) {
     drawPauseOverlay(context);
-  } else if (game.pause == GameRuntime::Pause::Countdown) {
-    drawCountdown(context, drawList);
   }
 }
 

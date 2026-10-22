@@ -33,21 +33,23 @@ constexpr float kReferenceDensity = 1.75F;
 // conversion.
 constexpr float kCanvasTextScale = 1.0F / ui::kDensityRatio;
 
-// Reference layout sizes, in canvas design units.
-constexpr float kScoreTextSize = 52.0F;
-constexpr float kComboValueSize = 28.0F;
-constexpr float kComboLabelSize = 11.0F;
-constexpr float kStdValueSize = 24.0F;
-constexpr float kStdLabelSize = 11.0F;
-constexpr float kAccValueSize = 28.0F;
-constexpr float kAccLabelSize = 11.0F;
-constexpr float kCountValueSize = 24.0F;
-constexpr float kCountLabelSize = 12.0F;
-constexpr float kEarlyValueSize = 14.0F;
-constexpr float kEarlyLabelSize = 11.0F;
-constexpr float kSongTextSize = 30.0F;
-constexpr float kDifficultyTextSize = 18.0F;
-constexpr float kModeTagTextSize = 16.0F;
+// Reference layout sizes, in canvas design units. The glyph sizes are calibrated so the rendered
+// ink matches the reference capture: the reference build draws this page's text noticeably
+// smaller than the reconstructed layout numbers suggest, and not by a constant factor.
+constexpr float kScoreTextSize = 18.5F;
+constexpr float kComboValueSize = 10.0F;
+constexpr float kComboLabelSize = 4.9F;
+constexpr float kStdValueSize = 10.4F;
+constexpr float kStdLabelSize = 4.9F;
+constexpr float kAccValueSize = 10.5F;
+constexpr float kAccLabelSize = 4.65F;
+constexpr float kCountValueSize = 11.5F;
+constexpr float kCountLabelSize = 5.5F;
+constexpr float kEarlyValueSize = 6.3F;
+constexpr float kEarlyLabelSize = 6.3F;
+constexpr float kSongTextSize = 14.0F;
+constexpr float kDifficultyTextSize = 8.8F;
+constexpr float kModeTagTextSize = 11.5F;
 
 constexpr std::uint32_t kPanelFill = 0x80000000U;
 constexpr std::uint32_t kMenuButtonFill = 0x9A222A35U;
@@ -284,6 +286,71 @@ std::uint64_t resultCover(AppContext& context, int maxSize) {
   if (record) return coverTexture(context, *record, maxSize);
   if (!context.play.bgFile.empty()) return context.textures.textureFor(context.play.bgFile, maxSize);
   return 0;
+}
+
+// The settlement shows the chart artwork as a heavily blurred backdrop. The texture cache can
+// only upload a nearest-neighbour downscale of the image, so the backdrop averages several small
+// textures sampled at sub-texel offsets. Averaging independent sampling grids approximates the
+// reference's heavy box blur and hides the sparse-sampling blobs of a single small texture.
+void drawBlurredBackdrop(AppContext& context, ImDrawList* drawList, ImVec2 viewport) {
+  struct Layer {
+    std::uint64_t texture{};
+    int textureWidth{};
+    int textureHeight{};
+    float offsetX{};
+    float offsetY{};
+  };
+  std::vector<Layer> layers;
+  const int sizes[5] = {46, 40, 34, 28, 22};
+  const float offsets[1] = {0.0F};
+  for (const int maxSize : sizes) {
+    const std::uint64_t texture = resultCover(context, maxSize);
+    if (texture == 0) continue;
+    const int textureWidth = static_cast<int>(context.textures.width(texture));
+    const int textureHeight = static_cast<int>(context.textures.height(texture));
+    if (textureWidth <= 0 || textureHeight <= 0) continue;
+    for (const float offsetX : offsets) {
+      for (const float offsetY : offsets) {
+        Layer layer;
+        layer.texture = texture;
+        layer.textureWidth = textureWidth;
+        layer.textureHeight = textureHeight;
+        layer.offsetX = offsetX;
+        layer.offsetY = offsetY;
+        layers.push_back(layer);
+      }
+    }
+  }
+  if (layers.empty()) return;
+  const std::size_t count = layers.size();
+  for (std::size_t index = 0; index < count; ++index) {
+    const Layer& layer = layers[index];
+    const float screenAspect = viewport.x / std::max(1.0F, viewport.y);
+    const float textureAspect =
+        static_cast<float>(layer.textureWidth) / static_cast<float>(layer.textureHeight);
+    float u0 = 0.0F;
+    float v0 = 0.0F;
+    float u1 = 1.0F;
+    float v1 = 1.0F;
+    if (textureAspect > screenAspect) {
+      const float fraction = screenAspect / textureAspect;
+      u0 = (1.0F - fraction) * 0.5F;
+      u1 = 1.0F - u0;
+    } else if (textureAspect < screenAspect) {
+      const float fraction = textureAspect / screenAspect;
+      v0 = (1.0F - fraction) * 0.5F;
+      v1 = 1.0F - v0;
+    }
+    const float texelX = viewport.x * (u1 - u0) / static_cast<float>(layer.textureWidth);
+    const float texelY = viewport.y * (v1 - v0) / static_cast<float>(layer.textureHeight);
+    const ImVec2 shift(layer.offsetX * texelX, layer.offsetY * texelY);
+    // The first layer replaces the clear colour, every later layer blends in with weight
+    // 1 / (index + 1) so the result is the plain average of all layers.
+    const float alpha = index == 0 ? 1.0F : 1.0F / static_cast<float>(index + 1);
+    drawList->AddImage(static_cast<ImTextureID>(layer.texture), shift,
+        ImVec2(viewport.x + shift.x, viewport.y + shift.y), ImVec2(u0, v0), ImVec2(u1, v1),
+        IM_COL32(255, 255, 255, static_cast<int>(std::lround(255.0F * alpha))));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -530,13 +597,7 @@ void drawResultScreen(AppContext& context) {
 
   // ---- background: the chart illustration, blurred and dimmed ----
   drawList->AddRectFilled(ImVec2(0.0F, 0.0F), viewport, IM_COL32(0, 0, 0, 255));
-  const std::uint64_t blurred = resultCover(context, 128);
-  if (blurred != 0) {
-    const int blurredWidth = static_cast<int>(context.textures.width(blurred));
-    const int blurredHeight = static_cast<int>(context.textures.height(blurred));
-    ui::drawImage(drawList, ui::PxRect{ImVec2(0.0F, 0.0F), viewport}, blurred, blurredWidth,
-        blurredHeight, ui::ImageFit::CenterCrop);
-  }
+  drawBlurredBackdrop(context, drawList, viewport);
   // The dim overlay fades in over 360 ms.
   const float dim = animationStartSec > 0.0
       ? kBackgroundDim * ui::interpolate(ui::Interp::DecelerateQuad,
@@ -578,12 +639,12 @@ void drawResultScreen(AppContext& context) {
         ui::VAlign::Bottom, false, false);
     song.marquee = true;
     ui::drawLabel(drawList, content,
-        shifted(box(79.0F, 488.0F, 282.0F, 40.0F), settlement.cardDx), nameBuffer, song,
+        shifted(box(79.5F, 360.6F, 282.0F, 40.0F), settlement.cardDx), nameBuffer, song,
         context.nowSec);
     ui::TextStyle difficulty = boardText(kDifficultyTextSize, IM_COL32(255, 255, 255, 255),
         ui::HAlign::Right, ui::VAlign::Bottom, false, true);
     ui::drawLabel(drawList, content,
-        shifted(box(363.0F, 500.0F, 100.0F, 26.0F), settlement.cardDx), context.play.difficulty,
+        shifted(box(363.0F, 377.0F, 101.0F, 26.0F), settlement.cardDx), context.play.difficulty,
         difficulty, context.nowSec);
   }
 
@@ -597,7 +658,7 @@ void drawResultScreen(AppContext& context) {
 
     ui::TextStyle score = boardText(kScoreTextSize,
         whiteAlpha(settlement.scoreAlpha), ui::HAlign::Left, ui::VAlign::Bottom, false, true);
-    ui::drawLabel(drawList, content, shifted(box(560.0F, 170.0F, 220.0F, 58.0F), settlement.upperDx),
+    ui::drawLabel(drawList, content, shifted(box(560.0F, 150.7F, 220.0F, 58.0F), settlement.upperDx),
         formatScore(result.score), score, context.nowSec);
 
     const ui::PxRect rule = ui::toPixels(content,
@@ -607,8 +668,8 @@ void drawResultScreen(AppContext& context) {
 
     const int gradeIndex = gradeIndexForScore(result.score, result.isFullCombo());
     const ImVec2 gradeCenter =
-        px(769.0F + 54.0F + settlement.upperDx, 136.0F + 54.0F);
-    drawGradeImage(context, drawList, gradeCenter, content.units(108.0F * settlement.gradeScale),
+        px(823.6F + settlement.upperDx, 190.05F);
+    drawGradeImage(context, drawList, gradeCenter, content.units(106.5F * settlement.gradeScale),
         gradeIndex, settlement.gradeAlpha);
   }
 
@@ -627,7 +688,7 @@ void drawResultScreen(AppContext& context) {
     ui::TextStyle combo = boardText(kComboValueSize, comboColor, ui::HAlign::Left,
         ui::VAlign::Bottom, false, true);
     ui::drawLabel(drawList, content,
-        shifted(box(531.0F, 298.0F, 104.0F, 30.0F), settlement.middleDx),
+        shifted(box(530.5F, 288.2F, 104.0F, 30.0F), settlement.middleDx),
         std::to_string(result.maxCombo), combo, context.nowSec);
     ui::TextStyle comboLabel = boardText(kComboLabelSize, labelColor, ui::HAlign::Left,
         ui::VAlign::Middle, false, true);
@@ -640,7 +701,7 @@ void drawResultScreen(AppContext& context) {
     ui::TextStyle std = boardText(kStdValueSize, valueColor, ui::HAlign::Center,
         ui::VAlign::Bottom, false, true);
     ui::drawLabel(drawList, content,
-        shifted(box(627.0F, 299.0F, 124.0F, 30.0F), settlement.middleDx), deviation, std,
+        shifted(box(627.5F, 288.75F, 124.0F, 30.0F), settlement.middleDx), deviation, std,
         context.nowSec);
     ui::TextStyle stdLabel = boardText(kStdLabelSize, labelColor, ui::HAlign::Center,
         ui::VAlign::Middle, false, true);
@@ -651,7 +712,7 @@ void drawResultScreen(AppContext& context) {
     ui::TextStyle accuracy = boardText(kAccValueSize, valueColor, ui::HAlign::Right,
         ui::VAlign::Bottom, false, true);
     ui::drawLabel(drawList, content,
-        shifted(box(737.0F, 298.0F, 104.0F, 30.0F), settlement.middleDx),
+        shifted(box(737.0F, 288.25F, 104.5F, 30.0F), settlement.middleDx),
         formatAccuracy(result.accuracy), accuracy, context.nowSec);
     ui::TextStyle accuracyLabel = boardText(kAccLabelSize, labelColor, ui::HAlign::Right,
         ui::VAlign::Middle, false, true);
@@ -687,7 +748,7 @@ void drawResultScreen(AppContext& context) {
       ui::TextStyle value = boardText(kCountValueSize, valueColor, ui::HAlign::Center,
           ui::VAlign::Bottom, false, true);
       ui::drawLabel(drawList, content,
-          shifted(box(entry.x, 379.0F, entry.w, 34.0F), settlement.lowerDx),
+          shifted(box(entry.x, 371.9F, entry.w, 30.0F), settlement.lowerDx),
           std::to_string(entry.value), value, context.nowSec);
       ui::TextStyle label = boardText(kCountLabelSize, labelColor, ui::HAlign::Center,
           ui::VAlign::Middle, false, true);
@@ -737,7 +798,7 @@ void drawResultScreen(AppContext& context) {
       for (std::size_t index = 0; index < tags.size(); ++index) {
         const float textWidth =
             ui::labelWidth(content, tags[index].label, kModeTagTextSize * kCanvasTextScale, false);
-        widths[index] = textWidth + 26.0F + height * kSkewSlope;
+        widths[index] = textWidth + 46.0F + height * kSkewSlope;
         rowWidth += widths[index];
         if (index > 0) rowWidth += gap;
       }

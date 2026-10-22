@@ -169,7 +169,7 @@ void applyReferenceSettings(AppContext& context) {
   settings.disableChartShader = false;
   settings.chartReveal = false;
   settings.storyMode = false;
-  settings.replayEnabled = true;
+  settings.replayEnabled = false;
 }
 
 void populatePlay(AppContext& context, const std::string& chartId) {

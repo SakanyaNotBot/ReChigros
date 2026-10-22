@@ -87,7 +87,7 @@ void PauseBackdropPass::draw(gl::Texture& source, gl::Framebuffer& blurScratch,
   // clamped so extreme resolutions stay in range.
   const float scale = std::clamp(
       static_cast<float>(source.height()) / 1080.0F, 0.5F, 2.0F);
-  const float radius = 4.0F * scale;
+  const float radius = 6.0F * scale;
   const float texelX = radius / static_cast<float>(source.width());
   const float texelY = radius / static_cast<float>(source.height());
   for (int iteration = 0; iteration < scene::PAUSE_SCENE_BLUR_ITERATIONS; ++iteration) {
