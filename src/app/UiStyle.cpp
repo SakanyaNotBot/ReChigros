@@ -9,6 +9,8 @@ namespace {
 
 constexpr int kGridLayers = 3;
 
+bool g_backdropSuppressed = false;
+
 ImVec2 panelPoint(ImVec2 topLeft, ImVec2 bottomRight, float skew, int index) {
   const float x0 = topLeft.x;
   const float y0 = topLeft.y;
@@ -74,6 +76,7 @@ void applyTheme() {
 }
 
 void drawBackdrop(ImDrawList* drawList, ImVec2 size, double timeSec) {
+  if (g_backdropSuppressed) return;
   if (drawList == nullptr || size.x <= 1.0F || size.y <= 1.0F) return;
   // Vertical gradient built from two multi-colour quads.
   const ImU32 top = IM_COL32(16, 19, 26, 255);
@@ -239,6 +242,10 @@ void endFullscreenWindow() {
   ImGui::End();
   ImGui::PopStyleColor();
   ImGui::PopStyleVar(3);
+}
+
+void setBackdropSuppressed(bool suppressed) {
+  g_backdropSuppressed = suppressed;
 }
 
 } // namespace rechigros::app::ui

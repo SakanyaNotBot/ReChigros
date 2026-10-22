@@ -20,8 +20,13 @@ void applyTheme();
       static_cast<int>(value & 0xFFU), static_cast<int>((value >> 24) & 0xFFU));
 }
 
-// Full-window animated backdrop: three slowly rotating triangle grids.
+// Full-window animated backdrop: three slowly rotating triangle grids. This is
+// the fallback used when the GPU backdrop module is unavailable.
 void drawBackdrop(ImDrawList* drawList, ImVec2 size, double timeSec);
+
+// Suppresses the ImGui backdrop fallback while the GPU backdrop is drawing, so
+// the shader output is not painted over.
+void setBackdropSuppressed(bool suppressed);
 
 // Draws one parallelogram panel. `skew` is the horizontal offset between the top
 // and bottom edge; set `straightLeft`/`straightRight` to keep that edge vertical.
