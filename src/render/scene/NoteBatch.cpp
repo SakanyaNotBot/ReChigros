@@ -271,6 +271,50 @@ void buildLineDrawOrder(const game::Chart& chart, std::vector<int>& out) {
   }
 }
 
+NoteHeadPose noteHeadPose(const game::Note& note, const LineFrame& frame,
+    const NotePassParams& params) {
+  NoteHeadPose pose;
+  if (!frame.valid || !frame.renderable || note.master == nullptr) return pose;
+  if (!(params.stageWidth > 1.0e-6F) || !(params.stageHeight > 1.0e-6F)) return pose;
+  const auto& line = *note.master;
+  const float stageAspect = params.stageWidth / params.stageHeight;
+  const double bpm = frame.bpm > 0.0 ? frame.bpm : 120.0;
+  const double beatScale = static_cast<double>(game::PGR_HEIGHT) * (kBeatSeconds / bpm) *
+      static_cast<double>(params.stageHeight);
+  const bool above = note.isAbove;
+  const double speed = note.speed * static_cast<double>(params.scrollSpeed);
+  const double baseFpD = (note.floorPosition - frame.floorPosition) * beatScale * speed;
+  const auto baseFpPx = static_cast<float>(baseFpD);
+  const float transYPx = note.yOffset * params.stageHeight;
+  const float controlHeight = controlHeightFromBasePx(baseFpPx, note.yOffset, speed, stageAspect,
+      params.stageHeight);
+  const float yControl = evalControl(line, kControlY, controlHeight);
+  const float baseFpWithControl = applyYControlScale(baseFpPx, yControl);
+  const float visualFp = baseFpWithControl + transYPx;
+
+  const float skewControl = evalControl(line, kControlSkew, controlHeight);
+  const float inclineSinr = combineInclineSinr(frame.inclineSinr, skewControl);
+  float inclineValue = 1.0F;
+  if (isFinite(inclineSinr)) {
+    inclineValue = calcInclineValue(inclineSinr, baseFpWithControl, transYPx, stageAspect,
+        params.stageHeight);
+  }
+  float offsetX = static_cast<float>(note.positionX * game::PGR_WIDTH * params.stageWidth);
+  const float xControl = evalControl(line, kControlX, controlHeight);
+  offsetX *= inclineValue;
+  if (isFinite(xControl) && xControl != 0.0F) offsetX *= xControl;
+
+  const float atX = frame.x + offsetX * frame.cosLine;
+  const float atY = frame.y + offsetX * frame.sinLine;
+  const float dirX = above ? frame.sinLine : -frame.sinLine;
+  const float dirY = above ? -frame.cosLine : frame.cosLine;
+  pose.valid = true;
+  pose.x = atX + visualFp * dirX;
+  pose.y = atY + visualFp * dirY;
+  pose.rotationDeg = frame.rotateDeg + (above ? 0.0F : 180.0F);
+  return pose;
+}
+
 void buildHeadBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frames,
     const std::vector<int>& drawOrder, const game::Chart& chart, int noteType,
     bool highlightVariant, float textureWidth, float textureHeight, const NotePassParams& params) {

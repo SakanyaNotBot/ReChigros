@@ -8,7 +8,7 @@
 #include <limits>
 #include <vector>
 
-namespace rechigros::game { class Chart; }
+namespace rechigros::game { class Chart; struct Note; }
 
 namespace rechigros::render::scene {
 
@@ -62,6 +62,18 @@ struct NotePassParams {
     return (std::isfinite(value) && value > 0.0F) ? value : 1.0F;
   }
 };
+
+// World-space pose of one note head at the frame's chart time, using the same control-
+// curve math as the note passes. Hit effects that appear where a note was when it was
+// hit resolve their position through this.
+struct NoteHeadPose {
+  bool valid{false};
+  float x{};
+  float y{};
+  float rotationDeg{};
+};
+[[nodiscard]] NoteHeadPose noteHeadPose(const game::Note& note, const LineFrame& frame,
+    const NotePassParams& params);
 
 // Writes every note-head sprite of one texture bucket into the batch. Notes whose
 // type differs from `noteType`, or whose highlight variant differs from

@@ -128,6 +128,8 @@ struct RenderFrameInput {
   // timing (one burst every half beat while a hold is active); the hit-effect pass draws one
   // burst per entry at the position the hold occupies.
   std::vector<game::HoldBodyBurst> holdBodyBursts;
+  // Hold-head bursts: one per hold head hit, drawn where the head was when it was hit.
+  std::vector<game::HoldHeadBurst> holdHeadBursts;
 
   std::string songName;
   std::string levelName;

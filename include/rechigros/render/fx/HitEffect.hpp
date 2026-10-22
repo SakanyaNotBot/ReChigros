@@ -97,6 +97,13 @@ public:
       double chartTimeSec, double visualTimeSec, float stageX, float stageY, float stageWidth,
       float stageHeight, float noteWidth);
 
+  // Spawns the burst for a hold head hit at the position the renderer resolved for the
+  // judged frame (where the head was when it was hit, which is above the line for an early
+  // hit and on the line once the head has arrived), like the reference head effect.
+  void spawnHoldHead(game::Chart& chart, const game::HoldHeadBurst& burst,
+      double chartTimeSec, double visualTimeSec, float x, float y, float rotationDeg,
+      float noteWidth, float musicSpeed = 1.0F);
+
   [[nodiscard]] bool empty() const noexcept { return effects_.empty(); }
   [[nodiscard]] std::size_t size() const noexcept { return effects_.size(); }
 

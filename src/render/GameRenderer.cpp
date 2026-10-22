@@ -172,7 +172,6 @@ struct GameRenderer::Impl {
   gl::Texture* kaleidoColour{};
   gl::Texture* dsGridTexture{};
   gl::Framebuffer pauseBlurA;
-  gl::Framebuffer pauseBlurB;
   fx::PrprChain chain;
   // Cached chart-shader setting of the frame being rendered, read before the per-chart
   // preparation so the storyboard chain can be skipped when the setting is off.
@@ -878,9 +877,37 @@ void GameRenderer::Impl::drawHitEffects(const scene::StageLayout& layout,
   hitEffects.update(*chart, input.chartTimeSec, input.visualTimeSec, layout.stage.x,
       layout.stage.y, layout.stage.width, layout.stage.height, noteWidth,
       input.practice.enabled ? input.practice.speed : 1.0F);
-  // Hold-body bursts are timed by the gameplay session, so they are added after the
-  // judgement-driven bursts. They use the same geometry as a head burst, at the position
-  // the hold currently occupies.
+  // Hold bursts are timed by the gameplay session and arrive as events. A head burst is
+  // placed where the head was when it was hit (above the line for an early hit, on the line
+  // once the head has arrived); body bursts sit on the line contact point.
+  const float musicSpeed = input.practice.enabled ? input.practice.speed : 1.0F;
+  for (const auto& burst : input.holdHeadBursts) {
+    const game::Note* note = burst.noteIndex >= 0 &&
+            static_cast<std::size_t>(burst.noteIndex) < chart->allNotesSorted.size()
+        ? chart->allNotesSorted[static_cast<std::size_t>(burst.noteIndex)]
+        : nullptr;
+    if (note == nullptr) continue;
+    // Resolve the judged frame's line state, then the head pose on that line.
+    int lineIndex = -1;
+    for (std::size_t index = 0; index < chart->judgeLineList.size(); ++index) {
+      if (chart->judgeLineList[index].get() == note->master) {
+        lineIndex = static_cast<int>(index);
+        break;
+      }
+    }
+    if (lineIndex < 0 || static_cast<std::size_t>(lineIndex) >= lineFrames.size()) continue;
+    scene::NotePassParams poseParams;
+    poseParams.chartTimeSec = input.chartTimeSec;
+    poseParams.stageWidth = layout.stage.width;
+    poseParams.stageHeight = layout.stage.height;
+    poseParams.scrollSpeed = input.scrollSpeed;
+    poseParams.officialFormat = chart->formatVersion > 0;
+    const scene::NoteHeadPose pose =
+        scene::noteHeadPose(*note, lineFrames[static_cast<std::size_t>(lineIndex)], poseParams);
+    if (!pose.valid) continue;
+    hitEffects.spawnHoldHead(*chart, burst, input.chartTimeSec, input.visualTimeSec, pose.x,
+        pose.y, pose.rotationDeg, noteWidth, musicSpeed);
+  }
   for (const auto& burst : input.holdBodyBursts) {
     hitEffects.spawnHoldBody(*chart, burst, input.chartTimeSec, input.visualTimeSec,
         layout.stage.x, layout.stage.y, layout.stage.width, layout.stage.height, noteWidth);
@@ -1448,7 +1475,6 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       // so the pause picture never shows a crisp HUD over the graded backdrop.
       if (pauseBlurA.width() != width || pauseBlurA.height() != height) {
         pauseBlurA.resize(width, height);
-        pauseBlurB.resize(width, height);
       }
       RenderFrameInput frozen = input;
       frozen.pause.mode = PauseMode::None;
@@ -1460,11 +1486,9 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       drawScene(frozen, chart, judgement, pauseBlurA.fbo(), false);
       glBindFramebuffer(GL_FRAMEBUFFER, sceneTarget);
       glViewport(0, 0, width, height);
-      // The capture target is the blur source, so the second scratch target is the
-      // first destination.
-      // The backdrop composites into the presented target, which differs between the
-      // interactive path and the offscreen one.
-      pauseBackdrop.draw(pauseBlurA.color(), pauseBlurB, pauseBlurA, sceneTarget, alpha,
+      // The presented frame receives the graded result; the scalable-blur pyramid lives
+      // inside the pass so the paused scene goes through the reference blur chain.
+      pauseBackdrop.draw(pauseBlurA.color(), sceneTarget, alpha,
           scene::PAUSE_BACKDROP_VIBRANCY, brightness, flatten);
       bindDefaultBlend();
       // The reference keeps the HUD readable but soft inside the graded pause frame. The

@@ -6,6 +6,7 @@
 #include "rechigros/app/UiWidgets.hpp"
 
 #include <algorithm>
+#include <filesystem>
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -313,32 +314,30 @@ std::uint64_t resultCover(AppContext& context, int maxSize) {
   return 0;
 }
 
-// The settlement shows the chart artwork as a heavily blurred backdrop. The texture cache can
-// only upload a nearest-neighbour downscale of the image, so the backdrop draws that small
-// texture many times at spaced offsets and averages the results: the shifted bilinear samples
-// together form the wide box kernel of the reference's blur, and the dense sample grid hides the
-// aliasing of a single small upscale.
+// Path of the artwork to blur for the backdrop; empty when the run has no artwork.
+std::filesystem::path resultCoverPath(AppContext& context) {
+  const auto record = context.library.find(context.play.chartId);
+  if (record) return record->bgFile;
+  return context.play.bgFile;
+}
+
+// The settlement shows the chart artwork as a heavily blurred backdrop. The backdrop texture
+// is pre-blurred by the texture cache with the reference blur (third-size copy, three box
+// passes of radius ~5% of the artwork width, bilinear upscale on draw), so it is a single
+// filtered image instead of a stack of shifted copies.
 void drawBlurredBackdrop(AppContext& context, ImDrawList* drawList, ImVec2 viewport) {
-  constexpr int kMaxSize = 44;
-  const std::uint64_t texture = resultCover(context, kMaxSize);
+  const std::filesystem::path path = resultCoverPath(context);
+  if (path.empty()) return;
+  const std::uint64_t texture = context.textures.blurredBackdropFor(path);
   if (texture == 0) return;
   const int textureWidth = static_cast<int>(context.textures.width(texture));
   const int textureHeight = static_cast<int>(context.textures.height(texture));
   if (textureWidth <= 0 || textureHeight <= 0) return;
 
   const float screenAspect = viewport.x / std::max(1.0F, viewport.y);
-  // The downscaled texture's aspect is rounded by its pixel size; the source artwork's own aspect
-  // is taken from the full resolution texture so the backdrop is cropped exactly like the
-  // reference's centre-crop.
-  float referenceAspect = static_cast<float>(textureWidth) / static_cast<float>(textureHeight);
-  const std::uint64_t fullTexture = resultCover(context, 2048);
-  if (fullTexture != 0) {
-    const int fullWidth = static_cast<int>(context.textures.width(fullTexture));
-    const int fullHeight = static_cast<int>(context.textures.height(fullTexture));
-    if (fullWidth > 0 && fullHeight > 0) {
-      referenceAspect = static_cast<float>(fullWidth) / static_cast<float>(fullHeight);
-    }
-  }
+  // The blurred texture keeps the artwork aspect; centre-crop it like the reference's
+  // background view.
+  const float referenceAspect = static_cast<float>(textureWidth) / static_cast<float>(textureHeight);
   float u0 = 0.0F;
   float v0 = 0.0F;
   float u1 = 1.0F;
@@ -352,24 +351,8 @@ void drawBlurredBackdrop(AppContext& context, ImDrawList* drawList, ImVec2 viewp
     v0 = (1.0F - fraction) * 0.5F;
     v1 = 1.0F - v0;
   }
-  const float texelX = viewport.x * (u1 - u0) / static_cast<float>(textureWidth);
-  const float texelY = viewport.y * (v1 - v0) / static_cast<float>(textureHeight);
-  const float spread = 1.2F;
-  const int taps[5] = {-2, -1, 0, 1, 2};
-  int index = 0;
-  for (const int tapX : taps) {
-    for (const int tapY : taps) {
-      const ImVec2 shift(static_cast<float>(tapX) * spread * texelX,
-          static_cast<float>(tapY) * spread * texelY);
-      // The first layer replaces the clear colour, every later layer blends in with weight
-      // 1 / (index + 1) so the result is the plain average of all layers.
-      const float alpha = index == 0 ? 1.0F : 1.0F / static_cast<float>(index + 1);
-      drawList->AddImage(static_cast<ImTextureID>(texture), shift,
-          ImVec2(viewport.x + shift.x, viewport.y + shift.y), ImVec2(u0, v0), ImVec2(u1, v1),
-          IM_COL32(255, 255, 255, static_cast<int>(std::lround(255.0F * alpha))));
-      ++index;
-    }
-  }
+  drawList->AddImage(static_cast<ImTextureID>(texture), ImVec2(0.0F, 0.0F), viewport,
+      ImVec2(u0, v0), ImVec2(u1, v1));
 }
 
 // ---------------------------------------------------------------------------

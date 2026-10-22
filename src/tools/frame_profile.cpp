@@ -27,8 +27,10 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -37,6 +39,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <new>
 #include <numeric>
 #include <string>
 #include <vector>
@@ -49,7 +52,66 @@
 
 #ifdef _WIN32
 # include <windows.h>
+# include <malloc.h>
 #endif
+
+// The tap profile replaces the process-wide allocation operators so per-frame and per-tap
+// heap traffic can be counted. The replacement lives in the executable and therefore also
+// covers the linked static libraries.
+namespace {
+std::atomic<unsigned long long> gAllocationCount{0};
+std::atomic<unsigned long long> gAllocationBytes{0};
+}
+
+void* operator new(std::size_t size) {
+  gAllocationCount.fetch_add(1, std::memory_order_relaxed);
+  gAllocationBytes.fetch_add(size, std::memory_order_relaxed);
+  if (void* pointer = std::malloc(size == 0 ? 1 : size)) return pointer;
+  throw std::bad_alloc();
+}
+void* operator new[](std::size_t size) {
+  return ::operator new(size);
+}
+void operator delete(void* pointer) noexcept {
+  std::free(pointer);
+}
+void operator delete[](void* pointer) noexcept {
+  std::free(pointer);
+}
+void operator delete(void* pointer, std::size_t) noexcept {
+  std::free(pointer);
+}
+void operator delete[](void* pointer, std::size_t) noexcept {
+  std::free(pointer);
+}
+void* operator new(std::size_t size, std::align_val_t alignment) {
+  gAllocationCount.fetch_add(1, std::memory_order_relaxed);
+  gAllocationBytes.fetch_add(size, std::memory_order_relaxed);
+#ifdef _WIN32
+  if (void* pointer = _aligned_malloc(size == 0 ? 1 : size, static_cast<std::size_t>(alignment))) {
+    return pointer;
+  }
+#else
+  void* pointer = nullptr;
+  if (posix_memalign(&pointer, static_cast<std::size_t>(alignment), size == 0 ? 1 : size) == 0) {
+    return pointer;
+  }
+#endif
+  throw std::bad_alloc();
+}
+void* operator new[](std::size_t size, std::align_val_t alignment) {
+  return ::operator new(size, alignment);
+}
+void operator delete(void* pointer, std::align_val_t) noexcept {
+#ifdef _WIN32
+  _aligned_free(pointer);
+#else
+  std::free(pointer);
+#endif
+}
+void operator delete[](void* pointer, std::align_val_t alignment) noexcept {
+  ::operator delete(pointer, alignment);
+}
 
 namespace {
 
@@ -96,7 +158,22 @@ struct Options {
   // When set, prints a per-bin census of the chart (live zones, notes) instead of a
   // steady-state run, so device frame times can be correlated with chart content.
   double scanBinSec{0.0};
+  // Tap profile: drive synthetic touches at chart note times in manual mode and report the
+  // per-frame cost around taps plus heap traffic.
+  bool tapProfile{false};
+  double tapDurationSec{30.0};
+  bool tapRender{true};
+  bool tapHud{true};
+  std::filesystem::path tapCsvPath;
 };
+
+std::atomic<unsigned long long> allocationCount() noexcept {
+  return gAllocationCount.load(std::memory_order_relaxed);
+}
+
+std::atomic<unsigned long long> allocationBytes() noexcept {
+  return gAllocationBytes.load(std::memory_order_relaxed);
+}
 
 Options parseOptions(int argc, char** argv) {
   Options options;
@@ -132,6 +209,16 @@ Options parseOptions(int argc, char** argv) {
       options.profileLoad = false;
     } else if (flag == "--scan-bins") {
       options.scanBinSec = std::max(0.1, std::atof(next().c_str()));
+    } else if (flag == "--tap-profile") {
+      options.tapProfile = true;
+    } else if (flag == "--tap-duration") {
+      options.tapDurationSec = std::max(1.0, std::atof(next().c_str()));
+    } else if (flag == "--no-render") {
+      options.tapRender = false;
+    } else if (flag == "--no-hud") {
+      options.tapHud = false;
+    } else if (flag == "--tap-csv") {
+      options.tapCsvPath = next();
     }
   }
   return options;
@@ -371,6 +458,326 @@ std::vector<FrameSample> measure(const Options& options, rechigros::game::Chart&
 #endif
   renderer.shutdown();
   return samples;
+}
+
+// Drives synthetic touches at chart note times in manual mode and compares the frames that
+// contain a tap against a no-tap control run over the same chart range. Also accounts heap
+// traffic per frame and per tap, which is where input stutter usually comes from.
+void runTapProfile(const Options& options, rechigros::game::Chart& chart) {
+  using rechigros::game::GameplaySession;
+  struct StageGeometry {
+    float left{};
+    float top{};
+    float width{};
+    float height{};
+    float aspect{16.0F / 9.0F};
+  };
+  const auto stageOf = [&options]() {
+    StageGeometry stage;
+    stage.aspect = 16.0F / 9.0F;
+    stage.width = static_cast<float>(options.width);
+    stage.height = stage.width / stage.aspect;
+    if (stage.height > static_cast<float>(options.height)) {
+      stage.height = static_cast<float>(options.height);
+      stage.width = stage.height * stage.aspect;
+    }
+    stage.left = (static_cast<float>(options.width) - stage.width) * 0.5F;
+    stage.top = (static_cast<float>(options.height) - stage.height) * 0.5F;
+    return stage;
+  };
+  const auto viewport = [&options]() {
+    GameplaySession::Viewport value;
+    value.width = static_cast<float>(options.width);
+    value.height = static_cast<float>(options.height);
+    value.targetAspect = 16.0F / 9.0F;
+    value.scrollSpeed = 1.0F;
+    value.dpi = 380.0F;
+    return value;
+  };
+  const auto stage = stageOf();
+  struct ScheduledTap {
+    double timeSec{};
+    std::int64_t id{};
+    float x{};
+    float y{};
+  };
+  std::vector<ScheduledTap> taps;
+  taps.reserve(chart.allNotesSorted.size());
+  std::int64_t nextTapId = -1000;
+  for (const auto* note : chart.allNotesSorted) {
+    if (note == nullptr) continue;
+    if (note->type != rechigros::game::NOTE_TAP && note->type != rechigros::game::NOTE_HOLD
+        && note->type != rechigros::game::NOTE_DRAG
+        && note->type != rechigros::game::NOTE_FLICK) {
+      continue;
+    }
+    if (note->sect < options.startTimeSec) continue;
+    if (note->sect > options.startTimeSec + options.tapDurationSec) continue;
+    auto* line = note->master;
+    if (line == nullptr) continue;
+    const auto state = line->fillState(note->sect, stage.aspect);
+    const float lineX = stage.left + state.xNorm * stage.width;
+    const float lineY = stage.top + state.yNorm * stage.height;
+    const float radians = state.rotateDeg * 3.14159265358979323846F / 180.0F;
+    const float cosine = std::cos(radians);
+    const float sine = std::sin(radians);
+    // The judge position of a note is the line position plus its along-line offset.
+    const float offsetPx =
+        static_cast<float>(note->positionX * rechigros::game::PGR_WIDTH * stage.width);
+    ScheduledTap tap;
+    tap.timeSec = note->sect;
+    tap.id = nextTapId--;
+    tap.x = lineX + offsetPx * cosine;
+    tap.y = lineY + offsetPx * sine;
+    taps.push_back(tap);
+  }
+
+  rechigros::render::GameRenderer renderer;
+  bool withRender = options.tapRender;
+  if (withRender && !renderer.initialize(options.assetRoot)) {
+    std::cout << "tap-profile: renderer unavailable, measuring update only\n";
+    withRender = false;
+  }
+  if (withRender) renderer.resize(options.width, options.height);
+
+  struct FrameRow {
+    double chartTimeSec{};
+    int taps{};
+    double tapMs{};
+    double updateMs{};
+    double renderMs{};
+    double totalMs{};
+    unsigned long long allocations{};
+    unsigned long long allocationBytes{};
+    unsigned long long tapAllocations{};
+    unsigned long long updateAllocations{};
+    unsigned long long renderAllocations{};
+    int judgedPerfect{};
+    int judgedGood{};
+    int judgedBad{};
+    int judgedMiss{};
+    bool control{};
+  };
+  const auto runSegment = [&](bool control) {
+    GameplaySession session;
+    session.setViewport(viewport());
+    session.setChart(&chart);
+    session.setAutoplay(false);
+    chart.resetRuntime();
+    rechigros::render::RenderFrameInput input;
+    input.hud.visible = options.tapHud;
+    input.dpi = 380.0F;
+    input.hud.totalDurationSec = std::max(1.0, chart.chartEndTimeSec);
+    std::vector<FrameRow> rows;
+    const int frameCount =
+        static_cast<int>(options.tapDurationSec / options.frameDeltaSec + 0.5);
+    rows.reserve(static_cast<std::size_t>(frameCount));
+    double time = options.startTimeSec;
+    std::size_t nextTap = 0;
+    while (nextTap < taps.size() && taps[nextTap].timeSec < time) ++nextTap;
+    std::vector<std::pair<double, std::int64_t>> releases;
+    for (int frame = 0; frame < frameCount; ++frame) {
+      FrameRow row;
+      row.control = control;
+      row.chartTimeSec = time;
+      const auto allocBefore = allocationCount();
+      const auto bytesBefore = allocationBytes();
+      if (!control) {
+        const auto tapStart = Clock::now();
+        while (nextTap < taps.size() && taps[nextTap].timeSec <= time) {
+          const auto& tap = taps[nextTap];
+          session.touchDown(tap.id, tap.x, tap.y);
+          releases.emplace_back(time + 0.05, tap.id);
+          ++row.taps;
+          ++nextTap;
+        }
+        std::size_t releaseIndex = 0;
+        while (releaseIndex < releases.size()) {
+          if (releases[releaseIndex].first <= time) {
+            session.touchUp(releases[releaseIndex].second);
+            releases.erase(releases.begin() + static_cast<std::ptrdiff_t>(releaseIndex));
+          } else {
+            ++releaseIndex;
+          }
+        }
+        row.tapMs = millisecondsSince(tapStart);
+        row.tapAllocations = allocationCount() - allocBefore;
+      }
+      const auto updateStart = Clock::now();
+      const auto countsBefore = session.judgement().counts();
+      const auto updateAllocBefore = allocationCount();
+      session.update(time, static_cast<float>(options.frameDeltaSec));
+      session.takeSoundEvents();
+      session.takeHoldBodyBursts();
+      row.updateMs = millisecondsSince(updateStart);
+      row.updateAllocations = allocationCount() - updateAllocBefore;
+      const auto countsAfter = session.judgement().counts();
+      row.judgedPerfect = countsAfter[0] - countsBefore[0];
+      row.judgedGood = countsAfter[1] - countsBefore[1];
+      row.judgedBad = countsAfter[2] - countsBefore[2];
+      row.judgedMiss = countsAfter[3] - countsBefore[3];
+
+      double renderMs = 0.0;
+      if (withRender) {
+        const auto& judgement = session.judgement();
+        input.chartTimeSec = time;
+        input.playheadSec = time;
+        input.visualTimeSec = static_cast<double>(frame) * options.frameDeltaSec;
+        input.hud.combo = judgement.combo();
+        input.hud.score = judgement.score();
+        input.hud.accuracy = judgement.accuracy();
+        input.hud.maxCombo = judgement.maxCombo();
+        input.hud.perfect = judgement.counts()[0];
+        input.hud.good = judgement.counts()[1];
+        input.hud.bad = judgement.counts()[2];
+        input.hud.miss = judgement.counts()[3];
+        input.hud.playheadSec = time;
+        const auto renderAllocBefore = allocationCount();
+        const auto renderStart = Clock::now();
+        renderer.render(input, &chart, &judgement);
+        glFinish();
+        renderMs = millisecondsSince(renderStart);
+        row.renderAllocations = allocationCount() - renderAllocBefore;
+      }
+      row.renderMs = renderMs;
+      row.totalMs = row.tapMs + row.updateMs + row.renderMs;
+      row.allocations = allocationCount() - allocBefore;
+      row.allocationBytes = allocationBytes() - bytesBefore;
+      rows.push_back(row);
+      time += options.frameDeltaSec;
+    }
+    return rows;
+  };
+
+  std::cout << std::fixed << std::setprecision(3)
+            << "tap-profile: taps=" << taps.size() << " duration=" << options.tapDurationSec
+            << "s start=" << options.startTimeSec << "s render=" << (withRender ? 1 : 0)
+            << '\n';
+  const auto tapRows = runSegment(false);
+  const auto controlRows = runSegment(true);
+
+  const auto stats = [](std::vector<double> values) {
+    Stats result;
+    if (values.empty()) return result;
+    std::sort(values.begin(), values.end());
+    const auto mean = std::accumulate(values.begin(), values.end(), 0.0)
+        / static_cast<double>(values.size());
+    const auto at = [&values](double fraction) {
+      return values[static_cast<std::size_t>(std::clamp(fraction, 0.0, 1.0)
+          * static_cast<double>(values.size() - 1))];
+    };
+    result.meanMs = mean;
+    result.p50Ms = at(0.50);
+    result.p95Ms = at(0.95);
+    result.p99Ms = at(0.99);
+    result.maxMs = values.back();
+    return result;
+  };
+  const auto column = [](const std::vector<FrameRow>& rows, const auto& pick) {
+    std::vector<double> values;
+    values.reserve(rows.size());
+    for (const auto& row : rows) values.push_back(static_cast<double>(pick(row)));
+    return values;
+  };
+  std::vector<double> tapOnly;
+  tapOnly.reserve(taps.size());
+  unsigned long long tapAllocTotal = 0;
+  for (const auto& row : tapRows) {
+    if (row.taps > 0) {
+      tapAllocTotal += row.tapAllocations;
+      tapOnly.push_back(row.tapMs);
+      if (row.taps > 1) {
+        for (int repeat = 1; repeat < row.taps; ++repeat) tapOnly.push_back(row.tapMs / row.taps);
+      }
+    }
+  }
+  const auto tapFrames = [](const std::vector<FrameRow>& rows, bool withTaps) {
+    std::vector<FrameRow> filtered;
+    for (const auto& row : rows) {
+      if ((row.taps > 0) == withTaps) filtered.push_back(row);
+    }
+    return filtered;
+  };
+  const auto tapHit = tapFrames(tapRows, true);
+  const auto tapMiss = tapFrames(tapRows, false);
+  const auto printBlock = [&](const char* label, const std::vector<FrameRow>& rows,
+                            const std::vector<FrameRow>& control) {
+    const auto update = stats(column(rows, [](const FrameRow& row) { return row.updateMs; }));
+    const auto render = stats(column(rows, [](const FrameRow& row) { return row.renderMs; }));
+    const auto total = stats(column(rows, [](const FrameRow& row) { return row.totalMs; }));
+    const auto allocations = stats(column(rows, [](const FrameRow& row) {
+      return static_cast<double>(row.allocations);
+    }));
+    const auto controlAllocations =
+        stats(column(control, [](const FrameRow& row) {
+          return static_cast<double>(row.allocations);
+        }));
+    const auto updateAllocations =
+        stats(column(rows, [](const FrameRow& row) {
+          return static_cast<double>(row.updateAllocations);
+        }));
+    const auto renderAllocations =
+        stats(column(rows, [](const FrameRow& row) {
+          return static_cast<double>(row.renderAllocations);
+        }));
+    int perfect = 0;
+    int good = 0;
+    int bad = 0;
+    int miss = 0;
+    for (const auto& row : rows) {
+      perfect += row.judgedPerfect;
+      good += row.judgedGood;
+      bad += row.judgedBad;
+      miss += row.judgedMiss;
+    }
+    std::cout << label << " frames=" << rows.size()
+              << " update mean=" << update.meanMs << " p95=" << update.p95Ms
+              << " p99=" << update.p99Ms
+              << " render mean=" << render.meanMs << " p95=" << render.p95Ms
+              << " p99=" << render.p99Ms
+              << " total mean=" << total.meanMs << " p99=" << total.p99Ms
+              << " max=" << total.maxMs
+              << " alloc/frame=" << allocations.meanMs
+              << " p99=" << allocations.p99Ms
+              << " (updateAlloc=" << updateAllocations.meanMs
+              << " renderAlloc=" << renderAllocations.meanMs << ')'
+              << " controlAlloc=" << controlAllocations.meanMs
+              << " judged P/G/B/M=" << perfect << '/' << good << '/' << bad << '/' << miss
+              << '\n';
+  };
+  printBlock("tap-frames  ", tapHit, controlRows);
+  printBlock("no-tap frames", tapMiss, controlRows);
+  printBlock("control     ", controlRows, controlRows);
+  const auto tapCost = stats(tapOnly);
+  std::cout << "tap-ops: taps=" << taps.size() << " cost mean=" << tapCost.meanMs
+            << " p50=" << tapCost.p50Ms << " p95=" << tapCost.p95Ms
+            << " p99=" << tapCost.p99Ms << " max=" << tapCost.maxMs
+            << " alloc/tap=" << (taps.empty() ? 0.0
+                                              : static_cast<double>(tapAllocTotal)
+                                                    / static_cast<double>(taps.size()))
+            << '\n';
+  if (!options.tapCsvPath.empty()) {
+    std::ofstream csv(options.tapCsvPath);
+    if (csv) {
+      csv << "kind,frame,chartTime,taps,tapMs,updateMs,renderMs,totalMs,allocations,"
+             "allocationBytes,tapAllocations,updateAllocations,renderAllocations,"
+             "perfect,good,bad,miss\n";
+      const auto writeRows = [&csv](const char* kind, const std::vector<FrameRow>& rows) {
+        for (std::size_t index = 0; index < rows.size(); ++index) {
+          const auto& row = rows[index];
+          csv << kind << ',' << index << ',' << row.chartTimeSec << ',' << row.taps << ','
+              << row.tapMs << ',' << row.updateMs << ',' << row.renderMs << ',' << row.totalMs
+              << ',' << row.allocations << ',' << row.allocationBytes << ','
+              << row.tapAllocations << ',' << row.updateAllocations << ','
+              << row.renderAllocations << ',' << row.judgedPerfect << ',' << row.judgedGood
+              << ',' << row.judgedBad << ',' << row.judgedMiss << '\n';
+        }
+      };
+      writeRows("tap", tapRows);
+      writeRows("control", controlRows);
+    }
+  }
+  if (withRender) renderer.shutdown();
 }
 
 // Times the one-off and per-frame CPU structures directly, so a hotspot shows up without
@@ -725,6 +1132,11 @@ int main(int argc, char** argv) {
       std::cout << "scan: " << bin << ',' << start << ',' << end << ',' << liveZones << ','
                 << notes << '\n';
     }
+  }
+
+  if (exitCode == 0 && options.tapProfile) {
+    runTapProfile(options, *chart);
+    scanOnly = true;
   }
 
   if (exitCode == 0 && !scanOnly) {

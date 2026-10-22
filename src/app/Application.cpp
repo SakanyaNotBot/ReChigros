@@ -2,6 +2,7 @@
 
 #include "rechigros/app/AppContext.hpp"
 #include "rechigros/app/CaptureHarness.hpp"
+#include "ImportDialogs.hpp"
 #include "rechigros/app/ScreenCommon.hpp"
 #include "rechigros/app/Screens.hpp"
 #include "rechigros/app/TriGridBackdrop.hpp"
@@ -37,6 +38,10 @@
 
 namespace rechigros::app {
 namespace {
+
+// A drop or picker answer waits for this many rendered frames before its import starts, so
+// the platform window has settled and the import does not run during the launch transition.
+constexpr int kDropStableFrames = 45;
 
 std::filesystem::path pathFromUtf8(const char* value) {
   if (value == nullptr || *value == '\0') return {};
@@ -461,6 +466,28 @@ int Application::run() {
     }
 
     syncWindowMetrics();
+    // A drop or picker answer can start an import that takes a moment. During the launch
+    // transition the platform window surface is still being resized, so the import waits for
+    // the first stable frames instead of extending the transition.
+    if (!pendingDrops_.empty() && renderedFrames_ >= kDropStableFrames) {
+      std::vector<std::string> pending;
+      pending.swap(pendingDrops_);
+      std::vector<std::filesystem::path> handled;
+      for (const std::string& payload : pending) {
+        // The platform reports a launch document twice in some configurations (once tagged by
+        // the in-app picker layer, once by the base activity). Only the first answer for a
+        // path starts an import.
+        const auto separator = payload.find('|');
+        const std::filesystem::path dropPath = separator == std::string::npos
+            ? pathFromUtf8(payload.c_str())
+            : pathFromUtf8(payload.substr(separator + 1).c_str());
+        if (std::find(handled.begin(), handled.end(), dropPath) != handled.end()) continue;
+        handled.push_back(dropPath);
+        if (!handlePickerResult(*app_, payload)) {
+          handleIncomingPath(*app_, dropPath);
+        }
+      }
+    }
     pollGpuTimer();
     beginGpuTimer();
 
@@ -1091,8 +1118,9 @@ void Application::handleEvent(const SDL_Event& event, bool& running) {
       return;
     case SDL_EVENT_DROP_FILE:
       if (event.drop.data != nullptr) {
-        const auto path = pathFromUtf8(event.drop.data);
-        handleIncomingPath(*app_, path);
+        // The drop is handled after the window has settled: an import can run for a moment
+        // and must not compete with the launch/resize transition on the platform thread.
+        pendingDrops_.emplace_back(event.drop.data);
         SDL_free(const_cast<char*>(event.drop.data));
       }
       return;

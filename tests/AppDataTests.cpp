@@ -10,13 +10,17 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
+
+#include <miniz.h>
 
 #include "TestScratch.hpp"
 
@@ -88,6 +92,35 @@ void testDifficultyNormalisation() {
 void writeText(const std::filesystem::path& path, const std::string& text) {
   std::ofstream output(path, std::ios::binary);
   output << text;
+}
+
+// Writes a real deflated archive so the import path is exercised end to end rather than a
+// hand-made directory copy.
+bool writeZipArchive(const std::filesystem::path& archive,
+    const std::vector<std::pair<std::string, std::string>>& files) {
+#ifdef _WIN32
+  FILE* file = _wfopen(archive.wstring().c_str(), L"wb");
+#else
+  FILE* file = std::fopen(archive.string().c_str(), "wb");
+#endif
+  if (file == nullptr) return false;
+  mz_zip_archive zip{};
+  if (!mz_zip_writer_init_cfile(&zip, file, 0)) {
+    std::fclose(file);
+    return false;
+  }
+  bool ok = true;
+  for (const auto& [name, content] : files) {
+    if (!mz_zip_writer_add_mem(&zip, name.c_str(), content.data(), content.size(),
+            MZ_BEST_COMPRESSION)) {
+      ok = false;
+      break;
+    }
+  }
+  if (!mz_zip_writer_finalize_archive(&zip)) ok = false;
+  if (!mz_zip_writer_end(&zip)) ok = false;
+  if (std::fclose(file) != 0) ok = false;
+  return ok;
 }
 
 void testSettingsAspectRatio() {
@@ -547,6 +580,85 @@ void testChartLibraryPackDetection() {
   require(sawAlpha, "complete packs appear in the indexed list");
 }
 
+// An imported package has to be installed in the persistent library, not kept in a cache
+// directory that the next launch cannot see: a fresh ChartLibrary built on the same data
+// root must list the imported chart with its metadata. This is the regression that made an
+// imported chart start as a temporary play and never show up in the local list.
+void testImportPersistsAcrossReload() {
+  using namespace rechigros::app;
+  const auto root = rechigros::test::scratchDirectory("app-data-import-persist");
+  // The scratch directory survives between runs; start from a clean library.
+  std::filesystem::remove_all(root);
+  const auto packs = root / "packs";
+  std::filesystem::create_directories(packs);
+  const auto archive = root / "Imported Pack.zip";
+  const std::string packInfo =
+      "name: Persisted Song\n"
+      "composer: Persisted Artist\n"
+      "charter: Persisted Charter\n"
+      "level: IN Lv.13\n"
+      "chart: chart.json\n"
+      "music: music.ogg\n"
+      "illustration: cover.png\n";
+  require(writeZipArchive(archive,
+              {{"info.yml", packInfo},
+                  {"chart.json", chartJson("Persisted Song", "IN Lv.13", "cover.png",
+                       "music.ogg")},
+                  {"music.ogg", "OggS"},
+                  {"cover.png", "PNG"}}),
+      "an importable chart archive is written");
+
+  ChartLibrary library(packs, root / "library.txt");
+  const auto imported = library.importZip(archive, false);
+  require(imported.imported, "a chart package imports into the library");
+  const std::string importedId = imported.record.id;
+  require(!importedId.empty(), "the imported chart gets a library identifier");
+
+  // (a) The pack lives in the persistent library, not in the cache.
+  const auto installedRoot = packs / importedId;
+  require(std::filesystem::is_directory(installedRoot),
+      "the imported pack is installed under the persistent packs directory");
+  require(std::filesystem::exists(installedRoot / "chart.json"),
+      "the imported pack carries its chart file");
+  require(std::filesystem::exists(installedRoot / "info.json"),
+      "the imported pack carries its canonical metadata");
+  bool sawTemporaryDirectory = false;
+  for (const auto& entry : std::filesystem::directory_iterator(packs)) {
+    if (entry.path().extension() == ".tmp") sawTemporaryDirectory = true;
+  }
+  require(!sawTemporaryDirectory, "the import leaves no temporary pack directory behind");
+
+  // (b) A fresh library over the same data root behaves like an application restart.
+  ChartLibrary reopened(packs, root / "library.txt");
+  const auto& records = reopened.records(true);
+  const ChartRecord* found = nullptr;
+  for (const auto& record : records) {
+    if (record.id == importedId) found = &record;
+  }
+  require(found != nullptr, "an imported chart is listed after a restart");
+  if (found != nullptr) {
+    requireEqual(found->songName, "Persisted Song", "the persisted chart keeps its name");
+    requireEqual(found->info.composer, "Persisted Artist",
+        "the persisted chart keeps its composer");
+    requireEqual(found->info.charter, "Persisted Charter",
+        "the persisted chart keeps its charter");
+    require(contains(found->difficulty, "IN"), "the persisted chart keeps its level prefix");
+    require(contains(found->difficulty, "13"), "the persisted chart keeps its level number");
+    require(found->complete(), "the persisted chart is complete and playable");
+  }
+
+  // Importing the same archive again is the reference's 本地已存在该谱面 case: the result
+  // reports "not imported" and the list keeps a single entry for it.
+  const auto duplicate = reopened.importZip(archive, false);
+  require(!duplicate.imported && duplicate.record.id == importedId,
+      "a duplicate import is detected instead of installing a second copy");
+  std::size_t matches = 0;
+  for (const auto& record : reopened.records(true)) {
+    if (record.id == importedId) ++matches;
+  }
+  require(matches == 1, "the local list holds the imported chart exactly once");
+}
+
 void requireNear(float actual, float expected, const char* what) {
   require(std::abs(actual - expected) < 1.0e-4F,
       std::string(what) + " (got " + std::to_string(actual) + ", want " + std::to_string(expected)
@@ -818,6 +930,7 @@ int main() {
   testReplayPlaybackResultMerge();
   testInfoFileFormats();
   testChartLibraryPackDetection();
+  testImportPersistsAcrossReload();
   testSettingsDefaultsPersistenceAndClamps();
   testSidecarDiscovery();
   testReplayStoreRows();

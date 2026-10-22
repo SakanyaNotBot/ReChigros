@@ -58,6 +58,8 @@ struct Options {
   bool chartReveal{false};
   bool pauseMenu{false};
   float pauseElapsedSec{0.3F};
+  // Draws the frame-rate readout so the HUD number composer can be captured.
+  bool showFps{false};
   // Drops the hold-body bursts so a frame can be compared with and without them.
   bool holdBodyBursts{true};
 };
@@ -104,6 +106,8 @@ Options parseOptions(int argc, char** argv) {
       options.pauseMenu = true;
     } else if (flag == "--pause-elapsed") {
       options.pauseElapsedSec = static_cast<float>(std::atof(next().c_str()));
+    } else if (flag == "--show-fps") {
+      options.showFps = true;
     } else if (flag == "--no-hold-bursts") {
       options.holdBodyBursts = false;
     } else if (flag == "--judge-line-width") {
@@ -225,6 +229,8 @@ int main(int argc, char** argv) {
       input.hud.playheadSec = options.chartTime;
       input.hud.totalDurationSec = std::max(1.0, chart->chartEndTimeSec);
       input.hud.comboLabel = "COMBO";
+      input.hud.showFps = options.showFps;
+      input.hud.fps = 144.0F;
       input.backgroundDim = options.backgroundDim;
       input.keyScale = options.keyScale;
       input.mirrorX = options.mirrorX;
@@ -258,7 +264,11 @@ int main(int argc, char** argv) {
       // Hold-body bursts produced while the session was driven to this chart time. The
       // renderer draws one burst per entry, so a hold frame can be inspected headlessly.
       input.holdBodyBursts = session.takeHoldBodyBursts();
-      if (!options.holdBodyBursts) input.holdBodyBursts.clear();
+  input.holdHeadBursts = session.takeHoldHeadBursts();
+      if (!options.holdBodyBursts) {
+    input.holdBodyBursts.clear();
+    input.holdHeadBursts.clear();
+  }
       if (options.pauseMenu) {
         input.pause.mode = rechigros::render::PauseMode::Menu;
         input.pause.elapsedSec = options.pauseElapsedSec;

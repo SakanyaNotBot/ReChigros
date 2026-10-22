@@ -1745,6 +1745,7 @@ void gameRender(AppContext& context) {
   input.levelName = context.play.difficulty;
   // Hold-body bursts are produced by the gameplay update; the hit-effect pass draws them.
   input.holdBodyBursts = game.session.takeHoldBodyBursts();
+  input.holdHeadBursts = game.session.takeHoldHeadBursts();
   context.renderer->render(input, game.chart.get(), &judgement);
 }
 

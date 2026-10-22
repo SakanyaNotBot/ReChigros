@@ -46,6 +46,7 @@ void GameplaySession::setChart(Chart* chart, bool challengeMode) {
   recordedHoldPressNotes_.clear();
   holdFxNotes_.clear();
   holdBodyBursts_.clear();
+  holdHeadBursts_.clear();
   if (replayRecording_) recordedReplay_.clear();
   judgement_.reset(chart_ ? static_cast<int>(chart_->allNotesSorted.size()) : 0, challengeMode);
   judgement_.setAutoplay(autoplay_);
@@ -167,6 +168,12 @@ float GameplaySession::touchPosition(const Note& note, float x, float y, double 
 }
 
 float GameplaySession::judgeDistance(const Note& note, float x, float y, double chartTime) const noexcept {
+  return judgeDistanceFromPosition(note, x, y, chartTime,
+      touchPosition(note, x, y, chartTime));
+}
+
+float GameplaySession::judgeDistanceFromPosition(const Note& note, float x, float y,
+    double chartTime, float position) const noexcept {
   auto* line = note.master;
   if (!line) return std::numeric_limits<float>::max();
   const auto view = stage();
@@ -176,13 +183,12 @@ float GameplaySession::judgeDistance(const Note& note, float x, float y, double 
   const auto radians = state.rotateDeg * PI / 180.0;
   const auto sine = static_cast<float>(std::sin(radians));
   const auto cosine = static_cast<float>(std::cos(radians));
-  const auto horizontal = touchPosition(note, x, y, chartTime);
-  if (!std::isfinite(horizontal)) return std::numeric_limits<float>::max();
+  if (!std::isfinite(position)) return std::numeric_limits<float>::max();
   const auto dx = x - lineX;
   const auto dy = y - lineY;
   const auto scale = JudgementEngine::judgePositionScalePx(viewport_.height, view.height, view.width);
   const auto perpendicular = (-dx * sine + dy * cosine) / scale;
-  return horizontal + std::abs(perpendicular / JUDGE_DISTANCE_Y_SCALE);
+  return position + std::abs(perpendicular / JUDGE_DISTANCE_Y_SCALE);
 }
 
 void GameplaySession::activateHold(Note& note, bool perfect, double chartTime, double diff,
@@ -207,8 +213,10 @@ void GameplaySession::activateHold(Note& note, bool perfect, double chartTime, d
   judgement_.recordOffset(note, judgement, diff, true);
   judgement_.recordIndicator(note, judgement, diff, true);
   soundEvents_.push_back(NOTE_TAP);
+  // The reference spawns the head burst at the moment and place the head was hit; the
+  // renderer resolves that position from the line state of the judged frame.
+  holdHeadBursts_.push_back({note.sortedIndex, chartTime, perfect});
   if (recordPress) recordHoldPress(note, perfect, diff);
-  (void)chartTime;
 }
 
 bool GameplaySession::commitNote(Note& note, JudgementEngine::Judgement judgement,
@@ -398,6 +406,12 @@ std::vector<HoldBodyBurst> GameplaySession::takeHoldBodyBursts() {
   return bursts;
 }
 
+std::vector<HoldHeadBurst> GameplaySession::takeHoldHeadBursts() {
+  std::vector<HoldHeadBurst> bursts;
+  bursts.swap(holdHeadBursts_);
+  return bursts;
+}
+
 void GameplaySession::applyReplayEntries(double time) {
   auto& notes = chart_->allNotesSorted;
   while (replayCursor_ < replayEntries_.size()) {
@@ -523,7 +537,7 @@ void GameplaySession::judgeNewTouches(double time, const Stage& view) {
         continue;
       }
       const auto absolute = std::abs(delta);
-      auto distance = judgeDistance(note, touch->x, touch->y, time);
+      auto distance = judgeDistanceFromPosition(note, touch->x, touch->y, time, position);
       if (!std::isfinite(distance)) distance = position;
       if (JudgementEngine::checkNoteCandidateReplaces(best != nullptr, best ? best->type : 0,
           bestDelta, bestAbsolute, note.type, delta, absolute, bestDistance, distance)) {

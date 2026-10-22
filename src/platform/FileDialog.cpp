@@ -164,6 +164,8 @@ void requestPicker(int mode) {
 
 constexpr int PICKER_FILE = 0;
 constexpr int PICKER_FOLDER = 1;
+constexpr int PICKER_REPLAY = 2;
+constexpr int PICKER_SKIN = 3;
 
 } // namespace
 
@@ -182,12 +184,22 @@ std::filesystem::path FileDialog::openChartPackage() {
   return {};
 }
 
-// Replay and skin pickers would need their own document-picker modes and answer routing
-// in the packaged platform layer; until that exists they report "no selection" and the
-// caller keeps its current state.
-std::filesystem::path FileDialog::openReplayFile() { return {}; }
-std::filesystem::path FileDialog::openSkinPackage() { return {}; }
-std::vector<std::filesystem::path> FileDialog::openChartSourceFiles() { return {}; }
+// Every packaged picker answers asynchronously through the tagged drop path, so the return
+// value only reports that the request was raised.
+std::filesystem::path FileDialog::openReplayFile() {
+  requestPicker(PICKER_REPLAY);
+  return {};
+}
+
+std::filesystem::path FileDialog::openSkinPackage() {
+  requestPicker(PICKER_SKIN);
+  return {};
+}
+
+std::vector<std::filesystem::path> FileDialog::openChartSourceFiles() {
+  requestPicker(PICKER_FILE);
+  return {};
+}
 
 // The picker is asynchronous here, so the answer arrives as a drop event instead of a
 // return value. Callers should treat an empty result as "ask again later".

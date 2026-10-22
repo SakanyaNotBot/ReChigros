@@ -85,6 +85,7 @@ const char* kChartJson = R"JSON({
 
 const char* kInfoYaml =
     "name: Import Check\n"
+    "composer: Import Composer\n"
     "charter: Tester\n"
     "level: IN 14\n"
     "chart: chart.json\n"
@@ -138,6 +139,33 @@ void checkChartPackage(const std::filesystem::path& root, ChartLibrary& library)
   report(!second.imported && second.chartId == first.chartId,
       "chart package duplicate deduplicated", second.message);
   report(second.message == "本地已存在该谱面", "chart package duplicate message", second.message);
+
+  // Persistence: the pack lives in the library root, no temporary install directory is
+  // left behind, and a fresh library over the same root (the shape of an application
+  // restart) still indexes it with its metadata.
+  const auto packsRoot = library.packsRoot();
+  report(rechigros::platform::fileExists(packsRoot / first.chartId / "info.json"),
+      "chart package installed under the persistent packs root", first.chartId);
+  bool sawTemporary = false;
+  std::error_code error;
+  if (std::filesystem::is_directory(packsRoot, error)) {
+    for (const auto& entry : std::filesystem::directory_iterator(packsRoot, error)) {
+      if (entry.path().extension() == ".tmp") sawTemporary = true;
+    }
+  }
+  report(!sawTemporary, "chart import leaves no temporary pack directory");
+  ChartLibrary reopened(packsRoot, library.scoreFile());
+  const auto persisted = reopened.find(first.chartId);
+  report(persisted.has_value(), "fresh library lists the imported chart (restart)",
+      first.chartId);
+  if (persisted) {
+    report(persisted->songName == "Import Check", "persisted chart name",
+        persisted->songName);
+    report(persisted->difficulty.find("IN") != std::string::npos, "persisted chart level",
+        persisted->difficulty);
+    report(persisted->info.composer == "Import Composer", "persisted chart composer",
+        persisted->info.composer);
+  }
 }
 
 void checkLooseFiles(const std::filesystem::path& root, ChartLibrary& library) {

@@ -261,6 +261,156 @@ void drawPlacedText(batch::SpriteBatch& batch, const HudCanvas& canvas, HudEleme
       0.0F, 1.0F, 1.0F, projection);
 }
 
+// A label's metrics: from the cached glyph strip when every character is available (the
+// composing path never allocates or uploads), otherwise from a rasterised string texture.
+struct LabelMetrics {
+  const text::GlyphStrip* strip{};
+  text::TextTexture* texture{};
+  text::ComposedTextMetrics values;
+  std::array<text::ComposedGlyphPlacement, text::kMaxComposedGlyphs> placements{};
+  int placementCount{};
+};
+
+bool loadLabelMetrics(text::TextRenderer& text, const std::string& label, float pixelSize,
+    LabelMetrics& out) {
+  if (const text::GlyphStrip* strip =
+          text.compose(label, pixelSize, out.values, out.placements, out.placementCount)) {
+    out.strip = strip;
+    return true;
+  }
+  out.texture = text.get(label, pixelSize, false);
+  if (out.texture == nullptr) return false;
+  out.values.advanceWidth = out.texture->advanceWidth;
+  out.values.inkLeft = out.texture->inkLeft;
+  out.values.inkTop = out.texture->inkTop;
+  out.values.inkRight = out.texture->inkRight;
+  out.values.inkBottom = out.texture->inkBottom;
+  out.values.ascentPx = out.texture->ascentPx;
+  out.values.descentPx = out.texture->descentPx;
+  out.values.textureWidth = out.texture->width;
+  out.values.textureHeight = out.texture->height;
+  return true;
+}
+
+// Whether the strip path reproduces the element transform exactly. Rotation and mirrored
+// scales are not representable glyph-by-glyph, so those fall back to the string texture.
+bool elementSupportsComposedText(const HudTransforms& transforms, HudElement element) {
+  const auto& transform = transforms.element[static_cast<std::size_t>(element)];
+  if (!transform.valid) return true;
+  return transform.rotateDeg == 0.0F && transform.scaleX > 0.0F && transform.scaleY > 0.0F;
+}
+
+// Composes a label from the glyph strip: one quad per glyph, batched into a single flush.
+// The quads occupy the same pixels as the equivalent rasterised string texture.
+void drawComposedLabel(batch::SpriteBatch& batch, const HudCanvas& canvas, HudElement element,
+    const HudTransforms& transforms, const text::GlyphStrip& strip,
+    const LabelMetrics& metrics, float inkLeft, float inkTop, float red, float green, float blue,
+    float alpha, const math::Mat4& projection) {
+  if (metrics.placementCount <= 0 || strip.width <= 0 || strip.height <= 0) return;
+  const auto& transform = transforms.element[static_cast<std::size_t>(element)];
+  float scaleX = 1.0F;
+  float scaleY = 1.0F;
+  float translateX = 0.0F;
+  float translateY = 0.0F;
+  float r = red;
+  float g = green;
+  float b = blue;
+  float a = alpha;
+  if (transform.valid) {
+    scaleX = std::abs(transform.scaleX);
+    scaleY = std::abs(transform.scaleY);
+    translateX = transform.translateX;
+    translateY = transform.translateY;
+    r *= transform.red;
+    g *= transform.green;
+    b *= transform.blue;
+    a *= transform.alpha;
+  }
+  const float baseLeft = inkLeft - 1.0F;
+  const float baseTop = inkTop - 1.0F;
+  const float wholeWidth = static_cast<float>(metrics.values.textureWidth);
+  const float wholeHeight = static_cast<float>(metrics.values.textureHeight);
+  const float wholeCenterX = baseLeft + wholeWidth * 0.5F;
+  const float wholeCenterY = baseTop + wholeHeight * 0.5F;
+  if (!(a > 0.002F) || !(scaleX > 0.0F) || !(scaleY > 0.0F)) return;
+  const float textureWidth = static_cast<float>(strip.width);
+  const float textureHeight = static_cast<float>(strip.height);
+  batch.begin();
+  for (int index = 0; index < metrics.placementCount; ++index) {
+    const auto& placement = metrics.placements[static_cast<std::size_t>(index)];
+    const float glyphLeft = baseLeft + static_cast<float>(placement.targetX);
+    const float glyphTop = baseTop + static_cast<float>(placement.targetY);
+    const float width = static_cast<float>(placement.width) * scaleX;
+    const float height = static_cast<float>(placement.height) * scaleY;
+    const float centerX = wholeCenterX
+        + (glyphLeft + static_cast<float>(placement.width) * 0.5F - wholeCenterX) * scaleX
+        + translateX;
+    float centerY = wholeCenterY
+        + (glyphTop + static_cast<float>(placement.height) * 0.5F - wholeCenterY) * scaleY
+        + translateY;
+    centerY = canvas.rootY + (centerY - canvas.rootY) * canvas.rootScale;
+    const float scaledHeight = height * canvas.rootScale;
+    if (!(width > 0.0F) || !(scaledHeight > 0.0F)) continue;
+    batch.addQuad(centerX, centerY, width, scaledHeight, 0.0F, std::clamp(r, 0.0F, 1.0F),
+        std::clamp(g, 0.0F, 1.0F), std::clamp(b, 0.0F, 1.0F), std::clamp(a, 0.0F, 1.0F),
+        static_cast<float>(placement.sourceX) / textureWidth,
+        static_cast<float>(placement.sourceY) / textureHeight,
+        static_cast<float>(placement.sourceX + placement.width) / textureWidth,
+        static_cast<float>(placement.sourceY + placement.height) / textureHeight);
+  }
+  batch.flush(projection, strip.texture, nullptr);
+}
+
+// Draws one label at its anchored ink position (same contract as drawPlacedText).
+void drawLabel(batch::SpriteBatch& batch, const HudCanvas& canvas, HudElement element,
+    const HudTransforms& transforms, text::TextRenderer& text, const std::string& label,
+    float pixelSize, const LabelMetrics& metrics, float inkLeft, float inkTop, float red,
+    float green, float blue, float alpha, const math::Mat4& projection) {
+  if (metrics.strip != nullptr && elementSupportsComposedText(transforms, element)) {
+    drawComposedLabel(batch, canvas, element, transforms, *metrics.strip, metrics, inkLeft, inkTop,
+        red, green, blue, alpha, projection);
+    return;
+  }
+  if (metrics.strip == nullptr && metrics.texture != nullptr) {
+    PlacedText placed;
+    placed.glyphs = metrics.texture;
+    placed.inkLeft = inkLeft;
+    placed.inkTop = inkTop;
+    drawPlacedText(batch, canvas, element, transforms, placed, red, green, blue, alpha, projection);
+    return;
+  }
+  auto* glyphs = text.get(label, pixelSize, false);
+  if (glyphs == nullptr) return;
+  PlacedText placed;
+  placed.glyphs = glyphs;
+  placed.inkLeft = inkLeft;
+  placed.inkTop = inkTop;
+  drawPlacedText(batch, canvas, element, transforms, placed, red, green, blue, alpha, projection);
+}
+
+// Draws a composed label at an absolute top-left, used by the untransformed FPS readout.
+void drawComposedTopLeft(batch::SpriteBatch& batch, const text::GlyphStrip& strip,
+    const LabelMetrics& metrics, float left, float top, float red, float green, float blue,
+    float alpha, const math::Mat4& projection) {
+  if (metrics.placementCount <= 0 || strip.width <= 0 || strip.height <= 0) return;
+  const float textureWidth = static_cast<float>(strip.width);
+  const float textureHeight = static_cast<float>(strip.height);
+  batch.begin();
+  for (int index = 0; index < metrics.placementCount; ++index) {
+    const auto& placement = metrics.placements[static_cast<std::size_t>(index)];
+    const float width = static_cast<float>(placement.width);
+    const float height = static_cast<float>(placement.height);
+    batch.addQuad(left + static_cast<float>(placement.targetX) + width * 0.5F,
+        top + static_cast<float>(placement.targetY) + height * 0.5F, width, height, 0.0F, red, green,
+        blue, alpha, static_cast<float>(placement.sourceX) / textureWidth,
+        static_cast<float>(placement.sourceY) / textureHeight,
+        static_cast<float>(placement.sourceX + placement.width) / textureWidth,
+        static_cast<float>(placement.sourceY + placement.height) / textureHeight);
+  }
+  batch.flush(projection, strip.texture, nullptr);
+}
+
+
 // HUD start/exit animation factor for the current frame.
 float computeRootScale(float introProgress, float outroProgress) {
   if (outroProgress > 0.0F) {
@@ -608,10 +758,13 @@ void drawFpsCounter(batch::SpriteBatch& batch, text::TextRenderer& text, const S
   const float textPx = dp * 12.0F;
   const int fps = std::max(0, static_cast<int>(std::lround(values.fps)));
   const std::string label = std::to_string(fps) + " FPS";
-  auto* glyphs = text.get(label, textPx, false);
-  if (glyphs == nullptr || glyphs->width <= 0 || glyphs->height <= 0) return;
-  const float width = static_cast<float>(glyphs->width);
-  const float height = static_cast<float>(glyphs->height);
+  LabelMetrics metrics;
+  if (!loadLabelMetrics(text, label, textPx, metrics)) return;
+  // The composed path reports the same virtual texture size and ink border as the rasterised
+  // string, so the plate and the top-left anchoring are unchanged.
+  const float width = static_cast<float>(metrics.values.textureWidth);
+  const float height = static_cast<float>(metrics.values.textureHeight);
+  if (!(width > 0.0F) || !(height > 0.0F)) return;
   const float left = layout.stage.x + dp * 4.0F;
   const float top = std::max(layout.stage.y + dp * 2.0F,
       layout.stage.y + layout.stage.height - dp * 2.0F - height);
@@ -622,8 +775,13 @@ void drawFpsCounter(batch::SpriteBatch& batch, text::TextRenderer& text, const S
         0.0F, 0.0F, 0.0F, 0.5F * hudAlpha, 0.0F, 0.0F, 1.0F, 1.0F);
     batch.flush(projection, *textures.white, nullptr);
   }
-  drawTextureTopLeftUntransformed(batch, glyphs->texture, left, top, width, height, 1.0F, 1.0F,
-      1.0F, hudAlpha, projection);
+  if (metrics.strip != nullptr) {
+    drawComposedTopLeft(batch, *metrics.strip, metrics, left, top, 1.0F, 1.0F, 1.0F, hudAlpha,
+        projection);
+  } else if (metrics.texture != nullptr) {
+    drawTextureTopLeftUntransformed(batch, metrics.texture->texture, left, top, width, height, 1.0F,
+        1.0F, 1.0F, hudAlpha, projection);
+  }
 }
 } // namespace
 
@@ -766,20 +924,19 @@ void drawHud(batch::SpriteBatch& batch, text::TextRenderer& text, const StageLay
   {
     const std::string label = formatScore(displayScore);
     const float sizePx = canvas.size(kScoreTextSize);
-    if (auto* glyphs = text.get(label, sizePx, false); glyphs != nullptr) {
+    LabelMetrics metrics;
+    if (loadLabelMetrics(text, label, sizePx, metrics)) {
       const float rectRight = canvas.x(canvas.halfUiW + kScoreXOffset) +
           canvas.size(kScoreW) * 0.5F;
       const float rectCenterY = canvas.y(kScoreY);
       const float contentWidth = std::ceil(text.measure(label, sizePx));
-      const float contentHeight = std::ceil(glyphs->descentPx + glyphs->ascentPx);
+      const float contentHeight = std::ceil(metrics.values.descentPx + metrics.values.ascentPx);
       const float boxTop = rectCenterY - contentHeight * 0.5F;
-      const float baseline = boxTop + glyphs->ascentPx;
-      PlacedText placed;
-      placed.glyphs = glyphs;
-      placed.inkLeft = rectRight - contentWidth + std::floor(glyphs->inkLeft);
-      placed.inkTop = baseline + glyphs->inkTop;
-      drawPlacedText(batch, canvas, HudElement::Score, transforms, placed, colors.scoreR,
-          colors.scoreG, colors.scoreB, textAlpha, projection);
+      const float baseline = boxTop + metrics.values.ascentPx;
+      drawLabel(batch, canvas, HudElement::Score, transforms, text, label, sizePx, metrics,
+          rectRight - contentWidth + std::floor(metrics.values.inkLeft),
+          baseline + metrics.values.inkTop, colors.scoreR, colors.scoreG, colors.scoreB, textAlpha,
+          projection);
     }
   }
 
@@ -787,20 +944,19 @@ void drawHud(batch::SpriteBatch& batch, text::TextRenderer& text, const StageLay
   if (values.showAccuracy) {
     const std::string label = formatAccuracyHundredths(accuracyHundredths);
     const float sizePx = canvas.size(kAccTextSize);
-    if (auto* glyphs = text.get(label, sizePx, false); glyphs != nullptr) {
+    LabelMetrics metrics;
+    if (loadLabelMetrics(text, label, sizePx, metrics)) {
       const float rectRight = canvas.x(canvas.halfUiW + kScoreXOffset) +
           canvas.size(kScoreW) * 0.5F;
       const float rectCenterY = canvas.y(kAccY);
       const float contentWidth = std::ceil(text.measure(label, sizePx));
-      const float contentHeight = std::ceil(glyphs->descentPx + glyphs->ascentPx);
+      const float contentHeight = std::ceil(metrics.values.descentPx + metrics.values.ascentPx);
       const float boxTop = rectCenterY - contentHeight * 0.5F;
-      const float baseline = boxTop + glyphs->ascentPx;
-      PlacedText placed;
-      placed.glyphs = glyphs;
-      placed.inkLeft = rectRight - contentWidth + std::floor(glyphs->inkLeft);
-      placed.inkTop = baseline + glyphs->inkTop;
-      drawPlacedText(batch, canvas, HudElement::Score, transforms, placed, colors.textR,
-          colors.textG, colors.textB, textAlpha * comboAlpha, projection);
+      const float baseline = boxTop + metrics.values.ascentPx;
+      drawLabel(batch, canvas, HudElement::Score, transforms, text, label, sizePx, metrics,
+          rectRight - contentWidth + std::floor(metrics.values.inkLeft),
+          baseline + metrics.values.inkTop, colors.textR, colors.textG, colors.textB,
+          textAlpha * comboAlpha, projection);
     }
   }
 
@@ -813,20 +969,21 @@ void drawHud(batch::SpriteBatch& batch, text::TextRenderer& text, const StageLay
     const std::string number = std::to_string(values.combo);
 
     const float numberSize = canvas.size(kComboNumberTextSize);
-    if (auto* glyphs = text.get(number, numberSize, false); glyphs != nullptr) {
-      const float inkWidth = std::ceil(glyphs->inkRight) - std::floor(glyphs->inkLeft);
+    LabelMetrics numberMetrics;
+    if (loadLabelMetrics(text, number, numberSize, numberMetrics)) {
+      const float inkWidth =
+          std::ceil(numberMetrics.values.inkRight) - std::floor(numberMetrics.values.inkLeft);
       const float contentWidth = std::ceil(std::max(inkWidth, text.measure(number, numberSize)));
-      const float contentHeight = std::ceil(glyphs->descentPx + glyphs->ascentPx);
+      const float contentHeight =
+          std::ceil(numberMetrics.values.descentPx + numberMetrics.values.ascentPx);
       const float centerX = canvas.x(0.0F);
       const float centerY = canvas.y(kComboY);
       const float boxTop = centerY - contentHeight * 0.5F;
-      const float baseline = boxTop + glyphs->ascentPx;
-      PlacedText placed;
-      placed.glyphs = glyphs;
-      placed.inkLeft = centerX - contentWidth * 0.5F;
-      placed.inkTop = baseline + glyphs->inkTop;
-      drawPlacedText(batch, canvas, HudElement::ComboNumber, transforms, placed, colors.textR,
-          colors.textG, colors.textB, textAlpha, projection);
+      const float baseline = boxTop + numberMetrics.values.ascentPx;
+      drawLabel(batch, canvas, HudElement::ComboNumber, transforms, text, number, numberSize,
+          numberMetrics, centerX - contentWidth * 0.5F,
+          baseline + numberMetrics.values.inkTop, colors.textR, colors.textG, colors.textB,
+          textAlpha, projection);
     }
 
     const float labelSize = canvas.size(kComboLabelTextSize);

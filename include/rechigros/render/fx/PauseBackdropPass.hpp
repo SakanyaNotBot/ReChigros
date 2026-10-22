@@ -1,16 +1,16 @@
 #pragma once
 
 #include "rechigros/render/fx/FullscreenPass.hpp"
+#include "rechigros/render/gl/Framebuffer.hpp"
 
 #include <filesystem>
 
-namespace rechigros::render::gl { class Framebuffer; }
-
 namespace rechigros::render::fx {
 
-// Draws the frozen scene behind the pause and resume overlays. The scene is copied into
-// a scratch target, blurred with a separable kernel, then composited through the pause
-// backdrop grade (vibrancy, brightness, flatten) at the requested opacity.
+// Draws the frozen scene behind the pause and resume overlays. The scene runs through the
+// reference scalable-blur pyramid (progressively downscaled blur targets, then back up to
+// the full view) and the result is composited through the pause backdrop grade (vibrancy,
+// brightness, flatten) at the requested opacity.
 class PauseBackdropPass final {
 public:
   PauseBackdropPass() = default;
@@ -22,17 +22,26 @@ public:
   void release() noexcept;
   [[nodiscard]] bool ready() const noexcept { return ready_; }
 
-  // Blurs `source` into `scratch`, then draws the graded result over the current target.
-  // `alpha` of zero or less returns without drawing. `vibrancy`, `brightness` and
-  // `flatten` follow the shipped pause grading.
-  // `output` receives the composite; it is bound explicitly because the blur passes leave
-  // their own target bound.
-  void draw(gl::Texture& source, gl::Framebuffer& blurScratch, gl::Framebuffer& blurTemp,
-      unsigned int outputFbo, float alpha, float vibrancy, float brightness, float flatten);
+  // Blurs `source` through the scalable-blur pyramid, then composites the graded result
+  // into `outputFbo`. `alpha` of zero or less returns without drawing. `vibrancy`,
+  // `brightness` and `flatten` follow the shipped pause grading.
+  void draw(gl::Texture& source, unsigned int outputFbo, float alpha, float vibrancy,
+      float brightness, float flatten);
 
 private:
+  // One blur pass from `source` into `destination`, with the reference scalable-blur
+  // kernel and the fixed full-view radius.
+  void blurPass(const gl::Texture& source, gl::Framebuffer& destination, float radiusPx);
+  void ensureTargets(int viewWidth, int viewHeight);
+
   FullscreenPass blur_;
   FullscreenPass grade_;
+  // Depth 0 is unused; depths 1..PAUSE_SCENE_BLUR_ITERATIONS hold the downscaled chain.
+  static constexpr int kMaxDepth = 4;
+  gl::Framebuffer pyramid_[kMaxDepth + 1];
+  gl::Framebuffer output_;
+  int viewWidth_{};
+  int viewHeight_{};
   std::filesystem::path assetRoot_;
   bool ready_{};
 };

@@ -24,6 +24,12 @@ public:
   // its longest edge fits that many pixels.
   [[nodiscard]] std::uint64_t textureFor(const std::filesystem::path& image, int maxSize = 0);
 
+  // Returns an ImGui-compatible texture holding the settlement-page backdrop: the image is
+  // decoded, downscaled to a third of its size, blurred with three separable box passes of
+  // radius ~5% of the artwork width and uploaded so the view upsamples it with bilinear
+  // filtering. This is the reference result page's background blur and is cached.
+  [[nodiscard]] std::uint64_t blurredBackdropFor(const std::filesystem::path& image);
+
   // Releases every texture. A current GL context is required.
   void reset() noexcept;
 

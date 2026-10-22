@@ -47,6 +47,10 @@ public:
 
   [[nodiscard]] float touchPosition(const Note& note, float x, float y, double chartTimeSec) const noexcept;
   [[nodiscard]] float judgeDistance(const Note& note, float x, float y, double chartTimeSec) const noexcept;
+  // Perpendicular component only: the caller already knows the along-line falloff, so this
+  // avoids evaluating the note geometry a second time in the touch scan.
+  [[nodiscard]] float judgeDistanceFromPosition(const Note& note, float x, float y,
+      double chartTimeSec, float position) const noexcept;
   [[nodiscard]] float effectiveJudgeArea(const Note& note, double chartTimeSec) const noexcept;
 
   // --- replay model -----------------------------------------------------------
@@ -69,6 +73,10 @@ public:
   // One hold-body burst produced during the last update. The caller spawns the hit effect
   // for the note; the index addresses Chart::allNotesSorted.
   std::vector<HoldBodyBurst> takeHoldBodyBursts();
+
+  // One hold-head burst produced during the last update. The renderer resolves its
+  // position from the judged frame and draws the effect there.
+  std::vector<HoldHeadBurst> takeHoldHeadBursts();
 
   // Red-zone state, updated each frame in the current stage geometry. `render` draws from
   // Chart::blockAreaList; judgement consults blockedTouchIds().
@@ -143,5 +151,6 @@ private:
   // the number of active holds rather than to the chart size.
   std::vector<Note*> holdFxNotes_;
   std::vector<HoldBodyBurst> holdBodyBursts_;
+  std::vector<HoldHeadBurst> holdHeadBursts_;
 };
 }

@@ -149,6 +149,10 @@ void HitEffectField::update(game::Chart& chart, double chartTimeSec, double visu
     if (tracked.judgement == judgement) continue; // already emitted for this state
     tracked.judgement = judgement;
     if (note->master == nullptr) continue;
+    // Hold notes get their head burst from the session event stream, which the renderer
+    // places where the head was when it was hit; an on-line burst from this scan would be
+    // wrong for an early hit and would duplicate the event burst.
+    if (note->isHold) continue;
 
     // Very late sweeps at load time must not produce bursts.
     if (note->sect > chartTimeSec + 0.5) continue;
@@ -229,6 +233,47 @@ void HitEffectField::spawnHoldBody(game::Chart& chart, const game::HoldBodyBurst
   const double lag = std::max(0.0, chartTimeSec - burst.timeSec);
   spawnBurstForNote(*note, burst.perfect ? 0 : 1, chartTimeSec, visualTimeSec - lag, stageX,
       stageY, stageWidth, stageHeight);
+}
+
+void HitEffectField::spawnHoldHead(game::Chart& chart, const game::HoldHeadBurst& burst,
+    double chartTimeSec, double visualTimeSec, float x, float y, float rotationDeg,
+    float noteWidth, float musicSpeed) {
+  noteWidth_ = noteWidth;
+  if (burst.noteIndex < 0
+      || static_cast<std::size_t>(burst.noteIndex) >= chart.allNotesSorted.size()) {
+    return;
+  }
+  const game::Note* note = chart.allNotesSorted[static_cast<std::size_t>(burst.noteIndex)];
+  if (note == nullptr) return;
+  // The reference back-dates the burst by (current chart time - event time) / speed so a
+  // slow frame does not restart the animation.
+  const double speed = std::max(0.001, static_cast<double>(musicSpeed));
+  const double lag = std::max(0.0, (chartTimeSec - burst.timeSec) / speed);
+  const int judgement = burst.perfect ? 0 : 1;
+  float red = 0.0F;
+  float green = 0.0F;
+  float blue = 0.0F;
+  float alpha = 1.0F;
+  int parts = 4;
+  if (isPerfect(judgement)) {
+    red = skin_.perfectRed;
+    green = skin_.perfectGreen;
+    blue = skin_.perfectBlue;
+    alpha = skin_.perfectAlpha;
+    parts = 4;
+  } else {
+    red = skin_.goodRed;
+    green = skin_.goodGreen;
+    blue = skin_.goodBlue;
+    alpha = skin_.goodAlpha;
+    parts = 3;
+  }
+  if (note->hasHitEffectTint) {
+    red = note->hitEffectR;
+    green = note->hitEffectG;
+    blue = note->hitEffectB;
+  }
+  spawn(x, y, visualTimeSec - lag, red, green, blue, alpha, parts, rotationDeg);
 }
 
 void HitEffectField::draw(batch::SpriteBatch& out, const math::Mat4& projection,

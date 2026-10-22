@@ -97,6 +97,8 @@ private:
     double wallSec{};
   };
   std::vector<FrameSample> frameSamples_;
+  // Drop and picker payloads wait for the window to settle before their import starts.
+  std::vector<std::string> pendingDrops_;
   // --swap-interval N: present pacing experiment; negative selects adaptive vsync.
   int swapInterval_{1};
   // Skips the immediate-mode frame for plain gameplay frames (default on; --no-imgui-skip

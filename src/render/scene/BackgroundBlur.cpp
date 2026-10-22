@@ -24,22 +24,20 @@ void main() {
 }
 )";
 
-// Separable five-tap blur; the offsets shrink with the target resolution so the kernel
-// keeps the same visual width at every viewport size.
+// Separable five-tap gaussian, matching the reference blur shader: the pass blurs along
+// one axis only, with side taps at 1.384615 and 3.230769 times the base texel step, so the
+// kernel keeps the same visual width at every resolution.
 constexpr const char* kBlurSource = R"(
 uniform sampler2D uTexture;
 uniform vec2 uTexelOffset;
 in vec2 uv;
 out vec4 fragmentColor;
 void main() {
-  vec2 step = uTexelOffset;
   vec4 sum = texture(uTexture, uv) * 0.2270270270;
-  sum += texture(uTexture, uv + vec2(step.x, 0.0)) * 0.1945945946;
-  sum += texture(uTexture, uv - vec2(step.x, 0.0)) * 0.1945945946;
-  sum += texture(uTexture, uv + vec2(0.0, step.y)) * 0.1216216216;
-  sum += texture(uTexture, uv - vec2(0.0, step.y)) * 0.1216216216;
-  sum += texture(uTexture, uv + step) * 0.0540540541;
-  sum += texture(uTexture, uv - step) * 0.0540540541;
+  sum += texture(uTexture, uv + uTexelOffset * 1.384615) * 0.3162162162;
+  sum += texture(uTexture, uv - uTexelOffset * 1.384615) * 0.3162162162;
+  sum += texture(uTexture, uv + uTexelOffset * 3.230769) * 0.0702702703;
+  sum += texture(uTexture, uv - uTexelOffset * 3.230769) * 0.0702702703;
   fragmentColor = sum;
 }
 )";
@@ -168,7 +166,9 @@ bool BackgroundBlur::rebuild(int viewWidth, int viewHeight, const gl::Texture& a
 
   const float offsetXTexel = kBlurOffsetPixels / static_cast<float>(targetWidth);
   const float offsetYTexel = kBlurOffsetPixels / static_cast<float>(targetHeight);
-  gl::Texture* current = &impl_->downsampled.color();
+  // The reference runs 8 iterations of (horizontal then vertical) blur over the downscaled
+  // artwork; each pair writes back into the same buffer, so the exposed target holds the
+  // result after exactly the reference pass count (16 passes).
   for (int iteration = 0; iteration < kBlurIterations; ++iteration) {
     impl_->ping.bind();
     glViewport(0, 0, targetWidth, targetHeight);
@@ -176,10 +176,10 @@ bool BackgroundBlur::rebuild(int viewWidth, int viewHeight, const gl::Texture& a
     impl_->blur.program().set1i("uTexture", 0);
     impl_->blur.program().set2f("uTexelOffset", offsetXTexel, 0.0F);
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, current->id());
+    glBindTexture(GL_TEXTURE_2D, impl_->downsampled.color().id());
     fx::FullscreenQuad::instance().draw();
 
-    impl_->pong.bind();
+    impl_->downsampled.bind();
     glViewport(0, 0, targetWidth, targetHeight);
     impl_->blur.program().use();
     impl_->blur.program().set1i("uTexture", 0);
@@ -187,19 +187,7 @@ bool BackgroundBlur::rebuild(int viewWidth, int viewHeight, const gl::Texture& a
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, impl_->ping.color().id());
     fx::FullscreenQuad::instance().draw();
-    current = &impl_->pong.color();
   }
-
-  // The last vertical pass wrote into the ping target; run one final horizontal pass so
-  // the result lives in the downsampled target that is exposed to callers.
-  impl_->downsampled.bind();
-  glViewport(0, 0, targetWidth, targetHeight);
-  impl_->blur.program().use();
-  impl_->blur.program().set1i("uTexture", 0);
-  impl_->blur.program().set2f("uTexelOffset", offsetXTexel, 0.0F);
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, current->id());
-  fx::FullscreenQuad::instance().draw();
 
   glBindFramebuffer(GL_FRAMEBUFFER, static_cast<unsigned int>(previousFbo));
   glViewport(previousViewport[0], previousViewport[1], previousViewport[2],

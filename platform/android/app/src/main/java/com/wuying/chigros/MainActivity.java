@@ -90,21 +90,50 @@ public final class MainActivity extends SDLActivity {
         if (!Intent.ACTION_VIEW.equals(intent.getAction())) return null;
         Uri uri = intent.getData();
         if (uri == null) return null;
+        File incoming;
         if ("file".equalsIgnoreCase(uri.getScheme())) {
-            File file = new File(uri.getPath());
-            return isZip(file) ? extractChartArchive(file).getAbsolutePath() : file.getAbsolutePath();
-        }
-        if (!"content".equalsIgnoreCase(uri.getScheme())) {
+            incoming = new File(uri.getPath());
+        } else if ("content".equalsIgnoreCase(uri.getScheme())) {
+            try {
+                getContentResolver().takePersistableUriPermission(uri,
+                        intent.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (RuntimeException ignored) {
+            }
+            incoming = copyContentUri(uri);
+        } else {
             throw new IOException("Unsupported URI scheme: " + uri.getScheme());
         }
-        try {
-            getContentResolver().takePersistableUriPermission(uri,
-                    intent.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        } catch (RuntimeException ignored) {
+        return tagIncomingFile(incoming);
+    }
+
+    // A picked document is handed to the native side with a short kind tag so it is imported
+    // into the right store: chart packs go into the chart library, replay archives into the
+    // replay store and resource packages into the skin store. A loose chart document is
+    // passed untagged, which starts it as a temporary chart instead of installing a pack.
+    private static String tagIncomingFile(File incoming) throws IOException {
+        final String lower = incoming.getName().toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".cgrp")) return "replay|" + incoming.getAbsolutePath();
+        if (!isZip(incoming)) return incoming.getAbsolutePath();
+        if (zipContainsAny(incoming, "replay.json")) return "replay|" + incoming.getAbsolutePath();
+        if (zipContainsAny(incoming, "respack.json", "skin.json")) {
+            return "skin|" + incoming.getAbsolutePath();
         }
-        File imported = copyContentUri(uri);
-        return isZip(imported) ? extractChartArchive(imported).getAbsolutePath()
-                : imported.getAbsolutePath();
+        return "chartzip|" + incoming.getAbsolutePath();
+    }
+
+    private static boolean zipContainsAny(File archive, String... names) {
+        try (ZipInputStream zip = new ZipInputStream(
+                new BufferedInputStream(new FileInputStream(archive)))) {
+            ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                final String entryName = entry.getName().toLowerCase(Locale.ROOT);
+                for (String name : names) {
+                    if (entryName.equals(name) || entryName.endsWith("/" + name)) return true;
+                }
+            }
+        } catch (IOException ignored) {
+        }
+        return false;
     }
 
     private File copyContentUri(Uri uri) throws IOException {
@@ -255,6 +284,8 @@ public final class MainActivity extends SDLActivity {
 
     private static final int PICKER_FILE = 0;
     private static final int PICKER_FOLDER = 1;
+    private static final int PICKER_REPLAY = 2;
+    private static final int PICKER_SKIN = 3;
     private static final int REQUEST_PICKER = 0x51D1;
 
     private static MainActivity instance;
@@ -309,11 +340,13 @@ public final class MainActivity extends SDLActivity {
             try {
                 final String path;
                 if (pickerMode == PICKER_FOLDER) {
-                    path = copyDocumentTree(uri);
+                    path = "chartdir|" + copyDocumentTree(uri);
+                } else if (pickerMode == PICKER_REPLAY) {
+                    path = "replay|" + copyContentUri(uri).getAbsolutePath();
+                } else if (pickerMode == PICKER_SKIN) {
+                    path = "skin|" + copyContentUri(uri).getAbsolutePath();
                 } else {
-                    File imported = copyContentUri(uri);
-                    path = isZip(imported) ? extractChartArchive(imported).getAbsolutePath()
-                            : imported.getAbsolutePath();
+                    path = tagIncomingFile(copyContentUri(uri));
                 }
                 if (path != null) SDLActivity.onNativeDropFile(path);
             } catch (IOException error) {

@@ -30,4 +30,10 @@ namespace rechigros::app {
 // skin so the renderer reloads it on the next run.
 [[nodiscard]] bool importSkinFromDialog(AppContext& context);
 
+// A platform picker that answers asynchronously reports the chosen document through the
+// drop channel tagged with the kind of document the caller asked for. Consumes the payload
+// and returns true when it was handled; a plain path returns false so the caller falls back
+// to the regular drag-and-drop handling.
+[[nodiscard]] bool handlePickerResult(AppContext& context, std::string_view payload);
+
 } // namespace rechigros::app

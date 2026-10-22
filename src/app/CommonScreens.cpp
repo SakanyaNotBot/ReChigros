@@ -297,13 +297,15 @@ void handleIncomingPath(AppContext& context, const std::filesystem::path& path) 
   try {
     if (std::filesystem::is_directory(path, error)) {
       const auto result = context.library.importDirectory(path);
-      notify(context, result.imported ? "已导入谱面" : "谱面已在库中");
+      notify(context, result.imported ? "谱面导入成功" : "本地已存在该谱面");
+      context.library.invalidate();
       openChartDetail(context, result.record.id);
       return;
     }
     if (extension == ".zip") {
       const auto result = context.library.importZip(path);
-      notify(context, result.imported ? "已导入谱面包" : "谱面包已在库中");
+      notify(context, result.imported ? "谱面导入成功" : "本地已存在该谱面");
+      context.library.invalidate();
       openChartDetail(context, result.record.id);
       return;
     }
