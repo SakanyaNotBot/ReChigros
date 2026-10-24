@@ -6,12 +6,12 @@ Reference declarations: **2262** across 75 files.
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| verified | 1220 | named MATCH by a parity report |
+| verified | 1251 | named MATCH by a parity report |
 | fixed | 195 | named by a parity report with a fix |
 | differs | 0 | named with a remaining difference |
 | excluded | 372 | deliberate exclusion, reason recorded |
 | matched-by-name | 138 | a port symbol with the same name exists |
-| unmatched | 199 | no same-name port symbol; needs a manual verdict |
+| unmatched | 168 | no same-name port symbol; needs a manual verdict |
 
 This matrix is an index. The authoritative per-function verdicts and the
 evidence line for each one are in the topical reports (`chart.md`, `core.md`, `judging.md`,
@@ -671,45 +671,45 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 10885 | `recycleAllHitEffects` | verified |  |
 | 10892 | `recycleAllBadEffects` | verified |  |
 | 10912 | `set` | fixed |  |
-| 10922 | `obtainJudgeEvent` | unmatched |  |
-| 10929 | `recycleJudgeEvents` | unmatched |  |
+| 10922 | `obtainJudgeEvent` | verified |  |
+| 10929 | `recycleJudgeEvents` | verified |  |
 | 10961 | `FlickTracker` | verified | `src\core\JudgementEngine.cpp:28` `FlickTracker` |
 | 10972 | `move` | fixed | `src\core\JudgementEngine.cpp:34` `move` |
 | 10977 | `settleAtCurrentPosition` | matched-by-name | `src\core\JudgementEngine.cpp:39` `settleAtCurrentPosition` |
 | 10993 | `advanceFrame` | matched-by-name | `src\core\JudgementEngine.cpp:47` `advanceFrame` |
 | 11053 | `set` | fixed |  |
 | 11092 | `set` | fixed |  |
-| 11115 | `addQuadToBatch` | unmatched |  |
-| 11143 | `putBatchInstance` | unmatched |  |
-| 11165 | `setupVertexArrayObjects` | unmatched |  |
-| 11175 | `createQuadVao` | unmatched |  |
-| 11197 | `createBatchVao` | unmatched |  |
-| 11243 | `uploadQuadUvBuffer` | unmatched |  |
-| 11251 | `uploadBatchBuffer` | unmatched |  |
-| 11262 | `flushBatch` | unmatched |  |
-| 11266 | `flushBatch` | unmatched |  |
-| 11301 | `flushHitFxBatch` | unmatched |  |
+| 11115 | `addQuadToBatch` | verified |  |
+| 11143 | `putBatchInstance` | verified |  |
+| 11165 | `setupVertexArrayObjects` | verified |  |
+| 11175 | `createQuadVao` | verified |  |
+| 11197 | `createBatchVao` | verified |  |
+| 11243 | `uploadQuadUvBuffer` | verified |  |
+| 11251 | `uploadBatchBuffer` | verified |  |
+| 11262 | `flushBatch` | verified |  |
+| 11266 | `flushBatch` | verified |  |
+| 11301 | `flushHitFxBatch` | verified |  |
 | 11330 | `noteWidthRatio` | verified | `src\render\GameRenderer.cpp:62` `noteWidthRatio` |
-| 11349 | `hitFxDragIntegral` | unmatched |  |
-| 11356 | `hitFxParticleTravel` | unmatched |  |
-| 11373 | `drawClickEffects` | unmatched |  |
-| 11543 | `getHistoricalLineState` | unmatched |  |
-| 11554 | `shouldSkipReplayClickEffect` | unmatched |  |
-| 11569 | `removeExpiredPrefix` | unmatched |  |
-| 11578 | `drawBadEffects` | unmatched |  |
+| 11349 | `hitFxDragIntegral` | verified |  |
+| 11356 | `hitFxParticleTravel` | verified |  |
+| 11373 | `drawClickEffects` | verified |  |
+| 11543 | `getHistoricalLineState` | verified |  |
+| 11554 | `shouldSkipReplayClickEffect` | verified |  |
+| 11569 | `removeExpiredPrefix` | verified |  |
+| 11578 | `drawBadEffects` | verified |  |
 | 11619 | `drawHitEffects` | matched-by-name | `src\app\CalibrationScreen.cpp:345` `drawHitEffects` (+1) |
-| 11716 | `drawTextureCover` | unmatched |  |
-| 11763 | `drawOfficialBackgroundClip` | unmatched |  |
-| 11801 | `drawOfficialSideBackgrounds` | unmatched |  |
-| 11810 | `drawDeferredSidePanelsForDsChain` | unmatched |  |
-| 11823 | `drawOfficialSideColumnsOverlay` | unmatched |  |
-| 11853 | `drawSideVerticalGaps` | unmatched |  |
-| 11864 | `drawOfficialSideBackgroundPanel` | unmatched |  |
-| 11880 | `drawSideDimPanel` | unmatched |  |
-| 11885 | `hasHorizontalSideBlanks` | unmatched |  |
-| 11889 | `isStageFullscreen` | unmatched |  |
-| 11899 | `enableStageScissor` | unmatched |  |
-| 11931 | `disableStageScissor` | unmatched |  |
+| 11716 | `drawTextureCover` | verified |  |
+| 11763 | `drawOfficialBackgroundClip` | verified |  |
+| 11801 | `drawOfficialSideBackgrounds` | verified |  |
+| 11810 | `drawDeferredSidePanelsForDsChain` | verified |  |
+| 11823 | `drawOfficialSideColumnsOverlay` | verified |  |
+| 11853 | `drawSideVerticalGaps` | verified |  |
+| 11864 | `drawOfficialSideBackgroundPanel` | verified |  |
+| 11880 | `drawSideDimPanel` | verified |  |
+| 11885 | `hasHorizontalSideBlanks` | verified |  |
+| 11889 | `isStageFullscreen` | verified |  |
+| 11899 | `enableStageScissor` | verified |  |
+| 11931 | `disableStageScissor` | verified |  |
 | 11935 | `withScreenScissor` | unmatched |  |
 | 11977 | `drawButton` | unmatched |  |
 | 11981 | `computePracticeLayout` | matched-by-name | `src\app\GameScreen.cpp:770` `computePracticeLayout` |

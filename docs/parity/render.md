@@ -384,6 +384,29 @@ These are noted so a future reader does not mistake them for divergences.
    particle positions do not. Inherent to the runtime change and deliberate so the port is
    deterministic across its own runs.
 
+### Batching, hit-effect particles and the side backgrounds
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `obtainJudgeEvent` / `recycleJudgeEvents` | judgement-event batching in `GameplaySession` | DIFFERENT BY DESIGN | The reference pools judgement-event objects so a burst of judgements does not allocate. The port collects them in a vector cleared each frame. Same events delivered, no pool needed. |
+| `addQuadToBatch` / `putBatchInstance` | `batch::SpriteBatch` instance append | MATCH | Same append of a quad instance into the current batch. |
+| `setupVertexArrayObjects` / `createQuadVao` / `createBatchVao` / `uploadQuadUvBuffer` / `uploadBatchBuffer` | `SpriteBatch` VAO and buffer setup | MATCH | Same VAO per batch kind and the same buffer upload strategy. |
+| `flushBatch` (2 overloads) / `flushHitFxBatch` | `SpriteBatch::flush` and the hit-effect batch flush | MATCH | Same flush of accumulated instances in one draw call, with the same per-kind state. |
+| `hitFxDragIntegral` :11352-11357 | `dragIntegral` (`HitEffect.cpp:39-43`) | MATCH | Identical polynomial `((0.05u - 0.4666667)u + 1.1)u^2` with the same clamp of u into 0..1 and the same zero at u <= 0. |
+| `hitFxParticleTravel` :11363-11374 | `particleTravel` (`HitEffect.cpp:48-61`) | MATCH | Same Simpson integration over `n = 24` intervals (`kTravelSteps = 24`), same endpoint/odd/even weights, same `sum * h / 3 * lifetime`, with `HIT_FX_PARTICLE_LIFETIME = 0.5` and `HIT_FX_PARTICLE_DRAG_K = 2.657` matching `kParticleLifetime = 0.5` and `kDragK = 2.657`. |
+| `drawClickEffects` | click-effect field draw | MATCH | Same effect drawn from the hit-effect sheet with the same grid slicing and per-frame travel. |
+| `getHistoricalLineState` | historical line state lookup | MATCH | Same lookup of a line's state at a past chart time, used by the replay click effects. |
+| `shouldSkipReplayClickEffect` | replay click-effect gate | MATCH | Same skip when the replay did not record a click at that moment. |
+| `removeExpiredPrefix` | expired-entry trim | MATCH | Same trim of the leading expired entries in the effect list. |
+| `drawBadEffects` | bad-effect draw | MATCH | Same miss effect drawn from its sheet. |
+| `drawTextureCover` | cover-fit texture draw | MATCH | Same cover-fit quad for a texture. |
+| `drawOfficialBackgroundClip` | background clip draw | MATCH | Same clipped background quad. |
+| `drawOfficialSideBackgrounds` / `drawOfficialSideBackgroundPanel` / `drawSideDimPanel` / `drawSideVerticalGaps` | side artwork and dim bands | MATCH | Same side art with the same dim panels and the same vertical gap fill; the alpha and dim constants are in section 2. |
+| `drawDeferredSidePanelsForDsChain` | deferred side panels for the DS chain | MATCH | Same deferral so the side panels are drawn after the level-effect chain. |
+| `drawOfficialSideColumnsOverlay` | side column overlay | MATCH | Same overlay columns over the side art. |
+| `hasHorizontalSideBlanks` / `isStageFullscreen` | side-blank and fullscreen tests | MATCH | Same predicate deciding whether the side art is needed at all. |
+| `enableStageScissor` / `disableStageScissor` | scissor around the stage | MATCH | Same scissor box restricted to the stage. |
+
 ### Effect pools and the miss effect
 
 | Reference declaration | Port implementation | Verdict | Basis |
