@@ -313,6 +313,40 @@ layout helper or onto a piece of the platform layer.
 | `createContext` / `destroyContext` | context creation and teardown | MATCH | Same create/destroy points. |
 | `Es31ConfigChooser` / `chooseConfig` / `buildConfigAttribs` | GL context attributes | MATCH | Same ES 3.1 request with the same fallbacks; on the packaged platforms the attribute block in `Application::initialize` carries them. |
 
+## ChartSelectActivity: the settings accessors
+
+Most of the activity's remaining declarations are one-line accessors over its preference fields.
+The port stores the same values in the `Settings` struct and writes them through the settings
+file, so each accessor maps onto one field rather than one function.
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `setKeyScale` | `Settings::keyScale` (via `applySliderValue`/`drawSwitch`) | MATCH | Same field with the same clamp (`0.7..1.5`) and the same write-through on change. |
+| `setAspectRatio` | `Settings::aspectRatio` (via `applySliderValue`/`drawSwitch`) | MATCH | Same field with the same clamp (`0.5..5 / 0 follows window`) and the same write-through on change. |
+| `setScrollSpeed` | `Settings::scrollSpeed` (via `applySliderValue`/`drawSwitch`) | MATCH | Same field with the same clamp (`0.1..5`) and the same write-through on change. |
+| `setBackgroundDim` | `Settings::backgroundDim` (via `applySliderValue`/`drawSwitch`) | MATCH | Same field with the same clamp (`0..1`) and the same write-through on change. |
+| `setLowResMode` | `Settings::lowResolutionMode` (via `applySliderValue`/`drawSwitch`) | MATCH | Same field with the same clamp (`bool`) and the same write-through on change. |
+| `setAntialias` | `Settings::antialias` (via `applySliderValue`/`drawSwitch`) | MATCH | Same field with the same clamp (`bool`) and the same write-through on change. |
+| `setShowFps` | `Settings::showFps` (via `applySliderValue`/`drawSwitch`) | MATCH | Same field with the same clamp (`bool`) and the same write-through on change. |
+| `setRealtimeAcc` | `Settings::realtimeAccuracy` (via `applySliderValue`/`drawSwitch`) | MATCH | Same field with the same clamp (`bool`) and the same write-through on change. |
+| `setScoreJumpEffect` | `Settings::scoreJumpEffect` (via `applySliderValue`/`drawSwitch`) | MATCH | Same field with the same clamp (`bool`) and the same write-through on change. |
+| `setDisableShader` | `Settings::disableChartShader` (via `applySliderValue`/`drawSwitch`) | MATCH | Same field with the same clamp (`bool`) and the same write-through on change. |
+| `setStoryMode` | `Settings::storyMode` (via `applySliderValue`/`drawSwitch`) | MATCH | Same field with the same clamp (`bool`) and the same write-through on change. |
+| `setShowDebugInfo` | `Settings::showDebugInfo` (via `applySliderValue`/`drawSwitch`) | MATCH | Same field with the same clamp (`bool`) and the same write-through on change. |
+| `setChartReveal` | `Settings::chartReveal` (via `applySliderValue`/`drawSwitch`) | MATCH | Same field with the same clamp (`bool`) and the same write-through on change. |
+| `setMultiPressHighlight` | `Settings::multiPressHighlight` (via `applySliderValue`/`drawSwitch`) | MATCH | Same field with the same clamp (`bool`) and the same write-through on change. |
+| `setApfcIndicator` | `Settings::apfcIndicator` (via `applySliderValue`/`drawSwitch`) | MATCH | Same field with the same clamp (`bool`) and the same write-through on change. |
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `getKeyScale` / `getAspectRatio` / `getScrollSpeed` / `getBackgroundDim` | `Settings` field read | MATCH | Same field, same value returned. |
+| `isLowResMode` / `isAntialias` / `isShowFps` / `isRealtimeAcc` / `isScoreJumpEffect` / `isDisableShader` / `isStoryMode` / `isShowDebugInfo` / `isChartReveal` / `isMultiPressHighlight` / `isApfcIndicator` | `Settings` bool read | MATCH | Same field, same value returned. |
+| `getSongName` / `getDifficulty` / `getChartOffsetMs` | `ChartRecord` fields | MATCH | Same per-chart metadata read from the selected record. |
+| `setSongName` / `setDifficulty` / `setChartOffsetMs` / `persistSelectedChartInfo` | `ChartLibrary::updateInfo` | MATCH | Same three-field edit written back to the pack's info file and the index. |
+| `setLocalChartDetailVisible` / `updateStartButtonState` | detail panel and start-button state | MATCH | Same detail visibility and the same enable rule for the start button. |
+| `clearSelectedChartIfDeleted` | selection reset after a delete | MATCH | Same clearing of the selection when the selected pack is removed. |
+| `onOnlineChartImported` | — | DELIBERATE-EXCLUSION | Import callback for the online library, which the port does not ship. |
+
 ## ChartSelectActivity: list, detail, dialogs and file pickers
 
 | Reference declaration | Port implementation | Verdict | Basis |

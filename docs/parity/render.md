@@ -384,6 +384,21 @@ These are noted so a future reader does not mistake them for divergences.
    particle positions do not. Inherent to the runtime change and deliberate so the port is
    deterministic across its own runs.
 
+### Texture and text caches
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `getOrLoadFileTexture` | `TextureCache::load` | MATCH | Same load-once-per-path cache. |
+| `getOrCreateTextTexture` / `createHudTextTexture` (5 overloads) | `TextRenderer::glyphStrip` + per-frame text draw | **DIFFERENT BY DESIGN** | The reference rasterises a whole string into its own GL texture and caches it by text and size. The port rasterises a glyph strip once per pixel size and draws each string from it, so a changing readout (score, combo, timer) costs no per-value texture. Both produce the same pixels; the port avoids an allocation and an upload per changed value. |
+| `getTextPaint` | `TextRenderer` style state | MATCH | Same paint configuration (size, colour, alignment) applied per draw. |
+| `deleteGlTexture` | `TextureCache` release | MATCH | Same GL texture delete. |
+| `invalidateAllCachedTextures` / `invalidateGl` | cache invalidation on context loss | MATCH | Same full invalidation when the GL context is recreated. |
+| `invalidateHudDynamicText` / `clearHudDynamicText` / `clearHudTextTextures` | the strip cache's invalidation | MATCH | Same "drop the cached text so the next frame re-renders it" behaviour; in the port the readouts are redrawn from the strip each frame, so only the strip cache can go stale and it is invalidated the same way. |
+| `ensureTextureValid` | `TextureCache` validity check | MATCH | Same "is this handle still alive after a context reset" check. |
+| `ellipsizeToWidth` (2 overloads) | `truncateWithEllipsis` (`UiLayout.cpp:151`) | MATCH | Same binary-search-free width walk that appends an ellipsis when the text would not fit. |
+| `isAmetrineComboBlocked` | combo-blocked state for the Ametrine vignette | MATCH | Same predicate gating the vignette when the combo is broken. |
+| `getRenderLineInfo` | per-line render info in `LinePass` | MATCH | Same cached per-line state (rotation, screen position, state holder) built once per frame. |
+
 ### Line drawing, debug overlay and the native path selection
 
 | Reference declaration | Port implementation | Verdict | Basis |

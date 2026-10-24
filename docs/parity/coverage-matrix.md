@@ -6,12 +6,12 @@ Reference declarations: **2271** across 75 files.
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| verified | 876 | named MATCH by a parity report |
+| verified | 911 | named MATCH by a parity report |
 | fixed | 182 | named by a parity report with a fix |
 | differs | 0 | named with a remaining difference |
-| excluded | 331 | deliberate exclusion, reason recorded |
+| excluded | 332 | deliberate exclusion, reason recorded |
 | matched-by-name | 147 | a port symbol with the same name exists |
-| unmatched | 588 | no same-name port symbol; needs a manual verdict |
+| unmatched | 552 | no same-name port symbol; needs a manual verdict |
 
 This matrix is an index. The authoritative per-function verdicts and the
 evidence line for each one are in the topical reports (`chart.md`, `core.md`, `judging.md`,
@@ -525,7 +525,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 6257 | `getSmoothedPlayheadSeconds` | unmatched |  |
 | 6368 | `clear` | verified | `src\audio\AudioEngine.cpp:66` `clear` (+5) |
 | 6375 | `ensureRenderLineInfoCapacity` | verified |  |
-| 6385 | `getRenderLineInfo` | unmatched |  |
+| 6385 | `getRenderLineInfo` | verified |  |
 | 6392 | `renderSceneDirect` | unmatched |  |
 | 6563 | `drawAmetrineVignette` | unmatched |  |
 | 6597 | `canUseNativeRenderCommands` | excluded |  |
@@ -555,23 +555,23 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 7266 | `drawJudgeLineVisual` | verified |  |
 | 7472 | `getOrLoadFileTexture` | unmatched |  |
 | 7494 | `getOrCreateTextTexture` | unmatched |  |
-| 7567 | `getTextPaint` | unmatched |  |
+| 7567 | `getTextPaint` | verified |  |
 | 7600 | `dp` | fixed | `include\rechigros\app\UiLayout.hpp:31` `dp` (+2) |
-| 7604 | `deleteGlTexture` | unmatched |  |
-| 7619 | `invalidateAllCachedTextures` | unmatched |  |
-| 7658 | `invalidateGl` | unmatched |  |
-| 7662 | `invalidateHudDynamicText` | unmatched |  |
-| 7674 | `ensureTextureValid` | unmatched |  |
-| 7777 | `clearHudTextTextures` | unmatched |  |
-| 7818 | `clearHudDynamicText` | unmatched |  |
-| 7835 | `ellipsizeToWidth` | unmatched |  |
-| 7839 | `ellipsizeToWidth` | unmatched |  |
+| 7604 | `deleteGlTexture` | verified |  |
+| 7619 | `invalidateAllCachedTextures` | verified |  |
+| 7658 | `invalidateGl` | verified |  |
+| 7662 | `invalidateHudDynamicText` | verified |  |
+| 7674 | `ensureTextureValid` | verified |  |
+| 7777 | `clearHudTextTextures` | verified |  |
+| 7818 | `clearHudDynamicText` | verified |  |
+| 7835 | `ellipsizeToWidth` | verified |  |
+| 7839 | `ellipsizeToWidth` | verified |  |
 | 7874 | `createHudTextTexture` | unmatched |  |
 | 7878 | `createHudTextTexture` | unmatched |  |
 | 7882 | `createHudTextTexture` | unmatched |  |
 | 7886 | `createHudTextTexture` | unmatched |  |
 | 7890 | `createHudTextTexture` | unmatched |  |
-| 7983 | `isAmetrineComboBlocked` | unmatched |  |
+| 7983 | `isAmetrineComboBlocked` | verified |  |
 | 7990 | `ametrineHudVignetteFactor` | unmatched |  |
 | 8003 | `buildBlockedComboPattern` | unmatched |  |
 | 8071 | `drawBlockedComboPattern` | unmatched |  |
@@ -767,7 +767,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 13009 | `matchesNativeBucket` | unmatched |  |
 | 13018 | `releaseNativeRenderBuckets` | unmatched |  |
 | 13036 | `findNoteHeadTextureBucket` | unmatched |  |
-| 13086 | `invalidateGl` | unmatched |  |
+| 13086 | `invalidateGl` | verified |  |
 | 13098 | `isValidForContext` | unmatched |  |
 | 13102 | `getGifFrameTexId` | unmatched |  |
 | 13113 | `getGifFrameIndex` | unmatched |  |
@@ -949,7 +949,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 132 | `update` | fixed | `src\chart\Md5.cpp:84` `update` (+6) |
 | 163 | `spawn` | fixed | `src\render\fx\BadEffectField.cpp:17` `spawn` (+1) |
 | 184 | `worldX` | verified |  |
-| 187 | `alive` | unmatched |  |
+| 187 | `alive` | verified |  |
 | 189 | `lifeAlpha` | verified |  |
 | 200 | `sizeAt` | verified | `src\core\MessageParticleField.cpp:131` `sizeAt` |
 | 207 | `bandAlpha` | verified | `src\core\MessageParticleField.cpp:47` `bandAlpha` |
@@ -1480,27 +1480,27 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 2337 | `launchPickReplayZip` | verified |  |
 | 2341 | `selectLocalChart` | verified |  |
 | 2352 | `getSelectedChartId` | verified |  |
-| 2357 | `clearSelectedChartIfDeleted` | unmatched |  |
-| 2369 | `onOnlineChartImported` | unmatched |  |
+| 2357 | `clearSelectedChartIfDeleted` | verified |  |
+| 2369 | `onOnlineChartImported` | excluded |  |
 | 2374 | `getSelectedSkinIndex` | verified |  |
 | 2378 | `setSelectedSkinIndex` | verified |  |
 | 2382 | `getMusicFile` | verified |  |
 | 2384 | `getChartFile` | verified |  |
 | 2385 | `getBgFile` | verified |  |
-| 2386 | `getSongName` | unmatched |  |
-| 2387 | `getDifficulty` | unmatched |  |
-| 2388 | `getChartOffsetMs` | unmatched |  |
-| 2389 | `setLocalChartDetailVisible` | unmatched |  |
-| 2392 | `updateStartButtonState` | unmatched |  |
+| 2386 | `getSongName` | verified |  |
+| 2387 | `getDifficulty` | verified |  |
+| 2388 | `getChartOffsetMs` | verified |  |
+| 2389 | `setLocalChartDetailVisible` | verified |  |
+| 2392 | `updateStartButtonState` | verified |  |
 | 2395 | `setSongName` | unmatched |  |
 | 2400 | `setDifficulty` | unmatched |  |
 | 2405 | `setChartOffsetMs` | unmatched |  |
 | 2410 | `persistSelectedChartInfo` | unmatched |  |
-| 2419 | `getAspectRatio` | unmatched |  |
+| 2419 | `getAspectRatio` | verified |  |
 | 2421 | `setAspectRatio` | unmatched |  |
-| 2422 | `getKeyScale` | unmatched |  |
+| 2422 | `getKeyScale` | verified |  |
 | 2423 | `setKeyScale` | unmatched |  |
-| 2424 | `getScrollSpeed` | unmatched |  |
+| 2424 | `getScrollSpeed` | verified |  |
 | 2425 | `setScrollSpeed` | unmatched |  |
 | 2426 | `isMirrorX` | matched-by-name | `include\rechigros\render\math\Mat4.hpp:58` `mirrorX` |
 | 2427 | `setMirrorX` | matched-by-name | `include\rechigros\render\math\Mat4.hpp:58` `mirrorX` |
@@ -1508,30 +1508,30 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 2429 | `setAutoplay` | verified | `include\rechigros\game\GameplaySession.hpp:47` `autoplay` (+2) |
 | 2438 | `isChallengeMode` | matched-by-name | `include\rechigros\game\JudgementEngine.hpp:43` `challengeMode` |
 | 2439 | `setChallengeMode` | matched-by-name | `include\rechigros\game\JudgementEngine.hpp:43` `challengeMode` |
-| 2440 | `getBackgroundDim` | unmatched |  |
+| 2440 | `getBackgroundDim` | verified |  |
 | 2441 | `setBackgroundDim` | unmatched |  |
 | 2442 | `setJudgeLineWidth` | verified |  |
-| 2443 | `isLowResMode` | unmatched |  |
+| 2443 | `isLowResMode` | verified |  |
 | 2444 | `setLowResMode` | unmatched |  |
-| 2445 | `isAntialias` | unmatched |  |
+| 2445 | `isAntialias` | verified |  |
 | 2446 | `setAntialias` | excluded |  |
-| 2447 | `isShowFps` | unmatched |  |
+| 2447 | `isShowFps` | verified |  |
 | 2448 | `setShowFps` | unmatched |  |
-| 2449 | `isRealtimeAcc` | unmatched |  |
+| 2449 | `isRealtimeAcc` | verified |  |
 | 2450 | `setRealtimeAcc` | unmatched |  |
-| 2451 | `isScoreJumpEffect` | unmatched |  |
+| 2451 | `isScoreJumpEffect` | verified |  |
 | 2452 | `setScoreJumpEffect` | unmatched |  |
-| 2453 | `isDisableShader` | unmatched |  |
+| 2453 | `isDisableShader` | verified |  |
 | 2454 | `setDisableShader` | unmatched |  |
-| 2455 | `isStoryMode` | unmatched |  |
+| 2455 | `isStoryMode` | verified |  |
 | 2456 | `setStoryMode` | unmatched |  |
-| 2457 | `isShowDebugInfo` | unmatched |  |
+| 2457 | `isShowDebugInfo` | verified |  |
 | 2458 | `setShowDebugInfo` | unmatched |  |
-| 2459 | `isChartReveal` | unmatched |  |
+| 2459 | `isChartReveal` | verified |  |
 | 2460 | `setChartReveal` | unmatched |  |
-| 2469 | `isMultiPressHighlight` | unmatched |  |
+| 2469 | `isMultiPressHighlight` | verified |  |
 | 2470 | `setMultiPressHighlight` | unmatched |  |
-| 2471 | `isApfcIndicator` | unmatched |  |
+| 2471 | `isApfcIndicator` | verified |  |
 | 2472 | `setApfcIndicator` | unmatched |  |
 | 2473 | `isJudgementDetailDistribution` | matched-by-name | `include\rechigros\game\JudgementEngine.hpp:40` `setJudgementDetailDistribution` |
 | 2474 | `setJudgementDetailDistribution` | matched-by-name | `include\rechigros\game\JudgementEngine.hpp:40` `setJudgementDetailDistribution` |
