@@ -59,6 +59,24 @@ wsl -e bash -lc 'cd /mnt/e/ReChigros; export LD_LIBRARY_PATH=$HOME/wsl-prefix/li
 4. 框架内部用 `GPU_Assert` 直接终止进程，**没有返回值可判断**，所以每次接线改动都要
    实际跑一遍冒烟程序，不能只看编译通过。
 
+### 设置页迁移到 ObjectivelyMVC：骨架已就位
+
+| 项 | 状态 |
+| --- | --- |
+| 框架三件套编译进应用 | **已完成**（WSL GCC 树 `BUILD=0`） |
+| C / C++ 桥接分层 | **已完成**：`MvcSettings.c`（纯 C，含框架头）+ `MvcSettingsBridge.cpp`（只转发 C ABI） |
+| 设置页结构（tabs / 行 / Checkbox） | **已实现并编译通过** |
+| 像素级验证接入 | **未完成**（还没把设置页接进冒烟程序的回读断言） |
+
+**关键设计**：框架头文件绝不能进 C++ 编译单元——它把 `interface` 当结构体成员名，和
+Windows SDK 的同名宏冲突。所以分成 C 实现 + C++ 转发两层，C++ 侧只看到普通函数声明。
+
+**踩到的坑（都已解决，记录避免重犯）**：
+- `$(Class, method)` 只用于**实例**；类方法要用 `$$(Class, method)`。
+- 三个框架静态库必须**全部显式链接**（`objectivelymvc objectivelygpu objectively`）。
+  只写 `objectivelymvc` 时，`release` 等符号在链接期缺失。
+- `MSVC` 树上 `RECHIGROS_WITH_OMVC` 默认 OFF，MVC 相关源文件条件编译，不影响 Windows 构建。
+
 ### MVC 出图：已打通（这是接界面迁移的前提）
 
 冒烟程序 `rechigros_omvc_smoke` **`SMOKE PASS`**，且是**像素级证明**：framebuffer 回读得到
