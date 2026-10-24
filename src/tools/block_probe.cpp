@@ -539,6 +539,27 @@ int main(int argc, char** argv) {
                         << " touchPos[0]=" << program.uniform("touchPos[0]")
                         << " touchShineValue=" << program.uniform("touchShineValue") << "\n";
             }
+            // The hover term reads the second mask's alpha channel, so the touch has to be
+            // written into that mask before the composite can see it. Re-rasterise with the
+            // hover quads added, then run the pre-passes again so the composite samples a
+            // mask that actually contains the point.
+            {
+              std::vector<fx::BlockMaskQuad> hoverB = maskB;
+              std::vector<fx::BlockOverlay::HoverPoint> hoverPoints;
+              fx::BlockOverlay::HoverPoint point;
+              point.centerX = 0.93F * static_cast<float>(width);
+              point.centerY = 0.5F * static_cast<float>(height);
+              point.radius = 0.18F * static_cast<float>(height);
+              hoverPoints.push_back(point);
+              fx::BlockOverlay::appendHoverQuads(hoverPoints, hoverB);
+              std::cout << "  hover quads added: " << (hoverB.size() - maskB.size()) << "\n";
+              pass.rasteriseMasks(maskA, hoverB);
+              pass.runPrepasses(options.chartTimeSec);
+              // Prove the hover really landed in the second mask's alpha channel: the
+              // composite reads it from there, so if this dump is unchanged nothing
+              // downstream can possibly react to the touch.
+              dumpTarget(pass.mask(1), options.outputDirectory / "03b_mask_hover.png", true);
+            }
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             glViewport(0, 0, width, height);
             glEnable(GL_BLEND);

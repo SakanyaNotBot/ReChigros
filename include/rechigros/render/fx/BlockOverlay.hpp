@@ -74,6 +74,22 @@ public:
   void collectMaskQuads(const std::vector<game::OfficialBlock>& blocks, float chartTimeSec,
       std::vector<BlockMaskQuad>& maskA, std::vector<BlockMaskQuad>& maskB) const;
 
+  // A finger held over the play field. The composite's hover term reads the second mask's
+  // alpha channel, so these are rasterised into it as soft blobs afterwards; a point stays
+  // here for as long as the finger is down, which is what keeps the glow from fading as it
+  // drags out of a zone.
+  struct HoverPoint {
+    float centerX{};
+    float centerY{};
+    // Radius in view pixels of the glow the shipped hover sprite paints.
+    float radius{};
+  };
+
+  // Appends one soft quad per held point into `maskB`. The alpha carries the coverage; the
+  // composite multiplies it by the shine, and its own SDF union then merges the points.
+  static void appendHoverQuads(const std::vector<HoverPoint>& points,
+      std::vector<BlockMaskQuad>& maskB);
+
   // Emits one block. Returns the number of quads added.
   int draw(const game::OfficialBlock& block, float chartTimeSec, batch::SpriteBatch& target) const;
 

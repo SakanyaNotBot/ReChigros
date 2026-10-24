@@ -32,10 +32,11 @@ void emitRect(batch::SpriteBatch& target, float x, float y, float width, float h
   target.addQuadTopLeft(x, y, width, height, red, green, blue, alpha, 0.0F, 0.0F, 1.0F, 1.0F);
 }
 
-// Appends one zone rectangle to a mask list. The coverage lives in the colour channels,
-// so alpha stays zero and the mask can accumulate several zones per texel.
+// Appends one zone rectangle to a mask list. Zone coverage lives in the colour channels, so
+// alpha stays zero for every zone quad and the mask can accumulate several zones per texel.
+// The second mask's alpha channel is reserved for the touch hover and is written separately.
 void appendMaskQuad(std::vector<BlockMaskQuad>& out, const game::OfficialBlock& block,
-    float red, float green, float blue) {
+    float red, float green, float blue, float alpha = 0.0F) {
   BlockMaskQuad quad;
   quad.centerX = block.centerX;
   quad.centerY = block.centerY;
@@ -45,7 +46,7 @@ void appendMaskQuad(std::vector<BlockMaskQuad>& out, const game::OfficialBlock& 
   quad.red = red;
   quad.green = green;
   quad.blue = blue;
-  quad.alpha = 0.0F;
+  quad.alpha = alpha;
   out.push_back(quad);
 }
 
@@ -183,6 +184,29 @@ void BlockOverlay::collectMaskQuads(const std::vector<game::OfficialBlock>& bloc
     // Subtract zones that are not active are collected in the second mask.
     const float ready = phase == 1 ? block.showProgress() : 0.0F;
     appendMaskQuad(maskB, block, BlockCompositePass::MASK_WRITE_ALPHA, 0.0F, BlockCompositePass::MASK_WRITE_ALPHA * ready);
+  }
+}
+
+void BlockOverlay::appendHoverQuads(const std::vector<HoverPoint>& points,
+    std::vector<BlockMaskQuad>& maskB) {
+  // The composite reads the hover from the second mask's alpha and then runs its own smooth
+  // union over the points, so each point only has to mark where it is: the alpha value is a
+  // coverage constant and the shape comes from the shader's distance field. Writing the
+  // coverage here, rather than drawing the sprite, keeps the two paths from drifting.
+  constexpr float kHoverCoverage = 0.7F;
+  for (const auto& point : points) {
+    if (!(point.radius > 0.0F)) continue;
+    BlockMaskQuad quad;
+    quad.centerX = point.centerX;
+    quad.centerY = point.centerY;
+    quad.width = point.radius * 2.0F;
+    quad.height = point.radius * 2.0F;
+    quad.rotationDeg = 0.0F;
+    quad.red = 0.0F;
+    quad.green = 0.0F;
+    quad.blue = 0.0F;
+    quad.alpha = kHoverCoverage;
+    maskB.push_back(quad);
   }
 }
 

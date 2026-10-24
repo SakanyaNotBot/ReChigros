@@ -824,7 +824,42 @@ code that carries the behaviour.
 | `PreloadedGif` / `preloadGifTextures` / `decodeGifFrames` / `uploadPreloadedGifTextures` | `GifTexture` cache in the renderer | MATCH | Same "decode every frame of a `.gif` line texture once, then upload once" behaviour; the port keeps the frames in a renderer-side cache keyed by path. |
 | `applyBlockTextureWrap` / `applyTextureBilinearFilter` / `applyTexturePointFilter` / `maxFragTextureUnits` | `TextureCache`, `BlockCompositePass` sampling setup | MATCH | Same wrap and filter policy per texture class; the composite's point-versus-bilinear choice is recorded in `game_renderer_residual.md`. |
 
-## Follow-up: block touch hover (open, with a reproducible probe)
+## Follow-up: block touch hover (partially wired, probe still fails)
+
+The reference lights a spot under a held finger inside a block zone. This records exactly how
+far the port got and what the probe still reports.
+
+**Wired and verified as reachable.**
+- `BlockCompositePass::TouchState` carries the held points and a wall clock;
+  `RenderFrameInput::touches` feeds it from `GameRenderer`.
+- `ShaderProgram::set2fv` uploads the `touchPos[MAX_TOUCH]` array.
+- The composite uploads all three uniforms, and the probe confirms they resolve:
+  `touchCount=32 touchPos=33 touchPos[0]=33 touchShineValue=43`.
+- Points are converted into the space the shader compares against
+  (`uv * screenSize / screenSize.y`), not plain 0..1 fractions.
+- `BlockOverlay::appendHoverQuads` can write the second mask's alpha channel, which is the
+  channel the hover term reads (`block_composite.glsl:220`).
+
+**Still failing.** Stage 5b of `block_probe` composites the same frame with and without a held
+point and reports `0% of channels differ`. Dumping the mask before and after adding the hover
+quads shows the two masks are byte-identical:
+
+```
+alpha max  no-hover: 255  hover: 255
+alpha>0 px no-hover: 32400  hover: 32400
+pixels differ: 0
+```
+
+The mask alpha is already saturated from the zone quads, so writing the hover coverage adds
+nothing, and the probe's synthetic scene does not reach the branch that turns the hover into a
+visible change. The upload path, the coordinate conversion and the mask channel all check out;
+what is missing is a scene that actually drives the term, which the current probe fixture does
+not provide.
+
+**Not claimed as done.** The visible hover is not reproduced and the probe still reports
+FAIL. This is recorded so the next pass starts from the evidence instead of re-deriving it.
+
+
 
 The reference lights a spot under a held finger inside a block zone. The port now uploads the
 three uniforms the shader declares, and a probe asserts whether they reach it.
