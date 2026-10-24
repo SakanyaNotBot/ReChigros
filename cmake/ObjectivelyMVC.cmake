@@ -30,6 +30,52 @@ set(OMVC_INCLUDES
 # The include directories the application needs to reach the framework headers.
 set(OMVC_PUBLIC_INCLUDES ${OMVC_INCLUDES} "${OMVC_ROOT}/objectively-src")
 
+# Include roots for the headers the framework includes as <SDL3/...>, <SDL3_ttf/...> and
+# <SDL3_image/...>. They are read from the CMake targets so a different SDL source layout
+# still works.
+set(OMVC_DEP_INCLUDES)
+foreach(dep_target SDL3::Headers SDL3_ttf::SDL3_ttf SDL3_image::SDL3_image)
+  if(TARGET ${dep_target})
+    get_target_property(dep_includes ${dep_target} INTERFACE_INCLUDE_DIRECTORIES)
+    if(dep_includes)
+      foreach(dep_include IN LISTS dep_includes)
+        if(IS_DIRECTORY "${dep_include}")
+          list(APPEND OMVC_DEP_INCLUDES "${dep_include}")
+        else()
+          # Generator expressions and build-relative paths cannot be resolved here; the
+          # fallbacks below cover the layouts this project actually uses.
+        endif()
+      endforeach()
+    endif()
+  endif()
+endforeach()
+if(TARGET SDL3::Headers)
+  get_target_property(sdl_include_dirs SDL3::Headers INTERFACE_INCLUDE_DIRECTORIES)
+  if(sdl_include_dirs)
+    foreach(sdl_include IN LISTS sdl_include_dirs)
+      if(IS_DIRECTORY "${sdl_include}" AND NOT sdl_include IN_LIST OMVC_DEP_INCLUDES)
+        list(APPEND OMVC_DEP_INCLUDES "${sdl_include}")
+      endif()
+    endforeach()
+  endif()
+endif()
+# The CMake targets expose their include directories through generator expressions, which
+# cannot be expanded while configuring this list. The layouts this project can produce are
+# known, so they are added directly: a local SDL3 source tree, the fetched build copy, and
+# the two fetched extension trees.
+foreach(candidate
+    "${PROJECT_SOURCE_DIR}/third_party/SDL3/include"
+    "${CMAKE_BINARY_DIR}/third_party/SDL3/include-revision"
+    "${CMAKE_BINARY_DIR}/third_party/SDL3/include"
+    "${RECHIGROS_DOWNLOAD_DIR}/sdl3_ttf/SDL3_ttf-3.2.2/include"
+    "${RECHIGROS_DOWNLOAD_DIR}/sdl3_image/SDL3_image-3.2.4/include")
+  if(IS_DIRECTORY "${candidate}" AND NOT candidate IN_LIST OMVC_DEP_INCLUDES)
+    list(APPEND OMVC_DEP_INCLUDES "${candidate}")
+  endif()
+endforeach()
+
+list(REMOVE_DUPLICATES OMVC_DEP_INCLUDES)
+
 set(OMVC_GNU_C_TOOLCHAIN FALSE)
 if(MSVC)
   if(RECHIGROS_GNU_C_COMPILER AND EXISTS "${RECHIGROS_GNU_C_COMPILER}")
@@ -52,12 +98,28 @@ function(build_gnu_c_library omvc_target)
   foreach(include IN LISTS OMVC_INCLUDES)
     list(APPEND omvc_include_args "-I${include}")
   endforeach()
+  # The libraries include SDL3, SDL3_ttf and SDL3_image headers by their canonical
+  # <SDL3/...> spelling, so their include roots are passed alongside the framework's own.
+  foreach(dep_include IN LISTS OMVC_DEP_INCLUDES)
+    list(APPEND omvc_include_args "-I${dep_include}")
+  endforeach()
+  # A GNU-compatible toolchain builds the sources directly. On Windows this is the WSL GCC
+  # or clang path, because MSVC's C front end rejects the GNU extensions these libraries
+  # use and its Windows SDK headers redefine `interface`, which is a field name here.
   if(NOT MSVC)
     add_library(${omvc_target} STATIC ${omvc_sources})
     target_include_directories(${omvc_target} PUBLIC ${OMVC_PUBLIC_INCLUDES})
     target_compile_options(${omvc_target} PRIVATE -w)
     set_target_properties(${omvc_target} PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
     return()
+  endif()
+  # MSVC hosts without a clang that can escape the Windows SDK headers cannot build this
+  # framework at all; the error names the switch to set instead of failing much later.
+  if(NOT RECHIGROS_GNU_C_COMPILER)
+    message(FATAL_ERROR
+      "The interface framework is GNU C and cannot be built by MSVC. "
+      "Configure with -DRECHIGROS_GNU_C_COMPILER pointing at a clang/wsl gcc, "
+      "or set RECHIGROS_OMVC=OFF to build without it.")
   endif()
   set(omvc_objdir "${CMAKE_CURRENT_BINARY_DIR}/omvc-objects/${omvc_target}")
   set(omvc_objects)
@@ -77,10 +139,13 @@ function(build_gnu_c_library omvc_target)
       VERBATIM)
     list(APPEND omvc_objects "${object}")
   endforeach()
-  set(omvc_archive "${omvc_objdir}/lib${omvc_target}.a")
+  set(omvc_archive "${omvc_objdir}/lib${omvc_target}.lib")
+  # CMAKE_AR on an MSVC host is lib.exe, which has no "qc" operation; it takes the output
+  # archive followed by the objects and creates the archive itself.
   add_custom_command(
     OUTPUT "${omvc_archive}"
-    COMMAND "${CMAKE_AR}" qc "${omvc_archive}" ${omvc_objects}
+    COMMAND "${CMAKE_AR}" /nologo /OUT:${omvc_archive} ${omvc_objects}
+    COMMAND_EXPAND_LISTS
     DEPENDS ${omvc_objects}
     COMMENT "Archive ${omvc_target}"
     VERBATIM)

@@ -28,6 +28,14 @@ if(TARGET SDL3::SDL3main)
   target_link_libraries(rechigros_blocked_combo_probe PRIVATE SDL3::SDL3main)
 endif()
 
+# Interface framework smoke test: proves the ObjectivelyMVC runtime (SDL3 GPU device,
+# render device, window controller, view hierarchy) comes up before any screen is moved
+# onto it. It is C, like the framework, so the bridge does not depend on C++ interop.
+if(TARGET objectivelymvc)
+  add_executable(rechigros_omvc_smoke omvc_smoke.c)
+  target_link_libraries(rechigros_omvc_smoke PRIVATE objectivelymvc ${RECHIGROS_SDL_TARGET})
+endif()
+
 # Recording encoder check: pushes synthetic frames through the video encoder and verifies a
 # playable file comes out, so the encode path is gated independently of the renderer.
 add_executable(rechigros_record_check record_check.cpp ../app/VideoEncoder.cpp)
