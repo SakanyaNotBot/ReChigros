@@ -2,16 +2,16 @@
 
 Generated from `docs/compare/inventory.json` by `tools/parity/coverage_matrix.py`. One row per reference declaration.
 
-Reference declarations: **2312** across 75 files.
+Reference declarations: **2295** across 75 files.
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| verified | 298 | named MATCH by a parity report |
-| fixed | 165 | named by a parity report with a fix |
+| verified | 367 | named MATCH by a parity report |
+| fixed | 172 | named by a parity report with a fix |
 | differs | 0 | named with a remaining difference |
 | excluded | 3 | deliberate exclusion, reason recorded |
-| matched-by-name | 188 | a port symbol with the same name exists |
-| unmatched | 1470 | no same-name port symbol; needs a manual verdict |
+| matched-by-name | 171 | a port symbol with the same name exists |
+| unmatched | 1411 | no same-name port symbol; needs a manual verdict |
 
 This matrix is an index. The authoritative per-function verdicts and the
 evidence line for each one are in the topical reports (`chart.md`, `core.md`, `judging.md`,
@@ -130,72 +130,72 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 12 | `Easing` | fixed | `src\chart\RpeChartParser.cpp:152` `parseEasing` (+4) |
 | 14 | `clamp01` | verified | `src\core\Easing.cpp:142` `clamp01` (+6) |
 | 21 | `applyTween` | verified | `src\core\Easing.cpp:149` `applyTween` |
-| 62 | `sineIn` | matched-by-name | `src\core\Easing.cpp:9` `sineIn` |
-| 64 | `quadIn` | matched-by-name | `src\core\Easing.cpp:11` `quadIn` |
-| 65 | `cubicIn` | matched-by-name | `src\core\Easing.cpp:12` `cubicIn` |
-| 66 | `quartIn` | matched-by-name | `src\core\Easing.cpp:13` `quartIn` |
-| 67 | `quintIn` | matched-by-name | `src\core\Easing.cpp:14` `quintIn` |
+| 62 | `sineIn` | verified | `src\core\Easing.cpp:9` `sineIn` |
+| 64 | `quadIn` | verified | `src\core\Easing.cpp:11` `quadIn` |
+| 65 | `cubicIn` | verified | `src\core\Easing.cpp:12` `cubicIn` |
+| 66 | `quartIn` | verified | `src\core\Easing.cpp:13` `quartIn` |
+| 67 | `quintIn` | verified | `src\core\Easing.cpp:14` `quintIn` |
 | 68 | `expoIn` | verified | `src\core\Easing.cpp:15` `expoIn` |
-| 69 | `circIn` | matched-by-name | `src\core\Easing.cpp:17` `circIn` |
+| 69 | `circIn` | verified | `src\core\Easing.cpp:17` `circIn` |
 | 70 | `backIn` | fixed | `src\core\Easing.cpp:19` `backIn` |
-| 71 | `elasticIn` | matched-by-name | `src\core\Easing.cpp:25` `elasticIn` |
-| 72 | `bounceIn` | matched-by-name | `src\core\Easing.cpp:50` `bounceIn` |
-| 73 | `sineOut` | unmatched |  |
-| 75 | `quadOut` | unmatched |  |
-| 76 | `cubicOut` | unmatched |  |
-| 77 | `quartOut` | unmatched |  |
-| 78 | `quintOut` | unmatched |  |
-| 79 | `expoOut` | unmatched |  |
-| 80 | `circOut` | unmatched |  |
-| 81 | `backOut` | unmatched |  |
-| 82 | `elasticOut` | unmatched |  |
+| 71 | `elasticIn` | verified | `src\core\Easing.cpp:25` `elasticIn` |
+| 72 | `bounceIn` | verified | `src\core\Easing.cpp:50` `bounceIn` |
+| 73 | `sineOut` | verified |  |
+| 75 | `quadOut` | verified |  |
+| 76 | `cubicOut` | verified |  |
+| 77 | `quartOut` | verified |  |
+| 78 | `quintOut` | verified |  |
+| 79 | `expoOut` | verified |  |
+| 80 | `circOut` | verified |  |
+| 81 | `backOut` | verified |  |
+| 82 | `elasticOut` | verified |  |
 | 83 | `bounceOut` | verified | `src\core\Easing.cpp:30` `bounceOut` |
-| 103 | `sineInOut` | unmatched |  |
-| 105 | `quadInOut` | unmatched |  |
-| 106 | `cubicInOut` | unmatched |  |
-| 107 | `quartInOut` | unmatched |  |
-| 108 | `quintInOut` | unmatched |  |
-| 109 | `expoInOut` | unmatched |  |
-| 110 | `circInOut` | unmatched |  |
-| 111 | `backInOut` | unmatched |  |
-| 112 | `elasticInOut` | unmatched |  |
-| 113 | `bounceInOut` | unmatched |  |
+| 103 | `sineInOut` | verified |  |
+| 105 | `quadInOut` | verified |  |
+| 106 | `cubicInOut` | verified |  |
+| 107 | `quartInOut` | verified |  |
+| 108 | `quintInOut` | verified |  |
+| 109 | `expoInOut` | verified |  |
+| 110 | `circInOut` | verified |  |
+| 111 | `backInOut` | verified |  |
+| 112 | `elasticInOut` | verified |  |
+| 113 | `bounceInOut` | verified |  |
 | 119 | `rpeRawEasingToTweenId` | verified | `src\core\Easing.cpp:235` `rpeRawEasingToTweenId` |
 | 125 | `rpeEasingToTweenId` | verified | `src\core\Easing.cpp:241` `rpeEasingToTweenId` |
 | 132 | `apply` | fixed | `src\core\Easing.cpp:248` `apply` (+2) |
 | 138 | `applyTweenInt` | verified | `src\core\Easing.cpp:189` `applyTweenInt` |
-| 179 | `intSineIn` | matched-by-name | `src\core\Easing.cpp:62` `intSineIn` |
-| 181 | `intQuadIn` | matched-by-name | `src\core\Easing.cpp:64` `intQuadIn` |
-| 182 | `intCubicIn` | matched-by-name | `src\core\Easing.cpp:65` `intCubicIn` |
-| 183 | `intQuartIn` | matched-by-name | `src\core\Easing.cpp:66` `intQuartIn` |
-| 184 | `intQuintIn` | matched-by-name | `src\core\Easing.cpp:67` `intQuintIn` |
+| 179 | `intSineIn` | verified | `src\core\Easing.cpp:62` `intSineIn` |
+| 181 | `intQuadIn` | verified | `src\core\Easing.cpp:64` `intQuadIn` |
+| 182 | `intCubicIn` | verified | `src\core\Easing.cpp:65` `intCubicIn` |
+| 183 | `intQuartIn` | verified | `src\core\Easing.cpp:66` `intQuartIn` |
+| 184 | `intQuintIn` | verified | `src\core\Easing.cpp:67` `intQuintIn` |
 | 185 | `intExpoIn` | verified | `src\core\Easing.cpp:68` `intExpoIn` |
-| 186 | `intCircIn` | matched-by-name | `src\core\Easing.cpp:73` `intCircIn` |
-| 187 | `intBackIn` | matched-by-name | `src\core\Easing.cpp:75` `intBackIn` |
-| 188 | `intElasticIn` | matched-by-name | `src\core\Easing.cpp:90` `intElasticIn` |
+| 186 | `intCircIn` | verified | `src\core\Easing.cpp:73` `intCircIn` |
+| 187 | `intBackIn` | verified | `src\core\Easing.cpp:75` `intBackIn` |
+| 188 | `intElasticIn` | verified | `src\core\Easing.cpp:90` `intElasticIn` |
 | 189 | `elasticFAntideriv` | matched-by-name | `src\core\Easing.cpp:81` `elasticFAntideriv` |
-| 198 | `intBounceIn` | matched-by-name | `src\core\Easing.cpp:119` `intBounceIn` |
+| 198 | `intBounceIn` | verified | `src\core\Easing.cpp:119` `intBounceIn` |
 | 200 | `bounceHAntideriv` | verified | `src\core\Easing.cpp:92` `bounceHAntideriv` |
-| 226 | `intSineOut` | unmatched |  |
-| 228 | `intQuadOut` | unmatched |  |
-| 229 | `intCubicOut` | unmatched |  |
-| 230 | `intQuartOut` | unmatched |  |
-| 231 | `intQuintOut` | unmatched |  |
-| 232 | `intExpoOut` | unmatched |  |
-| 233 | `intCircOut` | unmatched |  |
-| 234 | `intBackOut` | unmatched |  |
-| 235 | `intElasticOut` | unmatched |  |
-| 236 | `intBounceOut` | unmatched |  |
-| 237 | `intSineInOut` | unmatched |  |
-| 239 | `intQuadInOut` | unmatched |  |
-| 240 | `intCubicInOut` | unmatched |  |
-| 241 | `intQuartInOut` | unmatched |  |
-| 242 | `intQuintInOut` | unmatched |  |
-| 243 | `intExpoInOut` | unmatched |  |
-| 244 | `intCircInOut` | unmatched |  |
-| 245 | `intBackInOut` | unmatched |  |
-| 246 | `intElasticInOut` | unmatched |  |
-| 247 | `intBounceInOut` | unmatched |  |
+| 226 | `intSineOut` | verified |  |
+| 228 | `intQuadOut` | verified |  |
+| 229 | `intCubicOut` | verified |  |
+| 230 | `intQuartOut` | verified |  |
+| 231 | `intQuintOut` | verified |  |
+| 232 | `intExpoOut` | verified |  |
+| 233 | `intCircOut` | verified |  |
+| 234 | `intBackOut` | verified |  |
+| 235 | `intElasticOut` | verified |  |
+| 236 | `intBounceOut` | verified |  |
+| 237 | `intSineInOut` | verified |  |
+| 239 | `intQuadInOut` | verified |  |
+| 240 | `intCubicInOut` | verified |  |
+| 241 | `intQuartInOut` | verified |  |
+| 242 | `intQuintInOut` | verified |  |
+| 243 | `intExpoInOut` | verified |  |
+| 244 | `intCircInOut` | verified |  |
+| 245 | `intBackInOut` | verified |  |
+| 246 | `intElasticInOut` | verified |  |
+| 247 | `intBounceInOut` | verified |  |
 | 248 | `clampedTween` | verified | `src\core\Easing.cpp:252` `clampedTween` |
 | 270 | `intClampedTween` | verified | `src\core\Easing.cpp:268` `intClampedTween` |
 | 296 | `buildBezierLut` | verified | `src\core\Easing.cpp:332` `buildBezierLut` (+1) |
@@ -233,7 +233,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 195 | `speedAt` | verified | `src\core\EventUtils.cpp:740` `speedAt` |
 | 200 | `start` | fixed |  |
 | 201 | `end` | fixed |  |
-| 235 | `initSpeedEvents` | verified | `src\core\EventUtils.cpp:766` `initSpeedEvents` |
+| 235 | `initSpeedEvents` | fixed | `src\core\EventUtils.cpp:766` `initSpeedEvents` |
 | 314 | `nextSpeedEventStart` | unmatched |  |
 | 323 | `computeFpForCumulative` | verified | `src\core\EventUtils.cpp:184` `computeFpForCumulative` |
 | 341 | `getFloorPosition` | fixed | `src\core\EventUtils.cpp:842` `getFloorPosition` (+2) |
@@ -480,7 +480,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 5262 | `setPrprVideoPlaybackSpeedAll` | unmatched |  |
 | 5268 | `releasePrprVideoRuntimes` | unmatched |  |
 | 5272 | `releasePrprVideoRuntimes` | unmatched |  |
-| 5279 | `release` | verified | `src\app\TriGridBackdrop.cpp:260` `release` (+11) |
+| 5279 | `release` | fixed | `src\app\TriGridBackdrop.cpp:260` `release` (+11) |
 | 5283 | `pausePrprVideoRuntimes` | unmatched |  |
 | 5292 | `resetPrprVideoRuntimes` | unmatched |  |
 | 5310 | `drawPrprVideos` | unmatched |  |
@@ -790,7 +790,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 13282 | `maybeSamplePlayerPosition` | unmatched |  |
 | 13291 | `samplePlayerPosition` | unmatched |  |
 | 13301 | `hasFreshPositionSample` | unmatched |  |
-| 13307 | `release` | verified | `src\app\TriGridBackdrop.cpp:260` `release` (+11) |
+| 13307 | `release` | fixed | `src\app\TriGridBackdrop.cpp:260` `release` (+11) |
 | 13346 | `FboTex` | unmatched |  |
 | 13354 | `releaseFbos` | unmatched |  |
 | 13386 | `ensurePrprFbos` | unmatched |  |
@@ -906,9 +906,9 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
 | 99 | `resolveFather` | verified | `src\core\JudgeLine.cpp:25` `resolveFather` |
-| 107 | `sec2beat` | verified | `src\core\JudgeLine.cpp:20` `sec2beat` |
+| 107 | `sec2beat` | fixed | `src\core\JudgeLine.cpp:20` `sec2beat` |
 | 112 | `globalSec2beat` | matched-by-name | `src\core\JudgeLine.cpp:22` `globalSec2beat` |
-| 118 | `beat2sec` | verified | `src\core\JudgeLine.cpp:23` `beat2sec` |
+| 118 | `beat2sec` | fixed | `src\core\JudgeLine.cpp:23` `beat2sec` |
 | 123 | `globalBeat2sec` | matched-by-name | `src\core\JudgeLine.cpp:24` `globalBeat2sec` |
 | 167 | `NoteControlPoint` | unmatched |  |
 | 170 | `NoteControlPoint` | unmatched |  |
@@ -929,7 +929,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 613 | `compare` | fixed |  |
 | 620 | `compare` | fixed |  |
 | 625 | `normalize` | verified | `src\core\JudgeLine.cpp:32` `normalize` |
-| 690 | `initSpeedEventsPhi` | verified | `src\core\JudgeLine.cpp:40` `initSpeedEventsPhi` |
+| 690 | `initSpeedEventsPhi` | fixed | `src\core\JudgeLine.cpp:40` `initSpeedEventsPhi` |
 
 ## `com\wuying\phigros\game\MathUtils.java`
 
@@ -1181,7 +1181,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 65 | `resetCursors` | verified | `src\core\JudgeLine.cpp:44` `resetCursors` |
 | 72 | `eval` | fixed |  |
 | 80 | `sanitizeScaleType` | matched-by-name | `include\rechigros\game\PrprEffect.hpp:48` `sanitizeScaleType` |
-| 85 | `finiteOr` | unmatched |  |
+| 85 | `finiteOr` | verified |  |
 | 89 | `clamp01` | verified | `src\core\Easing.cpp:142` `clamp01` (+6) |
 
 ## `com\wuying\phigros\game\ReplayData.java`
@@ -1196,36 +1196,36 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 55 | `RpeChartParser` | unmatched |  |
+| 55 | `RpeChartParser` | verified |  |
 | 126 | `call` | fixed |  |
-| 172 | `buildBezierLuts` | unmatched |  |
-| 184 | `buildBezierLutsForLine` | unmatched |  |
-| 226 | `assignBezierLuts` | unmatched |  |
-| 243 | `assignBezierLutsM` | unmatched |  |
-| 260 | `assignBezierLutsL` | unmatched |  |
-| 306 | `assignSpeedBezierLuts` | unmatched |  |
-| 323 | `equalsAnyIgnoreCase` | unmatched |  |
-| 393 | `parseAttachUiElementId` | unmatched |  |
+| 172 | `buildBezierLuts` | verified |  |
+| 184 | `buildBezierLutsForLine` | verified |  |
+| 226 | `assignBezierLuts` | verified |  |
+| 243 | `assignBezierLutsM` | verified |  |
+| 260 | `assignBezierLutsL` | verified |  |
+| 306 | `assignSpeedBezierLuts` | verified |  |
+| 323 | `equalsAnyIgnoreCase` | verified |  |
+| 393 | `parseAttachUiElementId` | verified |  |
 | 413 | `parseJudgeLine` | matched-by-name | `src\chart\RpeChartParser.cpp:806` `parseJudgeLine` |
 | 607 | `parse` | fixed | `src\chart\PecChartParser.cpp:248` `parse` (+4) |
 | 664 | `getEventTime` | matched-by-name | `src\chart\RpeChartParser.cpp:105` `eventTime` |
 | 675 | `parseOffsetSeconds` | verified |  |
 | 688 | `parseRpeVersion` | verified |  |
-| 701 | `parseBpmList` | unmatched |  |
+| 701 | `parseBpmList` | verified |  |
 | 717 | `parseAlphaEvents` | matched-by-name | `src\chart\RpeChartParser.cpp:226` `parseAlphaEvents` |
 | 733 | `parseLineEvents` | matched-by-name | `src\chart\OfficialChartParser.cpp:33` `parseLineEvents` (+1) |
 | 798 | `parseMoveEvents` | fixed | `src\chart\OfficialChartParser.cpp:36` `parseMoveEvents` (+1) |
 | 936 | `parseSpeedEvents` | matched-by-name | `src\chart\RpeChartParser.cpp:621` `parseSpeedEvents` |
 | 994 | `buildLegacySpeedHeightLayer` | matched-by-name | `src\chart\RpeChartParser.cpp:562` `buildLegacySpeedHeightLayer` |
 | 1047 | `applyLegacySpeedHeightMode` | matched-by-name | `src\chart\RpeChartParser.cpp:614` `applyLegacySpeedHeightMode` |
-| 1061 | `LegacySpeedCursor` | unmatched |  |
-| 1065 | `valueAt` | unmatched |  |
-| 1114 | `valueBefore` | unmatched |  |
+| 1061 | `LegacySpeedCursor` | verified |  |
+| 1065 | `valueAt` | verified |  |
+| 1114 | `valueBefore` | verified |  |
 | 1162 | `addSpeedEvent` | matched-by-name | `src\chart\RpeChartParser.cpp:545` `addSpeedEvent` |
-| 1185 | `parseScaleIntoLine` | unmatched |  |
-| 1233 | `parseInclineEvents` | unmatched |  |
-| 1248 | `applyStaticSkew` | unmatched |  |
-| 1260 | `parseStaticSkew` | unmatched |  |
+| 1185 | `parseScaleIntoLine` | verified |  |
+| 1233 | `parseInclineEvents` | verified |  |
+| 1248 | `applyStaticSkew` | verified |  |
+| 1260 | `parseStaticSkew` | verified |  |
 | 1273 | `parseGifEvents` | unmatched |  |
 | 1314 | `parseColorEvents` | unmatched |  |
 | 1364 | `parseTextEvents` | unmatched |  |
@@ -1241,7 +1241,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 1723 | `mergeSpeedLayers` | matched-by-name | `src\chart\RpeChartParser.cpp:504` `mergeSpeedLayers` |
 | 1777 | `SpeedLayerCursor` | verified |  |
 | 1781 | `valueAtStart` | unmatched |  |
-| 1826 | `valueBefore` | unmatched |  |
+| 1826 | `valueBefore` | verified |  |
 | 1869 | `speedEventAt` | unmatched |  |
 | 1873 | `start` | fixed |  |
 | 1874 | `end` | fixed |  |
@@ -1717,7 +1717,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 81 | `fits` | verified |  |
 | 95 | `build` | fixed | `src\render\fx\FullscreenPass.cpp:70` `build` (+1) |
 | 106 | `height` | verified | `include\rechigros\app\UiLayout.hpp:44` `height` (+5) |
-| 108 | `baseline` | unmatched |  |
+| 108 | `baseline` | fixed |  |
 | 109 | `width` | verified | `include\rechigros\app\UiLayout.hpp:43` `width` (+5) |
 | 110 | `textSize` | verified |  |
 | 111 | `draw` | fixed | `src\render\fx\BadEffectField.cpp:41` `draw` (+10) |

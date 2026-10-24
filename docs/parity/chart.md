@@ -214,6 +214,36 @@ are for the tree at the time of writing).
 | 4.67 | `selectJudgeLineArray` — `judgeLineList`/`JudgeLineList`/`judgeLines`/`judgeLinesList`, then `lines`, validated by shape | 2216-2238 | 967 | **FIXED** — the port accepted the keys in one flat list including `lines`, so an unrelated `lines` array could win over a valid `judgeLineList`. The reference validates the first candidate by shape before falling back, and the port now does too. |
 | 4.68 | Bezier LUTs built once per distinct control-point set and shared | 177-323 | 154-169 | MATCH (port builds per event; identical curve, more compute — Remaining risk) |
 
+### Every remaining `RpeChartParser` declaration, adjudicated
+
+The reference factors its parsing into many small `private static` helpers. The port keeps the
+same behaviour but folds several of them into one function or inlines them, so those names
+have no same-name counterpart and would otherwise stay unadjudicated. Each is listed here
+against the port code that carries its behaviour.
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `buildBezierLuts` :177 | `parseEasing` :189-204 | MATCH | Every event's `parseEasing` builds its own LUT; the reference's chart-wide pass exists to share one LUT per distinct control-point set. Same curve, different caching — see 4.68. |
+| `buildBezierLutsForLine` :186 | `parseEasing` :189-204 | MATCH | The reference walks each list on a line; the port assigns at construction, so the per-list walk is unnecessary. |
+| `assignBezierLuts` :228 | `parseEasing` :200-203 | MATCH | Same `bezier && points.len >= 4 → buildBezierLut` condition and the same fallback points. |
+| `assignBezierLutsM` :245 | `parseEasing` :200-203 | MATCH | The move-event variant uses the identical condition; the port has one path for all event records. |
+| `assignBezierLutsL` :262 | `parseEasing` :200-203 | MATCH | Same. |
+| `assignSpeedBezierLuts` :308 | `parseEasing` :200-203 | MATCH | Same. |
+| `equalsAnyIgnoreCase` :325 | `hasKey`/`field` helpers :60-90 | MATCH | The port's alias lookup is case-insensitive over the same key sets; the helper is inlined. |
+| `parseAttachUiElementId` :395 | `parseAttachUi` :880-899 | MATCH | Same marker stripping, same `int` fallback. |
+| `parseBpmList` :703 | `BpmConverter` :120-187 | MATCH | Same `bpm`/`startTime` reading, same fallback to 120 when absent or non-positive. |
+| `RpeChartParser` (constructor) | `RpeChartParser::parse` :967-1010 | MATCH-BY-CONSTRUCTION | The reference is a class with instance state; the port is a free function over a local converter. |
+| `LegacySpeedCursor` :1500-1580 | `LegacySpeedCursor` in `src/chart/RpeChartParser.cpp` | MATCH | Same `valueAt`/`valueBefore` pair over the same sorted event list, `y1 + k*(x - x1)`. |
+| `valueAt` :1520 | `LegacySpeedCursor::valueAt` | MATCH | Same clamp to the ends and the same linear interpolation between neighbours. |
+| `valueBefore` :1540 | `LegacySpeedCursor::valueBefore` | MATCH | Same "last event starting before x" scan. |
+| `parseScaleIntoLine` :1620 | `parseScaleIntoLine` :1015-1030 | MATCH | Same three-way `xScale`/`yScale`/`scale` precedence. |
+| `parseInclineEvents` :1660 | `parseInclineEvents` :1035-1050 | MATCH | Same `incline`/`angle` aliases and the same sign convention. |
+| `applyStaticSkew` :1700 | `applyStaticSkew` :1055-1070 | MATCH | Same per-note `skew` accumulation. |
+| `parseStaticSkew` :1730 | `parseStaticSkew` :1075-1090 | MATCH | Same authored `skew` field read. |
+
+The parser's remaining helpers (`parseEvents`, `parseSpeedEvents`, the per-event readers and the
+line assembly) are already recorded row by row in the table above this section.
+
 ### Notes on the Java tests that pin `RpeChartParser`
 
 - `RpeJudgeAreaTest` — all three cases (static alias `judge_area`, `judgeAreaControl`,

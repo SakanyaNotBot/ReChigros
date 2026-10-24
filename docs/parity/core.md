@@ -48,6 +48,71 @@ Build state at time of writing: `build\core-parity`, full tree links, `ctest` 8/
 | `:332-339` bezierCacheKey | — | DELIBERATE-EXCLUSION | It exists only to key the parser's LUT memo map; the port memoises inside its parsers. No core call site. |
 | `:344-398` cubicBezierYforX | `:286-332` | MATCH | 21-sample table, Newton (4 iters, SLOPE_EPS 1e-7, NEWTON_MIN_STEP 1e-3), else bisection (10 iters, 1e-7). Non-finite control points → 0,0,1,1. Identical. |
 
+### Every `Easing.java` declaration, adjudicated
+
+The reference writes each curve variant as its own method (40 of them: 10 `xxxOut`, 10
+`xxxInOut`, and their `int` counterparts). The port implements the identical curves through
+two generic helpers and dispatches to them from the tween tables, so those names have no
+same-name counterpart and would otherwise stay unadjudicated. They are listed here one by
+one because the coverage matrix counts declarations, not concepts.
+
+The equivalence is not an argument from form: `tools/parity/easing_compare.py` evaluates
+both formulations on a dense grid and reports the worst disagreement over every pair.
+
+```
+max |port - reference| over all easing pairs = 0.000e+00
+VERDICT: EQUIVALENT
+```
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `sineOut` | `sideOut` `:55` | MATCH | generic `1 - in(1-x)` |
+| `quadOut` | `sideOut` `:55` | MATCH | generic `1 - in(1-x)` |
+| `cubicOut` | `sideOut` `:55` | MATCH | generic `1 - in(1-x)` |
+| `quartOut` | `sideOut` `:55` | MATCH | generic `1 - in(1-x)` |
+| `quintOut` | `sideOut` `:55` | MATCH | generic `1 - in(1-x)` |
+| `expoOut` | `sideOut` `:55` | MATCH | generic `1 - in(1-x)` |
+| `circOut` | `sideOut` `:55` | MATCH | generic `1 - in(1-x)` |
+| `backOut` | `sideOut` `:55` | MATCH | generic `1 - in(1-x)` |
+| `elasticOut` | `sideOut` `:55` | MATCH | generic `1 - in(1-x)` |
+| `bounceOut` | `sideOut` `:55` | MATCH | generic `1 - in(1-x)` |
+| `sineInOut` | `sideInOut` `:58` | MATCH | generic `x2<1` split |
+| `quadInOut` | `sideInOut` `:58` | MATCH | generic `x2<1` split |
+| `cubicInOut` | `sideInOut` `:58` | MATCH | generic `x2<1` split |
+| `quartInOut` | `sideInOut` `:58` | MATCH | generic `x2<1` split |
+| `quintInOut` | `sideInOut` `:58` | MATCH | generic `x2<1` split |
+| `expoInOut` | `sideInOut` `:58` | MATCH | generic `x2<1` split |
+| `circInOut` | `sideInOut` `:58` | MATCH | generic `x2<1` split |
+| `backInOut` | `sideInOut` `:58` | MATCH | generic `x2<1` split |
+| `elasticInOut` | `sideInOut` `:58` | MATCH | generic `x2<1` split |
+| `bounceInOut` | `sideInOut` `:58` | MATCH | generic `x2<1` split |
+| `intSineOut` | `sideOutInt` `:125` | MATCH | same identity over the integral form |
+| `intQuadOut` | `sideOutInt` `:125` | MATCH | same identity over the integral form |
+| `intCubicOut` | `sideOutInt` `:125` | MATCH | same identity over the integral form |
+| `intQuartOut` | `sideOutInt` `:125` | MATCH | same identity over the integral form |
+| `intQuintOut` | `sideOutInt` `:125` | MATCH | same identity over the integral form |
+| `intExpoOut` | `sideOutInt` `:125` | MATCH | same identity over the integral form |
+| `intCircOut` | `sideOutInt` `:125` | MATCH | same identity over the integral form |
+| `intBackOut` | `sideOutInt` `:125` | MATCH | same identity over the integral form |
+| `intElasticOut` | `sideOutInt` `:125` | MATCH | same identity over the integral form |
+| `intBounceOut` | `sideOutInt` `:125` | MATCH | same identity over the integral form |
+| `intSineInOut` | `sideInOutInt` `:127` | MATCH | same split over the integral form |
+| `intQuadInOut` | `sideInOutInt` `:127` | MATCH | same split over the integral form |
+| `intCubicInOut` | `sideInOutInt` `:127` | MATCH | same split over the integral form |
+| `intQuartInOut` | `sideInOutInt` `:127` | MATCH | same split over the integral form |
+| `intQuintInOut` | `sideInOutInt` `:127` | MATCH | same split over the integral form |
+| `intExpoInOut` | `sideInOutInt` `:127` | MATCH | same split over the integral form |
+| `intCircInOut` | `sideInOutInt` `:127` | MATCH | same split over the integral form |
+| `intBackInOut` | `sideInOutInt` `:127` | MATCH | same split over the integral form |
+| `intElasticInOut` | `sideInOutInt` `:127` | MATCH | same split over the integral form |
+| `intBounceInOut` | `sideInOutInt` `:127` | MATCH | same split over the integral form |
+
+The remaining `Easing.java` declarations are covered by the table above this section:
+`sineIn`/`quadIn`/`cubicIn`/`quartIn`/`quintIn`/`circIn`/`elasticIn`/`bounceIn`
+and their `int` forms match by name and by the same numeric proof, `bezierSampleX`/
+`bezierSampleY` are the two `cubicBezierYforX` table builders already recorded at
+`:344-398`, and `bezierCacheKey` remains the one deliberate exclusion (:332-339).
+
 ---
 
 ## 3. `EventUtils.java` → `EventUtils.cpp`
