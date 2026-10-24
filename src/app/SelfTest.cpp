@@ -526,6 +526,29 @@ int runSelfTest() {
         "settings switch toggles after scrolling");
     io.AddMousePosEvent(-100.0F, -100.0F);
     drawScreenHeadless(context, drawSettingsScreen);
+
+    // A finger drag that starts on a row must scroll the page, not toggle the row. The
+    // reference ScrollView takes the gesture from its children once it is vertical.
+    context.settingsTab = 0;
+    context.settings.realtimeAccuracy = false;
+    context.settingsDirty = false;
+    drawScreenHeadless(context, drawSettingsScreen);
+    io.AddMousePosEvent(640.0F, 300.0F);
+    drawScreenHeadless(context, drawSettingsScreen);
+    io.AddMouseButtonEvent(0, true);
+    drawScreenHeadless(context, drawSettingsScreen);
+    io.AddMousePosEvent(640.0F, 380.0F);
+    drawScreenHeadless(context, drawSettingsScreen);
+    io.AddMousePosEvent(640.0F, 300.0F);
+    drawScreenHeadless(context, drawSettingsScreen);
+    io.AddMouseButtonEvent(0, false);
+    drawScreenHeadless(context, drawSettingsScreen);
+    drawScreenHeadless(context, drawSettingsScreen);
+    report(!context.settings.realtimeAccuracy,
+        "dragging from a row scrolls instead of toggling");
+    io.AddMousePosEvent(-100.0F, -100.0F);
+    drawScreenHeadless(context, drawSettingsScreen);
+
     context.settings.realtimeAccuracy = false;
     context.settingsDirty = false;
     io.AddMousePosEvent(400.0F, 400.0F);
@@ -565,7 +588,7 @@ int runSelfTest() {
     int markVertices = 0;
     const ImDrawData* settingsDraw = ImGui::GetDrawData();
     if (settingsDraw != nullptr) {
-      const ImU32 markColor = IM_COL32(0x30, 0x33, 0x38, 0xFF);
+      const ImU32 markColor = IM_COL32(0xFF, 0xFF, 0xFF, 0xFF);
       for (int list = 0; list < settingsDraw->CmdListsCount; ++list) {
         for (const ImDrawVert& vertex : settingsDraw->CmdLists[list]->VtxBuffer) {
           if (vertex.col == markColor) ++markVertices;

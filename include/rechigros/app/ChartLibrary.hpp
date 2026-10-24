@@ -5,6 +5,9 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <future>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -71,6 +74,12 @@ public:
 
   void invalidate() noexcept { loaded_ = false; }
 
+  // Warm the index on a worker thread. The first screen does not need the pack list, and
+  // the scan reads and parses every package, so running it before the first frame turns
+  // launch into a multi-second black screen. Callers that need the records still go
+  // through records(), which waits for this warm-up when it is already running.
+  void warmUpAsync();
+
 private:
   struct ScoreEntry {
     int bestScore{};
@@ -78,6 +87,7 @@ private:
     std::int64_t lastPlayedAtMs{};
   };
 
+  void rebuildIndex();
   [[nodiscard]] std::optional<ChartRecord> loadRecordInternal(const std::string& id);
   [[nodiscard]] ImportResult installDirectory(const std::filesystem::path& temporary,
       const std::string& id, const std::string& fallbackName, bool requireComplete);
@@ -92,6 +102,9 @@ private:
   std::unordered_map<std::string, ScoreEntry> scores_;
   bool loaded_{};
   bool scoresLoaded_{};
+  // In-flight warm-up, joined by records() before it touches the index.
+  std::shared_ptr<std::shared_future<void>> warmUp_;
+  std::mutex indexMutex_;
 };
 
 // Formats one score with the fixed seven digit width used throughout the UI.

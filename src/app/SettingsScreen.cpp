@@ -208,6 +208,14 @@ struct PointerState {
   float pressX{};
   float pressY{};
   float scrollAtPress{};
+  // A press that started on a row is held here until the gesture resolves: a vertical
+  // move past the slop turns it into a scroll, a quick release turns it into a click.
+  // This is the parent-scroll-container interception the reference gets from its
+  // ScrollView, and it is what lets a finger drag the list from on top of a row.
+  bool rowPressPending{};
+  bool rowPressOnControl{};
+  float rowPressY{};
+  float rowScrollAtPress{};
 };
 
 PointerState& pointerState() {
@@ -798,6 +806,13 @@ bool pressReleased(const char* key, float x0, float y0, float x1, float y1,
     state.sliderDragging = false;
     return false;
   }
+  // A drag that the page claimed mid-press cancels this control: the gesture was a scroll,
+  // so releasing over the row must not also toggle it.
+  if (state.activeKey == key && state.scrollDragging) {
+    state.activeKey.clear();
+    state.sliderDragging = false;
+    return false;
+  }
   if (state.activeKey == key && pointer.released) {
     state.activeKey.clear();
     state.sliderDragging = false;
@@ -987,18 +1002,23 @@ void drawSwitch(const DrawContext& draw, const Block& block, float left, float t
   const float thumbX = bodyX + m.dp(31.0F) * progress;
   skewedBlock(draw.drawList, thumbX, bodyY, m.dp(35.0F), bodyHeight,
       bodyHeight * kToggleSkewFactor, ui::argb(0xFFFFFFFFU));
+  // The checked mark is anchored to the track's left end, not to the thumb: the thumb
+  // slides away from it as the switch turns on, which leaves the mark on the dark track
+  // where a white stroke reads clearly.
   if (progress > 0.01F) {
     const float alpha = std::clamp(progress, 0.0F, 1.0F);
-    const ImU32 markColor = ui::fade(ui::argb(0xFF303338U), alpha);
-    ImVec2 mark[3] = {
-        ImVec2(thumbX + m.dp(13.0F), bodyY + m.dp(13.0F)),
-        ImVec2(thumbX + m.dp(17.0F), bodyY + m.dp(17.0F)),
-        ImVec2(thumbX + m.dp(24.0F), bodyY + m.dp(8.0F)),
+    const ImU32 markColor = ui::fade(ui::argb(0xFFFFFFFFU), alpha);
+    const float markWidth = m.dp(1.5F);
+    const ImVec2 mark[3] = {
+        ImVec2(bodyX + m.dp(13.0F), bodyY + m.dp(13.0F)),
+        ImVec2(bodyX + m.dp(17.0F), bodyY + m.dp(17.0F)),
+        ImVec2(bodyX + m.dp(24.0F), bodyY + m.dp(8.0F)),
     };
-    const float markWidth = m.dp(2.0F);
-    draw.drawList->AddPolyline(mark, 3, markColor, 0, markWidth);
+    draw.drawList->AddPolyline(mark, 3, markColor, ImDrawFlags_RoundCornersAll, markWidth);
+    // Round caps: ImGui's polyline leaves the stroke ends square, and at 1.5 dp that is
+    // visible at the tips the reference draws with ROUND cap.
     for (const ImVec2& point : mark) {
-      draw.drawList->AddCircleFilled(point, markWidth * 0.5F, markColor, 8);
+      draw.drawList->AddCircleFilled(point, markWidth * 0.5F, markColor, 12);
     }
   }
   draw.controlRects.push_back({left, top, left + draw.rowWidth, top + rowPressHeight});
@@ -1914,8 +1934,12 @@ void drawSettingsScreen(AppContext& context) {
   DrawContext draw{context, m, drawList, context.nowSec, scroll, rowWidthPx(m), !dialogsOpen,
       state.controlRects};
 
-  // Scrolling: wheel over the page and left-drag on empty page space. A drag that starts on
-  // a control belongs to that control instead.
+  // Scrolling: wheel over the page, and a left-drag anywhere in the page area — including
+  // on top of a row. A press that starts on a row is provisional: it only fires as a click
+  // if the pointer is released without a vertical move past the slop. That mirrors the
+  // reference, whose ScrollView takes the gesture from its children once it decides the
+  // drag is vertical, so the list is draggable from the middle of a row and not only from
+  // the empty margins.
   if (!dialogsOpen) {
     const PointerSnapshot snapshot = pointerSnapshot();
     const bool overContent = pointInside(snapshot.position, 0.0F, contentTopPx(m), m.width,
@@ -1924,7 +1948,8 @@ void drawSettingsScreen(AppContext& context) {
     if (overContent && std::abs(wheel) > 0.0F) {
       scroll = std::clamp(scroll - wheel * m.dp(60.0F), 0.0F, maxScroll);
     }
-    if (snapshot.clicked && overContent && pointer.activeKey.empty()) {
+    if (snapshot.clicked && overContent && pointer.activeKey.empty()
+        && !pointer.scrollDragging) {
       bool overControl = false;
       for (const auto& rect : state.controlRects) {
         if (pointInside(snapshot.position, rect[0], rect[1], rect[2], rect[3])) {
@@ -1932,10 +1957,31 @@ void drawSettingsScreen(AppContext& context) {
           break;
         }
       }
+      pointer.rowPressPending = true;
+      pointer.rowPressOnControl = overControl;
+      pointer.rowPressY = snapshot.position.y;
+      pointer.rowScrollAtPress = scroll;
       if (!overControl) {
         pointer.scrollDragging = true;
         pointer.pressY = snapshot.position.y;
         pointer.scrollAtPress = scroll;
+      }
+    }
+    if (pointer.rowPressPending) {
+      const float travel = snapshot.position.y - pointer.rowPressY;
+      const float lateral = snapshot.position.x - pointer.pressX;
+      if (!snapshot.down) {
+        pointer.rowPressPending = false;
+      } else if (std::abs(travel) > m.dp(6.0F) && std::abs(travel) > std::abs(lateral)) {
+        // The gesture is a vertical drag, not a click. A row may already have latched the
+        // press on the frame it went down, so the press is released here rather than
+        // waiting for it to expire; otherwise the list could never be dragged from a row.
+        pointer.rowPressPending = false;
+        pointer.activeKey.clear();
+        pointer.sliderDragging = false;
+        pointer.scrollDragging = true;
+        pointer.pressY = pointer.rowPressY;
+        pointer.scrollAtPress = pointer.rowScrollAtPress;
       }
     }
     if (pointer.scrollDragging) {
@@ -1944,6 +1990,7 @@ void drawSettingsScreen(AppContext& context) {
             0.0F, maxScroll);
       } else {
         pointer.scrollDragging = false;
+        pointer.rowPressPending = false;
       }
     }
   } else {

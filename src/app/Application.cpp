@@ -191,7 +191,23 @@ Application::~Application() {
   shutdown();
 }
 
+namespace {
+// Wall-clock marker for the launch path. Android shows the window before the first frame
+// is drawn, so every millisecond spent between creating the window and presenting frame
+// one is a black screen the player sees.
+std::uint64_t launchMark() { return SDL_GetPerformanceCounter(); }
+
+void reportLaunchStage(const char* stage, std::uint64_t from, std::uint64_t frequency) {
+  if (frequency == 0) return;
+  const std::uint64_t now = SDL_GetPerformanceCounter();
+  std::printf("launch: %-22s %7.1f ms\n", stage,
+      static_cast<double>(now - from) * 1000.0 / static_cast<double>(frequency));
+}
+} // namespace
+
 bool Application::initialize() {
+  const std::uint64_t launchFrequency = SDL_GetPerformanceFrequency();
+  const std::uint64_t launchStart = launchMark();
   if (!replayPlaybackPath_.empty() && initialPath_.empty()) {
     std::cerr << "--replay-playback needs a chart path argument\n";
     return false;
@@ -200,6 +216,8 @@ bool Application::initialize() {
     std::cerr << "SDL_Init: " << SDL_GetError() << '\n';
     return false;
   }
+  reportLaunchStage("SDL_Init", launchStart, launchFrequency);
+  std::uint64_t launchStage = launchMark();
   // The diagnostic switch has to be on before the first draw so the first failing pass
   // is the one reported, rather than one inherited from an earlier frame.
   render::gl::setErrorLoggingEnabled(glDebug_);
@@ -381,6 +399,8 @@ bool Application::initialize() {
 #endif
   imguiReady_ = true;
 
+  reportLaunchStage("GL context + ImGui", launchStage, launchFrequency);
+  launchStage = launchMark();
   audio_ = std::make_unique<audio::AudioEngine>();
   const auto assetRoot = platform::assetRoot();
   audio_->initialize();
@@ -390,9 +410,13 @@ bool Application::initialize() {
   if (!renderer_->initialize(assetRoot)) {
     std::cerr << "Renderer initialization failed (asset root: " << assetRoot.string() << ")\n";
   }
+  reportLaunchStage("audio", launchStage, launchFrequency);
+  launchStage = launchMark();
   // Interface glyph cache. Every label is rasterised at the pixel size it is finally drawn
   // at, which keeps text sharp at any window size and density.
   ui::fontCache().initialize(assetRoot);
+  reportLaunchStage("glyph cache", launchStage, launchFrequency);
+  launchStage = launchMark();
 
   // GPU menu backdrop. When its shaders or textures fail to load, the interface
   // keeps the simple ImGui backdrop instead. The environment switch exists so the
@@ -427,7 +451,12 @@ bool Application::initialize() {
   // Scanning the pack directory reads and parses every pack's metadata. Doing it here rather
   // than on demand keeps it off the first frame that shows a screen needing the library,
   // which is otherwise the single most expensive frame in the session.
-  (void)app_->library.records();
+  // The pack list is not needed by the first screen, and building it reads and parses every
+  // installed package. Warming it on a worker thread keeps that cost off the launch path;
+  // any screen that does need the list joins the warm-up through records().
+  app_->library.warmUpAsync();
+  reportLaunchStage("library warm-up (async)", launchStage, launchFrequency);
+  launchStage = launchMark();
 
   // A capture run can open a specific screen with representative state, so a single
   // screen can be inspected and compared without walking the interface by hand.
@@ -447,6 +476,7 @@ bool Application::initialize() {
     }
   }
   if (!recordOutputPath_.empty()) runRecording(*app_);
+  reportLaunchStage("total to first frame", launchStart, launchFrequency);
   return true;
 }
 

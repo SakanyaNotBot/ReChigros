@@ -6,8 +6,10 @@
 #include <algorithm>
 #include <array>
 #include <fstream>
+#include <future>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 
 namespace rechigros::app {
 namespace {
@@ -445,10 +447,9 @@ int gradeIndexForScore(int score, bool fullCombo) {
 ChartLibrary::ChartLibrary(std::filesystem::path packsRoot, std::filesystem::path scoreFile)
     : packsRoot_(std::move(packsRoot)), scoreFile_(std::move(scoreFile)) {}
 
-const std::vector<ChartRecord>& ChartLibrary::records(bool force) {
-  if (loaded_ && !force) return records_;
+void ChartLibrary::rebuildIndex() {
   if (!scoresLoaded_) loadScores();
-  records_.clear();
+  std::vector<ChartRecord> records;
   std::error_code error;
   std::filesystem::create_directories(packsRoot_, error);
   if (std::filesystem::is_directory(packsRoot_, error)) {
@@ -458,11 +459,44 @@ const std::vector<ChartRecord>& ChartLibrary::records(bool force) {
       const std::string id = entry.path().filename().string();
       if (id.size() > 4 && id.compare(id.size() - 4, 4, ".tmp") == 0) continue;
       auto record = loadRecordInternal(id);
-      if (record && record->complete()) records_.push_back(std::move(*record));
+      if (record && record->complete()) records.push_back(std::move(*record));
     }
   }
+  std::lock_guard<std::mutex> lock(indexMutex_);
+  records_ = std::move(records);
   sortRecords();
   loaded_ = true;
+}
+
+void ChartLibrary::warmUpAsync() {
+  std::lock_guard<std::mutex> lock(indexMutex_);
+  if (loaded_ || warmUp_) return;
+  auto promise = std::make_shared<std::promise<void>>();
+  warmUp_ = std::make_shared<std::shared_future<void>>(promise->get_future().share());
+  // The worker must never call records(): records() joins this very future, so a warm-up
+  // that went through it would wait on itself. It rebuilds the index directly instead.
+  std::thread([this, promise]() {
+    try {
+      rebuildIndex();
+    } catch (...) {
+      // A failed warm-up leaves the index unloaded; the next records() call rebuilds inline.
+    }
+    promise->set_value();
+  }).detach();
+}
+
+const std::vector<ChartRecord>& ChartLibrary::records(bool force) {
+  // A warm-up may still be writing the index, so the caller joins it first. This keeps the
+  // first screen fast without ever handing out a half-built list.
+  std::shared_ptr<std::shared_future<void>> pending;
+  {
+    std::lock_guard<std::mutex> lock(indexMutex_);
+    pending = warmUp_;
+    warmUp_.reset();
+  }
+  if (pending) pending->wait();
+  if (loaded_ && !force) return records_;
+  rebuildIndex();
   return records_;
 }
 
