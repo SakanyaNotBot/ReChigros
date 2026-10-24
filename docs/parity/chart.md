@@ -216,6 +216,45 @@ are for the tree at the time of writing).
 
 ## ChartLoader, SkinManager and TriGridBackgroundView: every declaration adjudicated
 
+## ReplayManager and ZipPackUtils: every declaration adjudicated
+
+Both are utility classes whose work the port spreads across the replay store, the archive layer
+and the import core. Each entry names the port code carrying the behaviour.
+
+### `ReplayManager.java` → `src/app/Replay.cpp` + `ImportCore.cpp`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `ReplayInfo` / `ReplayManager` (class, 2) | `ReplayInfo` / `ReplayStore` (`Replay.cpp`) | DELIBERATE-EXCLUSION | The reference is a static manager over Android `File` paths; the port has a store object rooted at the data directory, with the same record shape. |
+| `isReplayEnabled` / `setReplayEnabled` | `settings.replayEnabled` | MATCH | Same preference flag gating recording. |
+| `startRecording` / `finishRecording` | `GameplaySession` replay recording | MATCH | Same begin/end around a run, same per-note entries. |
+| `clearCachedReplay` / `getCachedReplayFile` | pending replay buffer in `Replay.cpp` | MATCH | Same "hold the finished run until the result page saves it" step. |
+| `getReplaysRoot` / `getReplayDir` | `context.dataRoot / "replays"` | MATCH | Same root and the same one-directory-per-replay layout. |
+| `getChartFile` / `getMusicFile` / `getBgFile` | resource lookup when packing a replay | MATCH | Same three resources bundled per replay. |
+| `isReplayAlreadySaved` | content-hash de-duplication | MATCH | Both refuse to store a replay already present. The port compares by content rather than by timestamp, which is the stricter of the two and was a deliberate earlier fix (see `gameplay.md`). |
+| `getReplayData` / `getReplayInfo` / `getReplayList` | `readReplayFile`, `ReplayStore::list` | MATCH | Same parse and the same sorted listing. |
+| `setFavorite` | replay metadata write | MATCH | Same favourite flag persisted in the replay file. |
+| `deleteReplay` / `deleteRecursive` | `ReplayStore::remove` + `platform::removeRecursively` | MATCH | Same recursive delete of one replay directory. |
+| `isLikelyReplayPackage` | `isReplayArchive` (`ImportCore.cpp`) | MATCH | Same "archive containing `replay.json`" classification. |
+| `isInsideDir` :628-635 | `Archive` path checks (`Archive.cpp:69,302`) | MATCH | The reference compares canonical path prefixes; the port rejects any `..` segment and any entry whose relative path starts with `..`. Both refuse an entry that would escape its root. |
+| `relativizePath` | `lexically_relative` | MATCH | Same "path relative to the replay directory, leading separators stripped". |
+| `findFile` / `findChartFileInDir` / `findAudioFileInDir` / `findImageFileInDir` | `findChartFile` / `findAudioFile` / `findImageFile` in `ImportCore.cpp` | MATCH | Same extension-preference order when a pack has several candidates. |
+
+### `ZipPackUtils.java` → `src/platform/Archive.cpp` + `ImportCore.cpp`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `ZipPackUtils` (class) | `platform::Archive` | DELIBERATE-EXCLUSION | A static utility over `ZipInputStream`; the port's archive layer uses miniz through a small `Archive` class. |
+| `ZipEntryInfo` | `ArchiveEntry` | MATCH | Same per-entry record (path, size, directory flag). |
+| `isDirectory` | entry name test in `Archive` | MATCH | Same trailing-separator test. |
+| `BoundedRafInputStream` (2 constructors) / `readDummyByte` | bounded stream reads in `Archive` | DELIBERATE-EXCLUSION | A Java `InputStream` shim that reads a zip entry through a bounded `RandomAccessFile`; miniz reads entries directly, so there is no stream object to bound. The size limits it enforced are still applied. |
+| `deleteRecursive` | `platform::removeRecursively` | MATCH | Same recursive delete. |
+| `resolveInfoPath` | info-file resolution in `ImportCore.cpp` | MATCH | Same `info.txt`/`.yml`/`.json` candidate order. |
+| `looksLikeOfficialChartJson` / `looksLikeRpeChartJson` / `looksLikeAnyChartJson` / `looksLikePhiEditText` | `classifyChartFile` (`ImportCore.cpp`) | MATCH | Same shape probes deciding which parser a candidate file belongs to. |
+| `findChartFileInExtracted` / `findAudioFileInExtracted` / `findImageFileInExtracted` | `findChartFile` / `findAudioFile` / `findImageFile` | MATCH | Same extension preference over the extracted tree. |
+| `readInfoFileWithEncodingFallback` / `readInfoFileWithCharset` / `readJsonWithCharset` / `readYamlLikeWithCharset` / `readKeyValueTxtWithCharset` / `readCsvWithCharset` / `readAllWithCharset` | `decodeLegacyText` + the four info parsers | MATCH | Same UTF-8-first decode with a legacy fallback when the bytes are not valid UTF-8, then the same parser per file kind. |
+| `infoFromKvMap` / `getFirstJsonStr` / `firstNonEmptyStr` / `stripYamlVal` / `parseCsvLineSimple` | info-field assembly in `InfoFile.cpp` | MATCH | Same field aliases, same trim/quote stripping and the same first-non-empty rule. |
+
 ### `ChartLoader.java` → `src/chart/ChartLoader.cpp`
 
 | Reference declaration | Port implementation | Verdict | Basis |

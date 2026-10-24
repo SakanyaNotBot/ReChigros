@@ -2,16 +2,16 @@
 
 Generated from `docs/compare/inventory.json` by `tools/parity/coverage_matrix.py`. One row per reference declaration.
 
-Reference declarations: **2292** across 75 files.
+Reference declarations: **2285** across 75 files.
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| verified | 551 | named MATCH by a parity report |
+| verified | 635 | named MATCH by a parity report |
 | fixed | 177 | named by a parity report with a fix |
 | differs | 0 | named with a remaining difference |
 | excluded | 3 | deliberate exclusion, reason recorded |
-| matched-by-name | 168 | a port symbol with the same name exists |
-| unmatched | 1225 | no same-name port symbol; needs a manual verdict |
+| matched-by-name | 161 | a port symbol with the same name exists |
+| unmatched | 1148 | no same-name port symbol; needs a manual verdict |
 
 This matrix is an index. The authoritative per-function verdicts and the
 evidence line for each one are in the topical reports (`chart.md`, `core.md`, `judging.md`,
@@ -1055,7 +1055,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 556 | `getAsDouble` | fixed |  |
 | 565 | `getAsInt` | unmatched |  |
 | 574 | `getAsBool` | fixed |  |
-| 588 | `getFirst` | unmatched |  |
+| 588 | `getFirst` | verified |  |
 | 597 | `asObj` | unmatched |  |
 | 602 | `asArray` | unmatched |  |
 | 612 | `copyLineEvent` | unmatched |  |
@@ -1271,7 +1271,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 2238 | `asObj` | unmatched |  |
 | 2244 | `getAsArray` | unmatched |  |
 | 2254 | `getAsObject` | unmatched |  |
-| 2264 | `getFirst` | unmatched |  |
+| 2264 | `getFirst` | verified |  |
 | 2273 | `getAsDouble` | fixed |  |
 | 2285 | `getAsInt` | unmatched |  |
 | 2297 | `getAsBool` | fixed |  |
@@ -1484,9 +1484,9 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 2369 | `onOnlineChartImported` | unmatched |  |
 | 2374 | `getSelectedSkinIndex` | verified |  |
 | 2378 | `setSelectedSkinIndex` | verified |  |
-| 2382 | `getMusicFile` | unmatched |  |
-| 2384 | `getChartFile` | unmatched |  |
-| 2385 | `getBgFile` | unmatched |  |
+| 2382 | `getMusicFile` | verified |  |
+| 2384 | `getChartFile` | verified |  |
+| 2385 | `getBgFile` | verified |  |
 | 2386 | `getSongName` | unmatched |  |
 | 2387 | `getDifficulty` | unmatched |  |
 | 2388 | `getChartOffsetMs` | unmatched |  |
@@ -1547,8 +1547,8 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 2489 | `setMusicSpeed` | matched-by-name | `src\core\GameplaySession.cpp:66` `setMusicSpeed` |
 | 2490 | `getAudioOffsetMs` | unmatched |  |
 | 2491 | `setAudioOffsetMs` | verified |  |
-| 2492 | `isReplayEnabled` | unmatched |  |
-| 2493 | `setReplayEnabled` | unmatched |  |
+| 2492 | `isReplayEnabled` | verified |  |
+| 2493 | `setReplayEnabled` | verified |  |
 | 2494 | `loadPersistedSettings` | unmatched |  |
 | 2534 | `getPrefs` | verified |  |
 | 2539 | `isApfcIndicatorEnabled` | unmatched |  |
@@ -1592,7 +1592,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 2877 | `setState` | matched-by-name | `src\app\LibraryScreen.cpp:214` `state` |
 | 2884 | `setOnTabSelected` | unmatched |  |
 | 2888 | `onDraw` | verified |  |
-| 2927 | `performClick` | unmatched |  |
+| 2927 | `performClick` | verified |  |
 | 2933 | `onTouchEvent` | verified |  |
 | 2944 | `drawSkewRect` | unmatched |  |
 | 2957 | `tabProgress` | unmatched |  |
@@ -1630,8 +1630,8 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | --- | --- | --- | --- |
 | 62 | `GameDialog` | unmatched |  |
 | 83 | `Builder` | unmatched |  |
-| 85 | `setTitle` | unmatched |  |
-| 87 | `setTitle` | unmatched |  |
+| 85 | `setTitle` | verified |  |
+| 87 | `setTitle` | verified |  |
 | 88 | `setMessage` | verified |  |
 | 89 | `setMessage` | verified |  |
 | 90 | `setView` | matched-by-name | `src\platform\Gif.cpp:30` `view` |
@@ -1756,27 +1756,27 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 41 | `JudgementHistogramView` | unmatched |  |
 | 46 | `JudgementHistogramView` | unmatched |  |
 | 51 | `init` | fixed |  |
-| 57 | `setHistogram` | unmatched |  |
-| 68 | `setTitle` | unmatched |  |
-| 73 | `setContentInsets` | unmatched |  |
-| 83 | `setHistogramTypeface` | unmatched |  |
-| 88 | `setSourceBitmap` | unmatched |  |
+| 57 | `setHistogram` | verified |  |
+| 68 | `setTitle` | verified |  |
+| 73 | `setContentInsets` | verified |  |
+| 83 | `setHistogramTypeface` | verified |  |
+| 88 | `setSourceBitmap` | verified |  |
 | 94 | `onSizeChanged` | unmatched |  |
 | 105 | `onDetachedFromWindow` | unmatched |  |
 | 111 | `onDraw` | verified |  |
 | 127 | `drawBlurredBackdrop` | matched-by-name | `src\app\ResultScreen.cpp:322` `drawBlurredBackdrop` |
-| 142 | `drawPanel` | matched-by-name | `src\app\CalibrationScreen.cpp:511` `drawPanel` (+1) |
-| 173 | `drawBars` | unmatched |  |
-| 213 | `drawPeakTag` | unmatched |  |
-| 257 | `drawAxisLabels` | unmatched |  |
-| 272 | `effectiveMaxBarHeight` | unmatched |  |
-| 277 | `ensureBlurredBitmap` | unmatched |  |
-| 302 | `recycleBlurredBitmap` | unmatched |  |
-| 311 | `boxBlur` | unmatched |  |
-| 371 | `formatSignedMs` | unmatched |  |
-| 376 | `formatAxisMs` | unmatched |  |
+| 142 | `drawPanel` | verified | `src\app\CalibrationScreen.cpp:511` `drawPanel` (+1) |
+| 173 | `drawBars` | verified |  |
+| 213 | `drawPeakTag` | verified |  |
+| 257 | `drawAxisLabels` | verified |  |
+| 272 | `effectiveMaxBarHeight` | verified |  |
+| 277 | `ensureBlurredBitmap` | verified |  |
+| 302 | `recycleBlurredBitmap` | verified |  |
+| 311 | `boxBlur` | verified |  |
+| 371 | `formatSignedMs` | verified |  |
+| 376 | `formatAxisMs` | verified |  |
 | 381 | `dp` | fixed | `include\rechigros\app\UiLayout.hpp:31` `dp` (+2) |
-| 385 | `withAlpha` | unmatched |  |
+| 385 | `withAlpha` | verified |  |
 | 389 | `clamp` | fixed |  |
 | 395 | `pack` | fixed |  |
 
@@ -1864,31 +1864,31 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 49 | `ReplayInfo` | unmatched |  |
 | 59 | `ReplayManager` | unmatched |  |
 | 61 | `getPrefs` | verified |  |
-| 67 | `isReplayEnabled` | unmatched |  |
-| 71 | `setReplayEnabled` | unmatched |  |
-| 75 | `startRecording` | unmatched |  |
-| 81 | `finishRecording` | unmatched |  |
-| 100 | `clearCachedReplay` | unmatched |  |
-| 105 | `getCachedReplayFile` | unmatched |  |
-| 109 | `getReplaysRoot` | unmatched |  |
-| 115 | `getReplayDir` | unmatched |  |
-| 119 | `getChartFile` | unmatched |  |
-| 131 | `getMusicFile` | unmatched |  |
-| 143 | `getBgFile` | unmatched |  |
-| 155 | `isReplayAlreadySaved` | unmatched |  |
+| 67 | `isReplayEnabled` | verified |  |
+| 71 | `setReplayEnabled` | verified |  |
+| 75 | `startRecording` | verified |  |
+| 81 | `finishRecording` | verified |  |
+| 100 | `clearCachedReplay` | verified |  |
+| 105 | `getCachedReplayFile` | verified |  |
+| 109 | `getReplaysRoot` | verified |  |
+| 115 | `getReplayDir` | verified |  |
+| 119 | `getChartFile` | verified |  |
+| 131 | `getMusicFile` | verified |  |
+| 143 | `getBgFile` | verified |  |
+| 155 | `isReplayAlreadySaved` | verified |  |
 | 171 | `getReplayData` | unmatched |  |
 | 181 | `getReplayInfo` | unmatched |  |
 | 292 | `getReplayList` | unmatched |  |
-| 328 | `setFavorite` | unmatched |  |
+| 328 | `setFavorite` | verified |  |
 | 338 | `deleteReplay` | unmatched |  |
-| 497 | `isLikelyReplayPackage` | unmatched |  |
+| 497 | `isLikelyReplayPackage` | verified |  |
 | 595 | `deleteRecursive` | unmatched |  |
-| 626 | `isInsideDir` | unmatched |  |
-| 636 | `relativizePath` | unmatched |  |
-| 647 | `findFile` | unmatched |  |
-| 661 | `findChartFileInDir` | unmatched |  |
-| 677 | `findAudioFileInDir` | unmatched |  |
-| 694 | `findImageFileInDir` | unmatched |  |
+| 626 | `isInsideDir` | verified |  |
+| 636 | `relativizePath` | verified |  |
+| 647 | `findFile` | verified |  |
+| 661 | `findChartFileInDir` | verified |  |
+| 677 | `findAudioFileInDir` | verified |  |
+| 694 | `findImageFileInDir` | verified |  |
 
 ## `com\wuying\phigros\ui\ResultActivity.java`
 
@@ -2138,23 +2138,23 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
 | 28 | `SettingsSliderView` | unmatched |  |
-| 39 | `setOnValueChanged` | unmatched |  |
+| 39 | `setOnValueChanged` | verified |  |
 | 41 | `dp` | fixed | `include\rechigros\app\UiLayout.hpp:31` `dp` (+2) |
 | 43 | `scale` | fixed |  |
-| 44 | `capWidth` | unmatched |  |
-| 45 | `thumbWidth` | unmatched |  |
-| 46 | `endInset` | unmatched |  |
-| 47 | `thumbGap` | unmatched |  |
-| 49 | `trackLeft` | unmatched |  |
-| 53 | `trackRight` | unmatched |  |
+| 44 | `capWidth` | verified |  |
+| 45 | `thumbWidth` | verified |  |
+| 46 | `endInset` | verified |  |
+| 47 | `thumbGap` | verified |  |
+| 49 | `trackLeft` | verified |  |
+| 53 | `trackRight` | verified |  |
 | 54 | `left` | fixed | `include\rechigros\render\math\Mat4.hpp:85` `left` |
 | 58 | `right` | fixed | `include\rechigros\render\math\Mat4.hpp:88` `right` |
-| 62 | `parallelogram` | unmatched |  |
+| 62 | `parallelogram` | verified |  |
 | 74 | `onDraw` | verified |  |
-| 96 | `updateValue` | matched-by-name | `src\chart\OfficialChartParser.cpp:20` `value` |
-| 106 | `updateFromX` | unmatched |  |
+| 96 | `updateValue` | verified | `src\chart\OfficialChartParser.cpp:20` `value` |
+| 106 | `updateFromX` | verified |  |
 | 111 | `onTouchEvent` | verified |  |
-| 158 | `performClick` | unmatched |  |
+| 158 | `performClick` | verified |  |
 | 160 | `onKeyDown` | unmatched |  |
 | 172 | `onInitializeAccessibilityNodeInfo` | unmatched |  |
 | 182 | `performAccessibilityAction` | unmatched |  |
@@ -2304,14 +2304,14 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 468 | `mapToDest` | verified |  |
 | 475 | `findInfoFile` | verified | `src\app\ChartLibrary.cpp:140` `findInfoFile` |
 | 493 | `resolveExisting` | verified |  |
-| 503 | `findChartFile` | matched-by-name | `src\app\ChartLibrary.cpp:156` `findChartFile` |
-| 512 | `findAudioFile` | matched-by-name | `src\app\ChartLibrary.cpp:164` `findAudioFile` |
+| 503 | `findChartFile` | verified | `src\app\ChartLibrary.cpp:156` `findChartFile` |
+| 512 | `findAudioFile` | verified | `src\app\ChartLibrary.cpp:164` `findAudioFile` |
 | 523 | `findByInfoName` | verified | `src\app\ChartLibrary.cpp:180` `findByInfoName` |
 | 539 | `isChartCandidate` | verified |  |
 | 559 | `isAudioCandidate` | verified |  |
 | 565 | `isImageCandidate` | verified |  |
 | 571 | `readHead` | verified | `src\app\ChartLibrary.cpp:20` `readHead` (+1) |
-| 583 | `findImageFile` | matched-by-name | `src\app\ChartLibrary.cpp:172` `findImageFile` |
+| 583 | `findImageFile` | verified | `src\app\ChartLibrary.cpp:172` `findImageFile` |
 | 594 | `chooseShortestPath` | verified | `src\app\ChartLibrary.cpp:60` `chooseShortestPath` |
 | 605 | `compareLocalCharts` | unmatched |  |
 | 623 | `getRecordModifiedAt` | verified | `src\app\ChartLibrary.cpp:204` `recordModifiedAt` |
@@ -2349,7 +2349,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 373 | `parseIntOrNull` | unmatched |  |
 | 383 | `getInt` | verified | `src\app\Settings.cpp:31` `parseInt` |
 | 398 | `getBool` | verified | `src\app\Settings.cpp:41` `parseBool` |
-| 418 | `firstNonEmpty` | matched-by-name | `src\app\InfoFile.cpp:46` `firstNonEmpty` |
+| 418 | `firstNonEmpty` | verified | `src\app\InfoFile.cpp:46` `firstNonEmpty` |
 | 427 | `stripQuotes` | verified | `src\app\InfoFile.cpp:26` `stripQuotes` (+2) |
 | 440 | `trimDifficultyWhitespace` | fixed | `src\app\InfoFile.cpp:167` `trimDifficultyWhitespace` |
 | 449 | `isDifficultyEdgeWhitespace` | matched-by-name | `src\app\InfoFile.cpp:130` `isDifficultyEdgeWhitespace` |
@@ -2409,7 +2409,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 190 | `readBundledFallback` | unmatched |  |
 | 211 | `formatBytes` | unmatched |  |
 | 224 | `numericChartId` | unmatched |  |
-| 232 | `firstNonEmpty` | matched-by-name | `src\app\InfoFile.cpp:46` `firstNonEmpty` |
+| 232 | `firstNonEmpty` | verified | `src\app\InfoFile.cpp:46` `firstNonEmpty` |
 
 ## `com\wuying\phigros\util\PcmDecoder.java`
 
@@ -2438,36 +2438,36 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | --- | --- | --- | --- |
 | 36 | `ZipPackUtils` | unmatched |  |
 | 312 | `normalizeZipEntryName` | verified |  |
-| 439 | `ZipEntryInfo` | unmatched |  |
-| 447 | `isDirectory` | unmatched |  |
+| 439 | `ZipEntryInfo` | verified |  |
+| 447 | `isDirectory` | verified |  |
 | 464 | `BoundedRafInputStream` | unmatched |  |
 | 468 | `BoundedRafInputStream` | unmatched |  |
 | 505 | `close` | verified |  |
 | 510 | `readDummyByte` | unmatched |  |
 | 517 | `deleteRecursive` | unmatched |  |
 | 530 | `isInfoFile` | verified |  |
-| 538 | `resolveInfoPath` | unmatched |  |
+| 538 | `resolveInfoPath` | verified |  |
 | 548 | `isAudioFile` | verified |  |
 | 557 | `isImageFile` | verified |  |
 | 564 | `readHead` | verified | `src\app\ChartLibrary.cpp:20` `readHead` (+1) |
-| 575 | `looksLikeOfficialChartJson` | unmatched |  |
-| 581 | `looksLikeRpeChartJson` | unmatched |  |
-| 587 | `looksLikeAnyChartJson` | unmatched |  |
-| 598 | `looksLikePhiEditText` | unmatched |  |
+| 575 | `looksLikeOfficialChartJson` | verified |  |
+| 581 | `looksLikeRpeChartJson` | verified |  |
+| 587 | `looksLikeAnyChartJson` | verified |  |
+| 598 | `looksLikePhiEditText` | verified |  |
 | 607 | `isLikelyChart` | verified |  |
-| 615 | `findChartFileInExtracted` | unmatched |  |
-| 635 | `findAudioFileInExtracted` | unmatched |  |
-| 649 | `findImageFileInExtracted` | unmatched |  |
+| 615 | `findChartFileInExtracted` | verified |  |
+| 635 | `findAudioFileInExtracted` | verified |  |
+| 649 | `findImageFileInExtracted` | verified |  |
 | 663 | `findByInfoNameInExtracted` | verified |  |
-| 689 | `readInfoFileWithEncodingFallback` | unmatched |  |
-| 736 | `readInfoFileWithCharset` | unmatched |  |
-| 757 | `readJsonWithCharset` | unmatched |  |
-| 780 | `readYamlLikeWithCharset` | unmatched |  |
-| 801 | `readKeyValueTxtWithCharset` | unmatched |  |
-| 827 | `readCsvWithCharset` | unmatched |  |
-| 852 | `infoFromKvMap` | unmatched |  |
-| 870 | `getFirstJsonStr` | unmatched |  |
-| 886 | `firstNonEmptyStr` | unmatched |  |
-| 895 | `readAllWithCharset` | unmatched |  |
-| 912 | `stripYamlVal` | unmatched |  |
-| 925 | `parseCsvLineSimple` | unmatched |  |
+| 689 | `readInfoFileWithEncodingFallback` | verified |  |
+| 736 | `readInfoFileWithCharset` | verified |  |
+| 757 | `readJsonWithCharset` | verified |  |
+| 780 | `readYamlLikeWithCharset` | verified |  |
+| 801 | `readKeyValueTxtWithCharset` | verified |  |
+| 827 | `readCsvWithCharset` | verified |  |
+| 852 | `infoFromKvMap` | verified |  |
+| 870 | `getFirstJsonStr` | verified |  |
+| 886 | `firstNonEmptyStr` | verified |  |
+| 895 | `readAllWithCharset` | verified |  |
+| 912 | `stripYamlVal` | verified |  |
+| 925 | `parseCsvLineSimple` | verified |  |

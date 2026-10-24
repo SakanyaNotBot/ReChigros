@@ -123,6 +123,39 @@ constant against `ResultActivity.java:727-760`.
 | `blurBackground` / `gaussianBlur` | `TextureCache::blurredBackdropFor` | MATCH | Identical recipe: a third-size copy, three separable box passes, radius `max(4, round(w * 0.05 / 3))`, bilinear upsample. Checked constant for constant. |
 | `AlphaTarget` / `childAlphaTargets` / `startEnterAnimation` | `ResultScreen` enter animation | MATCH | Same staggered per-element alpha ramp driven by the same easing set. |
 
+## JudgementHistogramView and SettingsSliderView: every declaration adjudicated
+
+### `JudgementHistogramView.java` → `ResultScreen.cpp drawJudgementHistogram`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `JudgementHistogramView` (2 constructors) | `drawJudgementHistogram` (`ResultScreen.cpp:396`) | DELIBERATE-EXCLUSION | An Android `View` subclass; the port draws the histogram as part of the result screen, so there is no view object. |
+| `setHistogram` | `context.lastResult.judgementOffsetBins` | MATCH | Same 21-bin array driving the bars. |
+| `setTitle` | the "判定分布" label | MATCH | Same title string. |
+| `setContentInsets` | inset computation in the draw function | MATCH | Same content inset from the skew and the panel width. |
+| `setHistogramTypeface` / `setSourceBitmap` | shared font cache and backdrop texture | MATCH | Same typeface and the same source artwork under the histogram. |
+| `onSizeChanged` / `onDetachedFromWindow` | per-frame size read, renderer lifetime | DELIBERATE-EXCLUSION | View lifecycle callbacks; the port reads the box every frame. |
+| `drawBlurredBackdrop` | `TextureCache::blurredBackdropFor` + the darkened backdrop polygon | MATCH | Same blurred-artwork backdrop with the same alpha applied. |
+| `drawPanel` / `drawBars` / `drawPeakTag` / `drawAxisLabels` | one draw function, four sections | MATCH | Same panel, bar, peak-tag and axis-label composition; the tag format is `+%dms`/`%dms` on both sides (`ResultScreen.cpp:487`). |
+| `effectiveMaxBarHeight` :274-277 | bar-height cap in the draw function | MATCH | Same rule: below `dp(86)` use the graph height, otherwise `max(dp(20), graphH * 0.9)`. |
+| `ensureBlurredBitmap` / `recycleBlurredBitmap` / `boxBlur` | `blurredBackdropFor` cache | MATCH | Same "build once, reuse, release with the screen" lifetime; the blur recipe is the reference's (third-size, three box passes). |
+| `formatSignedMs` :373-376 | `snprintf` at `:487` | MATCH | Same `+%dms` for positives and `%dms` otherwise. |
+| `formatAxisMs` :378-381 | axis labels in the draw function | MATCH | Same `+%d`/`%d` without the unit. |
+| `withAlpha` | `whiteAlpha(alpha)` | MATCH | Same colour with the reveal alpha folded in. |
+
+### `SettingsSliderView.java` → `SettingsScreen.cpp drawSlider`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `SettingsSliderView` (constructor) | `drawSlider` (`SettingsScreen.cpp`) | DELIBERATE-EXCLUSION | An Android `View`; the port draws the slider in place each frame. |
+| `setOnValueChanged` | `sliderInput` + `applySliderValue` | MATCH | Same "report the value on change" contract. |
+| `capWidth` / `thumbWidth` / `endInset` / `thumbGap` / `trackLeft` / `trackRight` | `SliderGeometry` | MATCH | Same cap, thumb, end-inset and track bounds; the port keeps them in one `SliderGeometry` struct instead of five getters. |
+| `parallelogram` | `skewedBlock` | MATCH | Same skewed quad with `skew = height * 0.268`. |
+| `updateValue` / `updateFromX` | `sliderInput` fraction mapping | MATCH | Same x → fraction → snapped value mapping with the same step rounding. |
+| `performClick` | press state machine in `sliderInput` | MATCH | Same click-through on release. |
+| `onKeyDown` | — | DELIBERATE-EXCLUSION | The reference supports keyboard stepping for an Android accessibility path; the port's slider is pointer-only and the settings page is not keyboard-navigated. |
+| `onInitializeAccessibilityNodeInfo` / `performAccessibilityAction` | `ImGui` item metadata | DELIBERATE-EXCLUSION | Android accessibility bridge; ImGui supplies its own item description, and the reference's content description has no cross-platform equivalent. |
+
 ## GameDialog: every declaration adjudicated
 
 The reference implements its dialogs as a hand-drawn skewed panel inside a custom `ViewGroup`.
