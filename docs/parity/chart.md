@@ -290,6 +290,26 @@ and the import core. Each entry names the port code carrying the behaviour.
 | `TriGridRenderer` / `onSurfaceCreated` / `onSurfaceChanged` | `TriGridBackdrop::initialize` / `resize` | MATCH | Same program creation and the same size-dependent state. |
 | `createProgram` / `compileShader` | `shader::build` in the renderer | MATCH | Same compile/link with the same failure logging. |
 
+### The RPE speed-layer merge
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `getEventTime` | `EventUtils::eventTime` | MATCH | Same event start-time read with the same fallback for a missing field. |
+| `parseAlphaEvents` | alpha-event parse | MATCH | Same alpha event list parse. |
+| `buildLegacySpeedHeightLayer` | legacy speed-height layer build | MATCH | Same conversion of the legacy speed/height pair into a speed layer. |
+| `applyLegacySpeedHeightMode` | legacy speed-height application | MATCH | Same application of that mode to the line's speed events. |
+| `addSpeedEvent` | `addSpeedEvent` in `RpeChartParser.cpp` | MATCH | Same append with the same dedupe of an identical neighbouring event. |
+| `mergeSpeedLayers` | merged speed-layer build | MATCH | Same merge of the layers into one event list. |
+| `speedAtLayersStart` :1887-1894 | `speedAtLayersStart` (`RpeChartParser.cpp:416-420`) | MATCH | Same sum of each layer's value at the instant. |
+| `speedAtLayersEnd` :1896-1901 | `speedAtLayersEnd` (`:422-427`) | MATCH | Same `nextafter` step to the left so the value at the end of a segment is the one approaching from inside, with the same non-finite guard. |
+| `addSampledMergedSpeedEvents` :1903-1915 | sampled merge (`:548-549`) | MATCH | Same subdivision into `ceil(duration / 0.125)` segments, each sampled at its endpoints. |
+| `addMergedSpeedEventFromVarying` / `addMergedSpeedEvent` | merged event append | MATCH | Same append of a merged event built from two sampled values. |
+| `speedEventProgress` | `speedEventProgress` (`:444-452`) | MATCH | Same clamp of `(t - start) / duration` into 0..1 and the same `1.0` for a non-positive duration. |
+| `subSpeedEasingWindow` | sub-speed easing window | MATCH | Same per-segment easing window applied when a segment carries its own easing. |
+| `hasSpeedBezier` | `hasSpeedBezier` (`:429-432`) | MATCH | Same "has a lut or at least four control points" test. |
+| `evalSpeedBezier` | `evalSpeedBezier` (`:434-443`) | MATCH | Same lut lookup first, then the cubic bezier for x, then the identity fallback. |
+| `buildSpeedSubBezierLut` | sub-segment bezier lut build | MATCH | Same lut built over the sub-segment's eased progress. |
+
 ### Event parsing helpers
 
 | Reference declaration | Port implementation | Verdict | Basis |

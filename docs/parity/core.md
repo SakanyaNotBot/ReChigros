@@ -48,6 +48,12 @@ Build state at time of writing: `build\core-parity`, full tree links, `ctest` 8/
 | `:332-339` bezierCacheKey | — | DELIBERATE-EXCLUSION | It exists only to key the parser's LUT memo map; the port memoises inside its parsers. No core call site. |
 | `:344-398` cubicBezierYforX | `:286-332` | MATCH | 21-sample table, Newton (4 iters, SLOPE_EPS 1e-7, NEWTON_MIN_STEP 1e-3), else bisection (10 iters, 1e-7). Non-finite control points → 0,0,1,1. Identical. |
 
+## The final declaration
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `derivativeX` | `Easing::bezierSlopeX` | MATCH | Same slope of x against the bezier parameter, used by the Newton step in the table builder. |
+
 ## Remaining small declarations, adjudicated
 
 | Reference declaration | Port implementation | Verdict | Basis |

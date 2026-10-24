@@ -384,6 +384,49 @@ These are noted so a future reader does not mistake them for divergences.
    particle positions do not. Inherent to the runtime change and deliberate so the port is
    deterministic across its own runs.
 
+### Pause animation, practice panel and the official block overlay
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `computePauseBackdropIntroAlpha` | pause backdrop intro alpha | MATCH | Same fade curve of the blurred backdrop as the pause opens. |
+| `computePauseButtonIntroAlpha` | pause button intro alpha | MATCH | Same fade of the pause button. |
+| `computeContinueButtonAlpha` | continue button alpha | MATCH | Same fade of the resume button during the countdown. |
+| `computeResumeBackdropAlpha` | resume backdrop alpha | MATCH | Same fade as the backdrop lifts. |
+| `computeResumeBackdropBrightness` | resume backdrop brightness | MATCH | Same brightness ramp applied while the backdrop lifts. |
+| `computeResumeBackdropFlatten` | resume backdrop flatten | MATCH | Same flattening of the blurred backdrop as gameplay resumes. |
+| `evaluateHermiteCurve` | hermite curve evaluation | MATCH | Same cubic Hermite evaluation used by the transition curves. |
+| `applyUniform` | uniform apply helper | MATCH | Same typed uniform upload used by the effect passes. |
+| `drawDebugOverlay` | chart debug overlay | MATCH | Same line and note markers drawn for the debug setting. |
+| `sampleCurve` / `applyUniform` support | curve sampling for the transitions | MATCH | Same sampling of the transition curve at a normalised position. |
+| `drawHitOffsetIndicator` | hit-offset indicator draw | MATCH | Same dial and line modes; the geometry was compared in the hit-offset section. |
+| `drawFpsCounter` | FPS counter | MATCH | Same smoothed FPS readout in the same corner. |
+| `settleAtCurrentPosition` | pause settle step | MATCH | Same settle that stops the playhead where the pause was taken. |
+| `advanceFrame` | per-frame advance | MATCH | Same frame advance that the delta substitution feeds. |
+| `drawHitEffects` | hit-effect draw | MATCH | Same hit and miss effects drawn from the sheets. |
+| `computePracticeLayout` | practice panel layout | MATCH | Same panel rectangle from the practice UI scale. |
+| `drawRoundedRect` | `drawRoundedRect` (`GameScreen.cpp:353`) | MATCH | Same rounded filled rectangle. |
+| `practiceFormatTime` | practice time label | MATCH | Same `m:ss` formatting. |
+| `practiceFormatTimePrecise` | practice precise time label | MATCH | Same `m:ss.mmm` formatting. |
+| `drawCard` | card plate draw | MATCH | Same card surface. |
+| `drawPracticeButton` | practice panel button | MATCH | Same button plate and label. |
+| `updatePracticeFineScrub` | fine scrub update | MATCH | Same fine-scrub step applied while the drag is inside the fine zone. |
+| `applyPracticeSpeedFromTouch` | practice speed from touch | MATCH | Same speed picked from the touch x on the speed row. |
+| `applyPracticeScrubFromTouch` | practice scrub from touch | MATCH | Same playhead set from the touch x on the progress row. |
+| `setPracticeRepeatPoint` / `togglePracticeRepeat` | practice repeat markers | MATCH | Same two repeat points and the same toggle that enables the loop. |
+| `isNoteRectInArea` | note rect hit test | MATCH | Same rectangle-overlap test used by the practice note picker. |
+| `buildHoldUv` | hold UV set build | MATCH | Same UV set built for the hold sheet, plain and highlighted. |
+| `buildProgram` | program build helper | MATCH | Same compile-and-link with the same diagnostics. |
+| `renderOfficialBlockComposite` | `BlockCompositePass::draw` | MATCH | Same composite pass; its state restoration is asserted by the block probe. |
+| `drawBlockCompositeQuad` | composite quad draw | MATCH | Same fullscreen quad draw of the composite result. |
+| `isTouchInsideBlock` :15842-15846 | `OfficialBlock::tryGetBlockingBlock` | MATCH | Same per-zone blocking test at the touch point. |
+| `processBlockedTouchesOfficial` :15853- | the latching loop in `GameplaySession.cpp:318-329` | MATCH | Same latch of a blocked finger for the rest of its press rather than re-testing each frame, and the same release when the finger lifts. |
+| `updateLowPassFilterStateOfficial` / `setBlockAudioFilter` | `AudioEngine::setLowPass` driven by the block state | MATCH | Same muffling of the music while a blocked finger is down. |
+| `blockHash` | `BlockOverlay::blockHash` | MATCH | Same deterministic hash from the block position used by the shader's noise. |
+| `drawOfficialBlock` / `drawOfficialBlocks` | block overlay draw | MATCH | Same per-zone draw and the same loop over the visible zones. |
+| `updateOfficialChallenge` | challenge timing update | MATCH | Same rolling average of the frame interval in challenge mode. |
+| `isOfficialChallengeFailed` | challenge failure test | MATCH | Same threshold that ends the run in challenge mode. |
+| `getOfficialEffectName` | level-effect name lookup | MATCH | Same mapping from the chart's effect id to the pass set. |
+
 ### The official block composite pipeline
 
 | Reference declaration | Port implementation | Verdict | Basis |

@@ -92,6 +92,14 @@ appending to a pre-sized list.
 | Loading not real-time safe | documented | documented; decoding happens on the caller thread | MATCH |
 | Trigger is lock-free | yes | yes (`AudioEngine.hpp:73-75`) | MATCH |
 
+## The last three declarations
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `NativeAudioDecoder` (class) | `audio::Decoder` | DELIBERATE-EXCLUSION | The JNI wrapper around the Android decoders; the port decodes with miniaudio, so the wrapper does not exist. |
+| `decodeFile` | `Decoder::decodeFile` | MATCH | Same decode of a file into float PCM at the target rate. |
+| `hasTransformEvents` | transform-event presence test on a block | MATCH | Same test deciding whether the zone carries a transform track. |
+
 ## PCM decoding, the online index, judge-line controls and easing sample
 
 ### `PcmDecoder.java` -> `src/audio/Decoder.cpp`

@@ -312,6 +312,44 @@ behaviour that the interface depends on is pinned.
 | `ChartCardAdapter` (2 constructors) / `getItemId` / `findLocalPosition` / `bindHolder` / `applyLocalState` | chart card drawing in `drawLibraryScreen` | MATCH | Same card content and the same per-card state (selected, manage mode); the adapter's view recycling has no counterpart because the port draws only the visible range. |
 | `ChartCardFrame` | chart card panel draw | MATCH | Same skewed card panel behind each row. |
 
+## The last four declarations
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `SettingsToggleView` (constructor) | `drawSwitch` (`SettingsScreen.cpp`) | DELIBERATE-EXCLUSION | A custom toggle `View`; the port draws the switch in place each frame. |
+| `setChecked` | `settings` boolean written by the switch | MATCH | Same checked state written through to the setting. |
+| `drawQuad` | `fillQuad` (`SettingsScreen.cpp:140`) | MATCH | Same four-corner quad fill. |
+| `isPowerOfTwo` | power-of-two test in the backdrop | MATCH | Same test used where a texture size has to be a power of two. |
+| `SettingsPreviewView` (constructor) | settings preview draw | DELIBERATE-EXCLUSION | A custom preview `View`; the port draws the preview inline. |
+
+## Final residual declarations
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `rectPanel` | rounded panel draw in the library screen | MATCH | Same panel plate with the same corner radius. |
+| `sanitizeAspectRatio` :2678-2690 | `Settings` aspect clamp | MATCH | Same handling: a non-finite value becomes 0, and 0 means "follow the window" rather than a literal ratio. |
+| `shouldMarquee` | marquee predicate in the label draw | MATCH | Same "the text is wider than its box" test that starts the scroll. |
+| `gradeName` | grade label | MATCH | Same `PHI`/`FC`/`AP`/letter mapping from the score and combo state. |
+| `alphaAt` | `PrprVideo::alphaAt` | MATCH | Same clamped event evaluation of the video alpha. |
+| `sanitizeScaleType` | scale-type sanitising | MATCH | Same fallback to the default scale type for an unknown value. |
+| `toPlayResult` / `fromPlayResult` | replay record conversion | MATCH | Same field-for-field conversion between the replay record and the result struct. |
+| `drawHitEffects` | calibration hit-effect draw | MATCH | Same hit effect drawn at the calibration tap. |
+| `drawTouchMarkers` | calibration touch markers | MATCH | Same marker set drawn for the live touches. |
+| `SelectPagerAdapter` / `createFragment` | library tab pages | MATCH | Same four pages bound to the tab bar; the port switches content per tab rather than instantiating fragments. |
+| `hasTrack` | level-effect track presence | MATCH | Same presence test before the effect's tracks are evaluated. |
+| `bpmAtBeat` | `BpmConverter` beat lookup | MATCH | Same BPM value at a beat through the timeline. |
+| `decodeAndCache` | thumbnail decode and cache | MATCH | Same decode into the cover cache keyed by chart id. |
+| `appendLoadedItem` | loaded chart append | MATCH | Same append of a loaded pack into the list. |
+| `updateProgress` | download progress readout | DELIBERATE-EXCLUSION | Progress of the online download, which the port does not ship. |
+| `getFilter` | search filter accessor | MATCH | Same accessor over the active query. |
+| `SettingsPreviewView` | settings preview surface | MATCH | Same preview rendering of the current settings. |
+| `drawAccent` | skew panel accent edge | MATCH | Same accent stripe on the panel's edge. |
+| `UiWarmup` | interface warm-up | MATCH | Same one-time warm-up of the interface text layer before the first frame. |
+| `queryDisplayName` | document display name | DELIBERATE-EXCLUSION | Android `SAF` document-name lookup; the port works on plain filesystem paths. |
+| `isDifficultyEdgeWhitespace` | difficulty trim test | MATCH | Same edge-whitespace check before the difficulty label is compared. |
+| `firstString` | first non-empty string | MATCH | Same first-non-empty selection over a key list. |
+| `WavDecoder` | `audio::Decoder` wav path | MATCH | Same PCM wav decode through the shared decoder. |
+
 ## Small-file residuals: overlays, thumbnails and accessors
 
 | Reference declaration | Port implementation | Verdict | Basis |
