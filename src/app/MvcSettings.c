@@ -110,13 +110,26 @@ static void buildList(int tab) {
 
   // The switch rows exist so the page has interactive content a test can drive; each one is
   // a Checkbox bound to a settings field the caller supplies.
+  // The switch list mirrors the reference's 游玩显示 card, in the same order. Row count and
+  // order are part of the screen's parity, so they are spelled out rather than derived.
   static const char *kVideoRows[] = {
     "镜像演示（X 轴）", "自动演示", "挑战模式", "低分辨率模式", "抗锯齿",
-    "显示 FPS", "ACC 实时显示",
+    "显示 FPS", "ACC 实时显示", "分数跳动效果", "禁用谱面 Shader", "显示调试信息",
+    "谱面揭秘", "多押高亮提示", "AP / FC 指示器", "判定详情分布", "剧情模式",
   };
-  const int rowCount = tab == 0 ? (int) (sizeof(kVideoRows) / sizeof(kVideoRows[0])) : 0;
+  static const char *kAudioRows[] = {};
+  static const char *kReplayRows[] = { "启用回放记录" };
+  static const char *kMoreRows[] = {};
+  const char **rows = NULL;
+  int rowCount = 0;
+  switch (tab) {
+    case 0: rows = kVideoRows; rowCount = (int) (sizeof(kVideoRows) / sizeof(kVideoRows[0])); break;
+    case 1: rows = kAudioRows; rowCount = (int) (sizeof(kAudioRows) / sizeof(kAudioRows[0])); break;
+    case 2: rows = kReplayRows; rowCount = (int) (sizeof(kReplayRows) / sizeof(kReplayRows[0])); break;
+    default: rows = kMoreRows; rowCount = (int) (sizeof(kMoreRows) / sizeof(kMoreRows[0])); break;
+  }
   for (int i = 0; i < rowCount; ++i) {
-    StackView *row = makeRow(kVideoRows[i], false);
+    StackView *row = makeRow(rows[i], false);
     if (row == NULL) continue;
     Checkbox *checkbox = $(alloc(Checkbox), initWithFrame, NULL);
     if (checkbox != NULL) {
