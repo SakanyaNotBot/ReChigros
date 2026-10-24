@@ -544,7 +544,11 @@ void GameplaySession::judgeNewTouches(double time, const Stage& view) {
   (void)view;
 
   for (auto& [id, touch] : touches_) {
-    (void)id;
+    // A finger that went down inside a block zone never judges anything: the reference takes
+    // it out of the judge list for the whole press. Without this the zone behaves like an
+    // ordinary part of the play field, which is exactly the wrong behaviour the zones exist
+    // to prevent.
+    if (blockedTouchIds_.find(id) != blockedTouchIds_.end()) continue;
     if (!touch->started) continue;
 
     Note* best{};
@@ -608,7 +612,7 @@ void GameplaySession::judgeDrags(double time, const Stage& view) {
     note.preJudge = JudgementEngine::dragLocalJudged(note.preJudge || note.dragPrimed, note.isJudged);
     if (!note.preJudge && std::abs(delta) <= DRAG_MISS_THRESHOLD) {
       for (const auto& [id, touch] : touches_) {
-        (void)id;
+        if (blockedTouchIds_.find(id) != blockedTouchIds_.end()) continue;
         if (touchPosition(note, touch->x, touch->y, time) < RADIUS_DRAG_PRIME) {
           note.preJudge = true;
           note.dragPrimed = true;
@@ -655,7 +659,7 @@ void GameplaySession::judgeFlicks(double time, const Stage& view) {
 
     if (!note.preJudge) {
       for (auto& [id, touch] : touches_) {
-        (void)id;
+        if (blockedTouchIds_.find(id) != blockedTouchIds_.end()) continue;
         if (!touch->flick.newFlick() || touch->flick.flicked()) continue;
         if (touchPosition(note, touch->x, touch->y, time) >= RADIUS_FLICK_PRIME) continue;
 
@@ -731,7 +735,9 @@ void GameplaySession::judgeTapHold(double time, const Stage& view) {
       // absorbs momentary finger jitter before the hold actually breaks.
       note.holdBroken = true;
       for (const auto& [id, touch] : touches_) {
-        (void)id;
+        // A blocked finger cannot hold a body either: the reference removes it from the
+        // judge list, so a hold under a zone breaks the same way it would with no finger.
+        if (blockedTouchIds_.find(id) != blockedTouchIds_.end()) continue;
         if (touchPosition(note, touch->x, touch->y, time) < RADIUS_HOLD_BODY) {
           note.holdBroken = false;
           note.safeFrame = HOLD_SAFE_FRAME_INIT;

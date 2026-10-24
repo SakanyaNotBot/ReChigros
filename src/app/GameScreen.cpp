@@ -1907,6 +1907,32 @@ float mirrorTouchX(const AppContext& context, float x) {
 bool gamePointerDown(AppContext& context, std::int64_t pointerId, float x, float y) {
   auto& game = context.game;
   if (!game.loaded || game.finished || game.inOutro) return false;
+
+  // The pause plates are drawn immediately but their hit test has to happen on the real
+  // touch path: on Android a finger never reaches ImGui's mouse state, so the overlay's own
+  // `IsMouseClicked` check can never fire and the plates would be dead. These are the same
+  // rectangles the overlay draws, from the same function.
+  if (game.pause == GameRuntime::Pause::Menu) {
+    const GameStagePixels stage = gameStagePixels(context);
+    const PauseButtonRects buttons = computePauseButtonRects(stage);
+    const auto inside = [&](const ImVec2& origin) {
+      return x >= origin.x && x <= origin.x + buttons.size && y >= origin.y &&
+          y <= origin.y + buttons.size;
+    };
+    if (inside(buttons.exit)) {
+      gameQuitToMenu(context);
+      return true;
+    }
+    if (inside(buttons.restart)) {
+      gameRestart(context);
+      return true;
+    }
+    if (inside(buttons.continueButton)) {
+      gameTogglePause(context);
+      return true;
+    }
+    return true;  // The menu owns every press while it is up.
+  }
   if (game.pause != GameRuntime::Pause::None) return false;
   if (game.inIntro) return false;
 
