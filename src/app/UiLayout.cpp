@@ -346,10 +346,23 @@ float drawLabel(ImDrawList* drawList, const Canvas& c, const Box& designBox, std
       text = truncateWithEllipsis(text, pixelSize, style.bold, available);
       textWidth = measureRun(text, pixelSize, style.bold);
     } else if (style.fitWidth && textWidth > available) {
-      for (int iteration = 0; iteration < 3 && textWidth > available; ++iteration) {
-        pixelSize = std::max(1.0F, pixelSize * available / std::max(1.0F, textWidth));
-        textWidth = measureRun(text, pixelSize, style.bold);
+      // Bisect for the largest size that still fits, exactly as the reference does: twelve
+      // halvings stop at 0.05 px, which is below the rasteriser's own precision. A fixed
+      // number of proportional steps was not enough to converge — a label whose width
+      // shrinks non-linearly with size settled below the size that would have fit, which is
+      // why fitted text came out visibly smaller than the same label on the reference.
+      float low = 0.01F;
+      float high = pixelSize;
+      for (int iteration = 0; iteration < 12 && high - low > 0.05F; ++iteration) {
+        const float middle = (low + high) * 0.5F;
+        if (measureRun(text, middle, style.bold) <= available) {
+          low = middle;
+        } else {
+          high = middle;
+        }
       }
+      pixelSize = low;
+      textWidth = measureRun(text, pixelSize, style.bold);
     }
   }
 

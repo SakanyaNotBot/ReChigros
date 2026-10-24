@@ -82,6 +82,53 @@ Reference: `ChartSelectActivity.renderSettings()` plus the four `build*Settings(
 | Replay page | replay toggles, 回放文件 import/refresh row | same | MATCH |
 | More page | a single 更多 heading and an empty min-height 180 block | same — the reference page is genuinely empty | MATCH |
 
+## GameDialog: every declaration adjudicated
+
+The reference implements its dialogs as a hand-drawn skewed panel inside a custom `ViewGroup`.
+The port uses ImGui modal popups, which carry the same modality, dismissal and button
+semantics without a view tree. None of these declarations has a same-name counterpart, so each
+is adjudicated here.
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `GameDialog` (class, 3) | `ImGui::BeginPopupModal` blocks | DELIBERATE-EXCLUSION | The reference hand-builds a skewed dialog panel over a custom `ViewGroup`; the port uses ImGui's modal popup, which supplies the same modality, centring and focus trapping without a custom view tree. |
+| `Builder` / `Builder.setView` | direct call sites | DELIBERATE-EXCLUSION | A builder for assembling an Android view; the port writes each dialog inline at its call site. |
+| `setTitle` (2 overloads) | `ImGui::TextUnformatted` heading | MATCH | Same single title line at the top of the panel. |
+| `setMessage` (2 overloads) | body text in the popup | MATCH | Same message body under the title. |
+| `setItems` | list rows in the skin/replay dialogs | MATCH | Same selectable list of items. |
+| `setPositiveButton` / `setNegativeButton` / `setNeutralButton` (2 each) | `ImGui::Button` pairs | MATCH | Same confirm/cancel/third action with the same labels and the same dismissal contract. |
+| `setCancelable` | `ImGuiWindowFlags_NoSavedSettings` + close handling | MATCH | Whether an outside press or back dismisses is decided per dialog on both sides. |
+| `setOnDismissListener` | the code after the popup block | MATCH | Both run a completion callback after dismissal; the port inlines it. |
+| `onCreate` / `onStop` | popup open/close | DELIBERATE-EXCLUSION | Android dialog lifecycle; the popup's Begin/End pair is the port's equivalent. |
+| `configureWindow` | `ImGui::SetNextWindowPos` / `SetNextWindowSize` | MATCH | Same centring and the same size rule (see the panel-width row). |
+| `AnimatorListenerAdapter` (2) / `onAnimationEnd` (2) / `runEnter` / `finishDismiss` | immediate-mode open/close | DELIBERATE-EXCLUSION | The reference animates the dialog in and out with `ValueAnimator`; the port's modals appear immediately. Recorded as a known motion difference, not a behavioural one. |
+| `applyProgress` | `ui::fade` alpha in the open animation | MATCH | Same 0..1 progress driving the panel's fade. |
+| `buildContent` | the popup's body block | MATCH | Same title, message, content and button order. |
+| `weightedWrap` | layout weights in the popup | DELIBERATE-EXCLUSION | An Android `LinearLayout` weight helper; ImGui sizes the popup from its content. |
+| `styleCustomView` | per-dialog styling inline | MATCH | Same surface styling, applied at the call site. |
+| `ButtonSpec` | button label/action pair | MATCH | Same two-field description of a dialog button. |
+| `DialogPanel` / `addButton` / `onMeasure` / `rebuildPaths` / `applySlant` | ImGui popup drawing | DELIBERATE-EXCLUSION | The reference lays out the panel by hand, rebuilds its skewed paths on each measure and re-slants the item scroll; the port's popup has no skewed panel. The *panel width* rule is still reproduced where a skewed panel is drawn (see the settings rows). |
+
+## GameTextView: every declaration adjudicated
+
+The reference's `GameTextView` is a `TextView` subclass whose text is measured and drawn by
+`GameTextRenderer`. The port has no widget objects, so the behaviour lives in the shared text
+layer (`ui::drawLabel` / `ui::TextStyle` / the glyph cache). This is also where the text-size
+behaviour that the interface depends on is pinned.
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `GameTextView` (3 constructors) | `ui::TextStyle` + `drawLabel` | DELIBERATE-EXCLUSION | The reference subclasses an Android `TextView` to get view lifecycle and attributes; the port's labels are stateless draw calls, so there is no view object to construct. |
+| `setDesignTextSize` / `getTextSize` / `setTextSize` | `ui::TextStyle::sizeDp` | MATCH | Design size in dp is scaled by the density at draw time, which is the same contract: the stored value is a design unit and the pixel size is derived, never stored. |
+| `setFitWidth` | `ui::TextStyle::fitWidth` | **FIXED** | The reference bisects for the largest font size that still fits (twelve halvings to 0.05 px, `GameTextRenderer.java:56-67`). The port ran three proportional steps, which does not converge for a label whose width shrinks non-linearly with size, so fitted labels settled smaller than the reference. `UiLayout.cpp:348-363` now performs the same bisection. |
+| `requestLayout` / `onTextChanged` / `invalidate` | immediate-mode redraw | DELIBERATE-EXCLUSION | Android invalidation callbacks; the port redraws every frame, so there is nothing to invalidate. |
+| `hasFixedSize` | `ui::Box` of the draw call | MATCH | Whether the label is measured against a fixed box or its own extent is decided per call site, same as the reference's fixed-size flag. |
+| `onMeasure` | `drawLabel` measurement | MATCH | Same rule: with an exact width the box wins, otherwise the natural extent is used. The degenerate zero-width first pass the reference guards against does not exist here. |
+| `textTop` / `getBaseline` | `drawRun` baseline computation | MATCH | Both place the first baseline at the box top plus the font ascent. |
+| `alignment` / `displayText` | `HAlign` handling and hint fallback in `drawLabel` | MATCH | Same gravity-to-alignment mapping, and the same "hint when empty" rule. |
+| `onConfigurationChanged` / `animationsEnabled` | `Application` density refresh, `Settings` | DELIBERATE-EXCLUSION | Configuration and animation-scale changes are Android system settings; the port re-reads density each frame and has no system animation scale. |
+| `drawCompoundDrawables` / `setSelected` | per-screen icon drawing | DELIBERATE-EXCLUSION | Compound drawables are an Android `TextView` feature; icons are drawn explicitly where the reference would attach them. |
+
 ## Every remaining `ChartSelectActivity` declaration, adjudicated
 
 The reference builds its screens by assembling Android views; the port draws them immediately.

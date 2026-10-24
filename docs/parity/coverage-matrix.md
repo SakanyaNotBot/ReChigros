@@ -6,12 +6,12 @@ Reference declarations: **2293** across 75 files.
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| verified | 432 | named MATCH by a parity report |
-| fixed | 173 | named by a parity report with a fix |
+| verified | 450 | named MATCH by a parity report |
+| fixed | 177 | named by a parity report with a fix |
 | differs | 0 | named with a remaining difference |
 | excluded | 3 | deliberate exclusion, reason recorded |
 | matched-by-name | 169 | a port symbol with the same name exists |
-| unmatched | 1347 | no same-name port symbol; needs a manual verdict |
+| unmatched | 1325 | no same-name port symbol; needs a manual verdict |
 
 This matrix is an index. The authoritative per-function verdicts and the
 evidence line for each one are in the topical reports (`chart.md`, `core.md`, `judging.md`,
@@ -472,7 +472,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 5100 | `drawRevealOutsidePanel` | unmatched |  |
 | 5156 | `initPrprVideoRuntimes` | unmatched |  |
 | 5203 | `preparePrprVideoPlayer` | unmatched |  |
-| 5219 | `Listener` | unmatched |  |
+| 5219 | `Listener` | verified |  |
 | 5220 | `onVideoSizeChanged` | unmatched |  |
 | 5224 | `onPlaybackStateChanged` | unmatched |  |
 | 5239 | `onPlayerError` | unmatched |  |
@@ -772,7 +772,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 13102 | `getGifFrameTexId` | unmatched |  |
 | 13113 | `getGifFrameIndex` | unmatched |  |
 | 13137 | `set` | fixed |  |
-| 13138 | `width` | verified | `include\rechigros\app\UiLayout.hpp:43` `width` (+5) |
+| 13138 | `width` | fixed | `include\rechigros\app\UiLayout.hpp:43` `width` (+5) |
 | 13139 | `height` | verified | `include\rechigros\app\UiLayout.hpp:44` `height` (+5) |
 | 13140 | `centerX` | matched-by-name | `include\rechigros\app\UiLayout.hpp:45` `centerX` (+1) |
 | 13141 | `centerY` | matched-by-name | `include\rechigros\app\UiLayout.hpp:46` `centerY` (+1) |
@@ -1439,7 +1439,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 1648 | `DetailCanvasHost` | unmatched |  |
 | 1660 | `textInset` | unmatched |  |
 | 1664 | `updateTextSafety` | unmatched |  |
-| 1696 | `onMeasure` | unmatched |  |
+| 1696 | `onMeasure` | verified |  |
 | 1713 | `onLayout` | verified |  |
 | 1729 | `SettingsBackdrop` | unmatched |  |
 | 1730 | `onDraw` | verified |  |
@@ -1611,7 +1611,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 3154 | `applyLocalState` | unmatched |  |
 | 3173 | `Vh` | verified |  |
 | 3188 | `ChartCardFrame` | unmatched |  |
-| 3191 | `onMeasure` | unmatched |  |
+| 3191 | `onMeasure` | verified |  |
 
 ## `com\wuying\phigros\ui\CoverImageLoader.java`
 
@@ -1632,18 +1632,18 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 83 | `Builder` | unmatched |  |
 | 85 | `setTitle` | unmatched |  |
 | 87 | `setTitle` | unmatched |  |
-| 88 | `setMessage` | unmatched |  |
-| 89 | `setMessage` | unmatched |  |
+| 88 | `setMessage` | verified |  |
+| 89 | `setMessage` | verified |  |
 | 90 | `setView` | matched-by-name | `src\platform\Gif.cpp:30` `view` |
-| 91 | `setItems` | unmatched |  |
+| 91 | `setItems` | verified |  |
 | 96 | `setPositiveButton` | unmatched |  |
 | 99 | `setPositiveButton` | unmatched |  |
 | 102 | `setNegativeButton` | unmatched |  |
 | 105 | `setNegativeButton` | unmatched |  |
 | 108 | `setNeutralButton` | unmatched |  |
 | 111 | `setNeutralButton` | unmatched |  |
-| 114 | `setCancelable` | unmatched |  |
-| 115 | `setOnDismissListener` | unmatched |  |
+| 114 | `setCancelable` | verified |  |
+| 115 | `setOnDismissListener` | verified |  |
 | 118 | `create` | verified |  |
 | 124 | `show` | verified |  |
 | 131 | `onCreate` | unmatched |  |
@@ -1658,16 +1658,16 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 235 | `onAnimationEnd` | unmatched |  |
 | 241 | `applyProgress` | matched-by-name | `src\app\UiLayout.cpp:451` `progress` |
 | 255 | `onStop` | unmatched |  |
-| 261 | `buildContent` | unmatched |  |
+| 261 | `buildContent` | verified |  |
 | 378 | `weightedWrap` | unmatched |  |
-| 386 | `styleCustomView` | unmatched |  |
+| 386 | `styleCustomView` | verified |  |
 | 401 | `text` | fixed |  |
 | 411 | `dp` | fixed | `include\rechigros\app\UiLayout.hpp:31` `dp` (+2) |
-| 420 | `ButtonSpec` | unmatched |  |
+| 420 | `ButtonSpec` | verified |  |
 | 442 | `DialogPanel` | unmatched |  |
 | 458 | `addButton` | unmatched |  |
 | 464 | `panelWidth` | verified |  |
-| 469 | `onMeasure` | unmatched |  |
+| 469 | `onMeasure` | verified |  |
 | 503 | `onLayout` | verified |  |
 | 522 | `rebuildPaths` | unmatched |  |
 | 546 | `applySlant` | unmatched |  |
@@ -1714,11 +1714,11 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | --- | --- | --- | --- |
 | 26 | `invalidate` | matched-by-name | `include\rechigros\app\ChartLibrary.hpp:70` `invalidate` (+1) |
 | 28 | `prepare` | verified | `src\app\TriGridBackdrop.cpp:217` `prepare` (+8) |
-| 81 | `fits` | verified |  |
+| 81 | `fits` | fixed |  |
 | 95 | `build` | fixed | `src\render\fx\FullscreenPass.cpp:70` `build` (+1) |
 | 106 | `height` | verified | `include\rechigros\app\UiLayout.hpp:44` `height` (+5) |
 | 108 | `baseline` | fixed |  |
-| 109 | `width` | verified | `include\rechigros\app\UiLayout.hpp:43` `width` (+5) |
+| 109 | `width` | fixed | `include\rechigros\app\UiLayout.hpp:43` `width` (+5) |
 | 110 | `textSize` | verified |  |
 | 111 | `draw` | fixed | `src\render\fx\BadEffectField.cpp:41` `draw` (+10) |
 
@@ -1738,12 +1738,12 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 74 | `onTextChanged` | unmatched |  |
 | 82 | `hasFixedSize` | unmatched |  |
 | 86 | `onConfigurationChanged` | unmatched |  |
-| 90 | `displayText` | unmatched |  |
-| 99 | `alignment` | unmatched |  |
+| 90 | `displayText` | verified |  |
+| 99 | `alignment` | verified |  |
 | 106 | `prepare` | verified | `src\app\TriGridBackdrop.cpp:217` `prepare` (+8) |
-| 115 | `onMeasure` | unmatched |  |
-| 136 | `textTop` | unmatched |  |
-| 142 | `getBaseline` | unmatched |  |
+| 115 | `onMeasure` | verified |  |
+| 136 | `textTop` | verified |  |
+| 142 | `getBaseline` | verified |  |
 | 145 | `onDraw` | verified |  |
 | 175 | `animationsEnabled` | unmatched |  |
 | 180 | `drawCompoundDrawables` | unmatched |  |
@@ -1785,7 +1785,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
 | 33 | `LocalChartAdapter` | unmatched |  |
-| 37 | `setItems` | unmatched |  |
+| 37 | `setItems` | verified |  |
 | 47 | `setManageMode` | verified |  |
 | 54 | `isManageMode` | unmatched |  |
 | 58 | `selectedIds` | unmatched |  |
@@ -1800,7 +1800,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | --- | --- | --- | --- |
 | 27 | `Item` | fixed |  |
 | 43 | `OnlineChartAdapter` | unmatched |  |
-| 47 | `setItems` | unmatched |  |
+| 47 | `setItems` | verified |  |
 | 53 | `addItems` | unmatched |  |
 | 59 | `setQuery` | unmatched |  |
 | 64 | `hasQuery` | unmatched |  |
@@ -1907,7 +1907,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 405 | `formatMultiplier` | matched-by-name | `src\app\ResultScreen.cpp:285` `formatMultiplier` |
 | 409 | `addModeTag` | unmatched |  |
 | 436 | `ModeTagFlow` | unmatched |  |
-| 441 | `onMeasure` | unmatched |  |
+| 441 | `onMeasure` | verified |  |
 | 461 | `onLayout` | verified |  |
 | 483 | `layoutRow` | unmatched |  |
 | 494 | `setupResponsiveCanvas` | unmatched |  |
@@ -1988,7 +1988,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | --- | --- | --- | --- |
 | 57 | `onCreateView` | unmatched |  |
 | 63 | `onViewCreated` | unmatched |  |
-| 85 | `Listener` | unmatched |  |
+| 85 | `Listener` | verified |  |
 | 87 | `onOpen` | verified |  |
 | 91 | `onSelectionChanged` | unmatched |  |
 | 100 | `OnScrollListener` | unmatched |  |
@@ -2027,7 +2027,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | --- | --- | --- | --- |
 | 70 | `onCreateView` | unmatched |  |
 | 76 | `onViewCreated` | unmatched |  |
-| 85 | `Listener` | unmatched |  |
+| 85 | `Listener` | verified |  |
 | 87 | `onDownload` | unmatched |  |
 | 91 | `onItemVisible` | unmatched |  |
 | 100 | `OnScrollListener` | unmatched |  |
@@ -2258,7 +2258,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
 | 22 | `UiTypography` | unmatched |  |
-| 24 | `px` | verified | `src\app\LibraryScreen.cpp:76` `px` |
+| 24 | `px` | fixed | `src\app\LibraryScreen.cpp:76` `px` |
 | 28 | `preloadAsync` | unmatched |  |
 | 45 | `gameTypeface` | unmatched |  |
 | 68 | `loadGameTypeface` | unmatched |  |
