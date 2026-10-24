@@ -99,6 +99,9 @@ Metrics metrics() {
   Metrics result;
   result.canvas = ui::canvas();
   result.scale = std::max(0.01F, result.canvas.scale);
+  // Density is the page's dp-to-pixel factor. It already folds the canvas scale in, which is
+  // why a 22dp label lands at the same physical size on any window; the interface scale is
+  // applied on top of it so the user's zoom enlarges the page as a whole.
   result.density = result.canvas.dp(1.0F);
   result.width = result.canvas.viewport.x;
   result.height = result.canvas.viewport.y;
