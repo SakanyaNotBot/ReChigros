@@ -64,6 +64,29 @@ int main(int argc, char **argv) {
   $(controller, setViewController, vc);
   printf("SMOKE view-hierarchy=ok\n");
 
+  // Render one real frame into an off-screen target. Until this step the test only proved
+  // the objects could be allocated; drawing together with a resolved target exercises the
+  // GPU pipeline, the theme's stylesheet and the view hierarchy, which is what a migrated
+  // screen will actually depend on. Rendering off-screen rather than to the swapchain is
+  // what lets this run under SDL_VIDEODRIVER=offscreen, where there is no drawable.
+  Framebuffer *target = $(device, createFramebuffer, &(GPU_FramebufferCreateInfo) {
+    .size = { 640, 360 },
+    .colorAttachments = {{ .format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM }},
+    .numColorTargets = 1,
+    .sampleCount = SDL_GPU_SAMPLECOUNT_1,
+  });
+  if (!target) {
+    fprintf(stderr, "SMOKE FAIL: createFramebuffer returned NULL\n");
+    return 1;
+  }
+  CommandBuffer *commands = $(device, acquireCommandBuffer);
+  if (!commands) {
+    fprintf(stderr, "SMOKE FAIL: acquireCommandBuffer returned NULL\n");
+    return 1;
+  }
+  $(controller, renderTo, commands, target);
+  printf("SMOKE render=ok\n");
+
   printf("SMOKE PASS\n");
 
   release(controller);

@@ -38,6 +38,7 @@
 | 整树编译链接 | `EXIT=0` |
 | 自检 / ctest | 37/37、8/8 |
 | **MVC 运行时** | **`SMOKE PASS`，Vulkan 后端，RenderDevice / WindowController / Theme / View 全部就绪** |
+| **MVC 真实出帧** | **`SMOKE render=ok`，离屏 framebuffer 渲染一帧成功** |
 
 WSL 没有桌面显示，但 **`SDL_VIDEODRIVER=offscreen` 能创建 GPU 设备**，MVC 因此可以在
 WSL 里真正初始化并出图。跑法：
@@ -46,9 +47,17 @@ WSL 里真正初始化并出图。跑法：
 wsl -e bash -lc 'cd /mnt/e/ReChigros; export LD_LIBRARY_PATH=$HOME/wsl-prefix/lib;   SDL_VIDEODRIVER=offscreen build/wsl-release/src/tools/rechigros_omvc_smoke'
 ```
 
-注意两件事：`SDL_VIDEODRIVER=dummy` **不行**（没有 GPU 后端）；且
-`RenderDevice::initWithWindow` 会自己认领窗口，调用方**不要**再调
-`SDL_ClaimWindowForGPUDevice`，否则报 "Window already claimed" 并在拆除时崩溃。
+注意四件事：
+
+1. `SDL_VIDEODRIVER=dummy` **不行**（没有 GPU 后端），必须用 `offscreen`。
+2. `RenderDevice::initWithWindow` 会自己认领窗口，调用方**不要**再调
+   `SDL_ClaimWindowForGPUDevice`，否则报 "Window already claimed" 并在拆除时崩溃。
+3. **`beginFrame` 之前必须先 `setFramebuffer`**，否则断言 "no framebuffer set" 直接崩。
+   离屏渲染的正确用法是 `createFramebuffer` + `acquireCommandBuffer` +
+   `controller renderTo:commands framebuffer:`，不要走 `beginFrame`（它只 resize
+   窗口的呈现目标）。
+4. 框架内部用 `GPU_Assert` 直接终止进程，**没有返回值可判断**，所以每次接线改动都要
+   实际跑一遍冒烟程序，不能只看编译通过。
 
 开工先跑 `git status --short` 确认干净，再按第九节验证环境。
 
