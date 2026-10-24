@@ -34,13 +34,9 @@ int main(int argc, char **argv) {
     SDL_Quit();
     return 1;
   }
-  if (!SDL_ClaimWindowForGPUDevice(gpu, window)) {
-    fprintf(stderr, "ClaimWindow: %s\n", SDL_GetError());
-    SDL_DestroyGPUDevice(gpu);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
-    return 1;
-  }
+  // RenderDevice::initWithWindow claims the window for the GPU device itself, so claiming it
+  // here first makes that call fail with "Window already claimed" and the process then tears
+  // down a device that is still in use.
   printf("SMOKE gpu-backend=%s\n", SDL_GetGPUDeviceDriver(gpu));
 
   RenderDevice *device = $(alloc(RenderDevice), initWithWindow, window, NULL);

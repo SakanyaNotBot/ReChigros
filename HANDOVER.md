@@ -29,9 +29,26 @@
 | 安卓 | `build.bat android Release` | NDK clang，不受影响 |
 
 `build/wsl-deps.sh` 在无 root 的 WSL 里把 X11/xcb/ttf/image/alsa/pulse/gbm 的开发与运行时
-文件解包到 `~/wsl-prefix`，脚本幂等可重跑。**已验证**：整树 `EXIT=0`、自检 37/37、
-ctest 8/8。**未验证**：WSL 当前无图形设备（`No available video device`），MVC 的实际
-出图未在 WSL 里截图确认。
+文件解包到 `~/wsl-prefix`，脚本幂等可重跑。
+
+**验证状态（重要）**：
+
+| 项 | 结果 |
+| --- | --- |
+| 整树编译链接 | `EXIT=0` |
+| 自检 / ctest | 37/37、8/8 |
+| **MVC 运行时** | **`SMOKE PASS`，Vulkan 后端，RenderDevice / WindowController / Theme / View 全部就绪** |
+
+WSL 没有桌面显示，但 **`SDL_VIDEODRIVER=offscreen` 能创建 GPU 设备**，MVC 因此可以在
+WSL 里真正初始化并出图。跑法：
+
+```bash
+wsl -e bash -lc 'cd /mnt/e/ReChigros; export LD_LIBRARY_PATH=$HOME/wsl-prefix/lib;   SDL_VIDEODRIVER=offscreen build/wsl-release/src/tools/rechigros_omvc_smoke'
+```
+
+注意两件事：`SDL_VIDEODRIVER=dummy` **不行**（没有 GPU 后端）；且
+`RenderDevice::initWithWindow` 会自己认领窗口，调用方**不要**再调
+`SDL_ClaimWindowForGPUDevice`，否则报 "Window already claimed" 并在拆除时崩溃。
 
 开工先跑 `git status --short` 确认干净，再按第九节验证环境。
 
