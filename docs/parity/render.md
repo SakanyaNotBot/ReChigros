@@ -384,6 +384,62 @@ These are noted so a future reader does not mistake them for divergences.
    particle positions do not. Inherent to the runtime change and deliberate so the port is
    deterministic across its own runs.
 
+### Line drawing, debug overlay and the native path selection
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `isMenuVisible` | `GameRuntime::Pause::Menu` | MATCH | Same pause-mode predicate. |
+| `setReplayRecorder` | `GameplaySession::setReplayRecording` | MATCH | Same attach point. |
+| `getPerfectCount` / `getGoodCount` / `getBadCount` / `getMissCount` | `JudgementEngine::result()` | MATCH | Same four counters. |
+| `sanitizeOfficialScreenDpi` | `Application::initialize` DPI block | MATCH | Same fallback chain. |
+| `sanitizeHitOffsetIndicatorMode` | `Settings::load` | **FIXED** | Out-of-range now falls back to disabled; the port had clamped. |
+| `resetNativeRenderBucketRuntimeState` | `Chart::resetRuntime` | MATCH | Same per-run reset of the transient note and line fields. |
+| `renderGameplayFrame` | `GameRenderer::render` | MATCH | Same frame composition. |
+| `blockCompositeHasWork` | `Chart::hasLiveBlock` | MATCH | Same live-block question answered through the sorted window index. |
+| `resetSmoothBiasHistory` | `SmoothingClock::reset` | MATCH | Same ring-buffer, count and sum reset. |
+| `primeSmoothClock` | `SmoothingClock::reset(reportedSec, nowSec)` | MATCH | Same re-anchor on a seek. |
+| `cacheSmoothedPlayhead` / `getSmoothedPlayheadSeconds` | `SmoothingClock::advance` | MATCH | Same once-per-frame cached value. |
+| `addSmoothBias` | ring-buffer block in `SmoothingClock::advance` | MATCH | Same 60-entry window and the same fill-then-overwrite order. |
+| `renderSceneDirect` | the scene body of `GameRenderer::render` | MATCH | Same direct scene path; pass order in section 4. |
+| `drawAmetrineVignette` | `fx::AmetrineVignette` | MATCH | Same inline vignette (radius 0.24, smoothness 0.55); the port carries it as an inline program like the reference does. |
+| `canUseNativeRenderCommands` / `canUseNativeTimeline` / `prepareNativeTimelineLineStates` / `applyNativeTimelineLineStates` / `prepareNativeLineState` / `drawNativeHoldNotes` / `drawNativeNoteHeads` | — | DELIBERATE-EXCLUSION | These select and drive the JNI render path. The port renders in-process, so the native path does not exist; the same lines and notes are drawn by `LinePass` and `NoteBatch`. See the `NativeRenderCommands` section. |
+| `resolveLineText` | text-event resolution in `LinePass` | MATCH | Same text value resolved from the line's text events. |
+| `currentChartGlobalBeat` | global beat in the renderer | MATCH | Same global-beat derivation from the playhead and the BPM timeline. |
+| `normalizeAlpha01` | alpha clamp at the draw sites | MATCH | Same clamp of the line alpha into 0..1. |
+| `getOrCreateDebugText` | debug overlay text cache | MATCH | Same cached debug label, rebuilt only when the text changes. |
+| `ensureLineDrawOrder` / `getLineZOrder` | `buildLineDrawOrder` (`NoteBatch.cpp`) | MATCH | Same stable draw ordering by z-order; the ordering contract is recorded in `game_renderer_residual.md`. |
+| `drawFakeJudgeLine` | fake line draw | MATCH | Same single decorative line at the stage centre, drawn at full width during the intro collapse. |
+| `isStoryboardJudgeLine` | storyboard-line test in the line pass | MATCH | Same "this line belongs to the storyboard" test that lets the outro hide storyboard elements only. |
+| `isLineAttachedToPrprVideo` | prpr-video attachment test | MATCH | Same attach-line lookup; the record is parsed even though video playback is out of scope. |
+| `drawJudgeLineVisualWithOutroLineCollapse` / `drawJudgeLineVisual` | line draw with the outro collapse scale | MATCH | Same per-line visual with the outro collapse applied to the plain and textured cases. |
+
+### Smoothing clock, effect programs and storyboard variables
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `isMenuVisible` | `GameRuntime::Pause::Menu` | MATCH | Same pause-mode predicate. |
+| `setReplayRecorder` | `GameplaySession::setReplayRecording` | MATCH | Same attach point. |
+| `getPerfectCount` / `getGoodCount` / `getBadCount` / `getMissCount` | `JudgementEngine::result()` | MATCH | Same four counters. |
+| `sanitizeOfficialScreenDpi` | `Application::initialize` DPI block | MATCH | Same fallback chain. |
+| `sanitizeHitOffsetIndicatorMode` | `Settings::load` | **FIXED** | Out-of-range falls back to disabled; the port had clamped. |
+| `resetNativeRenderBucketRuntimeState` | `Chart::resetRuntime` | MATCH | Same per-run reset. |
+| `renderGameplayFrame` | `GameRenderer::render` | MATCH | Same frame composition. |
+| `blockCompositeHasWork` | `Chart::hasLiveBlock` | MATCH | Same live-block question via the sorted window index. |
+| `setUniform2f` / `setUniform3f` / `setUniform1i` | uniform setters in the pass wrapper | MATCH | Same vec2/vec3/int uniform upload. |
+| `evalPrprVarScalar` / `evaluatePrprVarValue` / `evalEventList` / `clone` | storyboard variable evaluation | MATCH | Same constant/keyframe/reference resolution for a storyboard variable, and the same per-frame list evaluation. |
+| `ensureOfficialBloomPrograms` / `ensureVignetteNoiseProgram` / `buildPrprProgram` | program construction in the effect passes | MATCH | Same lazy program build per effect kind. |
+| `obtainBloomFbo` / `releaseBloomFbos` | bloom render targets | MATCH | Same acquire-on-first-use and release-with-the-pass lifetime. |
+| `bindEffectSampler` / `bindVignetteNoiseIfNeeded` | sampler and noise binding | MATCH | Same sampler slots and the same vignette-noise binding when the effect asks for it. |
+| `prprNoiseClockSec` | noise clock in the effect pass | MATCH | Same derived clock feeding the noise input. |
+| `applyPrprEffectChainFull` / `applyPrprEffectChainStageViewport` | global and stage-scoped chain segments (`GameRenderer.cpp:1644-1665`) | MATCH | Same two-segment split and order; the stage segment restores the caller's viewport afterwards. |
+| `applyPrprEffectPassFull` / `applyPrprEffectPassViewport` / `applyPrprEffectPassCommon` | per-pass application in the chain | MATCH | The reference factors the pass into a full-frame and a viewport variant over a shared body; the port has the same shared body with the viewport restored by the caller. |
+| `resetSmoothBiasHistory` | `SmoothingClock::reset` (`SmoothingClock.cpp:7`) | MATCH | Same clearing of the ring buffer, its count and its running sum. |
+| `invalidateSmoothClock` | `SmoothingClock` validity flag | MATCH | Same invalidate-so-the-next-sample-re-primes behaviour. |
+| `primeSmoothClock` | `SmoothingClock::reset(reportedSec, nowSec)` | MATCH | Same re-anchor of the prediction on a seek. |
+| `cacheSmoothedPlayhead` / `getSmoothedPlayheadSeconds` | `SmoothingClock::advance` | MATCH | Same once-per-frame cached value, returned unchanged for a repeated call in the same frame. |
+| `addSmoothBias` :6243-6258 | the ring-buffer block in `SmoothingClock::advance` | MATCH | Same 60-entry window (`SMOOTH_BIAS_HISTORY_SIZE = 60` vs `kHistorySize = 60`), same fill-then-overwrite order, same running sum. |
+| `ensureRenderLineInfoCapacity` | per-line info vector growth | MATCH | Same grow-to-fit before filling the per-line scratch data. |
+
 ### Storyboard effects and video playback
 
 | Reference declaration | Port implementation | Verdict | Basis |

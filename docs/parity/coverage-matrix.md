@@ -2,16 +2,16 @@
 
 Generated from `docs/compare/inventory.json` by `tools/parity/coverage_matrix.py`. One row per reference declaration.
 
-Reference declarations: **2272** across 75 files.
+Reference declarations: **2271** across 75 files.
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| verified | 841 | named MATCH by a parity report |
+| verified | 876 | named MATCH by a parity report |
 | fixed | 182 | named by a parity report with a fix |
 | differs | 0 | named with a remaining difference |
-| excluded | 324 | deliberate exclusion, reason recorded |
-| matched-by-name | 148 | a port symbol with the same name exists |
-| unmatched | 629 | no same-name port symbol; needs a manual verdict |
+| excluded | 331 | deliberate exclusion, reason recorded |
+| matched-by-name | 147 | a port symbol with the same name exists |
+| unmatched | 588 | no same-name port symbol; needs a manual verdict |
 
 This matrix is an index. The authoritative per-function verdicts and the
 evidence line for each one are in the topical reports (`chart.md`, `core.md`, `judging.md`,
@@ -54,7 +54,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 12 | `BpmTimeline` | matched-by-name | `src\core\BpmTimeline.cpp:8` `BpmTimeline` |
+| 12 | `BpmTimeline` | verified | `src\core\BpmTimeline.cpp:8` `BpmTimeline` |
 | 27 | `size` | fixed | `include\rechigros\game\BpmTimeline.hpp:8` `size` (+5) |
 | 31 | `beatToSec` | fixed | `src\chart\PecChartParser.cpp:67` `beatToSec` (+2) |
 | 44 | `secToBeat` | verified | `src\core\BpmTimeline.cpp:28` `secToBeat` |
@@ -496,63 +496,63 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 5622 | `applyOfficialBloomPass` | verified |  |
 | 5723 | `drawBloomStage` | verified |  |
 | 5743 | `setUniform1f` | verified |  |
-| 5748 | `setUniform2f` | unmatched |  |
-| 5753 | `setUniform3f` | unmatched |  |
-| 5758 | `setUniform1i` | unmatched |  |
-| 5763 | `evalPrprVarScalar` | unmatched |  |
-| 5776 | `ensureOfficialBloomPrograms` | unmatched |  |
-| 5786 | `ensureVignetteNoiseProgram` | unmatched |  |
-| 5791 | `buildPrprProgram` | unmatched |  |
-| 5815 | `obtainBloomFbo` | unmatched |  |
-| 5824 | `releaseBloomFbos` | unmatched |  |
-| 5833 | `bindEffectSampler` | unmatched |  |
-| 5845 | `bindVignetteNoiseIfNeeded` | unmatched |  |
-| 5933 | `prprNoiseClockSec` | unmatched |  |
-| 5940 | `applyPrprEffectChainFull` | unmatched |  |
-| 5966 | `applyPrprEffectChainStageViewport` | unmatched |  |
-| 6005 | `applyPrprEffectPassFull` | unmatched |  |
-| 6032 | `applyPrprEffectPassViewport` | unmatched |  |
-| 6076 | `applyPrprEffectPassCommon` | unmatched |  |
-| 6140 | `evaluatePrprVarValue` | unmatched |  |
-| 6147 | `clone` | unmatched |  |
-| 6160 | `evalEventList` | unmatched |  |
+| 5748 | `setUniform2f` | verified |  |
+| 5753 | `setUniform3f` | verified |  |
+| 5758 | `setUniform1i` | verified |  |
+| 5763 | `evalPrprVarScalar` | verified |  |
+| 5776 | `ensureOfficialBloomPrograms` | verified |  |
+| 5786 | `ensureVignetteNoiseProgram` | verified |  |
+| 5791 | `buildPrprProgram` | verified |  |
+| 5815 | `obtainBloomFbo` | verified |  |
+| 5824 | `releaseBloomFbos` | verified |  |
+| 5833 | `bindEffectSampler` | verified |  |
+| 5845 | `bindVignetteNoiseIfNeeded` | verified |  |
+| 5933 | `prprNoiseClockSec` | verified |  |
+| 5940 | `applyPrprEffectChainFull` | verified |  |
+| 5966 | `applyPrprEffectChainStageViewport` | verified |  |
+| 6005 | `applyPrprEffectPassFull` | verified |  |
+| 6032 | `applyPrprEffectPassViewport` | verified |  |
+| 6076 | `applyPrprEffectPassCommon` | verified |  |
+| 6140 | `evaluatePrprVarValue` | verified |  |
+| 6147 | `clone` | verified |  |
+| 6160 | `evalEventList` | verified |  |
 | 6189 | `applyUniform` | matched-by-name | `src\render\gl\ShaderProgram.cpp:227` `uniform` |
 | 6207 | `resetSmoothBiasHistory` | unmatched |  |
-| 6218 | `invalidateSmoothClock` | unmatched |  |
+| 6218 | `invalidateSmoothClock` | verified |  |
 | 6223 | `primeSmoothClock` | unmatched |  |
 | 6235 | `cacheSmoothedPlayhead` | unmatched |  |
 | 6241 | `addSmoothBias` | unmatched |  |
 | 6257 | `getSmoothedPlayheadSeconds` | unmatched |  |
 | 6368 | `clear` | verified | `src\audio\AudioEngine.cpp:66` `clear` (+5) |
-| 6375 | `ensureRenderLineInfoCapacity` | unmatched |  |
+| 6375 | `ensureRenderLineInfoCapacity` | verified |  |
 | 6385 | `getRenderLineInfo` | unmatched |  |
 | 6392 | `renderSceneDirect` | unmatched |  |
 | 6563 | `drawAmetrineVignette` | unmatched |  |
-| 6597 | `canUseNativeRenderCommands` | unmatched |  |
-| 6607 | `canUseNativeTimeline` | unmatched |  |
-| 6617 | `prepareNativeTimelineLineStates` | unmatched |  |
-| 6669 | `applyNativeTimelineLineStates` | unmatched |  |
-| 6727 | `resolveLineText` | unmatched |  |
-| 6735 | `prepareNativeLineState` | unmatched |  |
-| 6746 | `currentChartGlobalBeat` | unmatched |  |
-| 6751 | `drawNativeHoldNotes` | unmatched |  |
-| 6837 | `drawNativeNoteHeads` | unmatched |  |
+| 6597 | `canUseNativeRenderCommands` | excluded |  |
+| 6607 | `canUseNativeTimeline` | excluded |  |
+| 6617 | `prepareNativeTimelineLineStates` | excluded |  |
+| 6669 | `applyNativeTimelineLineStates` | excluded |  |
+| 6727 | `resolveLineText` | verified |  |
+| 6735 | `prepareNativeLineState` | excluded |  |
+| 6746 | `currentChartGlobalBeat` | verified |  |
+| 6751 | `drawNativeHoldNotes` | excluded |  |
+| 6837 | `drawNativeNoteHeads` | excluded |  |
 | 6905 | `drawDebugOverlay` | matched-by-name | `src\app\GameScreen.cpp:276` `drawDebugOverlay` |
-| 7032 | `normalizeAlpha01` | unmatched |  |
+| 7032 | `normalizeAlpha01` | verified |  |
 | 7042 | `isHitJudgement` | verified |  |
 | 7046 | `applyYControlScale` | verified | `src\core\NoteGeometry.cpp:37` `applyYControlScale` (+1) |
 | 7051 | `rpeControlHeightFromBasePx` | verified | `src\core\NoteGeometry.cpp:41` `rpeControlHeightFromBasePx` |
-| 7069 | `getOrCreateDebugText` | unmatched |  |
+| 7069 | `getOrCreateDebugText` | verified |  |
 | 7082 | `calcInclineValue` | verified | `src\core\NoteGeometry.cpp:53` `calcInclineValue` (+1) |
 | 7103 | `combineInclineSinr` | verified | `src\core\NoteGeometry.cpp:61` `combineInclineSinr` (+1) |
 | 7112 | `yOffsetToTransYPx` | verified | `src\core\NoteGeometry.cpp:70` `yOffsetToTransYPx` |
-| 7120 | `ensureLineDrawOrder` | unmatched |  |
-| 7149 | `getLineZOrder` | unmatched |  |
-| 7156 | `drawFakeJudgeLine` | unmatched |  |
-| 7217 | `isStoryboardJudgeLine` | unmatched |  |
-| 7225 | `isLineAttachedToPrprVideo` | unmatched |  |
-| 7235 | `drawJudgeLineVisualWithOutroLineCollapse` | unmatched |  |
-| 7266 | `drawJudgeLineVisual` | unmatched |  |
+| 7120 | `ensureLineDrawOrder` | verified |  |
+| 7149 | `getLineZOrder` | verified |  |
+| 7156 | `drawFakeJudgeLine` | verified |  |
+| 7217 | `isStoryboardJudgeLine` | verified |  |
+| 7225 | `isLineAttachedToPrprVideo` | verified |  |
+| 7235 | `drawJudgeLineVisualWithOutroLineCollapse` | verified |  |
+| 7266 | `drawJudgeLineVisual` | verified |  |
 | 7472 | `getOrLoadFileTexture` | unmatched |  |
 | 7494 | `getOrCreateTextTexture` | unmatched |  |
 | 7567 | `getTextPaint` | unmatched |  |
@@ -1163,7 +1163,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | --- | --- | --- | --- |
 | 27 | `PrprEffect` | fixed |  |
 | 35 | `isActive` | verified | `include\rechigros\game\PracticeJudgeWindows.hpp:22` `active` |
-| 41 | `PrprVar` | unmatched |  |
+| 41 | `PrprVar` | verified |  |
 | 49 | `ConstFloat` | verified |  |
 | 53 | `ConstFloat` | verified |  |
 | 62 | `ConstVec` | verified |  |
