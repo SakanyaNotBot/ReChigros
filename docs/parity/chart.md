@@ -190,7 +190,7 @@ are for the tree at the time of writing).
 | 4.43 | `.gif` texture detection | 600-602 | 944-945 | MATCH |
 | 4.44 | `notesAbove`/`notesBelow` presence selects the split form even when empty | 1424-1450 | 780-797 | MATCH |
 | 4.45 | Combined `notes`/`noteList`/`Notes` with `isAbove`/`above`/`aboveLine` | 1452-1516 | 770-778, 790-796 | MATCH |
-| 4.46 | Note type 0..3 shifted up by one, out-of-range dropped | 1520-1532 | 711-721 | DELIBERATE-EXCLUSION — the port clamps an unrepresentable type to tap instead of rejecting the note. The reference `return null` drops the note entirely; the port keeps it as a tap. This is a real behavioural difference, recorded under Remaining risk rather than silently changed, because dropping notes changes note counts and therefore scores. |
+| 4.46 | Note type: a value outside 1..4 is retried as the zero-based spelling (0..3 → +1), and anything still outside 1..4 is dropped | 1520-1524 | 765-772 | **FIXED** — the default read was 1 rather than the reference's 0, so `type:0` was kept as a tap through the wrong path and a zero-based `3` was read as a flick instead of a drag. The port now reads the default 0, reinterprets only values that are not already a valid one-based type, and drops what is still invalid. `tests/ChartParserTests.cpp` pins all three cases. |
 | 4.47 | Note time from `time`/`startTime`/`t`, beat → norm beat | 1534-1535 | 722-723 | MATCH |
 | 4.48 | Hold duration from `holdTime`, `endTime`, or `hold`/`duration` × 32 | 1537-1559 | 724-731 | MATCH |
 | 4.49 | `speed`/`noteSpeed` default 1 | 1565-1566 | 732-733 | MATCH |
@@ -517,10 +517,12 @@ scope. Each is written so the owner can apply it verbatim.
 
 ## Remaining risk
 
-1. **RPE note type out of range (row 4.46).** The reference drops a note whose `type` is
-   outside 1..4 after the 0..3 shift; the port keeps it as a tap. Fixing it would change note
-   counts and therefore every score, so it is left as-is and flagged rather than silently
-   altered. Impact is limited to malformed charts.
+1. **RPE note type out of range (row 4.46).** Now matches the reference: the value is
+   reinterpreted as zero-based only when it is not already a valid one-based type, and a value
+   still outside 1..4 drops the note. This changes nothing for charts authored in the
+   documented 1..4 range; it only corrects the zero-based spelling and genuinely malformed
+   entries. Pinned by `tests/ChartParserTests.cpp`, which asserts `0 → tap`, `2 → hold`,
+   `4 → drag` and `5 → dropped`.
 2. **RPE `parseRpeVersion` truncation (row 4.5).** Reference uses `Math.round`; the port's
    `integer()` now truncates (row 4.8). That is correct for `getAsInt` but means a version
    like `160.7` reads 160 in the port and 161 in the reference. The version only gates

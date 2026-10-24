@@ -129,7 +129,7 @@ any reference-derived value and are left in place.
 | `:529-557` resetCursors | `:44-46` | MATCH | every cursor + all layer cursors + the cache stamp. |
 | `:560-581` mergeNotes | `:27-32` | MATCH | above-then-below, `isAbove` flag, stable sort by time. |
 | `:627-690` normalize | `:31-38` | MATCH | sorts every list, adds coverage events, then `initSpeedEvents`. Port additionally sorts the event lists before initSpeedEvents in the same order the reference does. |
-| `:696-707` initSpeedEventsPhi | `:39-42` | MATCH | float32 accumulation, `bpm<=0 → 120` equivalent via the 1e-9 clamp. |
+| `:696-707` initSpeedEventsPhi | `:39-46` | **FIXED** | float32 accumulation matches. The reference replaces a non-positive `bpm` with 120 *before* dividing; the port clamped the divisor at 1e-9 instead, so a chart with `bpm <= 0` produced a near-zero division rather than the reference's 120-BPM spacing. `JudgeLine.cpp:41-46` now performs the same substitution. Scoped to this function: `sec2beat`/`beat2sec` deliberately keep the reference's ±Inf behaviour. |
 
 ### The `yNorm` invariant (defect #1) — proof
 
@@ -172,6 +172,34 @@ outcome: this fix repairs `.pec`/plain charts only.
 
 One port test encoded the defect and was corrected: `tests/CoreTests.cpp:42` asserted
 `yNorm==0.25` for a move ending at y=0; the reference answer is 0.75.
+
+---
+
+## 5a. Note geometry helpers (`GameRenderer.java:7049-7120` → `src/core/NoteGeometry.cpp`)
+
+These are `static` helpers on the renderer, but they are pure functions over the note and line
+state, so they were compared as behaviour and live in core.
+
+| Reference | Port | Verdict | Evidence |
+|---|---|---|---|
+| `:7049-7051` applyYControlScale | `:39-41` | MATCH | non-finite control passes the base through unchanged |
+| `:7059-7069` rpeControlHeightFromBasePx | `:43-53` | MATCH | same five guards, same `yOffset*RPE_HEIGHT + base*aspect*RPE_HEIGHT/(stageH*speed)` formula, same fallback to the offset term |
+| `:7095-7103` calcInclineValue | `:55-61` | MATCH | `1 - sin*param`, and a non-finite or exactly-zero result becomes 1 |
+| `:7105-7112` combineInclineSinr | `:63-70` | MATCH | both non-finite → NaN; `asin` of the clamped base plus the skew in degrees, then `sin` |
+| `:7118-7120` yOffsetToTransYPx | `:72-74` | MATCH | the offset is `yOffset*stageH`; the speed argument is ignored on both sides |
+
+The three speed bases are genuinely three different formulas in the reference, not one formula
+used loosely. The port keeps them apart in `speedFor` (`:15-25`):
+
+| Reference site | Speed used | Port |
+|---|---|---|
+| `computeNoteHeadPosition` `:2638` — the drawn note head | `(useOfficialSpeed ? 1 : note.speed) * scroll` | `SpeedBasis::Render` |
+| `computeNoteLocalX` `:10657` — the note's along-line offset | `(isHold && useOfficialSpeed ? 1 : note.speed) * scroll` | `SpeedBasis::Control` |
+| `computeNoteJudgePosition` `:10525` — touch-to-note mapping | `note.speed * scroll`, the official flag ignored | `SpeedBasis::Judge` |
+
+`tests/CoreTests.cpp:207-236` pins all three bases (including the hold-only collapse) and every
+helper above at hand-computed values, so a later refactor that merges two bases would fail the
+suite rather than silently move notes.
 
 ---
 
@@ -466,13 +494,20 @@ divergence from the reference.
   mirrored output will now render flipped — correct, but visually surprising. Only the numeric
   invariant and one unit test cover this; there is no `.pec` reference screenshot in
   `build/ref/` to compare against.
+- **`initSpeedEventsPhi` and the ±Inf paths are deliberately different.** A non-positive line
+  BPM is replaced with 120 by `initSpeedEventsPhi`, exactly as the reference does, so speed
+  event floor positions stay finite. `sec2beat`/`beat2sec` keep the reference's `bpm <= 0 →
+  ±Inf`, so the two diverge only for charts that are already unplayable. `calcNoteControl`
+  also gained the reference's interior clamps: `p` is clamped to [0,1] and a non-finite easing
+  result falls back to `p` (`JudgeLine.java:233-243`).
 - **`BpmTimeline` no longer rejects unsorted/non-positive tables.** The reference tolerates
   them by construction (its binary search just returns whatever it lands on). If a chart ships
   `bpm <= 0`, `beatToSec` now returns ±Inf exactly where the reference does. The one core path
   that could surface it is `NoteGeometry.cpp:91` (`*(PGR_BEAT/bpm)`) and
   `JudgeLine.cpp:221-222` (`holdLength`), both of which would produce Inf/NaN note lengths
-  rather than throwing. `JudgeLine::sec2beat`/`beat2sec` clamp at 1e-9 and are safe. Ranked
-  low because a zero-BPM chart is already unplayable in the reference.
+  rather than throwing. `JudgeLine::sec2beat`/`beat2sec` clamp at 1e-9 and are safe, and
+  `initSpeedEventsPhi` substitutes 120 as the reference does. Ranked low because a
+  zero-BPM chart is already unplayable in the reference.
 - **Random sequences are not bit-identical.** `MessageParticleField` (xorshift), `HitEffect`
   (xorshift) and `ClickEffectItem` (`std::mt19937`) do not reproduce `java.util.Random`.
   Distribution and draw order match; individual particle positions do not. This is inherent to

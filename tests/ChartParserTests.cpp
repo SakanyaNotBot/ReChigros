@@ -113,19 +113,22 @@ int main() {
     // A non-positive judgeArea falls back to 1.
     require(close(fieldLine.notesAbove[6].judgeArea, 1.0), "RPE judgeArea fallback");
 
-    // Note type mapping. RPE numbers 1..4 map onto the game's own constants, and a type
-    // outside that range discards the note rather than turning it into a tap.
+    // Note type mapping. A value already inside 1..4 keeps its meaning; only a value
+    // outside it is retried as the zero-based spelling, so 0 becomes a tap and 2 stays a
+    // hold instead of shifting into a flick. A value still outside 1..4 drops the note.
     const auto types = rechigros::chart::RpeChartParser::parse(std::string_view{R"json(
     {"META":{"offset":0,"RPEVersion":160},"BPMList":[{"bpm":120,"startTime":[0,0,1]}],
      "judgeLineList":[{"bpmfactor":1,"notesAbove":[
        {"type":0,"startTime":[0,0,1]},
        {"type":2,"startTime":[1,0,1]},
-       {"type":4,"startTime":[2,0,1]}
+       {"type":4,"startTime":[2,0,1]},
+       {"type":5,"startTime":[3,0,1]}
      ]}]})json"});
     const auto& typeLine = *types.judgeLineList.at(0);
-    require(typeLine.notesAbove.size() == 2, "RPE out-of-range note type is dropped");
-    require(typeLine.notesAbove[0].type == NOTE_HOLD, "RPE type 2 maps to hold");
-    require(typeLine.notesAbove[1].type == NOTE_DRAG, "RPE type 4 maps to drag");
+    require(typeLine.notesAbove.size() == 3, "RPE out-of-range note type is dropped");
+    require(typeLine.notesAbove[0].type == NOTE_TAP, "RPE type 0 shifts to tap");
+    require(typeLine.notesAbove[1].type == NOTE_HOLD, "RPE type 2 maps to hold");
+    require(typeLine.notesAbove[2].type == NOTE_DRAG, "RPE type 4 maps to drag");
 
     // Explicit notesAbove/notesBelow take precedence: a populated `notes` array is ignored
     // whenever either split key is present, even if both split arrays are empty.

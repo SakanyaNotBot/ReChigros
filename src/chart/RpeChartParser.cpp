@@ -762,11 +762,16 @@ std::array<float, 3> rgb(const json* value, bool& valid) {
   return result;
 }
 
-// Returns an empty result for a note whose authored type is outside 1..4, which is how a
-// malformed entry is discarded rather than silently turned into a tap.
+// Zero-based type values shift into the one-based range; other values outside it are
+// discarded rather than silently turned into a tap.
 std::optional<Note> parseNote(const json& source, const BpmConverter& bpm, double lineBpm) {
   Note note;
-  const auto type = integer(source, {"type", "noteType", "note"}, 1);
+  auto type = integer(source, {"type", "noteType", "note"}, 0);
+  // A zero-based spelling is only reinterpreted when the value is not already a valid
+  // one-based type; a two keeps its hold meaning rather than shifting into a flick.
+  if (type < 1 || type > 4) {
+    if (type >= 0 && type <= 3) ++type;
+  }
   if (type < 1 || type > 4) return std::nullopt;
   switch (type) {
     case 1: note.type = NOTE_TAP; break;

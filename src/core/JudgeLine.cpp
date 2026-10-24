@@ -39,8 +39,10 @@ void JudgeLine::normalize(){
   EventUtils::initSpeedEvents(speedEvents);for(auto& layer:speedEventLayers)EventUtils::initSpeedEvents(layer);
 }
 void JudgeLine::initSpeedEventsPhi()noexcept{
-  if(speedEvents.empty())return; const auto safeBpm=std::max(1e-9,bpm); float height=static_cast<float>(speedEvents.front().startTime/safeBpm*PGR_BEAT);
-  for(auto& event:speedEvents){event.floorPosition=height;const auto delta=static_cast<float>((event.endTime-event.startTime)/safeBpm*PGR_BEAT);height+=delta*static_cast<float>(event.value);}
+  if(speedEvents.empty())return;
+  if(bpm<=0.0)bpm=120.0;
+  float height=static_cast<float>(speedEvents.front().startTime/bpm*PGR_BEAT);
+  for(auto& event:speedEvents){event.floorPosition=height;const auto delta=static_cast<float>((event.endTime-event.startTime)/bpm*PGR_BEAT);height+=delta*static_cast<float>(event.value);}
 }
 void JudgeLine::resetCursors()noexcept{
   curRotate_.reset();curMove1_.reset();curMove2_.reset();curDisappear_.reset();curScaleX_.reset();curScaleY_.reset();curScale1_.reset();curScale2_.reset();curIncline_.reset();curColor_.reset();curText_.reset();curGif_.reset();
@@ -183,8 +185,14 @@ JudgeLine::State JudgeLine::fillState(double second,float aspect){
 }
 float JudgeLine::calcNoteControl(float height,int type,float fallback)const noexcept{
   const std::vector<NoteControlPoint>* list=nullptr; switch(type){case 0:list=&noteAlphaControls;break;case 1:list=&noteScaleControls;break;case 2:list=&noteXControls;break;case 3:list=&noteYControls;break;case 4:list=&noteSkewControls;break;case 5:list=&noteJudgeAreaControls;break;default:return fallback;}
-  if(list->empty())return fallback;if(height<=list->front().y)return list->front().value;if(height>=list->back().y)return list->back().value;
-  const auto it=std::lower_bound(list->begin(),list->end(),height,[](const auto& point,float value){return point.y<value;});const auto& b=*it;const auto& a=*(it-1);if(b.y-a.y<=1e-6F)return b.value;const auto p=(height-a.y)/(b.y-a.y);return a.value+(b.value-a.value)*static_cast<float>(Easing::apply(std::clamp(a.easing,0,28),p));
+  if(list->empty())return fallback;
+  if(height<=list->front().y)return list->front().value;
+  if(height>=list->back().y||std::isnan(height))return list->back().value;
+  const auto it=std::lower_bound(list->begin(),list->end(),height,[](const auto& point,float value){return point.y<value;});const auto& b=*it;const auto& a=*(it-1);if(b.y-a.y<=1e-6F)return b.value;
+  const auto p=std::clamp((height-a.y)/(b.y-a.y),0.0F,1.0F);
+  auto eased=static_cast<float>(Easing::apply(std::clamp(a.easing,0,28),p));
+  if(!std::isfinite(eased))eased=p;
+  return a.value+(b.value-a.value)*eased;
 }
 
 void Chart::updateUiTransform(int id,float x,float y,float r,float sx,float sy,float alpha){uiTransforms[id]={x,y,r,sx,sy,alpha};}
