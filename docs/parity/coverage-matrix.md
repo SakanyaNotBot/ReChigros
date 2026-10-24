@@ -2,16 +2,16 @@
 
 Generated from `docs/compare/inventory.json` by `tools/parity/coverage_matrix.py`. One row per reference declaration.
 
-Reference declarations: **2269** across 75 files.
+Reference declarations: **2268** across 75 files.
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| verified | 999 | named MATCH by a parity report |
+| verified | 1050 | named MATCH by a parity report |
 | fixed | 182 | named by a parity report with a fix |
 | differs | 0 | named with a remaining difference |
-| excluded | 354 | deliberate exclusion, reason recorded |
-| matched-by-name | 145 | a port symbol with the same name exists |
-| unmatched | 444 | no same-name port symbol; needs a manual verdict |
+| excluded | 355 | deliberate exclusion, reason recorded |
+| matched-by-name | 144 | a port symbol with the same name exists |
+| unmatched | 393 | no same-name port symbol; needs a manual verdict |
 
 This matrix is an index. The authoritative per-function verdicts and the
 evidence line for each one are in the topical reports (`chart.md`, `core.md`, `judging.md`,
@@ -603,28 +603,28 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 8906 | `sampleCurve` | matched-by-name | `src\render\scene\HudPass.cpp:77` `sampleCurve` (+1) |
 | 8916 | `officialLevelStartEase` | verified |  |
 | 8923 | `officialLevelOverRootScaleY` | verified |  |
-| 8929 | `drawGameHudWithAnimationsClipped` | unmatched |  |
+| 8929 | `drawGameHudWithAnimationsClipped` | verified |  |
 | 8942 | `drawGameHud` | verified |  |
 | 8974 | `drawHitOffsetIndicator` | matched-by-name | `src\render\scene\HudPass.cpp:598` `drawHitOffsetIndicator` |
-| 9053 | `drawHitOffsetLineIndicator` | unmatched |  |
-| 9101 | `hitOffsetLineBottomSafety` | unmatched |  |
-| 9105 | `hitOffsetBottomSafety` | unmatched |  |
-| 9117 | `drawHitOffsetArc` | unmatched |  |
-| 9142 | `drawHitOffsetRadialLine` | unmatched |  |
-| 9159 | `drawHitOffsetLine` | unmatched |  |
-| 9175 | `drawHitOffsetArrowLinear` | unmatched |  |
-| 9190 | `drawHitOffsetArrow` | unmatched |  |
-| 9205 | `hitOffsetArrowWidth` | unmatched |  |
-| 9209 | `hitOffsetArrowHeight` | unmatched |  |
-| 9218 | `drawHitOffsetText` | unmatched |  |
-| 9245 | `hitOffsetColor` | unmatched |  |
-| 9256 | `hitOffsetPointX` | unmatched |  |
-| 9261 | `hitOffsetPointY` | unmatched |  |
-| 9266 | `hitOffsetLineX` | unmatched |  |
-| 9271 | `drawPauseTouchRing` | unmatched |  |
+| 9053 | `drawHitOffsetLineIndicator` | verified |  |
+| 9101 | `hitOffsetLineBottomSafety` | verified |  |
+| 9105 | `hitOffsetBottomSafety` | verified |  |
+| 9117 | `drawHitOffsetArc` | verified |  |
+| 9142 | `drawHitOffsetRadialLine` | verified |  |
+| 9159 | `drawHitOffsetLine` | verified |  |
+| 9175 | `drawHitOffsetArrowLinear` | verified |  |
+| 9190 | `drawHitOffsetArrow` | verified |  |
+| 9205 | `hitOffsetArrowWidth` | verified |  |
+| 9209 | `hitOffsetArrowHeight` | verified |  |
+| 9218 | `drawHitOffsetText` | verified |  |
+| 9245 | `hitOffsetColor` | verified |  |
+| 9256 | `hitOffsetPointX` | verified |  |
+| 9261 | `hitOffsetPointY` | verified |  |
+| 9266 | `hitOffsetLineX` | verified |  |
+| 9271 | `drawPauseTouchRing` | verified |  |
 | 9304 | `drawFpsCounter` | matched-by-name | `src\render\scene\HudPass.cpp:750` `drawFpsCounter` |
-| 9329 | `drawTextureAnchored` | unmatched |  |
-| 9338 | `drawTextureAnchored` | unmatched |  |
+| 9329 | `drawTextureAnchored` | verified |  |
+| 9338 | `drawTextureAnchored` | verified |  |
 | 9366 | `drawGifFrame` | unmatched |  |
 | 9418 | `renderSceneToFbo` | unmatched |  |
 | 9446 | `blurPass` | matched-by-name | `src\render\fx\PauseBackdropPass.cpp:90` `blurPass` |
@@ -1368,7 +1368,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 267 | `onSaveInstanceState` | excluded |  |
 | 288 | `onNewIntent` | verified |  |
 | 295 | `onResume` | verified |  |
-| 306 | `refreshLocalChartsOnResume` | unmatched |  |
+| 306 | `refreshLocalChartsOnResume` | verified |  |
 | 321 | `onPause` | verified |  |
 | 330 | `onDestroy` | excluded |  |
 | 338 | `onWindowFocusChanged` | verified |  |
@@ -1376,7 +1376,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 364 | `setupRoot` | excluded |  |
 | 394 | `restoreUiState` | excluded |  |
 | 423 | `renderRestoredScreen` | excluded |  |
-| 437 | `findLocalRecordById` | unmatched |  |
+| 437 | `findLocalRecordById` | verified |  |
 | 446 | `applyImmersiveMode` | excluded |  |
 | 467 | `renderHome` | verified |  |
 | 571 | `applyHomeLayout` | verified |  |
@@ -1420,15 +1420,15 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 1266 | `buildAudioSettings` | verified |  |
 | 1283 | `buildReplaySettings` | verified |  |
 | 1304 | `buildMoreSettings` | verified |  |
-| 1311 | `settingsCard` | unmatched |  |
+| 1311 | `settingsCard` | verified |  |
 | 1323 | `syncSettingsToggles` | verified |  |
-| 1332 | `addSwitch` | unmatched |  |
-| 1349 | `addSliderRow` | unmatched |  |
-| 1377 | `addEditRow` | unmatched |  |
+| 1332 | `addSwitch` | verified |  |
+| 1349 | `addSliderRow` | verified |  |
+| 1377 | `addEditRow` | verified |  |
 | 1396 | `SimpleWatcher` | excluded |  |
 | 1397 | `afterTextChanged` | excluded |  |
-| 1403 | `addActionRow` | unmatched |  |
-| 1420 | `addDualActions` | unmatched |  |
+| 1403 | `addActionRow` | verified |  |
+| 1420 | `addDualActions` | verified |  |
 | 1435 | `addReplayRow` | matched-by-name | `src\app\SettingsScreen.cpp:558` `replayRow` |
 | 1459 | `rowBase` | verified |  |
 | 1466 | `smallButton` | verified |  |
@@ -1497,11 +1497,11 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 2405 | `setChartOffsetMs` | unmatched |  |
 | 2410 | `persistSelectedChartInfo` | unmatched |  |
 | 2419 | `getAspectRatio` | verified |  |
-| 2421 | `setAspectRatio` | unmatched |  |
+| 2421 | `setAspectRatio` | verified |  |
 | 2422 | `getKeyScale` | verified |  |
-| 2423 | `setKeyScale` | unmatched |  |
+| 2423 | `setKeyScale` | verified |  |
 | 2424 | `getScrollSpeed` | verified |  |
-| 2425 | `setScrollSpeed` | unmatched |  |
+| 2425 | `setScrollSpeed` | verified |  |
 | 2426 | `isMirrorX` | matched-by-name | `include\rechigros\render\math\Mat4.hpp:58` `mirrorX` |
 | 2427 | `setMirrorX` | matched-by-name | `include\rechigros\render\math\Mat4.hpp:58` `mirrorX` |
 | 2428 | `isAutoplay` | matched-by-name | `include\rechigros\game\GameplaySession.hpp:47` `autoplay` (+2) |
@@ -1509,63 +1509,63 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 2438 | `isChallengeMode` | matched-by-name | `include\rechigros\game\JudgementEngine.hpp:43` `challengeMode` |
 | 2439 | `setChallengeMode` | matched-by-name | `include\rechigros\game\JudgementEngine.hpp:43` `challengeMode` |
 | 2440 | `getBackgroundDim` | verified |  |
-| 2441 | `setBackgroundDim` | unmatched |  |
+| 2441 | `setBackgroundDim` | verified |  |
 | 2442 | `setJudgeLineWidth` | verified |  |
 | 2443 | `isLowResMode` | verified |  |
-| 2444 | `setLowResMode` | unmatched |  |
+| 2444 | `setLowResMode` | verified |  |
 | 2445 | `isAntialias` | verified |  |
 | 2446 | `setAntialias` | excluded |  |
 | 2447 | `isShowFps` | verified |  |
-| 2448 | `setShowFps` | unmatched |  |
+| 2448 | `setShowFps` | verified |  |
 | 2449 | `isRealtimeAcc` | verified |  |
-| 2450 | `setRealtimeAcc` | unmatched |  |
+| 2450 | `setRealtimeAcc` | verified |  |
 | 2451 | `isScoreJumpEffect` | verified |  |
-| 2452 | `setScoreJumpEffect` | unmatched |  |
+| 2452 | `setScoreJumpEffect` | verified |  |
 | 2453 | `isDisableShader` | verified |  |
-| 2454 | `setDisableShader` | unmatched |  |
+| 2454 | `setDisableShader` | verified |  |
 | 2455 | `isStoryMode` | verified |  |
-| 2456 | `setStoryMode` | unmatched |  |
+| 2456 | `setStoryMode` | verified |  |
 | 2457 | `isShowDebugInfo` | verified |  |
-| 2458 | `setShowDebugInfo` | unmatched |  |
+| 2458 | `setShowDebugInfo` | verified |  |
 | 2459 | `isChartReveal` | verified |  |
-| 2460 | `setChartReveal` | unmatched |  |
+| 2460 | `setChartReveal` | verified |  |
 | 2469 | `isMultiPressHighlight` | verified |  |
-| 2470 | `setMultiPressHighlight` | unmatched |  |
+| 2470 | `setMultiPressHighlight` | verified |  |
 | 2471 | `isApfcIndicator` | verified |  |
-| 2472 | `setApfcIndicator` | unmatched |  |
+| 2472 | `setApfcIndicator` | verified |  |
 | 2473 | `isJudgementDetailDistribution` | matched-by-name | `include\rechigros\game\JudgementEngine.hpp:40` `setJudgementDetailDistribution` |
 | 2474 | `setJudgementDetailDistribution` | matched-by-name | `include\rechigros\game\JudgementEngine.hpp:40` `setJudgementDetailDistribution` |
 | 2475 | `isHitOffsetIndicator` | matched-by-name | `src\core\HitOffsetIndicator.cpp:9` `HitOffsetIndicator` |
-| 2476 | `setHitOffsetIndicator` | matched-by-name | `src\core\HitOffsetIndicator.cpp:9` `HitOffsetIndicator` |
-| 2477 | `getHitOffsetIndicatorMode` | unmatched |  |
-| 2478 | `setHitOffsetIndicatorMode` | unmatched |  |
+| 2476 | `setHitOffsetIndicator` | verified | `src\core\HitOffsetIndicator.cpp:9` `HitOffsetIndicator` |
+| 2477 | `getHitOffsetIndicatorMode` | verified |  |
+| 2478 | `setHitOffsetIndicatorMode` | verified |  |
 | 2484 | `getMusicVolumePct` | unmatched |  |
 | 2485 | `setMusicVolumePct` | unmatched |  |
 | 2486 | `getSfxVolumePct` | unmatched |  |
 | 2487 | `setSfxVolumePct` | unmatched |  |
 | 2488 | `getMusicSpeed` | matched-by-name | `src\core\GameplaySession.cpp:66` `setMusicSpeed` |
 | 2489 | `setMusicSpeed` | matched-by-name | `src\core\GameplaySession.cpp:66` `setMusicSpeed` |
-| 2490 | `getAudioOffsetMs` | unmatched |  |
+| 2490 | `getAudioOffsetMs` | verified |  |
 | 2491 | `setAudioOffsetMs` | verified |  |
 | 2492 | `isReplayEnabled` | verified |  |
 | 2493 | `setReplayEnabled` | verified |  |
 | 2494 | `loadPersistedSettings` | unmatched |  |
 | 2534 | `getPrefs` | verified |  |
-| 2539 | `isApfcIndicatorEnabled` | unmatched |  |
+| 2539 | `isApfcIndicatorEnabled` | verified |  |
 | 2545 | `editPrefs` | unmatched |  |
-| 2549 | `isReadyToStart` | unmatched |  |
+| 2549 | `isReadyToStart` | verified |  |
 | 2555 | `iconButton` | matched-by-name | `src\app\UiStyle.cpp:192` `iconButton` |
 | 2565 | `glassPanel` | matched-by-name | `src\app\UiLayout.cpp:182` `glassPanel` |
 | 2575 | `rectPanel` | matched-by-name | `src\app\UiLayout.cpp:191` `rectPanel` |
 | 2581 | `text` | fixed |  |
 | 2585 | `text` | fixed |  |
-| 2598 | `autoSingleLineText` | unmatched |  |
-| 2604 | `uiTypeface` | unmatched |  |
-| 2616 | `assetImage` | unmatched |  |
+| 2598 | `autoSingleLineText` | verified |  |
+| 2604 | `uiTypeface` | verified |  |
+| 2616 | `assetImage` | verified |  |
 | 2622 | `loadAssetBitmap` | verified |  |
 | 2631 | `dp` | fixed | `include\rechigros\app\UiLayout.hpp:31` `dp` (+2) |
-| 2635 | `tryTakePersistableRead` | unmatched |  |
-| 2642 | `hasLowerSuffix` | unmatched |  |
+| 2635 | `tryTakePersistableRead` | excluded |  |
+| 2642 | `hasLowerSuffix` | verified |  |
 | 2646 | `errorMessage` | excluded |  |
 | 2672 | `clampPctToMul` | unmatched |  |
 | 2676 | `sanitizeAspectRatio` | matched-by-name | `src\app\Settings.cpp:47` `sanitizeAspectRatio` |

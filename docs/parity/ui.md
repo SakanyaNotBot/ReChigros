@@ -313,6 +313,51 @@ layout helper or onto a piece of the platform layer.
 | `createContext` / `destroyContext` | context creation and teardown | MATCH | Same create/destroy points. |
 | `Es31ConfigChooser` / `chooseConfig` / `buildConfigAttribs` | GL context attributes | MATCH | Same ES 3.1 request with the same fallbacks; on the packaged platforms the attribute block in `Application::initialize` carries them. |
 
+### Remaining renderer draws and activity helpers
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `isMenuVisible` | `GameRuntime::Pause::Menu` | MATCH | Same pause-mode predicate. |
+| `setReplayRecorder` | `GameplaySession::setReplayRecording` | MATCH | Same attach point. |
+| `getPerfectCount` / `getGoodCount` / `getBadCount` / `getMissCount` | `JudgementEngine::result()` | MATCH | Same four counters. |
+| `sanitizeOfficialScreenDpi` | `Application::initialize` DPI block | MATCH | Same fallback chain. |
+| `sanitizeHitOffsetIndicatorMode` | `Settings::load` | **FIXED** | Out-of-range now falls back to disabled; the port had clamped. |
+| `resetNativeRenderBucketRuntimeState` | `Chart::resetRuntime` | MATCH | Same per-run reset. |
+| `renderGameplayFrame` / `renderSceneDirect` | `GameRenderer::render` | MATCH | Same frame composition and direct scene path. |
+| `blockCompositeHasWork` | `Chart::hasLiveBlock` | MATCH | Same live-block question. |
+| `drawAmetrineVignette` / `ametrineHudVignetteFactor` | `fx::AmetrineVignette` | MATCH | Same inline vignette and HUD factor. |
+| `getOrLoadFileTexture` | `TextureCache::load` | MATCH | Same load-once cache. |
+| `getOrCreateTextTexture` / `createHudTextTexture` (5) | `TextRenderer::glyphStrip` | **DIFFERENT BY DESIGN** | String-per-texture cache in the reference, glyph strip per size in the port. Same pixels, no per-value upload. |
+| `measureHudTextWidth` | `TextRenderer::measure` | MATCH | Same advance-width sum. |
+| `officialHudUnitPx` / `officialHudX` / `officialHudY` | `scene::hudUnit` / `hudX` / `hudY` | MATCH | Same centred mapping on the 1000-unit canvas. |
+| `hitOffsetArrowHeight` :9211 | `arrowHeight` (`HudPass.cpp:645-648`) | MATCH | Same aspect derivation from the glyph texture, and the same square fallback when the texture is missing. |
+| `drawHitOffsetText` | hit-offset readout text | MATCH | Same signed millisecond readout drawn under the dial. |
+| `hitOffsetColor` | tick colour by window | MATCH | Same perfect/good/bad colour split. |
+| `hitOffsetPointX` / `hitOffsetPointY` | dial point projection | MATCH | Same polar-to-cartesian placement at the offset angle. |
+| `hitOffsetLineX` | line-mode tick position | MATCH | Same linear tick position along the indicator line. |
+| `drawPauseTouchRing` | pause touch feedback ring | MATCH | Same ring drawn at the pause tap. |
+| `drawTextureAnchored` (2 overloads) | anchored texture draw helpers in the batch | MATCH | Same anchor handling (centre and corner anchored variants). |
+
+## ChartSelectActivity: the remaining accessors
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `refreshLocalChartsOnResume` / `findLocalRecordById` | library re-scan and id lookup | MATCH | Same behaviour. |
+| `settingsCard` / `addSwitch` / `addSliderRow` / `addEditRow` / `addActionRow` / `addDualActions` | `BlockBuilder` control set | MATCH | Same controls with the same metrics. |
+| `setSongName` / `setDifficulty` / `setChartOffsetMs` / `persistSelectedChartInfo` | `ChartLibrary::updateInfo` | MATCH | Same three-field edit written back to the pack's info file and the index. |
+| `setAspectRatio` / `setKeyScale` / `setScrollSpeed` / `setBackgroundDim` | `Settings` with the same clamps | MATCH | Same field, same range (`aspectRatio` 0.5..5 or 0 for window-follow, `keyScale` 0.7..1.5, `scrollSpeed` 0.1..5, `backgroundDim` 0..1). |
+| `setLowResMode` / `setShowFps` / `setRealtimeAcc` / `setScoreJumpEffect` / `setDisableShader` / `setStoryMode` / `setShowDebugInfo` / `setChartReveal` / `setMultiPressHighlight` / `setApfcIndicator` | `Settings` booleans | MATCH | Same field, same write-through. |
+| `getHitOffsetIndicatorMode` / `setHitOffsetIndicatorMode` | `settings.hitOffsetIndicatorMode` | MATCH | Same 0..2 field; the setter goes through the same sanitizer. |
+| `getMusicVolumePct` / `setMusicVolumePct` / `getSfxVolumePct` / `setSfxVolumePct` / `clampPctToMul` :2674-2676 | `SliderBind::MusicVolume` / `SoundVolume` (`SettingsScreen.cpp:416,452`) | MATCH | The reference clamps the percentage to 0..500 then divides by 100; the port stores the multiplier 0..5, shows it as `x100` and clamps the written value to 0..5. Identical for every reachable value. |
+| `getAudioOffsetMs` | `settings.audioOffsetMs` | MATCH | Same field, clamped to -500..500. |
+| `loadPersistedSettings` | `Settings::load` | MATCH | Same read of every setting with the same defaults and the same sanitising pass. |
+| `isApfcIndicatorEnabled` | `settings.apfcIndicator` | MATCH | Same read. |
+| `editPrefs` | `Settings::save` | MATCH | Same write-back to persistent storage. |
+| `isReadyToStart` | start-button enable rule | MATCH | Same "a chart is selected and its files exist" gate. |
+| `autoSingleLineText` / `uiTypeface` / `assetImage` | label and asset helpers | MATCH | Same single-line fitting, same bundled face and same asset lookup. |
+| `tryTakePersistableRead` | document-permission handling | DELIBERATE-EXCLUSION | Android `SAF` permission persistence; the port works on plain filesystem paths. |
+| `hasLowerSuffix` :2644-2646 | case-insensitive suffix test in the import path | MATCH | Same lowercased suffix comparison. |
+
 ## Local/replay pickers, the online adapter and the level-effect loader
 
 ### `SelectLocalChartsFragment.java`

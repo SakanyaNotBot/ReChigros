@@ -384,6 +384,32 @@ These are noted so a future reader does not mistake them for divergences.
    particle positions do not. Inherent to the runtime change and deliberate so the port is
    deterministic across its own runs.
 
+### Hit-offset indicator geometry
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `isMenuVisible` | `GameRuntime::Pause::Menu` | MATCH | Same pause-mode predicate. |
+| `setReplayRecorder` | `GameplaySession::setReplayRecording` | MATCH | Same attach point. |
+| `getPerfectCount` / `getGoodCount` / `getBadCount` / `getMissCount` | `JudgementEngine::result()` | MATCH | Same four counters. |
+| `sanitizeOfficialScreenDpi` | `Application::initialize` DPI block | MATCH | Same fallback chain. |
+| `sanitizeHitOffsetIndicatorMode` | `Settings::load` | **FIXED** | Out-of-range now falls back to disabled; the port had clamped. |
+| `resetNativeRenderBucketRuntimeState` | `Chart::resetRuntime` | MATCH | Same per-run reset. |
+| `renderGameplayFrame` / `renderSceneDirect` | `GameRenderer::render` | MATCH | Same frame composition and direct scene path. |
+| `blockCompositeHasWork` | `Chart::hasLiveBlock` | MATCH | Same live-block question. |
+| `drawAmetrineVignette` / `ametrineHudVignetteFactor` | `fx::AmetrineVignette` | MATCH | Same inline vignette and HUD factor. |
+| `getOrLoadFileTexture` | `TextureCache::load` | MATCH | Same load-once cache. |
+| `getOrCreateTextTexture` / `createHudTextTexture` (5) | `TextRenderer::glyphStrip` | **DIFFERENT BY DESIGN** | String-per-texture cache in the reference, glyph strip per size in the port. Same pixels, no per-value upload. |
+| `measureHudTextWidth` | `TextRenderer::measure` | MATCH | Same advance-width sum. |
+| `officialHudUnitPx` / `officialHudX` / `officialHudY` | `scene::hudUnit` / `hudX` / `hudY` | MATCH | Same `stageH / 1000` unit and the same centred mapping. |
+| `drawGameHudWithAnimationsClipped` | HUD draw inside the clip rect | MATCH | Same animated HUD drawn within the frame clip. |
+| `drawHitOffsetLineIndicator` :9055-9100 | the line-mode branch in `HudPass.cpp:643-760` | MATCH | Same half-width, same per-window tick positions along the line and the same indicator alpha. |
+| `hitOffsetLineBottomSafety` :9103-9105 | bottom-safety term in the dial placement | MATCH | Same `arrowHeight + dp(5)`. |
+| `hitOffsetBottomSafety` :9107-9118 | dial bottom-safety term | MATCH | Same `dp(3)` base, then the arrow footprint added when the glyph is available, so the dial never runs off the bottom edge. |
+| `drawHitOffsetArc` / `drawHitOffsetRadialLine` | arc and radial ticks in the dial | MATCH | Same arc from the perfect/good/bad window angles and the same radial tick placement. |
+| `drawHitOffsetLine` | line-mode dashes | MATCH | Same line mode drawing. |
+| `drawHitOffsetArrowLinear` / `drawHitOffsetArrow` | pointer glyph draw | MATCH | Same glyph drawn at the computed offset, with the same linear fallback when the texture is missing. |
+| `hitOffsetArrowWidth` :9207-9209 | `arrowWidth` (`HudPass.cpp:642`) | MATCH | Identical: `clamp(meterW * 0.095, dp(12), dp(17))`. |
+
 ### HUD text formatting and the level transition scale
 
 | Reference declaration | Port implementation | Verdict | Basis |
