@@ -6,12 +6,12 @@ Reference declarations: **2269** across 75 files.
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| verified | 972 | named MATCH by a parity report |
+| verified | 999 | named MATCH by a parity report |
 | fixed | 182 | named by a parity report with a fix |
 | differs | 0 | named with a remaining difference |
 | excluded | 354 | deliberate exclusion, reason recorded |
 | matched-by-name | 145 | a port symbol with the same name exists |
-| unmatched | 471 | no same-name port symbol; needs a manual verdict |
+| unmatched | 444 | no same-name port symbol; needs a manual verdict |
 
 This matrix is an index. The authoritative per-function verdicts and the
 evidence line for each one are in the topical reports (`chart.md`, `core.md`, `judging.md`,
@@ -517,12 +517,12 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 6147 | `clone` | verified |  |
 | 6160 | `evalEventList` | verified |  |
 | 6189 | `applyUniform` | matched-by-name | `src\render\gl\ShaderProgram.cpp:227` `uniform` |
-| 6207 | `resetSmoothBiasHistory` | unmatched |  |
+| 6207 | `resetSmoothBiasHistory` | verified |  |
 | 6218 | `invalidateSmoothClock` | verified |  |
-| 6223 | `primeSmoothClock` | unmatched |  |
-| 6235 | `cacheSmoothedPlayhead` | unmatched |  |
-| 6241 | `addSmoothBias` | unmatched |  |
-| 6257 | `getSmoothedPlayheadSeconds` | unmatched |  |
+| 6223 | `primeSmoothClock` | verified |  |
+| 6235 | `cacheSmoothedPlayhead` | verified |  |
+| 6241 | `addSmoothBias` | verified |  |
+| 6257 | `getSmoothedPlayheadSeconds` | verified |  |
 | 6368 | `clear` | verified | `src\audio\AudioEngine.cpp:66` `clear` (+5) |
 | 6375 | `ensureRenderLineInfoCapacity` | verified |  |
 | 6385 | `getRenderLineInfo` | verified |  |
@@ -573,20 +573,20 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 7890 | `createHudTextTexture` | unmatched |  |
 | 7983 | `isAmetrineComboBlocked` | verified |  |
 | 7990 | `ametrineHudVignetteFactor` | unmatched |  |
-| 8003 | `buildBlockedComboPattern` | unmatched |  |
-| 8071 | `drawBlockedComboPattern` | unmatched |  |
-| 8148 | `blockedComboNoiseSample` | unmatched |  |
-| 8173 | `blockedComboNoise` | unmatched |  |
+| 8003 | `buildBlockedComboPattern` | verified |  |
+| 8071 | `drawBlockedComboPattern` | verified |  |
+| 8148 | `blockedComboNoiseSample` | verified |  |
+| 8173 | `blockedComboNoise` | verified |  |
 | 8181 | `measureHudTextWidth` | unmatched |  |
-| 8204 | `drawHudText` | unmatched |  |
-| 8227 | `updateHudDynamicText` | unmatched |  |
-| 8326 | `drawHudDynamicText` | unmatched |  |
-| 8343 | `updateHudTextTexturesIfNeeded` | unmatched |  |
-| 8503 | `updateHudDisplayValues` | unmatched |  |
-| 8526 | `approachHudDisplayValue` | unmatched |  |
-| 8537 | `clampScoreInt` | unmatched |  |
-| 8543 | `drawHudTexts` | unmatched |  |
-| 8639 | `officialComboLabelOutroAlpha` | unmatched |  |
+| 8204 | `drawHudText` | verified |  |
+| 8227 | `updateHudDynamicText` | verified |  |
+| 8326 | `drawHudDynamicText` | verified |  |
+| 8343 | `updateHudTextTexturesIfNeeded` | verified |  |
+| 8503 | `updateHudDisplayValues` | verified |  |
+| 8526 | `approachHudDisplayValue` | verified |  |
+| 8537 | `clampScoreInt` | verified |  |
+| 8543 | `drawHudTexts` | verified |  |
+| 8639 | `officialComboLabelOutroAlpha` | verified |  |
 | 8656 | `clamp01` | verified | `src\core\Easing.cpp:142` `clamp01` (+6) |
 | 8660 | `officialHudUnitPx` | unmatched |  |
 | 8664 | `officialHudHalfUiW` | fixed |  |
@@ -594,17 +594,17 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 8677 | `officialHudY` | unmatched |  |
 | 8681 | `officialHudSize` | verified |  |
 | 8685 | `officialHudBottomTextYOffsetPx` | verified |  |
-| 8689 | `formatScore7` | unmatched |  |
-| 8701 | `formatPercentHundredths` | unmatched |  |
-| 8706 | `getAttachUiState` | unmatched |  |
-| 8714 | `applyUiTransformAndDraw` | unmatched |  |
-| 8726 | `applyUiTransformAndDrawUv` | unmatched |  |
-| 8869 | `drawGameHudWithAnimations` | unmatched |  |
+| 8689 | `formatScore7` | verified |  |
+| 8701 | `formatPercentHundredths` | verified |  |
+| 8706 | `getAttachUiState` | verified |  |
+| 8714 | `applyUiTransformAndDraw` | verified |  |
+| 8726 | `applyUiTransformAndDrawUv` | verified |  |
+| 8869 | `drawGameHudWithAnimations` | verified |  |
 | 8906 | `sampleCurve` | matched-by-name | `src\render\scene\HudPass.cpp:77` `sampleCurve` (+1) |
-| 8916 | `officialLevelStartEase` | unmatched |  |
-| 8923 | `officialLevelOverRootScaleY` | unmatched |  |
+| 8916 | `officialLevelStartEase` | verified |  |
+| 8923 | `officialLevelOverRootScaleY` | verified |  |
 | 8929 | `drawGameHudWithAnimationsClipped` | unmatched |  |
-| 8942 | `drawGameHud` | unmatched |  |
+| 8942 | `drawGameHud` | verified |  |
 | 8974 | `drawHitOffsetIndicator` | matched-by-name | `src\render\scene\HudPass.cpp:598` `drawHitOffsetIndicator` |
 | 9053 | `drawHitOffsetLineIndicator` | unmatched |  |
 | 9101 | `hitOffsetLineBottomSafety` | unmatched |  |

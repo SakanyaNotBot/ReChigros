@@ -384,6 +384,58 @@ These are noted so a future reader does not mistake them for divergences.
    particle positions do not. Inherent to the runtime change and deliberate so the port is
    deterministic across its own runs.
 
+### HUD text formatting and the level transition scale
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `isMenuVisible` | `GameRuntime::Pause::Menu` | MATCH | Same pause-mode predicate. |
+| `setReplayRecorder` | `GameplaySession::setReplayRecording` | MATCH | Same attach point. |
+| `getPerfectCount` / `getGoodCount` / `getBadCount` / `getMissCount` | `JudgementEngine::result()` | MATCH | Same four counters. |
+| `sanitizeOfficialScreenDpi` | `Application::initialize` DPI block | MATCH | Same fallback chain. |
+| `sanitizeHitOffsetIndicatorMode` | `Settings::load` | **FIXED** | Out-of-range now falls back to disabled; the port had clamped. |
+| `resetNativeRenderBucketRuntimeState` | `Chart::resetRuntime` | MATCH | Same per-run reset. |
+| `renderGameplayFrame` / `renderSceneDirect` | `GameRenderer::render` | MATCH | Same frame composition and direct scene path. |
+| `blockCompositeHasWork` | `Chart::hasLiveBlock` | MATCH | Same live-block question. |
+| `drawAmetrineVignette` / `ametrineHudVignetteFactor` | `fx::AmetrineVignette` | MATCH | Same inline vignette and HUD factor. |
+| `getOrLoadFileTexture` | `TextureCache::load` | MATCH | Same load-once cache. |
+| `getOrCreateTextTexture` / `createHudTextTexture` (5) | `TextRenderer::glyphStrip` | **DIFFERENT BY DESIGN** | String-per-texture cache in the reference, glyph strip per size in the port. Same pixels, no per-value upload. |
+| `measureHudTextWidth` | `TextRenderer::measure` | MATCH | Same advance-width sum. |
+| `clampScoreInt` :8539-8543 | the clamp inside `formatScore` (`HudPass.cpp:91-95`) | MATCH | Same 0..1,000,000 clamp. |
+| `formatScore7` :8691-8700 | `formatScore` `%07d` (`HudPass.cpp:93`) | MATCH | Same seven zero-padded digits for every value that survives `clampScoreInt`. The reference's digit-by-digit loop would drop the leading digit of a value above 9999999, which the clamp already excludes. |
+| `formatPercentHundredths` :8702-8705 | `formatAccuracyHundredths` (`HudPass.cpp:97-101`) | MATCH | Same 0..10000 clamp and the same `d.dd%` split. |
+| `getAttachUiState` | attach-UI element lookup | MATCH | Same id-to-line index lookup with the same bounds guard. |
+| `applyUiTransformAndDraw` / `applyUiTransformAndDrawUv` | attach-UI draw | MATCH | Same transform applied before drawing the attached element, with and without explicit UVs. |
+| `drawGameHudWithAnimations` | the HUD draw with the enter/outro animation | MATCH | Same animated HUD composition. |
+| `drawHudTexts` | HUD text block in `HudPass` | MATCH | Same readouts drawn in the same order at the same anchors. |
+| `officialHudUnitPx` | `scene::hudUnit` | MATCH | `stageH / 1000`, or 1 when degenerate. |
+| `officialHudX` / `officialHudY` | `scene::hudX` / `scene::hudY` | MATCH | Same `centerX + uiX * unit` and `centerY - uiY * unit`. |
+| `officialComboLabelOutroAlpha` | combo-label outro fade | MATCH | Same fade-out curve for the combo label. |
+| `officialLevelStartEase` / `officialLevelOverRootScaleY` | level start/over scaling | MATCH | Same ease curve and the same root scale applied at the level transition. |
+
+### HUD readouts, the Ametrine vignette and the broken-combo overlay
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `isMenuVisible` | `GameRuntime::Pause::Menu` | MATCH | Same pause-mode predicate. |
+| `setReplayRecorder` | `GameplaySession::setReplayRecording` | MATCH | Same attach point. |
+| `getPerfectCount` / `getGoodCount` / `getBadCount` / `getMissCount` | `JudgementEngine::result()` | MATCH | Same four counters. |
+| `sanitizeOfficialScreenDpi` | `Application::initialize` DPI block | MATCH | Same fallback chain. |
+| `sanitizeHitOffsetIndicatorMode` | `Settings::load` | **FIXED** | Out-of-range now falls back to disabled; the port had clamped. |
+| `resetNativeRenderBucketRuntimeState` | `Chart::resetRuntime` | MATCH | Same per-run reset. |
+| `renderGameplayFrame` | `GameRenderer::render` | MATCH | Same frame composition. |
+| `blockCompositeHasWork` | `Chart::hasLiveBlock` | MATCH | Same live-block question. |
+| `resetSmoothBiasHistory` / `primeSmoothClock` / `cacheSmoothedPlayhead` / `addSmoothBias` / `getSmoothedPlayheadSeconds` | `SmoothingClock` | MATCH | Same 60-entry bias window, same re-anchor and same once-per-frame cache. |
+| `renderSceneDirect` | the scene body of `GameRenderer::render` | MATCH | Same direct scene path. |
+| `drawAmetrineVignette` / `ametrineHudVignetteFactor` | `fx::AmetrineVignette` | MATCH | Same inline vignette (radius 0.24, smoothness 0.55) and the same HUD factor driving its strength. |
+| `getOrLoadFileTexture` | `TextureCache::load` | MATCH | Same load-once-per-path cache. |
+| `getOrCreateTextTexture` / `createHudTextTexture` (5 overloads) | `TextRenderer::glyphStrip` plus per-frame draw | **DIFFERENT BY DESIGN** | The reference rasterises each string into its own GL texture cached by text and size; the port rasterises a glyph strip once per pixel size and draws strings from it. Same pixels, no per-value allocation or upload. |
+| `measureHudTextWidth` | `TextRenderer::measure` | MATCH | Same advance-width sum for a string at a size. |
+| `drawHudText` | text draw in `HudPass` | MATCH | Same draw with the same alignment and colour. |
+| `updateHudDynamicText` / `drawHudDynamicText` / `updateHudTextTexturesIfNeeded` | per-frame HUD readout draw | MATCH | Same "refresh the readout then draw it" step; the port has no texture to refresh (see the strip note above), so the update only recomputes the value. |
+| `updateHudDisplayValues` :8505-8517 | `updateDisplayValues` (`HudPass.cpp:468`) | MATCH | Same per-frame advance with the elapsed time clamped to 100 ms and the same 50 ms catch-up constant (`HUD_SCORE_DISPLAY_CATCH_UP_MS = 50.0` vs the `deltaMs / 50.0` factor). |
+| `approachHudDisplayValue` | `approachDisplayValue` (`HudPass.cpp:454-466`) | MATCH | Same linear approach to the target, same saturation at one full step so a long frame cannot overshoot, same snap when the remainder is under 0.0001. Also returns the target unchanged for a non-finite current value. |
+| `buildBlockedComboPattern` / `drawBlockedComboPattern` / `blockedComboNoiseSample` / `blockedComboNoise` | broken-combo noise overlay | MATCH | Same deterministic noise pattern over the HUD when the combo is broken, with the same sampling. |
+
 ### Texture and text caches
 
 | Reference declaration | Port implementation | Verdict | Basis |
