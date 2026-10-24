@@ -2,16 +2,16 @@
 
 Generated from `docs/compare/inventory.json` by `tools/parity/coverage_matrix.py`. One row per reference declaration.
 
-Reference declarations: **2278** across 75 files.
+Reference declarations: **2276** across 75 files.
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| verified | 621 | named MATCH by a parity report |
-| fixed | 179 | named by a parity report with a fix |
+| verified | 714 | named MATCH by a parity report |
+| fixed | 180 | named by a parity report with a fix |
 | differs | 0 | named with a remaining difference |
-| excluded | 275 | deliberate exclusion, reason recorded |
-| matched-by-name | 154 | a port symbol with the same name exists |
-| unmatched | 895 | no same-name port symbol; needs a manual verdict |
+| excluded | 278 | deliberate exclusion, reason recorded |
+| matched-by-name | 152 | a port symbol with the same name exists |
+| unmatched | 800 | no same-name port symbol; needs a manual verdict |
 
 This matrix is an index. The authoritative per-function verdicts and the
 evidence line for each one are in the topical reports (`chart.md`, `core.md`, `judging.md`,
@@ -274,7 +274,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 55 | `SimpleOnGestureListener` | unmatched |  |
 | 56 | `onDown` | excluded |  |
 | 60 | `onSingleTapConfirmed` | unmatched |  |
-| 72 | `onDoubleTap` | unmatched |  |
+| 72 | `onDoubleTap` | verified |  |
 | 102 | `onTouchEvent` | verified |  |
 | 112 | `createContext` | unmatched |  |
 | 127 | `destroyContext` | unmatched |  |
@@ -312,8 +312,8 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 276 | `computeOutroPlainLineScaleX` | verified |  |
 | 283 | `computeStageTextureAlpha` | matched-by-name | `src\render\scene\Transition.cpp:107` `stageTextureAlpha` |
 | 306 | `computeSideArtworkAlpha` | matched-by-name | `src\render\scene\Transition.cpp:120` `sideArtworkAlpha` |
-| 314 | `hasIntroAudioReleaseElapsed` | unmatched |  |
-| 320 | `introDimMix` | unmatched |  |
+| 314 | `hasIntroAudioReleaseElapsed` | verified |  |
+| 320 | `introDimMix` | verified |  |
 | 335 | `outroDimMix` | matched-by-name | `src\render\scene\Transition.cpp:80` `outroDimMix` |
 | 351 | `computeBackgroundDimAlpha` | matched-by-name | `src\render\scene\Transition.cpp:127` `backgroundDimAlpha` |
 | 364 | `computeSideDimAlpha` | matched-by-name | `src\render\scene\Transition.cpp:135` `sideDimAlpha` |
@@ -330,61 +330,61 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 466 | `getAccuracyInternal` | verified |  |
 | 476 | `getRealtimeAccuracyInternal` | verified |  |
 | 818 | `PreloadedGif` | verified |  |
-| 1020 | `setJudgeLineWidth` | unmatched |  |
+| 1020 | `setJudgeLineWidth` | verified |  |
 | 1443 | `applyBlockTextureWrap` | verified |  |
 | 1454 | `applyTextureBilinearFilter` | verified |  |
 | 1464 | `applyTexturePointFilter` | verified |  |
 | 1474 | `maxFragTextureUnits` | verified |  |
-| 1552 | `GameRenderer` | excluded | `src\render\GameRenderer.cpp:1064` `GameRenderer` |
+| 1552 | `GameRenderer` | fixed | `src\render\GameRenderer.cpp:1064` `GameRenderer` |
 | 1726 | `sanitizeOfficialScreenDpi` | unmatched |  |
 | 1735 | `sanitizeHitOffsetIndicatorMode` | unmatched |  |
 | 1742 | `preloadGifTextures` | verified |  |
 | 1759 | `decodeGifFrames` | verified |  |
 | 1812 | `uploadPreloadedGifTextures` | verified |  |
-| 1877 | `onDoubleTap` | unmatched |  |
-| 1886 | `isInPauseHitArea` | unmatched |  |
-| 1893 | `computeRevealTransformedRect` | unmatched |  |
-| 1908 | `triggerPauseTouchFeedback` | unmatched |  |
-| 1912 | `isBeforeGameplayStartOrIntroTransition` | unmatched |  |
-| 1916 | `freezePlayheadForPause` | unmatched |  |
-| 1924 | `clearPausePlayheadFreeze` | unmatched |  |
-| 1929 | `shouldUsePausedPlayhead` | unmatched |  |
-| 1937 | `shouldPauseGameplayJudgement` | unmatched |  |
-| 1944 | `getPausedPlayheadSeconds` | unmatched |  |
-| 1950 | `resetIntroAudioToPausedStart` | unmatched |  |
-| 1958 | `enterPauseMenu` | unmatched |  |
-| 1980 | `beginResumeCountdown` | unmatched |  |
-| 2002 | `requestPauseMenu` | unmatched |  |
+| 1877 | `onDoubleTap` | verified |  |
+| 1886 | `isInPauseHitArea` | verified |  |
+| 1893 | `computeRevealTransformedRect` | verified |  |
+| 1908 | `triggerPauseTouchFeedback` | verified |  |
+| 1912 | `isBeforeGameplayStartOrIntroTransition` | verified |  |
+| 1916 | `freezePlayheadForPause` | verified |  |
+| 1924 | `clearPausePlayheadFreeze` | verified |  |
+| 1929 | `shouldUsePausedPlayhead` | verified |  |
+| 1937 | `shouldPauseGameplayJudgement` | verified |  |
+| 1944 | `getPausedPlayheadSeconds` | verified |  |
+| 1950 | `resetIntroAudioToPausedStart` | verified |  |
+| 1958 | `enterPauseMenu` | verified |  |
+| 1980 | `beginResumeCountdown` | verified |  |
+| 2002 | `requestPauseMenu` | verified |  |
 | 2010 | `onTouchEvent` | verified |  |
-| 2117 | `handleUiTap` | unmatched |  |
-| 2170 | `onSingleTap` | unmatched |  |
-| 2187 | `restartInternal` | unmatched |  |
-| 2340 | `applyPracticeSeek` | matched-by-name | `src\app\GameScreen.cpp:162` `applyPracticeSeek` |
-| 2459 | `firstNoteIndexAtOrAfter` | unmatched |  |
-| 2470 | `firstEffectIndexAtOrAfter` | unmatched |  |
-| 2481 | `requestPracticeSeek` | unmatched |  |
-| 2486 | `updatePracticeRepeat` | unmatched |  |
+| 2117 | `handleUiTap` | verified |  |
+| 2170 | `onSingleTap` | verified |  |
+| 2187 | `restartInternal` | verified |  |
+| 2340 | `applyPracticeSeek` | verified | `src\app\GameScreen.cpp:162` `applyPracticeSeek` |
+| 2459 | `firstNoteIndexAtOrAfter` | verified |  |
+| 2470 | `firstEffectIndexAtOrAfter` | verified |  |
+| 2481 | `requestPracticeSeek` | verified |  |
+| 2486 | `updatePracticeRepeat` | verified |  |
 | 2505 | `resetNativeRenderBucketRuntimeState` | unmatched |  |
 | 2519 | `transformTouchX` | fixed |  |
-| 2527 | `officialFingerWorldScalePx` | unmatched |  |
+| 2527 | `officialFingerWorldScalePx` | verified |  |
 | 2535 | `officialJudgePositionScalePx` | verified |  |
-| 2542 | `officialFingerWorldX` | unmatched |  |
-| 2546 | `officialFingerWorldY` | unmatched |  |
-| 2550 | `tryJudgeInputDown` | unmatched |  |
-| 2554 | `tryJudgeInputMove` | unmatched |  |
-| 2558 | `tryJudgeAt` | unmatched |  |
-| 2620 | `computeNoteHeadPosition` | unmatched |  |
+| 2542 | `officialFingerWorldX` | verified |  |
+| 2546 | `officialFingerWorldY` | verified |  |
+| 2550 | `tryJudgeInputDown` | verified |  |
+| 2554 | `tryJudgeInputMove` | verified |  |
+| 2558 | `tryJudgeAt` | verified |  |
+| 2620 | `computeNoteHeadPosition` | verified |  |
 | 2680 | `getPerfectWindowSec` | verified |  |
 | 2684 | `practiceJudgeOverrideActive` | verified |  |
 | 2689 | `tapPerfectWindowSec` | verified | `include\rechigros\game\JudgementEngine.hpp:57` `tapPerfectWindow` |
-| 2693 | `tapGoodWindowSec` | matched-by-name | `include\rechigros\game\JudgementEngine.hpp:65` `tapGoodWindow` |
-| 2697 | `setPracticePerfectWindowMs` | unmatched |  |
-| 2703 | `setPracticeGoodWindowMs` | unmatched |  |
-| 2709 | `getGoodWindowSec` | unmatched |  |
-| 2713 | `getBadWindowSec` | unmatched |  |
-| 2717 | `getOfficialFlickJudgeSpeed` | unmatched |  |
+| 2693 | `tapGoodWindowSec` | verified | `include\rechigros\game\JudgementEngine.hpp:65` `tapGoodWindow` |
+| 2697 | `setPracticePerfectWindowMs` | verified |  |
+| 2703 | `setPracticeGoodWindowMs` | verified |  |
+| 2709 | `getGoodWindowSec` | verified |  |
+| 2713 | `getBadWindowSec` | verified |  |
+| 2717 | `getOfficialFlickJudgeSpeed` | verified |  |
 | 2721 | `officialFlickJudgeSpeed` | verified |  |
-| 2726 | `getEarlyWindowSec` | unmatched |  |
+| 2726 | `getEarlyWindowSec` | verified |  |
 | 2731 | `getJudgeWindowSec` | verified | `src\core\JudgementEngine.cpp:99` `judgeWindowSec` |
 | 2744 | `getSpatialJudgeWindowSec` | verified |  |
 | 2770 | `officialCheckNoteCandidateReplaces` | verified |  |
@@ -402,37 +402,37 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 3017 | `buildPlayResult` | verified |  |
 | 3038 | `buildReplayPlaybackResult` | verified |  |
 | 3060 | `hasJudgementOffsetData` | verified |  |
-| 3068 | `onSurfaceCreated` | unmatched |  |
-| 3341 | `onSurfaceChanged` | unmatched |  |
+| 3068 | `onSurfaceCreated` | excluded |  |
+| 3341 | `onSurfaceChanged` | excluded |  |
 | 3390 | `computeStageRect` | matched-by-name | `src\render\fx\BlockCompositePass.cpp:237` `setStageRect` |
-| 3507 | `chartRevealCenterX` | unmatched |  |
-| 3511 | `chartRevealCenterY` | unmatched |  |
-| 3515 | `updateFrameChartRevealState` | unmatched |  |
+| 3507 | `chartRevealCenterX` | verified |  |
+| 3511 | `chartRevealCenterY` | verified |  |
+| 3515 | `updateFrameChartRevealState` | verified |  |
 | 3550 | `isChartRevealCameraActive` | matched-by-name | `src\app\GameScreen.cpp:80` `chartRevealCameraActive` |
-| 3554 | `shouldRevealHiddenChartObjects` | unmatched |  |
-| 3558 | `chartRevealHiddenFloorAlpha` | unmatched |  |
-| 3568 | `currentChartRevealScale` | unmatched |  |
-| 3573 | `chartRevealScreenX` | unmatched |  |
-| 3579 | `chartRevealScreenY` | unmatched |  |
-| 3585 | `computeRevealWorldBounds` | unmatched |  |
+| 3554 | `shouldRevealHiddenChartObjects` | verified |  |
+| 3558 | `chartRevealHiddenFloorAlpha` | verified |  |
+| 3568 | `currentChartRevealScale` | verified |  |
+| 3573 | `chartRevealScreenX` | verified |  |
+| 3579 | `chartRevealScreenY` | verified |  |
+| 3585 | `computeRevealWorldBounds` | verified |  |
 | 3602 | `onDrawFrame` | verified |  |
-| 3727 | `refreshPauseSceneBlur` | unmatched |  |
-| 3758 | `computeOfficialPauseBlurRadiusPx` | unmatched |  |
-| 3764 | `drawPauseBackdrop` | unmatched |  |
-| 3781 | `drawPauseBackdropTexture` | unmatched |  |
-| 3812 | `shouldPostProcessAntialias` | unmatched |  |
-| 3825 | `beginAntialiasFrame` | unmatched |  |
-| 3835 | `bindAntialiasTarget` | unmatched |  |
-| 3844 | `endAntialiasFrame` | unmatched |  |
-| 3851 | `drawFxaaToDefaultFramebuffer` | unmatched |  |
-| 3871 | `maybeAutoResumeAfterIntro` | unmatched |  |
-| 3894 | `beginIntroAudioStartWatchdog` | unmatched |  |
-| 3901 | `clearIntroAudioStartWatchdog` | unmatched |  |
-| 3908 | `maybeRetryIntroAudioStart` | unmatched |  |
-| 3943 | `releaseIntroAudioAtGameplayStart` | unmatched |  |
-| 3955 | `releaseAudioForResumeFade` | unmatched |  |
-| 3970 | `getResumeCountdownElapsedSec` | unmatched |  |
-| 3978 | `getPauseMenuElapsedSec` | unmatched |  |
+| 3727 | `refreshPauseSceneBlur` | verified |  |
+| 3758 | `computeOfficialPauseBlurRadiusPx` | verified |  |
+| 3764 | `drawPauseBackdrop` | verified |  |
+| 3781 | `drawPauseBackdropTexture` | verified |  |
+| 3812 | `shouldPostProcessAntialias` | verified |  |
+| 3825 | `beginAntialiasFrame` | verified |  |
+| 3835 | `bindAntialiasTarget` | verified |  |
+| 3844 | `endAntialiasFrame` | verified |  |
+| 3851 | `drawFxaaToDefaultFramebuffer` | verified |  |
+| 3871 | `maybeAutoResumeAfterIntro` | verified |  |
+| 3894 | `beginIntroAudioStartWatchdog` | verified |  |
+| 3901 | `clearIntroAudioStartWatchdog` | verified |  |
+| 3908 | `maybeRetryIntroAudioStart` | verified |  |
+| 3943 | `releaseIntroAudioAtGameplayStart` | verified |  |
+| 3955 | `releaseAudioForResumeFade` | verified |  |
+| 3970 | `getResumeCountdownElapsedSec` | verified |  |
+| 3978 | `getPauseMenuElapsedSec` | verified |  |
 | 3986 | `computePauseBackdropIntroAlpha` | matched-by-name | `src\render\scene\PauseBackdrop.cpp:63` `pauseBackdropIntroAlpha` |
 | 3995 | `computePauseButtonIntroAlpha` | matched-by-name | `src\app\GameScreen.cpp:644` `pauseButtonIntroAlpha` |
 | 4004 | `computeContinueButtonAlpha` | matched-by-name | `src\app\GameScreen.cpp:650` `continueButtonAlpha` |
@@ -440,35 +440,35 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 4020 | `computeResumeBackdropBrightness` | matched-by-name | `src\render\scene\PauseBackdrop.cpp:79` `resumeBackdropBrightness` |
 | 4026 | `computeResumeBackdropFlatten` | matched-by-name | `src\render\scene\PauseBackdrop.cpp:85` `resumeBackdropFlatten` |
 | 4032 | `evaluateHermiteCurve` | matched-by-name | `src\render\scene\PauseBackdrop.cpp:30` `evaluateHermiteCurve` |
-| 4065 | `finishResumeCountdown` | unmatched |  |
-| 4077 | `drawResumeCountdown` | unmatched |  |
-| 4108 | `drawOfficialCountdownDigit` | unmatched |  |
-| 4118 | `officialCountdownAlpha` | unmatched |  |
-| 4131 | `computeOfficialContinueBarX` | unmatched |  |
-| 4145 | `easeOutBack` | unmatched |  |
-| 4151 | `ensureCountdownTextures` | unmatched |  |
-| 4170 | `computeResumeFadeAlpha` | unmatched |  |
+| 4065 | `finishResumeCountdown` | verified |  |
+| 4077 | `drawResumeCountdown` | verified |  |
+| 4108 | `drawOfficialCountdownDigit` | verified |  |
+| 4118 | `officialCountdownAlpha` | verified |  |
+| 4131 | `computeOfficialContinueBarX` | verified |  |
+| 4145 | `easeOutBack` | verified |  |
+| 4151 | `ensureCountdownTextures` | verified |  |
+| 4170 | `computeResumeFadeAlpha` | verified |  |
 | 4180 | `renderGameplayFrame` | unmatched |  |
-| 4225 | `drawMessageEdgeMask` | unmatched |  |
+| 4225 | `drawMessageEdgeMask` | verified |  |
 | 4235 | `blockCompositeHasWork` | unmatched |  |
 | 4252 | `renderSceneWithPrprEffects` | unmatched |  |
-| 4452 | `drawHateBlackMaskOverlay` | unmatched |  |
-| 4489 | `drawBackgroundAndBarsOnly` | unmatched |  |
-| 4499 | `drawStageBackgroundOnly` | unmatched |  |
-| 4556 | `officialRawBackgroundHidden` | unmatched |  |
-| 4564 | `ensureKaleidoProgram` | unmatched |  |
-| 4569 | `ensureDsGridProgram` | unmatched |  |
-| 4574 | `isDesultorySignalsLevelEffects` | unmatched |  |
-| 4586 | `dsGridOverlayVisible` | unmatched |  |
+| 4452 | `drawHateBlackMaskOverlay` | verified |  |
+| 4489 | `drawBackgroundAndBarsOnly` | verified |  |
+| 4499 | `drawStageBackgroundOnly` | verified |  |
+| 4556 | `officialRawBackgroundHidden` | verified |  |
+| 4564 | `ensureKaleidoProgram` | verified |  |
+| 4569 | `ensureDsGridProgram` | verified |  |
+| 4574 | `isDesultorySignalsLevelEffects` | verified |  |
+| 4586 | `dsGridOverlayVisible` | verified |  |
 | 4620 | `drawGameplayObjects` | unmatched |  |
-| 4715 | `drawDsGridOverlay` | unmatched |  |
-| 4816 | `dsCanvasScaleFactor` | unmatched |  |
-| 4829 | `drawOfficialKaleidoBackdrop` | unmatched |  |
-| 4910 | `updateMessageStageMode` | unmatched |  |
-| 4936 | `advanceMessageParticles` | unmatched |  |
-| 4970 | `drawMessageParticles` | unmatched |  |
-| 5054 | `createParticleGlowTexture` | unmatched |  |
-| 5075 | `drawRevealScaledMasks` | unmatched |  |
+| 4715 | `drawDsGridOverlay` | verified |  |
+| 4816 | `dsCanvasScaleFactor` | verified |  |
+| 4829 | `drawOfficialKaleidoBackdrop` | verified |  |
+| 4910 | `updateMessageStageMode` | verified |  |
+| 4936 | `advanceMessageParticles` | verified |  |
+| 4970 | `drawMessageParticles` | verified |  |
+| 5054 | `createParticleGlowTexture` | verified |  |
+| 5075 | `drawRevealScaledMasks` | verified |  |
 | 5100 | `drawRevealOutsidePanel` | unmatched |  |
 | 5156 | `initPrprVideoRuntimes` | unmatched |  |
 | 5203 | `preparePrprVideoPlayer` | unmatched |  |
@@ -1077,7 +1077,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 100 | `OfficialLevelEffects` | unmatched |  |
+| 100 | `OfficialLevelEffects` | verified |  |
 | 108 | `isAvailable` | verified | `src\platform\FileDialog.cpp:131` `available` (+3) |
 | 117 | `loadRoot` | unmatched |  |
 | 127 | `loadByChart` | fixed |  |
@@ -1510,7 +1510,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 2439 | `setChallengeMode` | matched-by-name | `include\rechigros\game\JudgementEngine.hpp:43` `challengeMode` |
 | 2440 | `getBackgroundDim` | unmatched |  |
 | 2441 | `setBackgroundDim` | unmatched |  |
-| 2442 | `setJudgeLineWidth` | unmatched |  |
+| 2442 | `setJudgeLineWidth` | verified |  |
 | 2443 | `isLowResMode` | unmatched |  |
 | 2444 | `setLowResMode` | unmatched |  |
 | 2445 | `isAntialias` | unmatched |  |
@@ -2243,8 +2243,8 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 80 | `setBackgroundBitmap` | unmatched |  |
 | 206 | `setPendingBackground` | unmatched |  |
 | 213 | `TriGridRenderer` | unmatched |  |
-| 221 | `onSurfaceCreated` | unmatched |  |
-| 246 | `onSurfaceChanged` | unmatched |  |
+| 221 | `onSurfaceCreated` | excluded |  |
+| 246 | `onSurfaceChanged` | excluded |  |
 | 253 | `onDrawFrame` | verified |  |
 | 286 | `drawQuad` | matched-by-name | `src\app\TriGridBackdrop.cpp:281` `drawQuad` |
 | 298 | `swapPendingBackground` | unmatched |  |

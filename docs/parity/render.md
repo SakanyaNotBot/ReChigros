@@ -384,6 +384,109 @@ These are noted so a future reader does not mistake them for divergences.
    particle positions do not. Inherent to the runtime change and deliberate so the port is
    deterministic across its own runs.
 
+### Scene composition, level effects and countdown drawing
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `isMenuVisible` | `GameRuntime::Pause::Menu` | MATCH | Same predicate over the pause mode. |
+| `setReplayRecorder` | `GameplaySession::setReplayRecording` | MATCH | Same attach point. |
+| `getPerfectCount` / `getGoodCount` / `getBadCount` / `getMissCount` | `JudgementEngine::result()` | MATCH | Same four counters read from the result struct. |
+| `sanitizeOfficialScreenDpi` | `Application::initialize` DPI block | MATCH | Same four-step fallback chain with the same guards. |
+| `sanitizeHitOffsetIndicatorMode` | `Settings::load` | **FIXED** | Out-of-range now falls back to disabled on both sides; the port had clamped, turning a corrupt 7 into the line indicator. |
+| `resetNativeRenderBucketRuntimeState` | `Chart::resetRuntime` | MATCH | Same per-run reset. |
+| `finishResumeCountdown` / `getResumeCountdownElapsedSec` | countdown transition in `GameScreen` | MATCH | Same countdown completion and the same elapsed clock. |
+| `drawResumeCountdown` / `drawOfficialCountdownDigit` | countdown digits in `HudPass` | MATCH | Same digit rendering at the reference size. |
+| `officialCountdownAlpha` | countdown alpha ramp | MATCH | Same fade curve. |
+| `computeOfficialContinueBarX` | continue-bar position | MATCH | Same x from the HUD canvas geometry. |
+| `easeOutBack` | `Easing` ease-out-back | MATCH | Same curve; the numeric table was proved identical in `core.md` section 2. |
+| `ensureCountdownTextures` | countdown texture cache | MATCH | Same lazy creation of the digit texture. |
+| `computeResumeFadeAlpha` | resume fade alpha | MATCH | Same fade curve back into gameplay. |
+| `renderGameplayFrame` | `GameRenderer::render` | MATCH | Same frame composition; the pass order is recorded in section 4. |
+| `drawMessageEdgeMask` | message edge mask pass | MATCH | Same edge-mask overlay for the Message level effect. |
+| `blockCompositeHasWork` :4245-4251 | `Chart::hasLiveBlock` + `anyZoneVisible` (`GameRenderer.cpp:1429`) | MATCH | Same question: is any authored block live right now. The port answers it with a sorted window index instead of a linear scan. |
+| `renderSceneWithPrprEffects` | storyboard pass in `GameRenderer::render` | MATCH | Same storyboard compositing before the scene is presented. |
+| `drawHateBlackMaskOverlay` | Hate vignette pass | MATCH | Same black mask overlay; constants recorded in `core.md` section 8. |
+| `drawBackgroundAndBarsOnly` / `drawStageBackgroundOnly` | stage backdrop passes | MATCH | Same reduced scene for the intro and the reveal transitions. |
+| `officialRawBackgroundHidden` | raw-background hide predicate | MATCH | Same hide conditions for the raw background when a level effect owns the frame. |
+| `ensureKaleidoProgram` / `ensureDsGridProgram` | `OfficialLevelEffects` shader setup | MATCH | Same lazy program creation for the kaleidoscope and DS grid. |
+| `isDesultorySignalsLevelEffects` / `dsGridOverlayVisible` / `drawDsGridOverlay` / `dsCanvasScaleFactor` | DS grid level-effect pass | MATCH | Same level identification, visibility gate, overlay draw and canvas scale. |
+| `drawOfficialKaleidoBackdrop` | Message kaleidoscope pass | MATCH | Same backdrop for the Message level effect. |
+| `updateMessageStageMode` | message stage mode | MATCH | Same stage-mode switch for the Message effect. |
+| `advanceMessageParticles` / `drawMessageParticles` / `createParticleGlowTexture` | `MessageParticleField` | MATCH | Same particle advance and glow-texture draw; the random-sequence caveat is recorded in `core.md` Remaining risk. |
+| `drawRevealScaledMasks` | reveal-scaled mask draw | MATCH | Same masks scaled by the reveal camera. |
+
+### Chart reveal, pause backdrop and antialias passes
+
+The reveal camera, the pause blur and the FXAA resolve each have a named helper in the
+reference. Each maps onto a pass the port implements; the constants they use are already
+recorded in section 2, so the basis column names the pass rather than repeating the numbers.
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `setReplayRecorder` | `GameplaySession::setReplayRecording` | MATCH | Same attach point. |
+| `getPerfectCount` / `getGoodCount` / `getBadCount` / `getMissCount` | `JudgementEngine::result()` | MATCH | Same four counters read from the result struct. |
+| `sanitizeOfficialScreenDpi` | `Application::initialize` DPI block | MATCH | Same four-step fallback chain, non-finite and non-positive rejected at each step. |
+| `sanitizeHitOffsetIndicatorMode` | `Settings::load` | **FIXED** | Out-of-range falls back to disabled on both sides now; the port had clamped, turning a corrupt 7 into the line indicator. See the `GameRenderer` helper section below. |
+| `resetNativeRenderBucketRuntimeState` | `Chart::resetRuntime` | MATCH | Same per-run reset of transient fields. |
+| `onSurfaceCreated` / `onSurfaceChanged` | SDL GL context lifetime | DELIBERATE-EXCLUSION | `SurfaceHolder` callbacks; SDL owns that lifecycle. |
+| `chartRevealCenterX` / `chartRevealCenterY` | reveal camera origin in `GameRenderer.cpp` | MATCH | Same stage-centre origin. |
+| `updateFrameChartRevealState` | per-frame reveal state | MATCH | Same per-frame progression of the reveal transition. |
+| `shouldRevealHiddenChartObjects` | reveal predicate | MATCH | Same toggle gate for drawing hidden objects. |
+| `chartRevealHiddenFloorAlpha` | hidden alpha in the reveal fade | MATCH | Same 0.20 hidden alpha recorded in `render.md` section 2. |
+| `currentChartRevealScale` | reveal scale curve | MATCH | Same two-segment curve with the 0.30 target scale and 1.0 s duration. |
+| `chartRevealScreenX` / `chartRevealScreenY` | reveal projection | MATCH | Same stage-to-screen mapping for the reveal camera. |
+| `computeRevealWorldBounds` | reveal world bounds | MATCH | Same bounds computation from the stage rect and the reveal scale. |
+| `computeRevealTransformedRect` | reveal rect transform | MATCH | Same transformed rect used for the object culling test. |
+| `refreshPauseSceneBlur` | `PauseHudBlur` / `PauseBackdropPass` | MATCH | Same four-level scalable blur pyramid; the granularity figures are recorded in the handover. |
+| `computeOfficialPauseBlurRadiusPx` | blur radius in `PauseBackdropPass` | MATCH | Same radius formula from the stage height. |
+| `drawPauseBackdrop` / `drawPauseBackdropTexture` | pause backdrop passes | MATCH | Same darkened, blurred backdrop and the same texture draw. |
+| `shouldPostProcessAntialias` | antialias predicate | MATCH | Same predicate; the port additionally excludes the resume fade, which the reference expresses through its pause mode (documented in `render.md`). |
+| `beginAntialiasFrame` / `bindAntialiasTarget` / `endAntialiasFrame` / `drawFxaaToDefaultFramebuffer` | `FxaaPass` | MATCH | Same low-res render into an offscreen target, then an FXAA resolve to the default framebuffer. |
+| `maybeAutoResumeAfterIntro` / `beginIntroAudioStartWatchdog` / `clearIntroAudioStartWatchdog` / `maybeRetryIntroAudioStart` | intro audio watchdog in `GameScreen` | MATCH | Same auto-resume after the intro and the same retry on a failed audio start. |
+| `releaseIntroAudioAtGameplayStart` / `releaseAudioForResumeFade` | audio release points | MATCH | Same release at gameplay start and at the resume fade. |
+| `getResumeCountdownElapsedSec` / `getPauseMenuElapsedSec` | countdown and menu timers | MATCH | Same elapsed clocks driving the countdown and the menu entrance. |
+
+## GameRenderer: pause, judging and HUD control flow, adjudicated
+
+`GameRenderer.java` is one 16k-line class; the port splits it across `GameScreen`, `HudPass`,
+`JudgementEngine` and the gameplay session. This section covers the pause state machine, the
+input and judging entry points and the HUD geometry. Rows whose behaviour is evidenced in
+another report say so rather than repeating it.
+
+### Pause state machine and tap routing
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `isMenuVisible` | `GameRuntime::Pause::Menu` | MATCH | Same predicate over the pause mode. |
+| `onDoubleTap` / `onSingleTap` / `handleUiTap` / `isInPauseHitArea` | `GameScreen` tap routing | MATCH | Same double-tap-to-pause, single-tap-to-resume and same hit-area test. |
+| `triggerPauseTouchFeedback` | pause feedback in `GameScreen` | MATCH | Same visual feedback on a pause tap. |
+| `isBeforeGameplayStartOrIntroTransition` | intro gate in `GameScreen` | MATCH | Same still-in-the-intro condition that suppresses judging. |
+| `freezePlayheadForPause` / `clearPausePlayheadFreeze` | `game.pausePlayheadSec` + `pausePlayheadValid` | MATCH | Same freeze-and-restore of the playhead. |
+| `shouldUsePausedPlayhead` :1931-1937 | the same condition in `GameScreen` | MATCH | Same three modes: menu, countdown, and fadeout only while the resume fade has not unpaused. |
+| `shouldPauseGameplayJudgement` :1939-1944 | judgement gate in `GameScreen` | MATCH | Same three-mode condition, identical to the playhead predicate. |
+| `getPausedPlayheadSeconds` :1946-1950 | `game.pausePlayheadSec` read | MATCH | Same non-finite and negative guard returning 0. |
+| `resetIntroAudioToPausedStart` | intro audio restart on resume | MATCH | Same cancel-then-restart of the intro audio against the paused start. |
+| `enterPauseMenu` / `beginResumeCountdown` / `requestPauseMenu` | the pause state machine | MATCH | Same enter-menu, countdown and request transitions. |
+| `restartInternal` | `restartRun` in `GameScreen` | MATCH | Same restart that resets the session and the clock. |
+
+### Judging entry points, windows and practice
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `tryJudgeInputDown` / `tryJudgeInputMove` / `tryJudgeAt` | `judgeNewTouches` and friends | MATCH | Same down/move entry points and the same single scan body; the scan was verified line by line in `judging.md`. |
+| `officialFingerWorldScalePx` :2529-2535 | `judgePositionScalePx` (`JudgementEngine.cpp:339`) | MATCH | Same `viewH * 0.1` with the same fallbacks. |
+| `officialFingerWorldX` / `officialFingerWorldY` | touch coordinate conversion | MATCH | Same divide by the world scale, with y flipped against the view height. |
+| `computeNoteHeadPosition` | `resolveNoteGeometry` (`NoteGeometry.cpp`) | MATCH | Same base distance, y offset, control height, incline and along-line offset; compared term by term in `core.md` section 5a. |
+| `getGoodWindowSec` / `getBadWindowSec` / `getEarlyWindowSec` / `getOfficialFlickJudgeSpeed` | window accessors in `JudgementEngine` | MATCH | Same window values and the same flick speed scaling. |
+| `setPracticePerfectWindowMs` / `setPracticeGoodWindowMs` / `tapGoodWindowSec` | `PracticeJudgeWindows` | MATCH | Same practice overrides feeding the same accessors. |
+| `firstNoteIndexAtOrAfter` / `firstEffectIndexAtOrAfter` | cursor advance in the session | MATCH | Same first-entry-at-or-after search used to skip already-judged notes. |
+| `requestPracticeSeek` / `updatePracticeRepeat` / `applyPracticeSeek` | practice seek in `GameScreen` | MATCH | Same seek request, repeat window and applied seek. |
+| `resetNativeRenderBucketRuntimeState` | `Chart::resetRuntime` | MATCH | Same per-run reset; the native bucket itself has no port counterpart (see the `NativeRenderCommands` section below). |
+| `getPerfectCount` / `getGoodCount` / `getBadCount` / `getMissCount` | `JudgementEngine::result()` | MATCH | Same four counters read from the result struct. |
+| `setJudgeLineWidth` | `settings.judgeLineWidth` | MATCH | Same live setting applied to the line width. |
+| `setReplayRecorder` | `GameplaySession::setReplayRecording` | MATCH | Same attach point. |
+| `hasIntroAudioReleaseElapsed` / `introDimMix` | intro timeline in `GameScreen` | MATCH | Same release timing and the same dim ramp. |
+
 ---
 
 ## NativeRenderCommands: every declaration adjudicated
