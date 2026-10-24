@@ -6,12 +6,12 @@ Reference declarations: **2262** across 75 files.
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| verified | 1251 | named MATCH by a parity report |
+| verified | 1298 | named MATCH by a parity report |
 | fixed | 195 | named by a parity report with a fix |
 | differs | 0 | named with a remaining difference |
-| excluded | 372 | deliberate exclusion, reason recorded |
+| excluded | 383 | deliberate exclusion, reason recorded |
 | matched-by-name | 138 | a port symbol with the same name exists |
-| unmatched | 168 | no same-name port symbol; needs a manual verdict |
+| unmatched | 110 | no same-name port symbol; needs a manual verdict |
 
 This matrix is an index. The authoritative per-function verdicts and the
 evidence line for each one are in the topical reports (`chart.md`, `core.md`, `judging.md`,
@@ -710,67 +710,67 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 11889 | `isStageFullscreen` | verified |  |
 | 11899 | `enableStageScissor` | verified |  |
 | 11931 | `disableStageScissor` | verified |  |
-| 11935 | `withScreenScissor` | unmatched |  |
-| 11977 | `drawButton` | unmatched |  |
+| 11935 | `withScreenScissor` | verified |  |
+| 11977 | `drawButton` | verified |  |
 | 11981 | `computePracticeLayout` | matched-by-name | `src\app\GameScreen.cpp:770` `computePracticeLayout` |
-| 12041 | `computePracticeUiScale` | unmatched |  |
-| 12048 | `pdp` | unmatched |  |
-| 12053 | `btnRowTop` | unmatched |  |
-| 12057 | `practiceText` | unmatched |  |
-| 12069 | `drawPracticeTextCentered` | unmatched |  |
-| 12073 | `drawPracticeTextCentered` | unmatched |  |
-| 12084 | `drawPracticeTextLeft` | unmatched |  |
-| 12094 | `drawPracticeTextRight` | unmatched |  |
-| 12114 | `ensurePracticeUiTextures` | unmatched |  |
-| 12125 | `createRoundedMaskTexture` | unmatched |  |
-| 12136 | `createDiscTexture` | unmatched |  |
+| 12041 | `computePracticeUiScale` | verified |  |
+| 12048 | `pdp` | verified |  |
+| 12053 | `btnRowTop` | verified |  |
+| 12057 | `practiceText` | verified |  |
+| 12069 | `drawPracticeTextCentered` | verified |  |
+| 12073 | `drawPracticeTextCentered` | verified |  |
+| 12084 | `drawPracticeTextLeft` | verified |  |
+| 12094 | `drawPracticeTextRight` | verified |  |
+| 12114 | `ensurePracticeUiTextures` | verified |  |
+| 12125 | `createRoundedMaskTexture` | verified |  |
+| 12136 | `createDiscTexture` | verified |  |
 | 12146 | `drawRoundedRect` | matched-by-name | `src\app\GameScreen.cpp:341` `drawRoundedRect` |
-| 12185 | `drawDisc` | unmatched |  |
-| 12194 | `drawCapsule` | unmatched |  |
+| 12185 | `drawDisc` | verified |  |
+| 12194 | `drawCapsule` | verified |  |
 | 12202 | `practiceFormatTime` | matched-by-name | `src\app\GameScreen.cpp:698` `practiceFormatTime` |
 | 12208 | `practiceFormatTimePrecise` | matched-by-name | `src\app\GameScreen.cpp:706` `practiceFormatTimePrecise` |
-| 12216 | `drawPracticeMenu` | unmatched |  |
+| 12216 | `drawPracticeMenu` | verified |  |
 | 12321 | `drawCard` | matched-by-name | `src\app\GameScreen.cpp:347` `drawCard` |
-| 12329 | `drawJudgeMenu` | unmatched |  |
-| 12385 | `drawJudgeSliderRow` | unmatched |  |
+| 12329 | `drawJudgeMenu` | verified |  |
+| 12385 | `drawJudgeSliderRow` | verified |  |
 | 12404 | `drawPracticeButton` | matched-by-name | `src\app\GameScreen.cpp:928` `drawPracticeButton` |
-| 12419 | `practiceHandlesTouchDown` | unmatched |  |
-| 12473 | `practiceHandlesTouchMove` | unmatched |  |
+| 12419 | `practiceHandlesTouchDown` | verified |  |
+| 12473 | `practiceHandlesTouchMove` | verified |  |
 | 12510 | `updatePracticeFineScrub` | matched-by-name | `src\app\GameScreen.cpp:881` `updatePracticeFineScrub` |
-| 12535 | `applyPracticeFineScrubFromTouch` | unmatched |  |
+| 12535 | `applyPracticeFineScrubFromTouch` | verified |  |
 | 12543 | `applyPracticeSpeedFromTouch` | matched-by-name | `src\app\GameScreen.cpp:904` `applyPracticeSpeedFromTouch` |
-| 12551 | `judgePanelVisible` | unmatched |  |
-| 12556 | `applyPracticeJudgeFromTouch` | unmatched |  |
+| 12551 | `judgePanelVisible` | verified |  |
+| 12556 | `applyPracticeJudgeFromTouch` | verified |  |
 | 12570 | `applyPracticeScrubFromTouch` | matched-by-name | `src\app\GameScreen.cpp:898` `applyPracticeScrubFromTouch` |
 | 12578 | `setPracticeRepeatPoint` | matched-by-name | `src\app\GameScreen.cpp:838` `setPracticeRepeatPoint` |
 | 12601 | `togglePracticeRepeat` | matched-by-name | `src\app\GameScreen.cpp:862` `togglePracticeRepeat` |
-| 12611 | `practiceJump` | unmatched |  |
-| 12616 | `drawPauseButtons` | unmatched |  |
-| 12623 | `drawButton` | unmatched |  |
-| 12630 | `drawFullscreenTextureBackground` | unmatched |  |
-| 12642 | `drawFullscreenTextureFbo` | unmatched |  |
-| 12649 | `drawSolidRect` | unmatched |  |
+| 12611 | `practiceJump` | verified |  |
+| 12616 | `drawPauseButtons` | verified |  |
+| 12623 | `drawButton` | verified |  |
+| 12630 | `drawFullscreenTextureBackground` | verified |  |
+| 12642 | `drawFullscreenTextureFbo` | verified |  |
+| 12649 | `drawSolidRect` | verified |  |
 | 12654 | `drawLine` | verified |  |
-| 12667 | `drawTextureTopLeft` | unmatched |  |
-| 12678 | `drawTextureCentered` | unmatched |  |
+| 12667 | `drawTextureTopLeft` | verified |  |
+| 12678 | `drawTextureCentered` | verified |  |
 | 12725 | `isNoteRectInArea` | matched-by-name | `src\render\scene\NoteBatch.cpp:110` `isNoteRectInArea` |
-| 12755 | `drawFullQuadWithCurrentProgram` | unmatched |  |
-| 12796 | `rebuildTextureMetrics` | unmatched |  |
-| 12811 | `getNoteWidthScale` | unmatched |  |
-| 12817 | `getHoldUv` | unmatched |  |
+| 12755 | `drawFullQuadWithCurrentProgram` | verified |  |
+| 12796 | `rebuildTextureMetrics` | verified |  |
+| 12811 | `getNoteWidthScale` | verified |  |
+| 12817 | `getHoldUv` | verified |  |
 | 12824 | `buildHoldUv` | matched-by-name | `src\render\scene\NoteBatch.cpp:204` `buildHoldUv` |
-| 12882 | `getNoteHeadTexture` | unmatched |  |
-| 12895 | `getNoteHeadTextureSameType` | unmatched |  |
-| 12903 | `rebuildNoteHeadTextureDrawList` | unmatched |  |
-| 12923 | `rebuildNativeRenderBuckets` | unmatched |  |
-| 12964 | `buildNativeBucket` | unmatched |  |
-| 13009 | `matchesNativeBucket` | unmatched |  |
-| 13018 | `releaseNativeRenderBuckets` | unmatched |  |
-| 13036 | `findNoteHeadTextureBucket` | unmatched |  |
+| 12882 | `getNoteHeadTexture` | verified |  |
+| 12895 | `getNoteHeadTextureSameType` | verified |  |
+| 12903 | `rebuildNoteHeadTextureDrawList` | verified |  |
+| 12923 | `rebuildNativeRenderBuckets` | excluded |  |
+| 12964 | `buildNativeBucket` | excluded |  |
+| 13009 | `matchesNativeBucket` | excluded |  |
+| 13018 | `releaseNativeRenderBuckets` | excluded |  |
+| 13036 | `findNoteHeadTextureBucket` | verified |  |
 | 13086 | `invalidateGl` | verified |  |
-| 13098 | `isValidForContext` | unmatched |  |
-| 13102 | `getGifFrameTexId` | unmatched |  |
-| 13113 | `getGifFrameIndex` | unmatched |  |
+| 13098 | `isValidForContext` | verified |  |
+| 13102 | `getGifFrameTexId` | verified |  |
+| 13113 | `getGifFrameIndex` | verified |  |
 | 13137 | `set` | fixed |  |
 | 13138 | `width` | fixed | `include\rechigros\app\UiLayout.hpp:43` `width` (+5) |
 | 13139 | `height` | verified | `include\rechigros\app\UiLayout.hpp:44` `height` (+5) |
@@ -779,23 +779,23 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 13142 | `contains` | verified | `src\app\CalibrationScreen.cpp:293` `contains` |
 | 13170 | `PrprVideoRuntime` | excluded |  |
 | 13183 | `ready` | fixed | `include\rechigros\app\TriGridBackdrop.hpp:24` `ready` (+11) |
-| 13187 | `runOnPlayerThread` | unmatched |  |
+| 13187 | `runOnPlayerThread` | excluded |  |
 | 13195 | `start` | fixed |  |
 | 13212 | `pause` | fixed | `src\audio\AudioEngine.cpp:643` `pause` |
-| 13225 | `markPlaybackBlocked` | unmatched |  |
-| 13231 | `onPlaybackReleased` | unmatched |  |
+| 13225 | `markPlaybackBlocked` | excluded |  |
+| 13231 | `onPlaybackReleased` | excluded |  |
 | 13238 | `seekTo` | matched-by-name | `src\audio\AudioEngine.cpp:431` `seekTo` |
 | 13250 | `setPlaybackSpeed` | matched-by-name | `src\audio\AudioEngine.cpp:701` `setPlaybackSpeed` |
-| 13262 | `updateVideoSize` | unmatched |  |
-| 13282 | `maybeSamplePlayerPosition` | unmatched |  |
-| 13291 | `samplePlayerPosition` | unmatched |  |
-| 13301 | `hasFreshPositionSample` | unmatched |  |
+| 13262 | `updateVideoSize` | excluded |  |
+| 13282 | `maybeSamplePlayerPosition` | excluded |  |
+| 13291 | `samplePlayerPosition` | excluded |  |
+| 13301 | `hasFreshPositionSample` | excluded |  |
 | 13307 | `release` | fixed | `src\app\TriGridBackdrop.cpp:260` `release` (+11) |
-| 13346 | `FboTex` | unmatched |  |
-| 13354 | `releaseFbos` | unmatched |  |
-| 13386 | `ensurePrprFbos` | unmatched |  |
-| 13402 | `deleteFbo` | unmatched |  |
-| 13425 | `PrprShaderProgram` | unmatched |  |
+| 13346 | `FboTex` | verified |  |
+| 13354 | `releaseFbos` | verified |  |
+| 13386 | `ensurePrprFbos` | verified |  |
+| 13402 | `deleteFbo` | verified |  |
+| 13425 | `PrprShaderProgram` | verified |  |
 | 13465 | `applyDefaults` | unmatched |  |
 | 13486 | `getDefaultFloat` | unmatched |  |
 | 13499 | `UniformInfo` | unmatched |  |

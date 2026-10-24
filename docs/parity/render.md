@@ -384,6 +384,52 @@ These are noted so a future reader does not mistake them for divergences.
    particle positions do not. Inherent to the runtime change and deliberate so the port is
    deterministic across its own runs.
 
+### GIF frame selection and the video player internals
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `findNoteHeadTextureBucket` | note head texture lookup | MATCH | Same per-type bucket lookup used to pick the head texture. |
+| `isValidForContext` | GL context validity test | MATCH | Same "is this handle from the current context" check; the port tracks a context version the same way. |
+| `getGifFrameTexId` / `getGifFrameIndex` :13120-13131 | `AnimatedTexture::frameForTime` (`TextureCache.cpp:146-158`) | MATCH | Same accumulation: take the elapsed time modulo the total, walk the frame delays subtracting each, return the frame the remainder falls in, and clamp to the last frame. Frame delays are the same table, and a non-positive delay falls back the same way. |
+| `runOnPlayerThread` / `markPlaybackBlocked` / `onPlaybackReleased` / `updateVideoSize` / `maybeSamplePlayerPosition` / `samplePlayerPosition` / `hasFreshPositionSample` | — | DELIBERATE-EXCLUSION | These drive the Android video player: its thread hop, its block/release state and its position sampling. The port parses the video records but does not decode video, so there is no player to drive. Recorded as a known gap. |
+| `FboTex` / `releaseFbos` / `ensurePrprFbos` / `deleteFbo` / `PrprShaderProgram` | port FBO members and `gl::ShaderProgram` | MATCH | Same FBO alloc/release lifetime and the same program wrapper for the storyboard chain; the port uses its own types rather than nested classes. |
+
+### Pause buttons, texture draws and note texture selection
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `practiceJump` | practice jump in `GameScreen.cpp` | MATCH | Same forward/back jump with the same clamping to the playable range. |
+| `drawPauseButtons` | pause menu buttons | MATCH | Same resume/restart/exit button set at the same anchors. |
+| `drawFullscreenTextureBackground` / `drawFullscreenTextureFbo` | fullscreen texture and FBO blits | MATCH | Same fullscreen quad draw for a texture and for an FBO colour attachment. |
+| `drawSolidRect` / `drawTextureTopLeft` / `drawTextureCentered` | rect and anchored texture draws | MATCH | Same solid rect and the same two anchoring modes. |
+| `drawFullQuadWithCurrentProgram` | fullscreen quad draw with the bound program | MATCH | Same draw of the shared fullscreen quad with whatever program is bound. |
+| `rebuildTextureMetrics` | texture metric refresh | MATCH | Same recompute of the cached size-dependent metrics after a resize. |
+| `getNoteWidthScale` :12813-12817 | `widthScaleFor` (`NoteBatch.hpp:58-63`) | MATCH | Same rule: a non-highlighted note, or a type outside the table, keeps scale 1; otherwise the type's second column is used. The port passes the highlight flag where the reference compares `morebets == 1`, which is the same condition. |
+| `getHoldUv` | hold UV selection at the note draw | MATCH | Same pick between the plain and the highlighted hold UV set, with the same fallback to the plain set when highlighting is off. |
+| `getNoteHeadTexture` / `getNoteHeadTextureSameType` | note head texture pick | MATCH | Same per-type texture lookup with the same highlighting substitution. |
+| `rebuildNoteHeadTextureDrawList` | note head draw list build | MATCH | Same per-frame build of the note head draw list. |
+| `rebuildNativeRenderBuckets` / `buildNativeBucket` / `matchesNativeBucket` / `releaseNativeRenderBuckets` | — | DELIBERATE-EXCLUSION | These build the per-line buckets the JNI renderer consumes. The port renders in-process and walks the line list directly, so there is no bucket to build or match. See the `NativeRenderCommands` section. |
+
+### Practice-mode UI and the judge panel
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `withScreenScissor` | scissor helper around UI draws (`GameScreen.cpp`) | MATCH | Same save-set-restore of the scissor box around a UI region. |
+| `drawButton` | `drawSkewButton` in `GameScreen.cpp` | MATCH | Same skewed button plate with the same label centring and press feedback. |
+| `computePracticeUiScale` :12044-12048 | `practicePanelScale` (`GameScreen.cpp:346-351`) | MATCH | Identical: `clamp(min(stageH / dp(500), stageW / dp(720)), 0.5, 1)`. |
+| `pdp` :12051-12053 | `uiScale * gameDp(stage)` at the practice draw sites | MATCH | Same `value * density * practiceUiScale` product. |
+| `btnRowTop` | button row anchor in the practice panel | MATCH | Same anchor at the exit button's top edge. |
+| `practiceText` | text drawn from the shared glyph strip | **DIFFERENT BY DESIGN** | The reference caches one texture per practice string; the port draws the string from the per-size glyph strip. Same glyphs, no per-string upload. |
+| `drawPracticeTextCentered` (2 overloads) / `drawPracticeTextLeft` / `drawPracticeTextRight` | centred/left/right label draws | MATCH | Same three alignments at the same anchors. |
+| `ensurePracticeUiTextures` / `createRoundedMaskTexture` / `createDiscTexture` | rounded-rect and disc primitives | MATCH | Same rounded plate and the same filled disc, built from primitives rather than from uploaded masks. |
+| `drawDisc` / `drawCapsule` | disc and capsule draws in the practice panel | MATCH | Same disc and capsule geometry at the same radii. |
+| `drawPracticeMenu` | practice menu in `GameScreen.cpp` | MATCH | Same panel with the same rows; the layout constants are recorded in the handover. |
+| `drawJudgeMenu` / `drawJudgeSliderRow` | judge panel and its slider row | MATCH | Same judgement-display panel and the same slider row. |
+| `practiceHandlesTouchDown` / `practiceHandlesTouchMove` | practice panel touch routing | MATCH | Same hit test deciding whether the panel takes the press before the play field does. |
+| `applyPracticeFineScrubFromTouch` | fine scrub in `GameScreen.cpp` | MATCH | Same fine-scrub mapping from the touch x to the playhead. |
+| `judgePanelVisible` | judge panel visibility predicate | MATCH | Same visibility gate. |
+| `applyPracticeJudgeFromTouch` | judge-from-touch in `GameScreen.cpp` | MATCH | Same forward/back jump applied from the tapped position. |
+
 ### Batching, hit-effect particles and the side backgrounds
 
 | Reference declaration | Port implementation | Verdict | Basis |
