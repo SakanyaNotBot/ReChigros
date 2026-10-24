@@ -384,6 +384,31 @@ These are noted so a future reader does not mistake them for divergences.
    particle positions do not. Inherent to the runtime change and deliberate so the port is
    deterministic across its own runs.
 
+### Storyboard effects and video playback
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `isMenuVisible` | `GameRuntime::Pause::Menu` | MATCH | Same pause-mode predicate. |
+| `setReplayRecorder` | `GameplaySession::setReplayRecording` | MATCH | Same attach point. |
+| `getPerfectCount` / `getGoodCount` / `getBadCount` / `getMissCount` | `JudgementEngine::result()` | MATCH | Same four counters. |
+| `sanitizeOfficialScreenDpi` | `Application::initialize` DPI block | MATCH | Same fallback chain. |
+| `sanitizeHitOffsetIndicatorMode` | `Settings::load` | **FIXED** | Out-of-range falls back to disabled; the port had clamped. |
+| `resetNativeRenderBucketRuntimeState` | `Chart::resetRuntime` | MATCH | Same per-run reset. |
+| `renderGameplayFrame` | `GameRenderer::render` | MATCH | Same frame composition; pass order in section 4. |
+| `blockCompositeHasWork` | `Chart::hasLiveBlock` | MATCH | Same live-block question, answered through a sorted window index. |
+| `renderSceneWithPrprEffects` | stage + global effect chain in `GameRenderer.cpp:1644-1665` | MATCH | Same two-segment order: stage-scoped first, then global with the HUD composited in, so a chart with no global effect leaves the HUD unshaded. |
+| `applyPrprEffectChain` | `applyStageScopedChain` / the global segment | MATCH | Same chain application, same split between stage and full-frame passes. |
+| `applyPrprEffectPass` | per-effect pass in the chain | MATCH | Same single-pass application with the effect's uniforms. |
+| `applyOfficialBloomPass` / `drawBloomStage` | storyboard bloom pass | MATCH | Same bloom pass over the stage; constants recorded in section 2. |
+| `setUniform1f` | uniform setters in the pass wrapper | MATCH | Same scalar uniform upload. |
+| `drawGameplayObjects` | `drawHudPass` + line/note batches | MATCH | Same draw order for lines, notes and HUD. |
+| `drawRevealOutsidePanel` | reveal outside-panel draw | MATCH | Same dimmed region outside the reveal panel. |
+| `initPrprVideoRuntimes` / `preparePrprVideoPlayer` / `releasePrprVideoRuntimes` / `pausePrprVideoRuntimes` / `resetPrprVideoRuntimes` | — | DELIBERATE-EXCLUSION | The reference plays storyboard videos through ExoPlayer on Android. The port parses and keeps the `prprVideo` records (so charts using them still load) but does not decode video: that needs a platform media stack which is outside this port's dependency set. Recorded as a known gap. |
+| `onVideoSizeChanged` / `onPlaybackStateChanged` / `onPlayerError` | — | DELIBERATE-EXCLUSION | ExoPlayer callbacks for the above. |
+| `setPrprVideoPlaybackSpeed` / `setPrprVideoPlaybackSpeedAll` | — | DELIBERATE-EXCLUSION | Playback-rate control for the same player. |
+| `drawPrprVideos` / `canPrprVideosPlay` / `syncPrprVideo` / `seekPrprVideo` / `updatePrprVideoFrame` | — | DELIBERATE-EXCLUSION | Video texture upload and presentation; same gap as above. |
+| `drawExternalVideoCentered` / `drawExternalTextureCentered` | — | DELIBERATE-EXCLUSION | Helpers for presenting the decoded video frame. |
+
 ### Scene composition, level effects and countdown drawing
 
 | Reference declaration | Port implementation | Verdict | Basis |

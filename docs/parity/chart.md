@@ -290,6 +290,37 @@ and the import core. Each entry names the port code carrying the behaviour.
 | `TriGridRenderer` / `onSurfaceCreated` / `onSurfaceChanged` | `TriGridBackdrop::initialize` / `resize` | MATCH | Same program creation and the same size-dependent state. |
 | `createProgram` / `compileShader` | `shader::build` in the renderer | MATCH | Same compile/link with the same failure logging. |
 
+### Event parsing helpers
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `parseGifEvents` / `parseColorEvents` / `parseTextEvents` | gif / colour / text parsers in `RpeChartParser.cpp` | MATCH | Same key aliases and the same per-event field reads. |
+| `parseNotesIntoLine` / `parseRpeNoteAbove` / `parseRpeAboveFlag` | note assembly in `RpeChartParser.cpp` | MATCH | Same above/below split and the same `isAbove` aliases. |
+| `RpeNoteControlRaw` / `parseNoteControls` / `parseNoteControlsAny` | note-control parsing | MATCH | Same control list parse with the same two-entry default sentinel dropped (row 4.60). |
+| `withValueFallbacks` / `valueAtStart` | fallback read helpers | MATCH | Same "first present alias wins, else default" rule. |
+| `speedEventAt` | speed-event lookup | MATCH | Same find of the event covering a time. |
+| `ensureCoverageRotate` / `ensureCoverageAlpha` / `ensureCoveragePos` / `ensureCoverage1D` | `ensureCoverage` template (`RpeChartParser.cpp:207`) | MATCH | One template covers the four specialisations; same "empty list gets a full-span default" rule and the same leading-gap fill. |
+| `ensureCoverageMove` (2 overloads) | `ensureMoveCoverage` (`:220`) | MATCH | Same full-span default with the caller's x/y, same leading-gap fill. |
+| `ensureCoverageSpeed` / `defaultSpeed` | speed coverage (`:936-942`) | MATCH | Same default event: start 0, end 1e9, `value = endValue = 1`. |
+| `canPair` / `looksLikeJudgeLineArray` | array-shape probes in the parser | MATCH | Same shape checks deciding whether a node is a line array. |
+| `asObj` / `getAsArray` / `getAsObject` / `getAsInt` | json accessors | MATCH | Same coercion with the same defaults. |
+| `resolvePath` | resource path resolution | MATCH | Same resolve against the chart directory. |
+| `toXNorm` / `toYRaw` / `toNotePosX` / `clamp01f` | coordinate helpers | MATCH | Same normalisations (`/2048`, `/1400`, `670 * 9/80`) and the same clamp. |
+| `BpmPoint` / `toTimeline` | `BpmPoint` / `BpmConverter::timeline` | MATCH | Same BPM point record and the same timeline build. |
+
+### GameDialog internals
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `GameDialog` | `ImGui::BeginPopupModal` | DELIBERATE-EXCLUSION | Modal dialog realised with the toolkit's popup rather than a hand-built view group. |
+| `setPositiveButton` (2) / `setNegativeButton` (2) / `setNeutralButton` (2) | `ImGui::Button` pairs at each call site | MATCH | Same confirm/cancel/third actions with the same labels. |
+| `configureWindow` | `SetNextWindowPos` / `SetNextWindowSize` | MATCH | Same centring and size rule. |
+| `ButtonCell` / `ItemRow` | popup button and row drawing | DELIBERATE-EXCLUSION | Custom `View` subclasses for the dialog's buttons and rows; the popup draws them directly. |
+| `PressHighlight` / `dispatchSetPressed` / `setPressed` | shared press state | MATCH | Same pressed-state highlight on a press. |
+| `isStateful` / `onStateChange` | per-frame state read | DELIBERATE-EXCLUSION | Android drawable state callbacks; the port reads the press state each frame. |
+| `setAlpha` (2) / `setColorFilter` (2) / `getOpacity` (2) | alpha and tint applied at draw time | MATCH | Same alpha and tint applied to the button surface and the row. |
+| `setShift` / `SlantBox` | skew geometry of the dialog surface | DELIBERATE-EXCLUSION | The skewed panel shape; the port's popup has no skewed surface. |
+
 ### Every remaining `RpeChartParser` declaration, adjudicated
 
 The reference factors its parsing into many small `private static` helpers. The port keeps the

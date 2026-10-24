@@ -2,16 +2,16 @@
 
 Generated from `docs/compare/inventory.json` by `tools/parity/coverage_matrix.py`. One row per reference declaration.
 
-Reference declarations: **2276** across 75 files.
+Reference declarations: **2273** across 75 files.
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| verified | 714 | named MATCH by a parity report |
+| verified | 814 | named MATCH by a parity report |
 | fixed | 180 | named by a parity report with a fix |
 | differs | 0 | named with a remaining difference |
-| excluded | 278 | deliberate exclusion, reason recorded |
-| matched-by-name | 152 | a port symbol with the same name exists |
-| unmatched | 800 | no same-name port symbol; needs a manual verdict |
+| excluded | 313 | deliberate exclusion, reason recorded |
+| matched-by-name | 149 | a port symbol with the same name exists |
+| unmatched | 668 | no same-name port symbol; needs a manual verdict |
 
 This matrix is an index. The authoritative per-function verdicts and the
 evidence line for each one are in the topical reports (`chart.md`, `core.md`, `judging.md`,
@@ -451,7 +451,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 4180 | `renderGameplayFrame` | unmatched |  |
 | 4225 | `drawMessageEdgeMask` | verified |  |
 | 4235 | `blockCompositeHasWork` | unmatched |  |
-| 4252 | `renderSceneWithPrprEffects` | unmatched |  |
+| 4252 | `renderSceneWithPrprEffects` | verified |  |
 | 4452 | `drawHateBlackMaskOverlay` | verified |  |
 | 4489 | `drawBackgroundAndBarsOnly` | verified |  |
 | 4499 | `drawStageBackgroundOnly` | verified |  |
@@ -460,7 +460,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 4569 | `ensureDsGridProgram` | verified |  |
 | 4574 | `isDesultorySignalsLevelEffects` | verified |  |
 | 4586 | `dsGridOverlayVisible` | verified |  |
-| 4620 | `drawGameplayObjects` | unmatched |  |
+| 4620 | `drawGameplayObjects` | verified |  |
 | 4715 | `drawDsGridOverlay` | verified |  |
 | 4816 | `dsCanvasScaleFactor` | verified |  |
 | 4829 | `drawOfficialKaleidoBackdrop` | verified |  |
@@ -469,33 +469,33 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 4970 | `drawMessageParticles` | verified |  |
 | 5054 | `createParticleGlowTexture` | verified |  |
 | 5075 | `drawRevealScaledMasks` | verified |  |
-| 5100 | `drawRevealOutsidePanel` | unmatched |  |
-| 5156 | `initPrprVideoRuntimes` | unmatched |  |
-| 5203 | `preparePrprVideoPlayer` | unmatched |  |
+| 5100 | `drawRevealOutsidePanel` | verified |  |
+| 5156 | `initPrprVideoRuntimes` | excluded |  |
+| 5203 | `preparePrprVideoPlayer` | excluded |  |
 | 5219 | `Listener` | excluded |  |
-| 5220 | `onVideoSizeChanged` | unmatched |  |
-| 5224 | `onPlaybackStateChanged` | unmatched |  |
-| 5239 | `onPlayerError` | unmatched |  |
-| 5257 | `setPrprVideoPlaybackSpeed` | unmatched |  |
-| 5262 | `setPrprVideoPlaybackSpeedAll` | unmatched |  |
-| 5268 | `releasePrprVideoRuntimes` | unmatched |  |
-| 5272 | `releasePrprVideoRuntimes` | unmatched |  |
+| 5220 | `onVideoSizeChanged` | excluded |  |
+| 5224 | `onPlaybackStateChanged` | excluded |  |
+| 5239 | `onPlayerError` | excluded |  |
+| 5257 | `setPrprVideoPlaybackSpeed` | excluded |  |
+| 5262 | `setPrprVideoPlaybackSpeedAll` | excluded |  |
+| 5268 | `releasePrprVideoRuntimes` | excluded |  |
+| 5272 | `releasePrprVideoRuntimes` | excluded |  |
 | 5279 | `release` | fixed | `src\app\TriGridBackdrop.cpp:260` `release` (+11) |
-| 5283 | `pausePrprVideoRuntimes` | unmatched |  |
-| 5292 | `resetPrprVideoRuntimes` | unmatched |  |
-| 5310 | `drawPrprVideos` | unmatched |  |
-| 5368 | `canPrprVideosPlay` | unmatched |  |
-| 5374 | `syncPrprVideo` | unmatched |  |
-| 5407 | `seekPrprVideo` | unmatched |  |
-| 5411 | `seekPrprVideo` | unmatched |  |
-| 5426 | `updatePrprVideoFrame` | unmatched |  |
-| 5436 | `drawExternalVideoCentered` | unmatched |  |
-| 5484 | `drawExternalTextureCentered` | unmatched |  |
-| 5538 | `applyPrprEffectChain` | unmatched |  |
-| 5558 | `applyPrprEffectPass` | unmatched |  |
-| 5622 | `applyOfficialBloomPass` | unmatched |  |
-| 5723 | `drawBloomStage` | unmatched |  |
-| 5743 | `setUniform1f` | unmatched |  |
+| 5283 | `pausePrprVideoRuntimes` | excluded |  |
+| 5292 | `resetPrprVideoRuntimes` | excluded |  |
+| 5310 | `drawPrprVideos` | excluded |  |
+| 5368 | `canPrprVideosPlay` | excluded |  |
+| 5374 | `syncPrprVideo` | excluded |  |
+| 5407 | `seekPrprVideo` | excluded |  |
+| 5411 | `seekPrprVideo` | excluded |  |
+| 5426 | `updatePrprVideoFrame` | excluded |  |
+| 5436 | `drawExternalVideoCentered` | excluded |  |
+| 5484 | `drawExternalTextureCentered` | excluded |  |
+| 5538 | `applyPrprEffectChain` | verified |  |
+| 5558 | `applyPrprEffectPass` | verified |  |
+| 5622 | `applyOfficialBloomPass` | verified |  |
+| 5723 | `drawBloomStage` | verified |  |
+| 5743 | `setUniform1f` | verified |  |
 | 5748 | `setUniform2f` | unmatched |  |
 | 5753 | `setUniform3f` | unmatched |  |
 | 5758 | `setUniform1i` | unmatched |  |
@@ -777,7 +777,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 13140 | `centerX` | verified | `include\rechigros\app\UiLayout.hpp:45` `centerX` (+1) |
 | 13141 | `centerY` | verified | `include\rechigros\app\UiLayout.hpp:46` `centerY` (+1) |
 | 13142 | `contains` | verified | `src\app\CalibrationScreen.cpp:293` `contains` |
-| 13170 | `PrprVideoRuntime` | unmatched |  |
+| 13170 | `PrprVideoRuntime` | excluded |  |
 | 13183 | `ready` | fixed | `include\rechigros\app\TriGridBackdrop.hpp:24` `ready` (+11) |
 | 13187 | `runOnPlayerThread` | unmatched |  |
 | 13195 | `start` | fixed |  |
@@ -1044,7 +1044,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 100 | `call` | fixed |  |
 | 151 | `parseBlockAreas` | matched-by-name | `src\chart\OfficialChartParser.cpp:125` `parseBlockAreas` |
 | 245 | `parseJudgeLine` | matched-by-name | `src\chart\RpeChartParser.cpp:806` `parseJudgeLine` |
-| 303 | `parseNotes` | matched-by-name | `src\chart\OfficialChartParser.cpp:44` `parseNotes` (+1) |
+| 303 | `parseNotes` | verified | `src\chart\OfficialChartParser.cpp:44` `parseNotes` (+1) |
 | 344 | `parseLineEvents1D` | unmatched |  |
 | 372 | `parseMoveComponentEvents` | unmatched |  |
 | 420 | `parseSpeedEventsOfficial` | unmatched |  |
@@ -1053,11 +1053,11 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 502 | `defaultSpeedEvents` | unmatched |  |
 | 546 | `parseEventTime` | matched-by-name | `src\chart\RpeChartParser.cpp:105` `eventTime` |
 | 556 | `getAsDouble` | fixed |  |
-| 565 | `getAsInt` | unmatched |  |
+| 565 | `getAsInt` | verified |  |
 | 574 | `getAsBool` | fixed |  |
 | 588 | `getFirst` | verified |  |
-| 597 | `asObj` | unmatched |  |
-| 602 | `asArray` | unmatched |  |
+| 597 | `asObj` | verified |  |
+| 602 | `asArray` | verified |  |
 | 612 | `copyLineEvent` | unmatched |  |
 
 ## `com\wuying\phigros\game\OfficialEase.java`
@@ -1122,14 +1122,14 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 18 | `PecChartParser` | unmatched |  |
 | 23 | `parse` | fixed | `src\chart\PecChartParser.cpp:248` `parse` (+4) |
 | 258 | `clampEase` | verified | `src\chart\PecChartParser.cpp:85` `clampEase` |
-| 264 | `parseNote` | matched-by-name | `src\chart\PecChartParser.cpp:87` `parseNote` (+1) |
-| 307 | `toNotePosX` | unmatched |  |
+| 264 | `parseNote` | verified | `src\chart\PecChartParser.cpp:87` `parseNote` (+1) |
+| 307 | `toNotePosX` | verified |  |
 | 311 | `stripComments` | unmatched |  |
 | 317 | `parseDouble` | unmatched |  |
 | 326 | `round4` | verified |  |
 | 339 | `lb` | fixed |  |
 | 352 | `SpeedPoint` | unmatched |  |
-| 361 | `BpmPoint` | unmatched |  |
+| 361 | `BpmPoint` | verified |  |
 | 366 | `buildSpeedEvents` | fixed |  |
 | 400 | `normalizeMoveEvents` | unmatched |  |
 | 425 | `normalizeLineEvents` | unmatched |  |
@@ -1139,7 +1139,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 573 | `convertMoveEventsBeats` | unmatched |  |
 | 592 | `convertLineEventsBeats` | unmatched |  |
 | 609 | `defaultMove` | verified |  |
-| 622 | `defaultSpeed` | unmatched |  |
+| 622 | `defaultSpeed` | verified |  |
 | 633 | `defaultLine` | verified |  |
 | 651 | `BpmConverter` | verified | `src\chart\PecChartParser.cpp:55` `BpmConverter` (+1) |
 | 670 | `baseBpm` | verified | `src\chart\PecChartParser.cpp:64` `baseBpm` (+1) |
@@ -1174,7 +1174,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 34 | `PrprVideo` | verified |  |
+| 34 | `PrprVideo` | excluded |  |
 | 52 | `emptyEvents` | verified |  |
 | 57 | `alphaAt` | matched-by-name | `src\render\fx\BadEffectField.cpp:8` `alphaAt` |
 | 61 | `dimAt` | unmatched |  |
@@ -1226,23 +1226,23 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 1233 | `parseInclineEvents` | verified |  |
 | 1248 | `applyStaticSkew` | verified |  |
 | 1260 | `parseStaticSkew` | verified |  |
-| 1273 | `parseGifEvents` | unmatched |  |
-| 1314 | `parseColorEvents` | unmatched |  |
-| 1364 | `parseTextEvents` | unmatched |  |
-| 1414 | `parseNotesIntoLine` | unmatched |  |
-| 1465 | `parseRpeNoteAbove` | unmatched |  |
-| 1479 | `parseRpeAboveFlag` | unmatched |  |
-| 1516 | `parseNote` | matched-by-name | `src\chart\PecChartParser.cpp:87` `parseNote` (+1) |
-| 1637 | `RpeNoteControlRaw` | unmatched |  |
-| 1644 | `parseNoteControls` | unmatched |  |
-| 1660 | `parseNoteControlsAny` | unmatched |  |
-| 1672 | `parseNoteControlsAny` | unmatched |  |
-| 1712 | `withValueFallbacks` | unmatched |  |
+| 1273 | `parseGifEvents` | verified |  |
+| 1314 | `parseColorEvents` | verified |  |
+| 1364 | `parseTextEvents` | verified |  |
+| 1414 | `parseNotesIntoLine` | verified |  |
+| 1465 | `parseRpeNoteAbove` | verified |  |
+| 1479 | `parseRpeAboveFlag` | verified |  |
+| 1516 | `parseNote` | verified | `src\chart\PecChartParser.cpp:87` `parseNote` (+1) |
+| 1637 | `RpeNoteControlRaw` | verified |  |
+| 1644 | `parseNoteControls` | verified |  |
+| 1660 | `parseNoteControlsAny` | verified |  |
+| 1672 | `parseNoteControlsAny` | verified |  |
+| 1712 | `withValueFallbacks` | verified |  |
 | 1723 | `mergeSpeedLayers` | matched-by-name | `src\chart\RpeChartParser.cpp:504` `mergeSpeedLayers` |
 | 1777 | `SpeedLayerCursor` | verified |  |
-| 1781 | `valueAtStart` | unmatched |  |
+| 1781 | `valueAtStart` | verified |  |
 | 1826 | `valueBefore` | verified |  |
-| 1869 | `speedEventAt` | unmatched |  |
+| 1869 | `speedEventAt` | verified |  |
 | 1873 | `start` | fixed |  |
 | 1874 | `end` | fixed |  |
 | 1880 | `speedAt` | verified | `src\core\EventUtils.cpp:740` `speedAt` |
@@ -1256,36 +1256,36 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 1983 | `evalSpeedBezier` | matched-by-name | `src\chart\RpeChartParser.cpp:380` `evalSpeedBezier` |
 | 1995 | `buildSpeedSubBezierLut` | matched-by-name | `src\chart\RpeChartParser.cpp:411` `buildSpeedSubBezierLut` |
 | 2015 | `addMergedSpeedEvent` | matched-by-name | `src\chart\RpeChartParser.cpp:429` `addMergedSpeedEvent` |
-| 2053 | `ensureCoverageRotate` | unmatched |  |
-| 2057 | `ensureCoverageAlpha` | unmatched |  |
-| 2061 | `ensureCoveragePos` | unmatched |  |
-| 2065 | `ensureCoverage1D` | unmatched |  |
-| 2089 | `ensureCoverageMove` | unmatched |  |
-| 2093 | `ensureCoverageMove` | unmatched |  |
-| 2120 | `ensureCoverageSpeed` | unmatched |  |
+| 2053 | `ensureCoverageRotate` | verified |  |
+| 2057 | `ensureCoverageAlpha` | verified |  |
+| 2061 | `ensureCoveragePos` | verified |  |
+| 2065 | `ensureCoverage1D` | verified |  |
+| 2089 | `ensureCoverageMove` | verified |  |
+| 2093 | `ensureCoverageMove` | verified |  |
+| 2120 | `ensureCoverageSpeed` | verified |  |
 | 2173 | `defaultMove` | verified |  |
-| 2186 | `defaultSpeed` | unmatched |  |
-| 2197 | `canPair` | unmatched |  |
+| 2186 | `defaultSpeed` | verified |  |
+| 2197 | `canPair` | verified |  |
 | 2214 | `selectJudgeLineArray` | fixed |  |
-| 2224 | `looksLikeJudgeLineArray` | unmatched |  |
-| 2238 | `asObj` | unmatched |  |
-| 2244 | `getAsArray` | unmatched |  |
-| 2254 | `getAsObject` | unmatched |  |
+| 2224 | `looksLikeJudgeLineArray` | verified |  |
+| 2238 | `asObj` | verified |  |
+| 2244 | `getAsArray` | verified |  |
+| 2254 | `getAsObject` | verified |  |
 | 2264 | `getFirst` | verified |  |
 | 2273 | `getAsDouble` | fixed |  |
-| 2285 | `getAsInt` | unmatched |  |
+| 2285 | `getAsInt` | verified |  |
 | 2297 | `getAsBool` | fixed |  |
 | 2316 | `getAsString` | verified |  |
-| 2326 | `resolvePath` | unmatched |  |
-| 2337 | `toXNorm` | unmatched |  |
-| 2342 | `toYRaw` | unmatched |  |
-| 2347 | `toNotePosX` | unmatched |  |
+| 2326 | `resolvePath` | verified |  |
+| 2337 | `toXNorm` | verified |  |
+| 2342 | `toYRaw` | verified |  |
+| 2347 | `toNotePosX` | verified |  |
 | 2352 | `parseBeat` | verified | `src\chart\RpeChartParser.cpp:83` `parseBeat` |
 | 2391 | `parseBezierPoints` | fixed | `src\core\EventUtils.cpp:16` `hasBezierPoints` |
 | 2423 | `parseVec2` | fixed | `src\chart\RpeChartParser.cpp:235` `vec2` |
 | 2443 | `parseRgb` | verified | `src\chart\RpeChartParser.cpp:672` `rgb` |
-| 2483 | `clamp01f` | unmatched |  |
-| 2493 | `BpmPoint` | unmatched |  |
+| 2483 | `clamp01f` | verified |  |
+| 2493 | `BpmPoint` | verified |  |
 | 2505 | `BpmConverter` | verified | `src\chart\PecChartParser.cpp:55` `BpmConverter` (+1) |
 | 2524 | `baseBpm` | verified | `src\chart\PecChartParser.cpp:64` `baseBpm` (+1) |
 | 2531 | `beatToSec` | fixed | `src\chart\PecChartParser.cpp:67` `beatToSec` (+2) |
@@ -1430,56 +1430,56 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 1403 | `addActionRow` | unmatched |  |
 | 1420 | `addDualActions` | unmatched |  |
 | 1435 | `addReplayRow` | matched-by-name | `src\app\SettingsScreen.cpp:558` `replayRow` |
-| 1459 | `rowBase` | unmatched |  |
-| 1466 | `smallButton` | unmatched |  |
-| 1483 | `applyDetailBackground` | unmatched |  |
-| 1514 | `clearDetailBackground` | unmatched |  |
-| 1519 | `renderDetail` | unmatched |  |
-| 1635 | `updateDetailTextSafety` | unmatched |  |
-| 1648 | `DetailCanvasHost` | unmatched |  |
-| 1660 | `textInset` | unmatched |  |
-| 1664 | `updateTextSafety` | unmatched |  |
+| 1459 | `rowBase` | verified |  |
+| 1466 | `smallButton` | verified |  |
+| 1483 | `applyDetailBackground` | verified |  |
+| 1514 | `clearDetailBackground` | verified |  |
+| 1519 | `renderDetail` | verified |  |
+| 1635 | `updateDetailTextSafety` | verified |  |
+| 1648 | `DetailCanvasHost` | excluded |  |
+| 1660 | `textInset` | verified |  |
+| 1664 | `updateTextSafety` | verified |  |
 | 1696 | `onMeasure` | excluded |  |
 | 1713 | `onLayout` | verified |  |
-| 1729 | `SettingsBackdrop` | unmatched |  |
+| 1729 | `SettingsBackdrop` | verified |  |
 | 1730 | `onDraw` | excluded |  |
-| 1742 | `addDetailText` | unmatched |  |
-| 1751 | `showSearchDialog` | unmatched |  |
-| 1781 | `showPageJumpDialog` | unmatched |  |
-| 1801 | `showDetailInfoDialog` | unmatched |  |
-| 1816 | `showSkinSelectDialog` | unmatched |  |
-| 1829 | `deleteSelectedSkin` | unmatched |  |
+| 1742 | `addDetailText` | verified |  |
+| 1751 | `showSearchDialog` | verified |  |
+| 1781 | `showPageJumpDialog` | verified |  |
+| 1801 | `showDetailInfoDialog` | verified |  |
+| 1816 | `showSkinSelectDialog` | verified |  |
+| 1829 | `deleteSelectedSkin` | verified |  |
 | 1844 | `selectedSkinName` | verified |  |
 | 1851 | `hitOffsetLabel` | matched-by-name | `src\app\SettingsScreen.cpp:370` `hitOffsetLabel` |
-| 1858 | `cycleHitOffsetMode` | unmatched |  |
-| 1864 | `loadOnlineIndex` | unmatched |  |
+| 1858 | `cycleHitOffsetMode` | verified |  |
+| 1864 | `loadOnlineIndex` | excluded |  |
 | 1899 | `confirmDownload` | excluded |  |
 | 1908 | `downloadChart` | excluded |  |
-| 1939 | `ensureOnlineCover` | unmatched |  |
-| 1979 | `filterLocal` | unmatched |  |
-| 1991 | `filterOnline` | unmatched |  |
-| 2004 | `toggleLocalSelection` | unmatched |  |
-| 2018 | `updateLocalSelectionState` | unmatched |  |
-| 2024 | `toggleSelectAllLocal` | unmatched |  |
-| 2037 | `confirmDeleteSelected` | unmatched |  |
-| 2057 | `startSelectedRecord` | unmatched |  |
-| 2061 | `startSelectedRecord` | unmatched |  |
+| 1939 | `ensureOnlineCover` | excluded |  |
+| 1979 | `filterLocal` | verified |  |
+| 1991 | `filterOnline` | excluded |  |
+| 2004 | `toggleLocalSelection` | verified |  |
+| 2018 | `updateLocalSelectionState` | verified |  |
+| 2024 | `toggleSelectAllLocal` | verified |  |
+| 2037 | `confirmDeleteSelected` | verified |  |
+| 2057 | `startSelectedRecord` | verified |  |
+| 2061 | `startSelectedRecord` | verified |  |
 | 2071 | `playReplay` | matched-by-name | `src\app\ResultScreen.cpp:378` `playReplay` |
-| 2098 | `startPlay` | unmatched |  |
-| 2102 | `startPlay` | unmatched |  |
-| 2115 | `putPlaySettings` | unmatched |  |
-| 2157 | `handleIncomingIntent` | unmatched |  |
-| 2203 | `describeFile` | unmatched |  |
-| 2211 | `initLaunchers` | unmatched |  |
-| 2302 | `tryUpdateSongInfo` | unmatched |  |
-| 2317 | `launchPickZip` | unmatched |  |
-| 2321 | `launchPickMusic` | unmatched |  |
-| 2325 | `launchPickChart` | unmatched |  |
-| 2329 | `launchPickBg` | unmatched |  |
-| 2333 | `launchPickSkin` | unmatched |  |
-| 2337 | `launchPickReplayZip` | unmatched |  |
-| 2341 | `selectLocalChart` | unmatched |  |
-| 2352 | `getSelectedChartId` | unmatched |  |
+| 2098 | `startPlay` | verified |  |
+| 2102 | `startPlay` | verified |  |
+| 2115 | `putPlaySettings` | verified |  |
+| 2157 | `handleIncomingIntent` | verified |  |
+| 2203 | `describeFile` | verified |  |
+| 2211 | `initLaunchers` | verified |  |
+| 2302 | `tryUpdateSongInfo` | verified |  |
+| 2317 | `launchPickZip` | verified |  |
+| 2321 | `launchPickMusic` | verified |  |
+| 2325 | `launchPickChart` | verified |  |
+| 2329 | `launchPickBg` | verified |  |
+| 2333 | `launchPickSkin` | verified |  |
+| 2337 | `launchPickReplayZip` | verified |  |
+| 2341 | `selectLocalChart` | verified |  |
+| 2352 | `getSelectedChartId` | verified |  |
 | 2357 | `clearSelectedChartIfDeleted` | unmatched |  |
 | 2369 | `onOnlineChartImported` | unmatched |  |
 | 2374 | `getSelectedSkinIndex` | verified |  |
@@ -1647,7 +1647,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 118 | `create` | excluded |  |
 | 124 | `show` | verified |  |
 | 131 | `onCreate` | excluded |  |
-| 141 | `configureWindow` | unmatched |  |
+| 141 | `configureWindow` | verified |  |
 | 177 | `show` | verified |  |
 | 187 | `dismiss` | fixed |  |
 | 205 | `AnimatorListenerAdapter` | excluded |  |
@@ -1673,47 +1673,47 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 546 | `applySlant` | excluded |  |
 | 574 | `onDraw` | excluded |  |
 | 584 | `onTouchEvent` | verified |  |
-| 595 | `ButtonCell` | unmatched |  |
+| 595 | `ButtonCell` | excluded |  |
 | 618 | `onDraw` | excluded |  |
-| 632 | `dispatchSetPressed` | unmatched |  |
-| 638 | `setPressed` | unmatched |  |
-| 652 | `PressHighlight` | unmatched |  |
-| 654 | `isStateful` | unmatched |  |
-| 656 | `onStateChange` | unmatched |  |
+| 632 | `dispatchSetPressed` | verified |  |
+| 638 | `setPressed` | verified |  |
+| 652 | `PressHighlight` | verified |  |
+| 654 | `isStateful` | excluded |  |
+| 656 | `onStateChange` | excluded |  |
 | 665 | `draw` | fixed | `src\render\fx\BadEffectField.cpp:41` `draw` (+10) |
-| 682 | `setAlpha` | unmatched |  |
-| 684 | `setColorFilter` | unmatched |  |
-| 685 | `getOpacity` | unmatched |  |
-| 693 | `ItemRow` | unmatched |  |
-| 695 | `setShift` | unmatched |  |
+| 682 | `setAlpha` | verified |  |
+| 684 | `setColorFilter` | verified |  |
+| 685 | `getOpacity` | verified |  |
+| 693 | `ItemRow` | excluded |  |
+| 695 | `setShift` | excluded |  |
 | 708 | `onDraw` | excluded |  |
-| 723 | `SlantBox` | unmatched |  |
+| 723 | `SlantBox` | excluded |  |
 | 728 | `draw` | fixed | `src\render\fx\BadEffectField.cpp:41` `draw` (+10) |
-| 744 | `setAlpha` | unmatched |  |
-| 746 | `setColorFilter` | unmatched |  |
-| 747 | `getOpacity` | unmatched |  |
+| 744 | `setAlpha` | verified |  |
+| 746 | `setColorFilter` | verified |  |
+| 747 | `getOpacity` | verified |  |
 
 ## `com\wuying\phigros\ui\GameTextOverlay.java`
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
 | 21 | `GameTextOverlay` | unmatched |  |
-| 28 | `configure` | unmatched |  |
+| 28 | `configure` | verified |  |
 | 37 | `setColors` | unmatched |  |
 | 42 | `captureExternalColor` | unmatched |  |
 | 45 | `draw` | fixed | `src\render\fx\BadEffectField.cpp:41` `draw` (+10) |
-| 79 | `setAlpha` | unmatched |  |
-| 80 | `setColorFilter` | unmatched |  |
-| 81 | `getOpacity` | unmatched |  |
-| 82 | `isStateful` | unmatched |  |
-| 83 | `onStateChange` | unmatched |  |
+| 79 | `setAlpha` | verified |  |
+| 80 | `setColorFilter` | verified |  |
+| 81 | `getOpacity` | verified |  |
+| 82 | `isStateful` | excluded |  |
+| 83 | `onStateChange` | excluded |  |
 
 ## `com\wuying\phigros\ui\GameTextRenderer.java`
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
 | 26 | `invalidate` | excluded | `include\rechigros\app\ChartLibrary.hpp:70` `invalidate` (+1) |
-| 28 | `prepare` | verified | `src\app\TriGridBackdrop.cpp:217` `prepare` (+8) |
+| 28 | `prepare` | excluded | `src\app\TriGridBackdrop.cpp:217` `prepare` (+8) |
 | 81 | `fits` | fixed |  |
 | 95 | `build` | fixed | `src\render\fx\FullscreenPass.cpp:70` `build` (+1) |
 | 106 | `height` | verified | `include\rechigros\app\UiLayout.hpp:44` `height` (+5) |
@@ -1740,7 +1740,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 86 | `onConfigurationChanged` | excluded |  |
 | 90 | `displayText` | verified |  |
 | 99 | `alignment` | verified |  |
-| 106 | `prepare` | verified | `src\app\TriGridBackdrop.cpp:217` `prepare` (+8) |
+| 106 | `prepare` | excluded | `src\app\TriGridBackdrop.cpp:217` `prepare` (+8) |
 | 115 | `onMeasure` | excluded |  |
 | 136 | `textTop` | verified |  |
 | 142 | `getBaseline` | verified |  |
@@ -2006,7 +2006,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 240 | `updateManageActions` | unmatched |  |
 | 257 | `updateStateText` | unmatched |  |
 | 269 | `setHeaderCollapsed` | excluded |  |
-| 292 | `confirmDeleteSelected` | unmatched |  |
+| 292 | `confirmDeleteSelected` | verified |  |
 | 309 | `exportSelected` | unmatched |  |
 | 329 | `attachTextWatchers` | unmatched |  |
 | 332 | `SimpleWatcher` | excluded |  |

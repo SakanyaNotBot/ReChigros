@@ -273,6 +273,39 @@ behaviour that the interface depends on is pinned.
 | `onConfigurationChanged` / `animationsEnabled` | `Application` density refresh, `Settings` | DELIBERATE-EXCLUSION | Configuration and animation-scale changes are Android system settings; the port re-reads density each frame and has no system animation scale. |
 | `drawCompoundDrawables` / `setSelected` | per-screen icon drawing | DELIBERATE-EXCLUSION | Compound drawables are an Android `TextView` feature; icons are drawn explicitly where the reference would attach them. |
 
+## ChartSelectActivity: list, detail, dialogs and file pickers
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `refreshLocalChartsOnResume` | `ChartLibrary::records` + `warmUpAsync` | MATCH | Both re-scan the pack directory when the list may be stale. |
+| `findLocalRecordById` | `ChartLibrary::find` | MATCH | Same lookup by id. |
+| `settingsCard` | `BlockBuilder::heading` + section gap | MATCH | Same heading and bottom gap. |
+| `addSwitch` / `addSliderRow` / `addEditRow` / `addActionRow` / `addDualActions` | `BlockBuilder::toggle`/`slider`/`edit`/`action`/`dual` | MATCH | Same control set with the same metrics. |
+| `rowBase` / `smallButton` | row and small-button helpers in `SettingsScreen` | MATCH | Same base row and the same small button style. |
+| `applyDetailBackground` / `clearDetailBackground` | detail backdrop in `DetailScreen` | MATCH | Same blurred-artwork backdrop, applied and cleared on the same transitions. |
+| `renderDetail` | `drawDetailScreen` | MATCH | Same detail page. |
+| `updateDetailTextSafety` / `updateTextSafety` / `textInset` | detail text fitting | MATCH | Same inset and the same ellipsis when the text would overflow. |
+| `DetailCanvasHost` | `DetailScreen` draw host | DELIBERATE-EXCLUSION | A custom `ViewGroup` that hosts the detail canvas; the port draws the page directly. |
+| `addDetailText` | detail label draw calls | MATCH | Same labels at the same anchors. |
+| `SettingsBackdrop` | settings backdrop drawing | MATCH | Same slanted band behind the settings rows. |
+| `showSearchDialog` | library search field | MATCH | Same query box and the same filter application. |
+| `showPageJumpDialog` | page jump control | MATCH | Same jump-to-page field with the same clamp. |
+| `showDetailInfoDialog` | detail info panel | MATCH | Same metadata panel. |
+| `showSkinSelectDialog` | skin selection surface | MATCH | Same selection surface with the same entries; the row metrics are in `ui.md`. |
+| `deleteSelectedSkin` | skin delete path | MATCH | Same delete with the same built-in-entry refusal. |
+| `cycleHitOffsetMode` | hit-offset mode cycle | MATCH | Same 0→1→2→0 cycle through the sanitizer. |
+| `loadOnlineIndex` / `ensureOnlineCover` | — | DELIBERATE-EXCLUSION | Online library paging and remote covers; the port ships local packs only (see the online section in `ui.md`). |
+| `filterLocal` | query filter in `drawLibraryScreen` | MATCH | Same case-insensitive substring match over song name and difficulty. |
+| `filterOnline` | — | DELIBERATE-EXCLUSION | Filter over the remote index, which the port does not have. |
+| `toggleLocalSelection` / `updateLocalSelectionState` / `toggleSelectAllLocal` | selection set in `drawLibraryScreen` | MATCH | Same per-row toggle, same count readout, same select-all that respects the active filter. |
+| `confirmDeleteSelected` | delete-selected action | MATCH | Same confirmation then delete of every selected id. |
+| `startSelectedRecord` / `startPlay` / `putPlaySettings` | `populatePlay` + `navigateTo(Game)` | MATCH | Same play-setup assembly and the same hand-off to the gameplay screen. |
+| `handleIncomingIntent` | `handleIncomingPath` | MATCH | Same routing of a delivered document to the import path. |
+| `describeFile` | import dialog description | MATCH | Same kind label shown for a picked file. |
+| `initLaunchers` / `launchPickZip` / `launchPickMusic` / `launchPickChart` / `launchPickBg` / `launchPickSkin` / `launchPickReplayZip` | `ImportDialogs` pickers | MATCH | Same seven picker entry points; the port drives them with path fields and the platform picker. |
+| `selectLocalChart` / `getSelectedChartId` | `context.activeChartId` | MATCH | Same selected-chart state. |
+| `tryUpdateSongInfo` | info edit path | MATCH | Same info-file update for a selected pack. |
+
 ## Every remaining `ChartSelectActivity` declaration, adjudicated
 
 The reference builds its screens by assembling Android views; the port draws them immediately.
