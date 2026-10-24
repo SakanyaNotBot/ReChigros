@@ -288,12 +288,20 @@ void BlockCompositePass::rasteriseMasks(const std::vector<BlockMaskQuad>& maskAQ
   auto& vertices = maskVertices_;
   vertices.clear();
   vertices.reserve(maskAQuads.size() * 6U * 6U + maskBQuads.size() * 6U * 6U);
-  const std::size_t firstA = vertices.size();
+  // These are float indices into the interleaved buffer; glDrawArrays takes vertex indices,
+  // and every vertex is kFloatsPerVertex floats. Using the float index directly skipped the
+  // first two thirds of the second mask's geometry, so any quad whose range started past the
+  // first mask read the wrong vertices — the hover channel written into the second mask was
+  // silently dropped this way.
+  constexpr std::size_t kFloatsPerVertex = 6;
+  const std::size_t firstAFloat = vertices.size();
   for (const auto& quad : maskAQuads) appendQuad(vertices, quad, width_, height_);
-  const std::size_t firstB = vertices.size();
+  const std::size_t firstBFloat = vertices.size();
   for (const auto& quad : maskBQuads) appendQuad(vertices, quad, width_, height_);
-  const std::size_t vertexCountA = (firstB - firstA) / 6;
-  const std::size_t vertexCountB = vertices.size() / 6 - vertexCountA;
+  const std::size_t firstA = firstAFloat / kFloatsPerVertex;
+  const std::size_t firstB = firstBFloat / kFloatsPerVertex;
+  const std::size_t vertexCountA = firstB - firstA;
+  const std::size_t vertexCountB = vertices.size() / kFloatsPerVertex - firstB;
 
   maskProgram_.use();
   glBindVertexArray(maskVao_);

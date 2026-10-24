@@ -824,7 +824,49 @@ code that carries the behaviour.
 | `PreloadedGif` / `preloadGifTextures` / `decodeGifFrames` / `uploadPreloadedGifTextures` | `GifTexture` cache in the renderer | MATCH | Same "decode every frame of a `.gif` line texture once, then upload once" behaviour; the port keeps the frames in a renderer-side cache keyed by path. |
 | `applyBlockTextureWrap` / `applyTextureBilinearFilter` / `applyTexturePointFilter` / `maxFragTextureUnits` | `TextureCache`, `BlockCompositePass` sampling setup | MATCH | Same wrap and filter policy per texture class; the composite's point-versus-bilinear choice is recorded in `game_renderer_residual.md`. |
 
-## Follow-up: block touch hover (partially wired, probe still fails)
+## Follow-up: block touch hover (wired and verified)
+
+The reference lights a spot under a held finger inside a block zone. The port now reproduces it,
+and the fix exposed a real rendering defect on the way.
+
+**The defect.** `BlockCompositePass::rasteriseMasks` built its vertex buffer as an interleaved
+array of `float` and then used the **float** index as the `glDrawArrays` **vertex** index:
+
+```cpp
+const std::size_t firstB = vertices.size();          // float index
+...
+glDrawArrays(GL_TRIANGLES, firstB, vertexCountB);    // expects a vertex index
+```
+
+Every vertex is six floats. Once the first mask contributed geometry, the second mask's draw
+started three times too deep into the buffer and read the wrong vertices, so anything written
+only into the second mask was silently dropped. The two masks now convert explicitly
+(`kFloatsPerVertex`), which is why the hover channel can be seen at all.
+
+**What is now proven.** `block_probe` stage 5b composites the same frame with and without one
+held point and compares the pictures:
+
+```
+uniform touchCount=32 touchPos=33 touchPos[0]=33 touchShineValue=43
+hover quads added: 1 (maskB total 1)
+no-touch vs touch: 2.61135% of channels differ
+PASS: the touch uniforms affect the composite
+```
+
+The second mask's alpha carries the hover coverage (178 = 0.7 against a cleared background,
+2009 pixels lit), and `build/block-probe/09b_touch.png` shows the glow inside the zone.
+
+**Wiring summary.** `BlockCompositePass::TouchState` (held points plus wall clock) is fed from
+`RenderFrameInput::touches`; `GameRenderer` converts the points into the shader's space
+(`uv * screenSize / screenSize.y`); `ShaderProgram::set2fv` uploads the `touchPos[MAX_TOUCH]`
+array; `BlockOverlay::appendHoverQuads` writes the coverage into the second mask's alpha channel.
+
+**Not covered.** The probe drives the shader with a synthetic scene and a synthetic point. The
+real hover sprite (`official_textures/TouchHover.png`) is not sampled: the composite's own SDF
+union produces the shape, so the sprite is only needed for the sprite-based path the reference
+also has. A device check of the real glow is still outstanding.
+
+
 
 The reference lights a spot under a held finger inside a block zone. This records exactly how
 far the port got and what the probe still reports.

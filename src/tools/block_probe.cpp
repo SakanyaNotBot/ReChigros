@@ -552,13 +552,16 @@ int main(int argc, char** argv) {
               point.radius = 0.18F * static_cast<float>(height);
               hoverPoints.push_back(point);
               fx::BlockOverlay::appendHoverQuads(hoverPoints, hoverB);
-              std::cout << "  hover quads added: " << (hoverB.size() - maskB.size()) << "\n";
+              std::cout << "  hover quads added: " << (hoverB.size() - maskB.size())
+                        << " (maskB total " << hoverB.size() << ")\n";
               pass.rasteriseMasks(maskA, hoverB);
               pass.runPrepasses(options.chartTimeSec);
               // Prove the hover really landed in the second mask's alpha channel: the
               // composite reads it from there, so if this dump is unchanged nothing
               // downstream can possibly react to the touch.
-              dumpTarget(pass.mask(1), options.outputDirectory / "03b_mask_hover.png", true);
+              // Dumped WITHOUT the opaque flag: the hover lives in the alpha channel, which
+              // that flag overwrites with 255, so the earlier comparison could never see it.
+              dumpTarget(pass.mask(1), options.outputDirectory / "03b_mask_hover.png");
             }
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             glViewport(0, 0, width, height);
