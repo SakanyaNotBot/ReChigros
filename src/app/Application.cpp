@@ -1149,9 +1149,11 @@ void Application::pollGpuTimer() {
       nanoseconds = value;
     }
 #else
-    unsigned long long value = 0;
+    // GLuint64 is unsigned long on LP64 hosts and unsigned long long on Windows, so the
+    // value is read through the type the GL loader declares rather than a fixed-width one.
+    GLuint64 value = 0;
     glGetQueryObjectui64v(gpuQueries_[slot], GL_QUERY_RESULT, &value);
-    nanoseconds = value;
+    nanoseconds = static_cast<unsigned long long>(value);
 #endif
     if (sample < static_cast<int>(frameSamples_.size())) {
       frameSamples_[static_cast<std::size_t>(sample)].gpuMs =

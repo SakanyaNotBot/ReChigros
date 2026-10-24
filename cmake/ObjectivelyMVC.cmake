@@ -64,6 +64,7 @@ endif()
 # known, so they are added directly: a local SDL3 source tree, the fetched build copy, and
 # the two fetched extension trees.
 foreach(candidate
+    "${RECHIGROS_SDL_SOURCE}/include"
     "${PROJECT_SOURCE_DIR}/third_party/SDL3/include"
     "${CMAKE_BINARY_DIR}/third_party/SDL3/include-revision"
     "${CMAKE_BINARY_DIR}/third_party/SDL3/include"
@@ -100,6 +101,11 @@ function(build_gnu_c_library omvc_target)
   endforeach()
   # The libraries include SDL3, SDL3_ttf and SDL3_image headers by their canonical
   # <SDL3/...> spelling, so their include roots are passed alongside the framework's own.
+  # RECHIGROS_SDL_SOURCE may be set only after this file is included, so it is re-read here.
+  if(RECHIGROS_SDL_SOURCE AND IS_DIRECTORY "${RECHIGROS_SDL_SOURCE}/include"
+     AND NOT "${RECHIGROS_SDL_SOURCE}/include" IN_LIST OMVC_DEP_INCLUDES)
+    list(APPEND OMVC_DEP_INCLUDES "${RECHIGROS_SDL_SOURCE}/include")
+  endif()
   foreach(dep_include IN LISTS OMVC_DEP_INCLUDES)
     list(APPEND omvc_include_args "-I${dep_include}")
   endforeach()
@@ -108,8 +114,18 @@ function(build_gnu_c_library omvc_target)
   # use and its Windows SDK headers redefine `interface`, which is a field name here.
   if(NOT MSVC)
     add_library(${omvc_target} STATIC ${omvc_sources})
-    target_include_directories(${omvc_target} PUBLIC ${OMVC_PUBLIC_INCLUDES})
+    # The public includes are what consumers see; the dependency roots (SDL3, SDL3_ttf,
+    # SDL3_image) and the framework's own sibling trees are what the library's own sources
+    # need, because they include each other by <Objectively/...> and <SDL3/...> spelling.
+    target_include_directories(${omvc_target}
+      PUBLIC ${OMVC_PUBLIC_INCLUDES}
+      PRIVATE ${OMVC_DEP_INCLUDES})
     target_compile_options(${omvc_target} PRIVATE -w)
+    # GLIBC hides dladdr's Dl_info unless the feature-test macro is on; the reference builds
+    # set it globally, and this library reads it for class introspection.
+    if(NOT WIN32)
+      target_compile_definitions(${omvc_target} PRIVATE _GNU_SOURCE)
+    endif()
     set_target_properties(${omvc_target} PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
     return()
   endif()
@@ -156,7 +172,48 @@ function(build_gnu_c_library omvc_target)
   target_link_libraries(${omvc_target} INTERFACE "${omvc_archive}")
 endfunction()
 
-build_gnu_c_library(objectively objectively-src/Objectively/*.c)
+# Objectively's HTTP client is not used by the interface framework: nothing under
+# ObjectivelyMVC includes RESTClient or URLSession. They need libcurl, which is not part of
+# this project's dependency set, so they are left out of the build rather than pulling a
+# network stack in for an interface toolkit.
+file(GLOB OBJECTIVELY_ALL CONFIGURE_DEPENDS "${OMVC_ROOT}/objectively-src/Objectively/*.c")
+set(OBJECTIVELY_SOURCES)
+foreach(source IN LISTS OBJECTIVELY_ALL)
+  get_filename_component(source_name "${source}" NAME)
+  if(source_name MATCHES "^(RESTClient|URLSession|URLSessionDataTask|URLSessionDownloadTask|URLSessionTask|URLSessionUploadTask)\\.c$")
+    continue()
+  endif()
+  list(APPEND OBJECTIVELY_SOURCES "${source}")
+endforeach()
+
+# build_gnu_c_library takes a glob, so the filtered list is passed through a variable instead
+# of being re-globbed.
+function(build_gnu_c_library_from_list omvc_target)
+  set(omvc_sources ${ARGN})
+  # Everything below mirrors build_gnu_c_library, but with an explicit source list.
+  set(omvc_include_args)
+  foreach(include IN LISTS OMVC_INCLUDES)
+    list(APPEND omvc_include_args "-I${include}")
+  endforeach()
+  if(RECHIGROS_SDL_SOURCE AND IS_DIRECTORY "${RECHIGROS_SDL_SOURCE}/include"
+     AND NOT "${RECHIGROS_SDL_SOURCE}/include" IN_LIST OMVC_DEP_INCLUDES)
+    list(APPEND OMVC_DEP_INCLUDES "${RECHIGROS_SDL_SOURCE}/include")
+  endif()
+  foreach(dep_include IN LISTS OMVC_DEP_INCLUDES)
+    list(APPEND omvc_include_args "-I${dep_include}")
+  endforeach()
+  add_library(${omvc_target} STATIC ${omvc_sources})
+  target_include_directories(${omvc_target}
+    PUBLIC ${OMVC_PUBLIC_INCLUDES}
+    PRIVATE ${OMVC_DEP_INCLUDES})
+  target_compile_options(${omvc_target} PRIVATE -w)
+  if(NOT WIN32)
+    target_compile_definitions(${omvc_target} PRIVATE _GNU_SOURCE)
+  endif()
+  set_target_properties(${omvc_target} PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
+endfunction()
+
+build_gnu_c_library_from_list(objectively ${OBJECTIVELY_SOURCES})
 # The Windows-only Windowly shim lives beside the Visual Studio project, not in Sources.
 if(MSVC)
   target_include_directories(objectively INTERFACE "${OMVC_ROOT}/objectively-src")

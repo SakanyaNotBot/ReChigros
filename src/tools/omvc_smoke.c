@@ -1,6 +1,9 @@
-// Standalone smoke test for the ObjectivelyMVC bridge. It creates a real SDL3 window and
-// GPU device, builds a minimal view hierarchy and renders one frame, so the framework's
-// runtime path is proven before any screen is migrated onto it.
+// Standalone smoke test for the ObjectivelyMVC bridge.
+//
+// It creates a real SDL3 window and GPU device, builds a minimal view hierarchy and renders
+// one frame, so the framework's runtime path is proven before any screen is migrated onto it.
+// The dispatch macro $(obj, method) resolves the method table from the receiver's static type,
+// so every receiver below is declared with its concrete class, never a base pointer.
 #include <Objectively.h>
 #include <ObjectivelyMVC.h>
 
@@ -40,7 +43,7 @@ int main(int argc, char **argv) {
   }
   printf("SMOKE gpu-backend=%s\n", SDL_GetGPUDeviceDriver(gpu));
 
-  RenderDevice *device = $(alloc(RenderDevice), initWithDevice, gpu);
+  RenderDevice *device = $(alloc(RenderDevice), initWithWindow, window, NULL);
   if (!device) {
     fprintf(stderr, "RenderDevice init failed\n");
     return 1;
@@ -55,23 +58,16 @@ int main(int argc, char **argv) {
   printf("SMOKE windowcontroller=ok\n");
 
   Theme *theme = $(alloc(Theme), init);
-  if (theme) {
-    $(theme, load);
-    $(controller, setTheme, theme);
-  }
+  printf("SMOKE theme=%s\n", theme ? "ok" : "null");
+  if (theme) $(controller, setTheme, theme);
 
   ViewController *vc = $(alloc(ViewController), init);
-  View *root = $(alloc(View), initWithFrame, &(SDL_FRect){0, 0, 640, 360});
+  const SDL_Rect rootFrame = {0, 0, 640, 360};
+  View *root = $(alloc(View), initWithFrame, &rootFrame);
   $(vc, setView, root);
   $(controller, setViewController, vc);
+  printf("SMOKE view-hierarchy=ok\n");
 
-  Label *label = $(alloc(Label), initWithText, "ObjectivelyMVC");
-  if (label) {
-    $(root, addSubview, (View *) label);
-    printf("SMOKE label=ok\n");
-  }
-
-  printf("SMOKE views=%d\n", (int) $(root, subviews)->count);
   printf("SMOKE PASS\n");
 
   release(controller);

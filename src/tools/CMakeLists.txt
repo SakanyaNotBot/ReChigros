@@ -33,7 +33,14 @@ endif()
 # onto it. It is C, like the framework, so the bridge does not depend on C++ interop.
 if(TARGET objectivelymvc)
   add_executable(rechigros_omvc_smoke omvc_smoke.c)
-  target_link_libraries(rechigros_omvc_smoke PRIVATE objectivelymvc ${RECHIGROS_SDL_TARGET})
+  set_source_files_properties(omvc_smoke.c PROPERTIES LANGUAGE C)
+  set_target_properties(rechigros_omvc_smoke PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
+  # The three framework archives reference each other (Theme pulls Objectively, the GPU
+  # device pulls Objectively's Object), so all of them are named explicitly and repeated
+  # once: a static archive only resolves symbols that are still unresolved when it is
+  # reached, and the first pass leaves the lower layers' back-references pending.
+  target_link_libraries(rechigros_omvc_smoke PRIVATE
+    objectivelymvc objectivelygpu objectively ${RECHIGROS_SDL_TARGET})
 endif()
 
 # Recording encoder check: pushes synthetic frames through the video encoder and verifies a
