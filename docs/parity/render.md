@@ -384,6 +384,33 @@ These are noted so a future reader does not mistake them for divergences.
    particle positions do not. Inherent to the runtime change and deliberate so the port is
    deterministic across its own runs.
 
+### Effect pools and the miss effect
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `isMenuVisible` | `GameRuntime::Pause::Menu` | MATCH | Same pause-mode predicate. |
+| `setReplayRecorder` | `GameplaySession::setReplayRecording` | MATCH | Same attach point. |
+| `getPerfectCount` / `getGoodCount` / `getBadCount` / `getMissCount` | `JudgementEngine::result()` | MATCH | Same four counters. |
+| `sanitizeOfficialScreenDpi` | `Application::initialize` DPI block | MATCH | Same fallback chain. |
+| `sanitizeHitOffsetIndicatorMode` | `Settings::load` | **FIXED** | Out-of-range now falls back to disabled; the port had clamped. |
+| `resetNativeRenderBucketRuntimeState` | `Chart::resetRuntime` | MATCH | Same per-run reset. |
+| `renderGameplayFrame` / `renderSceneDirect` | `GameRenderer::render` | MATCH | Same frame composition and direct scene path. |
+| `blockCompositeHasWork` | `Chart::hasLiveBlock` | MATCH | Same live-block question. |
+| `drawAmetrineVignette` / `ametrineHudVignetteFactor` | `fx::AmetrineVignette` | MATCH | Same inline vignette and HUD factor. |
+| `getOrLoadFileTexture` | `TextureCache::load` | MATCH | Same load-once cache. |
+| `getOrCreateTextTexture` / `createHudTextTexture` (5) | `TextRenderer::glyphStrip` | **DIFFERENT BY DESIGN** | String-per-texture cache versus glyph strip per size. Same pixels, no per-value upload. |
+| `measureHudTextWidth` | `TextRenderer::measure` | MATCH | Same advance-width sum. |
+| `officialHudUnitPx` / `officialHudX` / `officialHudY` | `scene::hudUnit` / `hudX` / `hudY` | MATCH | Same centred mapping on the 1000-unit canvas. |
+| `getJudgeOffset` | `GameplaySession::touchPosition` | MATCH | Same normalised distance pipeline; compared term by term in the note-geometry section. |
+| `hasHitEffectTint` | `Note::tintR/G/B` presence flag | MATCH | Same single flag deciding whether the note's tint is used. |
+| `spawnBadEffect` | bad-effect spawn on a miss | MATCH | Same miss effect spawned at the note with the same quad and UVs from the effect sheet. |
+| `obtainHitEffect` | `std::vector` of effect records in the renderer | **DIFFERENT BY DESIGN** | The reference keeps object pools (`EFFECT_POOL_MAX`) so a burst of hits does not allocate per effect. The port stores the same effect records by value in a vector cleared each frame, so there is no pool to refill and no per-effect allocation either. The effects produced per frame are the same. |
+| `obtainBadEffect` | `std::vector` of effect records in the renderer | **DIFFERENT BY DESIGN** | The reference keeps object pools (`EFFECT_POOL_MAX`) so a burst of hits does not allocate per effect. The port stores the same effect records by value in a vector cleared each frame, so there is no pool to refill and no per-effect allocation either. The effects produced per frame are the same. |
+| `recycleHitEffect` | `std::vector` of effect records in the renderer | **DIFFERENT BY DESIGN** | The reference keeps object pools (`EFFECT_POOL_MAX`) so a burst of hits does not allocate per effect. The port stores the same effect records by value in a vector cleared each frame, so there is no pool to refill and no per-effect allocation either. The effects produced per frame are the same. |
+| `recycleBadEffect` | `std::vector` of effect records in the renderer | **DIFFERENT BY DESIGN** | The reference keeps object pools (`EFFECT_POOL_MAX`) so a burst of hits does not allocate per effect. The port stores the same effect records by value in a vector cleared each frame, so there is no pool to refill and no per-effect allocation either. The effects produced per frame are the same. |
+| `recycleAllHitEffects` | `std::vector` of effect records in the renderer | **DIFFERENT BY DESIGN** | The reference keeps object pools (`EFFECT_POOL_MAX`) so a burst of hits does not allocate per effect. The port stores the same effect records by value in a vector cleared each frame, so there is no pool to refill and no per-effect allocation either. The effects produced per frame are the same. |
+| `recycleAllBadEffects` | `std::vector` of effect records in the renderer | **DIFFERENT BY DESIGN** | The reference keeps object pools (`EFFECT_POOL_MAX`) so a burst of hits does not allocate per effect. The port stores the same effect records by value in a vector cleared each frame, so there is no pool to refill and no per-effect allocation either. The effects produced per frame are the same. |
+
 ### Note geometry and the judge-offset computation
 
 | Reference declaration | Port implementation | Verdict | Basis |

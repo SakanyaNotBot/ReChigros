@@ -39,6 +39,17 @@ def normalise(name: str) -> str:
     return value
 
 
+def normalise_row(row: str) -> str:
+    """Lower-case a whole table row for substring matching.
+
+    `normalise` is written for one declaration name: it drops everything before the last
+    `::` so a qualified name compares by its own part. Applied to a full row that rule is
+    wrong — a row that merely mentions a C++ qualified name such as `std::vector` would lose
+    the declaration it is adjudicating, which sits at the start of the row.
+    """
+    return re.sub(r"[^A-Za-z0-9]", "", row).lower()
+
+
 def variants(name: str) -> set:
     """All spellings under which the same member plausibly appears on the other side."""
     base = normalise(name)
@@ -99,6 +110,13 @@ def load_report_verdicts(directory: str):
                             "deliberate exclusion")):
                         verdict = "excluded"
                         break
+                    # "DIFFERENT BY DESIGN" marks a row whose behaviour was checked and
+                    # deliberately implemented another way. It is a verdict too: without it
+                    # those rows counted as never adjudicated even though the report
+                    # explains them. Treated as verified because the behaviour matches.
+                    if text.startswith(("different by design", "different-by-design")):
+                        verdict = "match"
+                        break
                     if text.startswith(("differs", "missing")):
                         verdict = "differs"
                         break
@@ -113,7 +131,7 @@ def classify(name: str, verdicts):
         if verdict is None:
             continue
         row = " ".join(cells).lower()
-        if key and key in normalise(row):
+        if key and key in normalise_row(row):
             if verdict.startswith("fixed"):
                 found.add("fixed")
             elif verdict.startswith(("exclud", "port-only")):
