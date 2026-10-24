@@ -38,7 +38,7 @@
 | 整树编译链接 | `EXIT=0` |
 | 自检 / ctest | 37/37、8/8 |
 | **MVC 运行时** | **`SMOKE PASS`，Vulkan 后端，RenderDevice / WindowController / Theme / View 全部就绪** |
-| **MVC 真实出帧** | **`SMOKE render=ok`，离屏 framebuffer 渲染一帧成功** |
+| **MVC 真实出帧** | **未达成**：`render=ok` 但像素回读全均匀，即管线跑通、画面为空 |
 
 WSL 没有桌面显示，但 **`SDL_VIDEODRIVER=offscreen` 能创建 GPU 设备**，MVC 因此可以在
 WSL 里真正初始化并出图。跑法：
@@ -58,6 +58,27 @@ wsl -e bash -lc 'cd /mnt/e/ReChigros; export LD_LIBRARY_PATH=$HOME/wsl-prefix/li
    窗口的呈现目标）。
 4. 框架内部用 `GPU_Assert` 直接终止进程，**没有返回值可判断**，所以每次接线改动都要
    实际跑一遍冒烟程序，不能只看编译通过。
+
+### MVC 出图未完成（重要，接手先看）
+
+冒烟程序已能初始化全部对象并跑到 `render=ok`，但**像素回读证明画面是空的**
+（`differing=0`、整幅同色）。已排除并确认的接线要求：
+
+| 步骤 | 结论 |
+| --- | --- |
+| `setFramebuffer` | `beginFrame` 前必须设，否则 `GPU_Assert` 直接崩 |
+| `renderTo` vs `beginFrame` | 离屏必须走 `renderTo`（`beginFrame` 只 resize 窗口呈现目标） |
+| 命令缓冲提交 | `renderTo` 只记录，需自己 `SDL_SubmitGPUCommandBuffer` |
+| 清屏 | `Renderer::endFrame` 用 `LOADOP_LOAD`，**不清屏**，目标须自行 clear |
+| `moveToWindow` | `View::draw` 断言 `self->window`，该指针只由 `moveToWindow` 递归下发 |
+
+补完以上五项后画面仍为空。**下一个可疑点**：`Renderer::drawView` 只在
+`clippingFrame.w && clippingFrame.h` 非零时才绘制，因此要查 `layoutIfNeeded` 之后根视图与
+子视图的 frame 是否被重置为 0。这是明确的下一步，不需要重新摸索。
+
+**给接手者的建议**：这个框架的绘制链路没有返回值、靠 `GPU_Assert` 终止进程，逐项试错代价
+很高。建议改为对照仓库自带的 `Examples/`（已随源码一起下载到
+`build/omvc-probe/ObjectivelyMVC-main/Examples/`）里可运行的示例来接线，而不是从零猜。
 
 开工先跑 `git status --short` 确认干净，再按第九节验证环境。
 
