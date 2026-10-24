@@ -273,6 +273,43 @@ behaviour that the interface depends on is pinned.
 | `onConfigurationChanged` / `animationsEnabled` | `Application` density refresh, `Settings` | DELIBERATE-EXCLUSION | Configuration and animation-scale changes are Android system settings; the port re-reads density each frame and has no system animation scale. |
 | `drawCompoundDrawables` / `setSelected` | per-screen icon drawing | DELIBERATE-EXCLUSION | Compound drawables are an Android `TextView` feature; icons are drawn explicitly where the reference would attach them. |
 
+## Video settings, the result page, replays and calibration: residuals
+
+### `SelectVideoFragment.java`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `refreshSkinDropdown` | skin selection row | MATCH | Same skin list with the same entries. |
+| `bindHitOffsetIndicatorModeDropdown` / `buildHitOffsetModeLabels` / `getHitOffsetModeLabel` | hit-offset mode row | MATCH | Same three labels (关闭/线性/径向) bound to the same 0..2 field. |
+| `syncAutoplayRevealSwitches` | autoplay and reveal switch sync | MATCH | Same two switches kept in step with the stored settings. |
+| `applyPresetSelection` / `updatePresetLabelForValue` / `buildPresetLabels` / `getPresetLabel` / `findPresetIndex` | aspect-ratio preset row | MATCH | Same preset list and the same nearest-preset lookup for a stored value. |
+| `getScreenAspect` :440-446 | aspect fallback in `aspectRatioText` (`SettingsScreen.cpp:606-613`) | MATCH | Same `w / h` when the window has a size and the same `16 / 9` fallback otherwise; a stored value of 0 or less shows the window aspect instead of a number. |
+| `formatFloat` :462-464 | `%.5f` at `SettingsScreen.cpp:611` | MATCH | Identical format string, five decimal places. |
+| `performFiltering` / `publishResults` / `NoFilterStringAdapter` | search field filtering | DELIBERATE-EXCLUSION | `Filterable` plumbing for the `AutoCompleteTextView` skin picker; the port filters the list as it draws. |
+
+### `ResultActivity.java`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `illustrationScrim` | illustration scrim in `ResultScreen` | MATCH | Same darkened scrim over the artwork. |
+| `ShaderFactory` | linear-gradient background shader | MATCH | Same top-to-bottom gradient behind the result panels. |
+| `setupResponsiveCanvas` | `ui::canvas` | MATCH | Same uniform scale and centring on the design canvas. |
+| `blurBackground` / `gaussianBlur` | `TextureCache::blurredBackdropFor` | MATCH | Identical recipe: third-size copy, three box passes, radius `max(4, round(w * 0.05 / 3))`, bilinear upsample. Verified constant for constant earlier in `ui.md`. |
+
+### `ReplayManager.java`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `getReplayData` / `getReplayInfo` / `getReplayList` | `ReplayStore::read` / `list` | MATCH | Same parse of a replay file and the same sorted listing. |
+| `deleteReplay` / `deleteRecursive` | `ReplayStore::remove` + `platform::removeRecursively` | MATCH | Same recursive delete of one replay directory. |
+
+### `CalibrationActivity.java`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `drawTap` | tap marker draw in `CalibrationScreen` | MATCH | Same marker drawn where the tap landed. |
+| `getSeconds` | `SmoothingClock::seconds` | MATCH | Same seconds accessor over the smoothed clock. |
+
 ## SkewFrameLayout, UiTypography and GameGLSurfaceView: every declaration adjudicated
 
 These three are the Android view/platform glue for the interface. Each maps either onto a

@@ -92,6 +92,39 @@ appending to a pre-sized list.
 | Loading not real-time safe | documented | documented; decoding happens on the caller thread | MATCH |
 | Trigger is lock-free | yes | yes (`AudioEngine.hpp:73-75`) | MATCH |
 
+## PCM decoding, the online index, judge-line controls and easing sample
+
+### `PcmDecoder.java` -> `src/audio/Decoder.cpp`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `PcmDecoder` (class) | `audio::Decoder` (`src/audio/Decoder.cpp`) | DELIBERATE-EXCLUSION | The reference decodes through `MediaExtractor`/`MediaCodec` on Android; the port decodes with miniaudio, so the class and its frame APIs do not exist. |
+| `DecodedAudio` | `AudioBuffer` | MATCH | Same result record: interleaved float samples plus a sample rate. |
+| `getNumFrames` :32-35 | frame count derivation in `readAllFrames` | MATCH | Same `length / channels`, with the same zero result for a non-positive channel count. |
+| `selectAudioTrack` | track selection done by miniaudio | MATCH | Same outcome: the first audio track is used and a file with no audio track fails with an error rather than producing silence. |
+| `FloatArrayBuilder` / `appendPcm` / `ensureCapacity` | `std::vector<float>` growth in `readAllFrames` | MATCH | Same append-with-growth behaviour; the container handles the capacity. |
+
+### `OnlineIndexClient.java`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `OnlineIndexClient` (class) | — | DELIBERATE-EXCLUSION | The remote chart index client; the port ships local packs only. |
+| `loadCachedOrBundled` / `saveCache` / `readCache` / `readBundledFallback` | — | DELIBERATE-EXCLUSION | Caching and fallback for the remote index. |
+| `formatBytes` | byte-size formatting in the import dialogs | MATCH | Same human-readable size string used when an archive is described. |
+| `numericChartId` | — | DELIBERATE-EXCLUSION | Numeric id derivation for remote entries. |
+
+### `JudgeLine.java` residual
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `NoteControlPoint` (3 constructors) | `NoteControlPoint` in `src/game/JudgeLine.hpp` | MATCH | Same control-point record; the port has one aggregate initialiser where the reference has three overloads. |
+
+### `Easing.java` residual
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `bezierSampleY` | `Easing::bezierSampleY` | MATCH | Same sample of the cached bezier table; covered by the numeric equivalence proof in section 2. |
+
 ## NativeAudioEngine and ChartLibraryManager: every declaration adjudicated
 
 ### `NativeAudioEngine.java` -> `src/audio/AudioEngine.cpp`

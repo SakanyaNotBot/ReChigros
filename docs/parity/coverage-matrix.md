@@ -6,12 +6,12 @@ Reference declarations: **2268** across 75 files.
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| verified | 1050 | named MATCH by a parity report |
+| verified | 1076 | named MATCH by a parity report |
 | fixed | 182 | named by a parity report with a fix |
 | differs | 0 | named with a remaining difference |
-| excluded | 355 | deliberate exclusion, reason recorded |
+| excluded | 364 | deliberate exclusion, reason recorded |
 | matched-by-name | 144 | a port symbol with the same name exists |
-| unmatched | 393 | no same-name port symbol; needs a manual verdict |
+| unmatched | 358 | no same-name port symbol; needs a manual verdict |
 
 This matrix is an index. The authoritative per-function verdicts and the
 evidence line for each one are in the topical reports (`chart.md`, `core.md`, `judging.md`,
@@ -204,7 +204,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 330 | `bezierCacheKey` | excluded |  |
 | 339 | `cubicBezierYforX` | verified | `src\core\Easing.cpp:284` `cubicBezierYForX` |
 | 398 | `bezierSampleX` | matched-by-name | `src\core\Easing.cpp:131` `bezierSampleX` |
-| 403 | `bezierSampleY` | unmatched |  |
+| 403 | `bezierSampleY` | verified |  |
 | 407 | `bezierSlopeX` | matched-by-name | `src\core\Easing.cpp:136` `bezierSlopeX` |
 
 ## `com\wuying\phigros\game\EventCursor.java`
@@ -910,9 +910,9 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 112 | `globalSec2beat` | matched-by-name | `src\core\JudgeLine.cpp:22` `globalSec2beat` |
 | 118 | `beat2sec` | fixed | `src\core\JudgeLine.cpp:23` `beat2sec` |
 | 123 | `globalBeat2sec` | matched-by-name | `src\core\JudgeLine.cpp:24` `globalBeat2sec` |
-| 167 | `NoteControlPoint` | unmatched |  |
-| 170 | `NoteControlPoint` | unmatched |  |
-| 174 | `NoteControlPoint` | unmatched |  |
+| 167 | `NoteControlPoint` | verified |  |
+| 170 | `NoteControlPoint` | verified |  |
+| 174 | `NoteControlPoint` | verified |  |
 | 188 | `calcNoteControl` | verified | `src\core\JudgeLine.cpp:183` `calcNoteControl` |
 | 269 | `State` | fixed | `src\app\LibraryScreen.cpp:214` `state` |
 | 320 | `getStateInto` | fixed |  |
@@ -1070,7 +1070,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 89 | `evaluate` | fixed | `src\core\OfficialEase.cpp:80` `evaluate` (+2) |
 | 117 | `bezier01` | verified | `src\core\OfficialEase.cpp:29` `bezier01` |
 | 142 | `sampleX` | unmatched |  |
-| 146 | `sampleY` | unmatched |  |
+| 146 | `sampleY` | verified |  |
 | 150 | `derivativeX` | matched-by-name | `src\core\OfficialEase.cpp:28` `derivativeX` |
 
 ## `com\wuying\phigros\game\OfficialLevelEffects.java`
@@ -1331,7 +1331,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 381 | `setPanelWidthPx` | verified |  |
 | 385 | `resetSmoothClock` | verified |  |
 | 392 | `onDraw` | excluded |  |
-| 447 | `drawTap` | unmatched |  |
+| 447 | `drawTap` | verified |  |
 | 460 | `drawHitEffects` | matched-by-name | `src\app\CalibrationScreen.cpp:345` `drawHitEffects` (+1) |
 | 510 | `drawTouchMarkers` | matched-by-name | `src\app\CalibrationScreen.cpp:409` `drawTouchMarkers` |
 | 531 | `onTouchEvent` | verified |  |
@@ -1575,7 +1575,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 2698 | `clampInt` | unmatched |  |
 | 2704 | `parseFloatSafe` | verified |  |
 | 2713 | `parseIntSafe` | verified |  |
-| 2722 | `formatFloat` | unmatched |  |
+| 2722 | `formatFloat` | verified |  |
 | 2726 | `fallback` | fixed |  |
 | 2730 | `nonEmpty` | verified | `src\app\LibraryScreen.cpp:159` `nonEmpty` |
 | 2734 | `shouldMarquee` | matched-by-name | `src\app\LibraryScreen.cpp:157` `shouldMarquee` |
@@ -1897,8 +1897,8 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 81 | `iconIndex` | verified |  |
 | 92 | `onCreate` | excluded |  |
 | 304 | `stylePanels` | verified |  |
-| 323 | `illustrationScrim` | unmatched |  |
-| 327 | `ShaderFactory` | unmatched |  |
+| 323 | `illustrationScrim` | verified |  |
+| 327 | `ShaderFactory` | verified |  |
 | 328 | `resize` | excluded | `src\render\GameRenderer.cpp:1096` `resize` (+2) |
 | 337 | `styleCornerButton` | verified |  |
 | 350 | `styleChipButton` | verified |  |
@@ -1958,7 +1958,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 224 | `parseFloatSafe` | verified |  |
 | 234 | `clamp` | fixed |  |
 | 238 | `clampInt` | unmatched |  |
-| 242 | `formatFloat` | unmatched |  |
+| 242 | `formatFloat` | verified |  |
 | 246 | `host` | excluded |  |
 | 252 | `beforeTextChanged` | excluded |  |
 | 253 | `onTextChanged` | excluded |  |
@@ -2101,28 +2101,28 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 198 | `SimpleWatcher` | excluded |  |
 | 199 | `afterTextChanged` | excluded |  |
 | 251 | `onResume` | verified |  |
-| 257 | `refreshSkinDropdown` | unmatched |  |
+| 257 | `refreshSkinDropdown` | verified |  |
 | 292 | `refreshFromActivity` | verified |  |
-| 350 | `bindHitOffsetIndicatorModeDropdown` | unmatched |  |
-| 363 | `syncAutoplayRevealSwitches` | unmatched |  |
-| 370 | `applyPresetSelection` | unmatched |  |
-| 392 | `updatePresetLabelForValue` | unmatched |  |
-| 402 | `buildPresetLabels` | unmatched |  |
-| 411 | `buildHitOffsetModeLabels` | unmatched |  |
-| 419 | `getHitOffsetModeLabel` | unmatched |  |
-| 425 | `getPresetLabel` | unmatched |  |
-| 431 | `findPresetIndex` | unmatched |  |
-| 438 | `getScreenAspect` | unmatched |  |
+| 350 | `bindHitOffsetIndicatorModeDropdown` | verified |  |
+| 363 | `syncAutoplayRevealSwitches` | verified |  |
+| 370 | `applyPresetSelection` | verified |  |
+| 392 | `updatePresetLabelForValue` | verified |  |
+| 402 | `buildPresetLabels` | verified |  |
+| 411 | `buildHitOffsetModeLabels` | verified |  |
+| 419 | `getHitOffsetModeLabel` | verified |  |
+| 425 | `getPresetLabel` | verified |  |
+| 431 | `findPresetIndex` | verified |  |
+| 438 | `getScreenAspect` | verified |  |
 | 446 | `parseFloatSafe` | verified |  |
 | 456 | `clamp` | fixed |  |
-| 460 | `formatFloat` | unmatched |  |
+| 460 | `formatFloat` | verified |  |
 | 464 | `host` | excluded |  |
 | 470 | `beforeTextChanged` | excluded |  |
 | 471 | `onTextChanged` | excluded |  |
 | 476 | `Filter` | fixed | `src\render\gl\Texture.cpp:69` `setFilter` |
-| 477 | `performFiltering` | unmatched |  |
-| 484 | `publishResults` | unmatched |  |
-| 493 | `NoFilterStringAdapter` | unmatched |  |
+| 477 | `performFiltering` | excluded |  |
+| 484 | `publishResults` | excluded |  |
+| 493 | `NoFilterStringAdapter` | excluded |  |
 | 498 | `getFilter` | matched-by-name | `src\render\gl\Texture.cpp:69` `setFilter` |
 
 ## `com\wuying\phigros\ui\SettingsPreviewView.java`
@@ -2402,13 +2402,13 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 32 | `OnlineIndexClient` | unmatched |  |
-| 63 | `loadCachedOrBundled` | unmatched |  |
-| 169 | `saveCache` | unmatched |  |
-| 179 | `readCache` | unmatched |  |
-| 190 | `readBundledFallback` | unmatched |  |
-| 211 | `formatBytes` | unmatched |  |
-| 224 | `numericChartId` | unmatched |  |
+| 32 | `OnlineIndexClient` | excluded |  |
+| 63 | `loadCachedOrBundled` | excluded |  |
+| 169 | `saveCache` | excluded |  |
+| 179 | `readCache` | excluded |  |
+| 190 | `readBundledFallback` | excluded |  |
+| 211 | `formatBytes` | verified |  |
+| 224 | `numericChartId` | excluded |  |
 | 232 | `firstNonEmpty` | verified | `src\app\InfoFile.cpp:46` `firstNonEmpty` |
 
 ## `com\wuying\phigros\util\PcmDecoder.java`
@@ -2416,9 +2416,9 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
 | 15 | `PcmDecoder` | unmatched |  |
-| 23 | `DecodedAudio` | unmatched |  |
-| 30 | `getNumFrames` | unmatched |  |
-| 175 | `selectAudioTrack` | unmatched |  |
+| 23 | `DecodedAudio` | verified |  |
+| 30 | `getNumFrames` | verified |  |
+| 175 | `selectAudioTrack` | verified |  |
 | 194 | `FloatArrayBuilder` | unmatched |  |
 | 199 | `appendPcm` | unmatched |  |
 | 222 | `ensureCapacity` | unmatched |  |
