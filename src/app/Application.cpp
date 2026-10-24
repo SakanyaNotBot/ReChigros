@@ -1264,10 +1264,11 @@ void Application::handleEvent(const SDL_Event& event, bool& running) {
       return;
     case SDL_EVENT_DROP_FILE:
       if (event.drop.data != nullptr) {
-        // The drop is handled after the window has settled: an import can run for a moment
-        // and must not compete with the launch/resize transition on the platform thread.
+        // SDL owns drop-event memory through its temporary-event list: polling copies the
+        // pointer out of the queue, and the next SDL_PumpEvents frees it. Freeing it here as
+        // well is a double free that shows up on the next event pump, exactly what the
+        // Android intent-import path hit. The pending list owns its own std::string copy.
         pendingDrops_.emplace_back(event.drop.data);
-        SDL_free(const_cast<char*>(event.drop.data));
       }
       return;
     case SDL_EVENT_KEY_DOWN:

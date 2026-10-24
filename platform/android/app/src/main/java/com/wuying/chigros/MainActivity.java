@@ -72,7 +72,10 @@ public final class MainActivity extends SDLActivity {
             try {
                 final String path = prepareIncomingIntent(intent);
                 if (path != null) runOnUiThread(() -> SDLActivity.onNativeDropFile(path));
-            } catch (IOException error) {
+            } catch (IOException | RuntimeException error) {
+                // A content URI whose read grant is missing (or already revoked) throws
+                // SecurityException, which is a RuntimeException. Catching only IOException
+                // let it escape this worker thread and kill the whole process on import.
                 Log.e(TAG, "Unable to prepare incoming chart", error);
                 runOnUiThread(() -> Toast.makeText(this,
                         "Cannot import chart: " + error.getMessage(), Toast.LENGTH_LONG).show());
@@ -89,7 +92,7 @@ public final class MainActivity extends SDLActivity {
             try {
                 String path = prepareIncomingIntent(intent);
                 if (path != null) runOnUiThread(() -> SDLActivity.onNativeDropFile(path));
-            } catch (IOException error) {
+            } catch (IOException | RuntimeException error) {
                 Log.e(TAG, "Unable to import incoming chart", error);
                 runOnUiThread(() -> Toast.makeText(this,
                         "Cannot import chart: " + error.getMessage(), Toast.LENGTH_LONG).show());
