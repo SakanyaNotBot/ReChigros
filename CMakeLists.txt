@@ -43,9 +43,12 @@ if(RECHIGROS_BUILD_APP)
   # `interface`, which they use as a field name, so on this host the application is built by
   # the GCC tree instead (see build/wsl-build.sh). The option lets a Windows configure still
   # build the tests and tools without the framework.
-  # Default off on an MSVC host: the framework cannot be compiled by it, and the supported
-  # way to build the interface on Windows is the WSL GCC tree. Other toolchains default on.
-  if(MSVC)
+  # The framework is not built on two hosts:
+  #  * MSVC, because its C front end rejects the GNU extensions the framework uses;
+  #  * Android, because the framework's container code calls the GNU/BSD `qsort_r`, which
+  #    bionic does not provide.
+  # Both keep using the in-process interface layer; the GCC tree builds the framework.
+  if(MSVC OR ANDROID)
     set(RECHIGROS_WITH_OMVC_DEFAULT OFF)
   else()
     set(RECHIGROS_WITH_OMVC_DEFAULT ON)

@@ -99,6 +99,33 @@ in landscape is expected to look the same on both applications.
 
 None outstanding.
 
+## Android device verification (first run)
+
+Verified on an emulator because no physical device was attached. The emulator is a Pixel 5
+profile: Android 12, `1080x2340`, density 440 — a **portrait** panel, which makes it a direct
+test of the forced-landscape constraint.
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| APK installs | PASS | `adb install` returned Success |
+| Application starts | PASS | process alive, window focused |
+| Forced landscape | PASS | `dumpsys display` reports `mCurrentOrientation=1`, surface is `2340x1080` |
+| Home screen renders | PASS | `evidence/android-home.png` |
+| Settings opens | PASS | `evidence/android-settings.png` |
+| Drag from the middle of a row scrolls | PASS | two middle-drags scrolled the list — reported defect #2 |
+| Switch toggles on tap | PASS | a tap on a switch row toggled it and re-laid out the list |
+| Checked mark is visible | PASS | `evidence/android-switch-on.png` — white check on the dark track, reported defect #1 |
+
+The checked mark sits on the track's left end, so it stays visible after the thumb slides
+right. That is what the reference does, and what the port previously got wrong.
+
+### What this does not cover
+
+This is an **emulator** with SwiftShader software GL, not a physical device. It proves the
+Android build, the platform layer, the input paths and the interface rendering. It does **not**
+cover real-GPU shader compilation, high-refresh-rate presentation, or real touch latency. A
+physical-device run is still outstanding.
+
 ## Remaining risk
 
 1. **No device attached during this pass.** The orientation fix is verified from the packaged
