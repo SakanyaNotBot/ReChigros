@@ -1574,7 +1574,12 @@ void restartRunFromZero(AppContext& context) {
 void gameUpdate(AppContext& context, float frameDeltaSec) {
   auto& game = context.game;
   if (!game.loaded || !game.chart) return;
-  const float delta = std::clamp(frameDeltaSec, 0.0F, 0.1F);
+  // The chart advance follows the reference: a non-positive or overlong frame interval
+  // falls back to one 60 Hz frame instead of stalling the playhead or jumping it. The
+  // reference uses 0.25 as the overlong bound; clamping only the upper end here would
+  // still leave a zero interval advancing nothing, which the reference never does.
+  float delta = frameDeltaSec;
+  if (!(delta > 0.0F) || delta > 0.25F) delta = 1.0F / 60.0F;
   game.frameDeltaSec = delta;
   syncGameplayViewport(context);
 

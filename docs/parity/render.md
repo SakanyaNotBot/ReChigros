@@ -384,6 +384,30 @@ These are noted so a future reader does not mistake them for divergences.
    particle positions do not. Inherent to the runtime change and deliberate so the port is
    deterministic across its own runs.
 
+### The gameplay update and the background blur
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `isMenuVisible` | `GameRuntime::Pause::Menu` | MATCH | Same pause-mode predicate. |
+| `setReplayRecorder` | `GameplaySession::setReplayRecording` | MATCH | Same attach point. |
+| `getPerfectCount` / `getGoodCount` / `getBadCount` / `getMissCount` | `JudgementEngine::result()` | MATCH | Same four counters. |
+| `sanitizeOfficialScreenDpi` | `Application::initialize` DPI block | MATCH | Same fallback chain. |
+| `sanitizeHitOffsetIndicatorMode` | `Settings::load` | **FIXED** | Out-of-range now falls back to disabled; the port had clamped. |
+| `resetNativeRenderBucketRuntimeState` | `Chart::resetRuntime` | MATCH | Same per-run reset. |
+| `renderGameplayFrame` / `renderSceneDirect` | `GameRenderer::render` | MATCH | Same frame composition and direct scene path. |
+| `blockCompositeHasWork` | `Chart::hasLiveBlock` | MATCH | Same live-block question. |
+| `drawAmetrineVignette` / `ametrineHudVignetteFactor` | `fx::AmetrineVignette` | MATCH | Same inline vignette and HUD factor. |
+| `getOrLoadFileTexture` | `TextureCache::load` | MATCH | Same load-once cache. |
+| `getOrCreateTextTexture` / `createHudTextTexture` (5) | `TextRenderer::glyphStrip` | **DIFFERENT BY DESIGN** | String-per-texture cache versus glyph strip per size. Same pixels, no per-value upload. |
+| `measureHudTextWidth` | `TextRenderer::measure` | MATCH | Same advance-width sum. |
+| `officialHudUnitPx` / `officialHudX` / `officialHudY` | `scene::hudUnit` / `hudX` / `hudY` | MATCH | Same centred mapping on the 1000-unit canvas. |
+| `drawGifFrame` | gif frame draw in the line pass | MATCH | Same frame selected from the pre-decoded gif and drawn on the line. |
+| `renderSceneToFbo` | scene render target | MATCH | Same offscreen scene target, used by the low-res and effect paths alike. |
+| `pauseScalableBlurPass` / `createBackgroundBlur` / `renderBackgroundToFbo` | `BackgroundBlur` (`src/render/scene/BackgroundBlur.cpp`) | MATCH | Same four-level scalable blur pyramid with the same radius derivation. |
+| `drawTimerLine` | timer line in the HUD | MATCH | Same timer bar drawn between its two caps. |
+| `updateGameplay` :9642-9665 | `gameUpdate` (`GameScreen.cpp:1574`) | **FIXED** | The reference substitutes one 60 Hz frame when the chart delta is non-positive or above 0.25 s. The port clamped the interval to `0..0.1`, so a zero interval advanced nothing (the playhead stalled for a frame) and a 150 ms hitch advanced less than the reference would. `GameScreen.cpp` now applies the reference rule, and `Application.cpp` bounds the interval at 0.25 instead of 0.1 so the gameplay update sees the real value. |
+| `activateHoldAfterHead` | hold activation in the judgement engine | MATCH | Same "activate the hold once its head is judged" step; the hold tail itself was verified in `judging.md`. |
+
 ### Hit-offset indicator geometry
 
 | Reference declaration | Port implementation | Verdict | Basis |

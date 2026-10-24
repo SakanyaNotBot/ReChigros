@@ -2,16 +2,16 @@
 
 Generated from `docs/compare/inventory.json` by `tools/parity/coverage_matrix.py`. One row per reference declaration.
 
-Reference declarations: **2268** across 75 files.
+Reference declarations: **2267** across 75 files.
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| verified | 1076 | named MATCH by a parity report |
-| fixed | 182 | named by a parity report with a fix |
+| verified | 1084 | named MATCH by a parity report |
+| fixed | 183 | named by a parity report with a fix |
 | differs | 0 | named with a remaining difference |
 | excluded | 364 | deliberate exclusion, reason recorded |
-| matched-by-name | 144 | a port symbol with the same name exists |
-| unmatched | 358 | no same-name port symbol; needs a manual verdict |
+| matched-by-name | 143 | a port symbol with the same name exists |
+| unmatched | 350 | no same-name port symbol; needs a manual verdict |
 
 This matrix is an index. The authoritative per-function verdicts and the
 evidence line for each one are in the topical reports (`chart.md`, `core.md`, `judging.md`,
@@ -625,17 +625,17 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 9304 | `drawFpsCounter` | matched-by-name | `src\render\scene\HudPass.cpp:750` `drawFpsCounter` |
 | 9329 | `drawTextureAnchored` | verified |  |
 | 9338 | `drawTextureAnchored` | verified |  |
-| 9366 | `drawGifFrame` | unmatched |  |
-| 9418 | `renderSceneToFbo` | unmatched |  |
-| 9446 | `blurPass` | matched-by-name | `src\render\fx\PauseBackdropPass.cpp:90` `blurPass` |
-| 9468 | `pauseScalableBlurPass` | unmatched |  |
-| 9499 | `createBackgroundBlur` | unmatched |  |
-| 9570 | `renderBackgroundToFbo` | unmatched |  |
-| 9603 | `drawTimerLine` | unmatched |  |
-| 9639 | `updateGameplay` | unmatched |  |
+| 9366 | `drawGifFrame` | verified |  |
+| 9418 | `renderSceneToFbo` | verified |  |
+| 9446 | `blurPass` | verified | `src\render\fx\PauseBackdropPass.cpp:90` `blurPass` |
+| 9468 | `pauseScalableBlurPass` | verified |  |
+| 9499 | `createBackgroundBlur` | verified |  |
+| 9570 | `renderBackgroundToFbo` | verified |  |
+| 9603 | `drawTimerLine` | verified |  |
+| 9639 | `updateGameplay` | fixed |  |
 | 9676 | `syncPausedJudgementState` | fixed |  |
 | 9687 | `replayRecordNowChartTimeSec` | verified |  |
-| 9692 | `activateHoldAfterHead` | unmatched |  |
+| 9692 | `activateHoldAfterHead` | verified |  |
 | 9712 | `trackActiveHold` | unmatched |  |
 | 9720 | `useTrackedHoldOptimization` | unmatched |  |
 | 9728 | `updateTrackedHoldNotes` | unmatched |  |

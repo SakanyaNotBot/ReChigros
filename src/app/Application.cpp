@@ -533,7 +533,10 @@ int Application::run() {
       frameClockReset_ = false;
     }
     if (fixedDelta_) delta = 1.0F / 60.0F;
-    delta = std::clamp(delta, 0.0F, 0.1F);
+    // Upper bound only. A zero interval still has to reach the gameplay update so it can
+    // substitute one reference frame; clamping the low end here would erase the difference
+    // between "no time passed" and "one frame passed" before the chart ever sees it.
+    delta = std::min(delta, 0.25F);
     elapsed += static_cast<double>(delta);
     if (delta > 0.0F) {
       smoothedFps_ = smoothedFps_ * 0.92F + (1.0F / delta) * 0.08F;
