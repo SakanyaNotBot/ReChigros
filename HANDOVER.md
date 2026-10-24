@@ -309,7 +309,15 @@ $adb='D:\Studio-SDK\platform-tools\adb.exe'
   逻辑单位，并在设备像素网格上对齐；布局与命中坐标不变。自检锁定该换算，
   **但真机 1.25x/2x 输出的实际观感仍需真机截图确认**。
 
-### 4. 平台验证缺口
+### 4. 平台验证缺口（本轮状态）
+
+本轮重新构建了安卓 APK（`platform/android/app/build/outputs/apk/release/app-release.apk`，含本轮
+全部改动，三种 ABI 的 `libSDL3.so`/`libmain.so`、dex 与 assets 齐全，manifest 仍为
+`screenOrientation="landscape"`）。**但那只是编译和打包验证，不是真机运行验证**：
+本轮 `adb devices` 始终为空，没有可用模拟器或真机，因此高 DPI 字体映射、噪域点采样
+差异、设置页开关在触屏上的手感这三项都**没有设备证据**，不要当成已验。
+
+### 4a. 平台验证缺口
 
 - **Android**：APK 的横屏与 intent-filter 已从打包产物验证，也在 BlueStacks 上装过。
   但真机（非高通 GPU / mediump 回退路径）未验证。模拟器当前未启动
