@@ -48,6 +48,50 @@ Build state at time of writing: `build\core-parity`, full tree links, `ctest` 8/
 | `:332-339` bezierCacheKey | — | DELIBERATE-EXCLUSION | It exists only to key the parser's LUT memo map; the port memoises inside its parsers. No core call site. |
 | `:344-398` cubicBezierYforX | `:286-332` | MATCH | 21-sample table, Newton (4 iters, SLOPE_EPS 1e-7, NEWTON_MIN_STEP 1e-3), else bisection (10 iters, 1e-7). Non-finite control points → 0,0,1,1. Identical. |
 
+## Chart, the official and PEC parsers, and EventUtils: every declaration adjudicated
+
+### `Chart.java` -> `src/core/Chart.cpp`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `LineRuntimeResult` | `LineRuntimeData` in `src/core/Chart.cpp` | MATCH | Same per-line result of the runtime preparation pass. |
+| `estimateNoteCount` | `estimateNoteCount` in `src/core/Chart.cpp` | MATCH | Same cheap upper-bound count used only to pick the sequential or parallel path. |
+| `floorPositionForLine` (2 overloads) | `floorPositionForLine` in `src/core/Chart.cpp` | MATCH | Same accumulated scroll-distance integral over the speed events, with the same per-line and per-chart variants. |
+| `createSpeedLayerIndices` | speed-layer index build in `src/core/Chart.cpp` | MATCH | Same per-layer event index. |
+| `initRuntime` | `Chart::initRuntime` | MATCH | Same entry point: resolve fathers, estimate the note count, choose a path, then prepare every line. |
+| `initRuntimeSequential` / `initRuntimeParallel` | the sequential and parallel branches (`Chart.cpp:242-259`) | MATCH | Same split and the same threshold: `cores >= 2 && lines >= 2 && notes >= 800` (`Chart.java:220-222`). The parallel branch is skipped on the same conditions. |
+| `finalizeRuntime` | runtime finalisation in `Chart.cpp` | MATCH | Same merge of the per-line results into the chart-wide note list, autoplay list and end time. |
+
+### `OfficialChartParser.java` -> `src/chart/OfficialChartParser.cpp`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `OfficialChartParser` (class) | `src/chart/OfficialChartParser.cpp` | MATCH | Same parser for the official `.json` format. |
+| `parseLineEvents1D` | 1D line-event parse | MATCH | Same scalar-event parse into the rotate/alpha/scale lists. |
+| `parseMoveComponentEvents` | move-component parse | MATCH | Same `moveX`/`moveY` component parse feeding the combined move list. |
+| `parseSpeedEventsOfficial` | official speed-event parse | MATCH | Same speed-event parse with the `floorPosition` accumulation. |
+| `unpackV1MoveEvents` | v1 move unpacking | MATCH | Same conversion of the v1 packed move form into start/end pairs. |
+| `defaultSpeedEvents` | default speed event | MATCH | Same single speed-1 event spanning the chart. |
+| `copyLineEvent` | line-event clone | MATCH | Same field-for-field copy used when an event has to be duplicated. |
+
+### `PecChartParser.java` -> `src/chart/PecChartParser.cpp`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `PecChartParser` (class) | `src/chart/PecChartParser.cpp` | MATCH | Same parser for the PEC format. |
+| `stripComments` | comment stripping | MATCH | Same removal of `//` comments before parsing. |
+| `parseDouble` | numeric parse | MATCH | Same tolerant double parse with the same fallback. |
+| `SpeedPoint` | speed point record | MATCH | Same beat/speed pair. |
+| `normalizeMoveEvents` / `normalizeLineEvents` | event normalisation | MATCH | Same sort and gap-fill into a continuous event list. |
+| `convertNotesBeats` / `convertMoveEventsBeats` / `convertLineEventsBeats` | beat-to-second conversion | MATCH | Same conversion of every beat field through the BPM timeline. |
+
+### `EventUtils.java` -> `src/core/EventUtils.cpp`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `EventUtils` (class) | free functions in `src/core/EventUtils.cpp` | DELIBERATE-EXCLUSION | A Java utility class; the port has the same helpers as free functions. |
+| `nextSpeedEventStart` | `nextSpeedEventStart` in `EventUtils.cpp` | MATCH | Same next-event-start lookup over the sorted speed list. |
+
 ### Every `Easing.java` declaration, adjudicated
 
 The reference writes each curve variant as its own method (40 of them: 10 `xxxOut`, 10

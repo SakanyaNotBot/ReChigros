@@ -313,6 +313,50 @@ layout helper or onto a piece of the platform layer.
 | `createContext` / `destroyContext` | context creation and teardown | MATCH | Same create/destroy points. |
 | `Es31ConfigChooser` / `chooseConfig` / `buildConfigAttribs` | GL context attributes | MATCH | Same ES 3.1 request with the same fallbacks; on the packaged platforms the attribute block in `Application::initialize` carries them. |
 
+## Local/replay pickers, the online adapter and the level-effect loader
+
+### `SelectLocalChartsFragment.java`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `onSelectionChanged` / `refreshFromActivity` | selection sync in `drawLibraryScreen` | MATCH | Same selection maintained when the list is rebuilt. |
+| `openRecord` / `showRecordDetail` / `populateDetail` | detail open path | MATCH | Same open-the-detail-page behaviour with the same fields filled. |
+| `handleBackPressed` | back handling in the library screen | MATCH | Same back chain: leave manage mode, then leave the list. |
+| `showList` (2 overloads) | list draw | MATCH | Same list view, filtered by the same query. |
+| `updateManageActions` / `updateStateText` | manage-mode action row and empty-state text | MATCH | Same action set in manage mode and the same `本地暂无谱面` empty message. |
+| `exportSelected` | export-selected action | MATCH | Same export of the selected packs to the documents directory. |
+| `attachTextWatchers` / `setTextIfDifferent` | search field binding | DELIBERATE-EXCLUSION | Android text-watcher binding to keep the query in sync; the port reads the field directly each frame. |
+
+### `SelectReplayFragment.java`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `enterSelectionMode` (2 overloads) / `exitSelectionMode` | replay list selection mode | MATCH | Same enter/exit of multi-select. |
+| `handleExportClick` / `handleDeleteClick` | export and delete actions | MATCH | Same export and the same confirmed delete of the selected replays. |
+| `refreshFromActivity` / `refreshList` | replay list rebuild | MATCH | Same re-read of the replay directory. |
+| `updateActionButtons` | action-button state | MATCH | Same enable rule (nothing selected disables the actions). |
+| `buildReplayItem` | replay row draw | MATCH | Same row content: song, difficulty, score, timestamp. |
+| `toggleReplaySelection` | per-row selection toggle | MATCH | Same toggle. |
+
+### `OnlineChartAdapter.java`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `OnlineChartAdapter` (class) | — | DELIBERATE-EXCLUSION | The remote-index list adapter; the port ships local packs only. |
+| `addItems` / `setQuery` / `hasQuery` / `visibleCount` / `totalCount` / `notifyItemUpdated` | — | DELIBERATE-EXCLUSION | Remote-index paging and filtering; no port counterpart. |
+| `onCreateViewHolder` / `onBindViewHolder` / `getItemCount` | — | DELIBERATE-EXCLUSION | `RecyclerView` adapter callbacks for the remote list. |
+| `buildMeta` | — | DELIBERATE-EXCLUSION | Remote entry metadata formatting. |
+
+### `OfficialLevelEffects.java` -> `src/game/OfficialLevelEffects.cpp`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `loadRoot` | level-effect root load | MATCH | Same read of the chart's `effectObjects` root. |
+| `settingParams` / `effectSettings` | per-effect settings parse | MATCH | Same settings block parsed per effect. |
+| `dogConsts` | Glitch-Dog constants | MATCH | Same constant set for the glitch-dog effect. |
+| `slashUniforms` / `slashTracks` / `addSlashVars` / `slashKeys` | dimension-slash tracks | MATCH | Same per-slash variable and uniform wiring; strengths arrive pre-scaled by `0.01` on both sides. |
+| `posEvents` | position event track | MATCH | Same position track feeding the effect. |
+
 ## ChartSelectActivity: the settings accessors
 
 Most of the activity's remaining declarations are one-line accessors over its preference fields.
