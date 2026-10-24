@@ -2,16 +2,16 @@
 
 Generated from `docs/compare/inventory.json` by `tools/parity/coverage_matrix.py`. One row per reference declaration.
 
-Reference declarations: **2262** across 75 files.
+Reference declarations: **2261** across 75 files.
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| verified | 1298 | named MATCH by a parity report |
-| fixed | 195 | named by a parity report with a fix |
+| verified | 1331 | named MATCH by a parity report |
+| fixed | 196 | named by a parity report with a fix |
 | differs | 0 | named with a remaining difference |
 | excluded | 383 | deliberate exclusion, reason recorded |
-| matched-by-name | 138 | a port symbol with the same name exists |
-| unmatched | 110 | no same-name port symbol; needs a manual verdict |
+| matched-by-name | 137 | a port symbol with the same name exists |
+| unmatched | 77 | no same-name port symbol; needs a manual verdict |
 
 This matrix is an index. The authoritative per-function verdicts and the
 evidence line for each one are in the topical reports (`chart.md`, `core.md`, `judging.md`,
@@ -796,41 +796,41 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 13386 | `ensurePrprFbos` | verified |  |
 | 13402 | `deleteFbo` | verified |  |
 | 13425 | `PrprShaderProgram` | verified |  |
-| 13465 | `applyDefaults` | unmatched |  |
-| 13486 | `getDefaultFloat` | unmatched |  |
-| 13499 | `UniformInfo` | unmatched |  |
-| 13507 | `initPrprShaderPrograms` | unmatched |  |
-| 13560 | `warmUpPrprShaderPrograms` | unmatched |  |
-| 13645 | `getPrprProgram` | unmatched |  |
-| 13654 | `resolvePrprShaderSource` | unmatched |  |
-| 13684 | `normalizePrprShaderKey` | unmatched |  |
+| 13465 | `applyDefaults` | verified |  |
+| 13486 | `getDefaultFloat` | verified |  |
+| 13499 | `UniformInfo` | verified |  |
+| 13507 | `initPrprShaderPrograms` | verified |  |
+| 13560 | `warmUpPrprShaderPrograms` | verified |  |
+| 13645 | `getPrprProgram` | verified |  |
+| 13654 | `resolvePrprShaderSource` | fixed |  |
+| 13684 | `normalizePrprShaderKey` | verified |  |
 | 13700 | `isPrprShaderFileName` | verified |  |
-| 13706 | `prprPresetFileForKey` | unmatched |  |
-| 13754 | `readAssetText` | unmatched |  |
-| 13768 | `parsePrprUniformDefaults` | unmatched |  |
-| 13808 | `preprocessPrprFragment` | unmatched |  |
-| 13864 | `createWhiteTexture` | unmatched |  |
-| 13886 | `createEmptyTexture` | unmatched |  |
-| 13901 | `setLinearTextureParams` | unmatched |  |
-| 13908 | `setLinearTextureParams` | unmatched |  |
-| 13912 | `updateTextureWrap` | unmatched |  |
-| 13921 | `uploadBitmapToBoundTexture` | unmatched |  |
-| 13936 | `discardBoundFboColor` | unmatched |  |
-| 13940 | `createFboForTexture` | unmatched |  |
-| 13955 | `isFboComplete` | unmatched |  |
-| 13966 | `loadTextureFromAssetsSafe` | unmatched |  |
-| 13970 | `loadOfficialShaderTexture` | unmatched |  |
-| 13995 | `flipBitmapVertical` | unmatched |  |
-| 14011 | `loadStackedAtlasSlicesVFlip` | unmatched |  |
-| 14044 | `loadTextureFromAssetsSafe` | unmatched |  |
-| 14057 | `forceBitmapWhite` | unmatched |  |
-| 14078 | `loadTextureFromFileSafe` | unmatched |  |
-| 14084 | `loadTextureFromFileSafe` | unmatched |  |
-| 14098 | `decodeBitmapDownsampled` | unmatched |  |
+| 13706 | `prprPresetFileForKey` | verified |  |
+| 13754 | `readAssetText` | verified |  |
+| 13768 | `parsePrprUniformDefaults` | verified |  |
+| 13808 | `preprocessPrprFragment` | verified |  |
+| 13864 | `createWhiteTexture` | verified |  |
+| 13886 | `createEmptyTexture` | verified |  |
+| 13901 | `setLinearTextureParams` | verified |  |
+| 13908 | `setLinearTextureParams` | verified |  |
+| 13912 | `updateTextureWrap` | verified |  |
+| 13921 | `uploadBitmapToBoundTexture` | verified |  |
+| 13936 | `discardBoundFboColor` | verified |  |
+| 13940 | `createFboForTexture` | verified |  |
+| 13955 | `isFboComplete` | verified |  |
+| 13966 | `loadTextureFromAssetsSafe` | verified |  |
+| 13970 | `loadOfficialShaderTexture` | verified |  |
+| 13995 | `flipBitmapVertical` | verified |  |
+| 14011 | `loadStackedAtlasSlicesVFlip` | verified |  |
+| 14044 | `loadTextureFromAssetsSafe` | verified |  |
+| 14057 | `forceBitmapWhite` | verified |  |
+| 14078 | `loadTextureFromFileSafe` | verified |  |
+| 14084 | `loadTextureFromFileSafe` | verified |  |
+| 14098 | `decodeBitmapDownsampled` | verified |  |
 | 14116 | `loadGifTexture` | verified |  |
-| 14137 | `uploadGifFramesFromPreloaded` | unmatched |  |
-| 14190 | `uploadBitmapAsTexture` | unmatched |  |
-| 14194 | `uploadBitmapAsTexture` | unmatched |  |
+| 14137 | `uploadGifFramesFromPreloaded` | verified |  |
+| 14190 | `uploadBitmapAsTexture` | verified |  |
+| 14194 | `uploadBitmapAsTexture` | verified |  |
 | 14218 | `loadResPackFromAssets` | unmatched |  |
 | 14230 | `resolveFloat` | verified | `src\render\skin\SkinConfig.cpp:406` `resolveFloat` |
 | 14240 | `resolveBool` | verified | `src\render\skin\SkinConfig.cpp:413` `resolveBool` |
@@ -2248,7 +2248,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 253 | `onDrawFrame` | verified |  |
 | 286 | `drawQuad` | matched-by-name | `src\app\TriGridBackdrop.cpp:281` `drawQuad` |
 | 298 | `swapPendingBackground` | verified |  |
-| 326 | `loadTexture` | matched-by-name | `src\app\TriGridBackdrop.cpp:172` `loadTexture` |
+| 326 | `loadTexture` | verified | `src\app\TriGridBackdrop.cpp:172` `loadTexture` |
 | 355 | `isPowerOfTwo` | matched-by-name | `src\app\TriGridBackdrop.cpp:114` `isPowerOfTwo` |
 | 359 | `createProgram` | verified |  |
 | 383 | `compileShader` | verified |  |

@@ -384,15 +384,28 @@ void PrprChain::prepare(const std::filesystem::path& assetRoot,
 
   for (const auto& key : keys) {
     std::string source;
+    // A pack may reference its own shader with or without the leading slash the format
+    // allows, so both spellings are tried before falling back to the bundled presets.
     if (const auto it = chartSources.find(key); it != chartSources.end()) {
       source = it->second;
-    } else {
-      const char* fileName = presetFileForKey(key);
-      if (fileName == nullptr) continue;
-      const auto bytes = platform::AssetManager::readBinary(assetRoot_, "prpr_shaders/" +
-          std::string(fileName));
-      if (bytes.empty()) continue;
-      source.assign(bytes.begin(), bytes.end());
+    } else if (key.size() > 1 && key.front() == '/') {
+      if (const auto it = chartSources.find(key.substr(1)); it != chartSources.end()) {
+        source = it->second;
+      }
+    }
+    if (source.empty()) {
+      if (const char* fileName = presetFileForKey(key); fileName != nullptr) {
+        const auto bytes = platform::AssetManager::readBinary(assetRoot_, "prpr_shaders/" +
+            std::string(fileName));
+        if (!bytes.empty()) source.assign(bytes.begin(), bytes.end());
+      }
+    }
+    // A key that is itself a shader file name is also tried directly against the presets,
+    // which is how a chart can name "vignette.glsl" rather than the preset key "vignette".
+    if (source.empty() && !key.empty() && key.front() != '/' &&
+        key.find(".glsl") != std::string::npos) {
+      const auto bytes = platform::AssetManager::readBinary(assetRoot_, "prpr_shaders/" + key);
+      if (!bytes.empty()) source.assign(bytes.begin(), bytes.end());
     }
     if (source.empty()) continue;
 

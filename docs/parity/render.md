@@ -384,6 +384,34 @@ These are noted so a future reader does not mistake them for divergences.
    particle positions do not. Inherent to the runtime change and deliberate so the port is
    deterministic across its own runs.
 
+### Texture upload and framebuffer helpers
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `updateTextureWrap` | wrap parameter set in the texture cache | MATCH | Same clamp-to-edge or repeat selection per texture class. |
+| `uploadBitmapToBoundTexture` / `uploadBitmapAsTexture` / `uploadGifFramesFromPreloaded` | texture upload in `TextureCache.cpp` | MATCH | Same RGBA8 upload of a decoded bitmap, and the same per-frame upload for a gif's preloaded frames. |
+| `discardBoundFboColor` | colour attachment discard | MATCH | Same discard of a render target's contents when it is about to be overwritten. |
+| `createFboForTexture` / `isFboComplete` | framebuffer creation and status check | MATCH | Same attach-and-check sequence; a target that fails the completeness check is released rather than used. |
+| `loadTextureFromAssetsSafe` (2 overloads) | asset texture load in `TextureCache` | MATCH | Same load with a null result on a missing or undecodable asset. |
+| `loadOfficialShaderTexture` | official effect texture load | MATCH | Same load of the effect sheets (`official_textures/...`) with clamp-to-edge. |
+| `flipBitmapVertical` / `loadStackedAtlasSlicesVFlip` | vertical flip at the texture-upload sites | MATCH | Same vertical flip, applied where the sheet's slices are stacked bottom-up; the port flips during upload rather than into a second bitmap, which reaches the same orientation. |
+| `forceBitmapWhite` | white-out of a bitmap | MATCH | Same replacement of every texel with opaque white, used for the solid-colour fallback. |
+| `loadTextureFromFileSafe` (2 overloads) | file texture load | MATCH | Same load from a filesystem path with the same null-on-failure contract. |
+| `decodeBitmapDownsampled` | downscaled decode | MATCH | Same decode straight to a reduced size for the thumbnail cache. |
+
+### Storyboard shader programs and texture parameters
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `applyDefaults` / `getDefaultFloat` / `UniformInfo` / `parsePrprUniformDefaults` | uniform-default parse in `PrprChain.cpp` | MATCH | Same per-uniform defaults scraped from the shader's own comments, used when a chart does not set the value. |
+| `initPrprShaderPrograms` / `warmUpPrprShaderPrograms` / `getPrprProgram` | chain program build in `PrprChain.cpp` | MATCH | Same lazy build per shader key plus the same up-front warm-up for the keys a chart names. |
+| `resolvePrprShaderSource` :13656-13685 | the source resolution in `PrprChain.cpp:385-397` | **FIXED** | The reference has three fallbacks the port was missing: a pack may name its own shader with a leading `/` (looked up again without it), and a key that is itself a `*.glsl` file name is tried directly against the presets. Without them a chart naming `/my_shader` or `vignette.glsl` fell through to no program and lost its effect silently. |
+| `normalizePrprShaderKey` / `prprPresetFileForKey` | `presetFileForKey` (`PrprChain.cpp:99-120`) | MATCH | Same key-to-file mapping; the port additionally lists the camelCase and snake_case spellings as separate entries, which reaches the same files. |
+| `readAssetText` | `AssetManager::readBinary` | MATCH | Same asset read. |
+| `preprocessPrprFragment` | `preparePresetSource` in `PrprChain.cpp` | MATCH | Same rewrite that makes a shipped preset compile in this context (version line, precision, output declaration). |
+| `createWhiteTexture` / `createEmptyTexture` | white and empty texture creation | MATCH | Same 1x1 white texture and the same empty texture used as a placeholder. |
+| `setLinearTextureParams` (2 overloads) | linear filter parameters in the texture cache | MATCH | Same `GL_LINEAR` min/mag with the same clamp-to-edge wrap. |
+
 ### GIF frame selection and the video player internals
 
 | Reference declaration | Port implementation | Verdict | Basis |
