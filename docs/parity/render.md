@@ -386,6 +386,48 @@ These are noted so a future reader does not mistake them for divergences.
 
 ---
 
+## NativeRenderCommands: every declaration adjudicated
+
+The reference crosses a JNI boundary: `NativeRenderCommands` packs the chart into primitive
+arrays and pushes per-frame state into a native renderer. The port links its renderer in and
+passes C++ structures directly, so this whole layer has no counterpart — but the *data* it
+carries does, and that is what the verdicts below point at.
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `NativeRenderCommands` (class) | — | DELIBERATE-EXCLUSION | The reference marshals chart state across the JNI boundary into a native renderer. The port renders in-process, so there is no boundary to marshal across and no command buffer to fill. |
+| `isAvailable` | always true | MATCH | The reference probes whether its native library loaded; the port has no such probe because the renderer is linked in. |
+| `LineState` | `game::JudgeLine::State` | MATCH | Same per-line state record. |
+| `LineTimeline` | `Chart` | MATCH | Same per-chart timeline. |
+| `NoteBucket` | `JudgeLine::notesByType` | MATCH | Same per-type note buckets. |
+| `hasWhiteDefault` | `SkinConfig` default colour handling | MATCH | Same "no explicit colour means white" rule, applied at load instead of at upload. |
+| `countNonNullLayers` | `JudgeLine::eventLayers` size | MATCH | Same layer presence test. |
+| `countSpeedLayers` | `JudgeLine::speedEventLayers` size | MATCH | Same. |
+| `hasSpeedLayers` | `speedEventLayers.empty()` | MATCH | Same. |
+| `countNoteControls` | — | DELIBERATE-EXCLUSION | These size or fill the JNI buffers that carry chart data to the native renderer; the port renders in-process, so there is no buffer to size. The data itself is unchanged, and its field-for-field equivalence is in `core.md` section 14. |
+| `countLineEvents` | — | DELIBERATE-EXCLUSION | These size or fill the JNI buffers that carry chart data to the native renderer; the port renders in-process, so there is no buffer to size. The data itself is unchanged, and its field-for-field equivalence is in `core.md` section 14. |
+| `countMoveEvents` | — | DELIBERATE-EXCLUSION | These size or fill the JNI buffers that carry chart data to the native renderer; the port renders in-process, so there is no buffer to size. The data itself is unchanged, and its field-for-field equivalence is in `core.md` section 14. |
+| `countSpeedEvents` | — | DELIBERATE-EXCLUSION | These size or fill the JNI buffers that carry chart data to the native renderer; the port renders in-process, so there is no buffer to size. The data itself is unchanged, and its field-for-field equivalence is in `core.md` section 14. |
+| `countSpeedLayerEvents` | — | DELIBERATE-EXCLUSION | These size or fill the JNI buffers that carry chart data to the native renderer; the port renders in-process, so there is no buffer to size. The data itself is unchanged, and its field-for-field equivalence is in `core.md` section 14. |
+| `countColorEvents` | — | DELIBERATE-EXCLUSION | These size or fill the JNI buffers that carry chart data to the native renderer; the port renders in-process, so there is no buffer to size. The data itself is unchanged, and its field-for-field equivalence is in `core.md` section 14. |
+| `countGifEvents` | — | DELIBERATE-EXCLUSION | These size or fill the JNI buffers that carry chart data to the native renderer; the port renders in-process, so there is no buffer to size. The data itself is unchanged, and its field-for-field equivalence is in `core.md` section 14. |
+| `countSpeedBezierData` | — | DELIBERATE-EXCLUSION | These size or fill the JNI buffers that carry chart data to the native renderer; the port renders in-process, so there is no buffer to size. The data itself is unchanged, and its field-for-field equivalence is in `core.md` section 14. |
+| `countSpeedLayerBezierData` | — | DELIBERATE-EXCLUSION | These size or fill the JNI buffers that carry chart data to the native renderer; the port renders in-process, so there is no buffer to size. The data itself is unchanged, and its field-for-field equivalence is in `core.md` section 14. |
+| `countColorBezierData` | — | DELIBERATE-EXCLUSION | These size or fill the JNI buffers that carry chart data to the native renderer; the port renders in-process, so there is no buffer to size. The data itself is unchanged, and its field-for-field equivalence is in `core.md` section 14. |
+| `countLineBezierData` | — | DELIBERATE-EXCLUSION | These size or fill the JNI buffers that carry chart data to the native renderer; the port renders in-process, so there is no buffer to size. The data itself is unchanged, and its field-for-field equivalence is in `core.md` section 14. |
+| `countMoveBezierData` | — | DELIBERATE-EXCLUSION | These size or fill the JNI buffers that carry chart data to the native renderer; the port renders in-process, so there is no buffer to size. The data itself is unchanged, and its field-for-field equivalence is in `core.md` section 14. |
+| `bezierDataCount` | — | DELIBERATE-EXCLUSION | Sizes or fills a JNI buffer that carries chart data to the native renderer; the port renders in-process, so there is no buffer. The data is unchanged and its field-for-field equivalence is in `core.md` section 14. |
+| `LineEventWriter` | — | DELIBERATE-EXCLUSION | Sizes or fills a JNI buffer that carries chart data to the native renderer; the port renders in-process, so there is no buffer. The data is unchanged and its field-for-field equivalence is in `core.md` section 14. |
+| `MoveEventWriter` | — | DELIBERATE-EXCLUSION | Sizes or fills a JNI buffer that carries chart data to the native renderer; the port renders in-process, so there is no buffer. The data is unchanged and its field-for-field equivalence is in `core.md` section 14. |
+| `SpeedEventWriter` | — | DELIBERATE-EXCLUSION | Sizes or fills a JNI buffer that carries chart data to the native renderer; the port renders in-process, so there is no buffer. The data is unchanged and its field-for-field equivalence is in `core.md` section 14. |
+| `ColorEventWriter` | — | DELIBERATE-EXCLUSION | Sizes or fills a JNI buffer that carries chart data to the native renderer; the port renders in-process, so there is no buffer. The data is unchanged and its field-for-field equivalence is in `core.md` section 14. |
+| `GifEventWriter` | — | DELIBERATE-EXCLUSION | Sizes or fills a JNI buffer that carries chart data to the native renderer; the port renders in-process, so there is no buffer. The data is unchanged and its field-for-field equivalence is in `core.md` section 14. |
+| `NoteControlWriter` | — | DELIBERATE-EXCLUSION | Sizes or fills a JNI buffer that carries chart data to the native renderer; the port renders in-process, so there is no buffer. The data is unchanged and its field-for-field equivalence is in `core.md` section 14. |
+| `syncDynamicStates` | per-frame `fillState` read | MATCH | Pushes changing per-line values into native memory each frame; the port reads the same values while drawing, so there is no sync step. |
+| `syncDynamicState` | per-frame `fillState` read | MATCH | Same, for a single line. |
+| `resetRuntimeState` | `Chart::resetRuntime` | MATCH | Same per-run reset of the transient note and line fields. |
+| `updateLoopStarts` | `SmoothingClock` loop phase | MATCH | Same restart bookkeeping when the beat clock wraps. |
+
 ## 6a. `GameRenderer` helper declarations with no same-name port symbol
 
 `GameRenderer.java` is the largest single source of unadjudicated declarations (518), because

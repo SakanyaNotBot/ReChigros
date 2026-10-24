@@ -2,16 +2,16 @@
 
 Generated from `docs/compare/inventory.json` by `tools/parity/coverage_matrix.py`. One row per reference declaration.
 
-Reference declarations: **2285** across 75 files.
+Reference declarations: **2281** across 75 files.
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| verified | 635 | named MATCH by a parity report |
+| verified | 607 | named MATCH by a parity report |
 | fixed | 177 | named by a parity report with a fix |
 | differs | 0 | named with a remaining difference |
-| excluded | 3 | deliberate exclusion, reason recorded |
-| matched-by-name | 161 | a port symbol with the same name exists |
-| unmatched | 1148 | no same-name port symbol; needs a manual verdict |
+| excluded | 183 | deliberate exclusion, reason recorded |
+| matched-by-name | 157 | a port symbol with the same name exists |
+| unmatched | 1000 | no same-name port symbol; needs a manual verdict |
 
 This matrix is an index. The authoritative per-function verdicts and the
 evidence line for each one are in the topical reports (`chart.md`, `core.md`, `judging.md`,
@@ -22,14 +22,14 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 10 | `onCreate` | unmatched |  |
+| 10 | `onCreate` | excluded |  |
 
 ## `com\wuying\phigros\audio\NativeAudioEngine.java`
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
 | 11 | `NativeAudioEngine` | unmatched |  |
-| 13 | `create` | verified |  |
+| 13 | `create` | excluded |  |
 | 19 | `delete` | fixed | `src\tools\frame_profile.cpp:74` `delete` (+2) |
 | 25 | `setMusicData` | unmatched |  |
 | 34 | `setMusicData` | unmatched |  |
@@ -43,7 +43,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 81 | `prepareDefaultSfxIfMissing` | unmatched |  |
 | 86 | `start` | fixed |  |
 | 91 | `pause` | fixed | `src\audio\AudioEngine.cpp:643` `pause` |
-| 96 | `restart` | verified | `src\audio\AudioEngine.cpp:673` `restart` |
+| 96 | `restart` | excluded | `src\audio\AudioEngine.cpp:673` `restart` |
 | 101 | `restartPaused` | matched-by-name | `src\audio\AudioEngine.cpp:681` `restartPaused` |
 | 106 | `seekTo` | matched-by-name | `src\audio\AudioEngine.cpp:431` `seekTo` |
 | 112 | `stop` | fixed | `src\audio\AudioEngine.cpp:648` `stop` |
@@ -201,7 +201,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 296 | `buildBezierLut` | verified | `src\core\Easing.cpp:332` `buildBezierLut` (+1) |
 | 306 | `buildBezierLut` | verified | `src\core\Easing.cpp:332` `buildBezierLut` (+1) |
 | 317 | `lookupBezierLut` | verified | `src\core\Easing.cpp:348` `lookupBezierLut` |
-| 330 | `bezierCacheKey` | unmatched |  |
+| 330 | `bezierCacheKey` | excluded |  |
 | 339 | `cubicBezierYforX` | verified | `src\core\Easing.cpp:284` `cubicBezierYForX` |
 | 398 | `bezierSampleX` | matched-by-name | `src\core\Easing.cpp:131` `bezierSampleX` |
 | 403 | `bezierSampleY` | unmatched |  |
@@ -290,7 +290,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 109 | `setPracticeEnabled` | matched-by-name | `include\rechigros\game\JudgementEngine.hpp:56` `setPracticeEnabled` |
 | 115 | `setPracticeSpeed` | matched-by-name | `src\app\GameScreen.cpp:872` `setPracticeSpeed` |
 | 124 | `getPracticeSpeed` | matched-by-name | `src\app\GameScreen.cpp:872` `setPracticeSpeed` |
-| 128 | `shouldResumeAudioOnActivityResume` | unmatched |  |
+| 128 | `shouldResumeAudioOnActivityResume` | excluded |  |
 | 138 | `setReplayRecorder` | unmatched |  |
 | 143 | `setReplayPlayback` | verified | `include\rechigros\game\GameplaySession.hpp:73` `replayPlayback` (+2) |
 | 150 | `sortReplayEntriesByTime` | verified |  |
@@ -335,7 +335,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 1454 | `applyTextureBilinearFilter` | verified |  |
 | 1464 | `applyTexturePointFilter` | verified |  |
 | 1474 | `maxFragTextureUnits` | verified |  |
-| 1552 | `GameRenderer` | verified | `src\render\GameRenderer.cpp:1064` `GameRenderer` |
+| 1552 | `GameRenderer` | excluded | `src\render\GameRenderer.cpp:1064` `GameRenderer` |
 | 1726 | `sanitizeOfficialScreenDpi` | unmatched |  |
 | 1735 | `sanitizeHitOffsetIndicatorMode` | unmatched |  |
 | 1742 | `preloadGifTextures` | verified |  |
@@ -472,7 +472,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 5100 | `drawRevealOutsidePanel` | unmatched |  |
 | 5156 | `initPrprVideoRuntimes` | unmatched |  |
 | 5203 | `preparePrprVideoPlayer` | unmatched |  |
-| 5219 | `Listener` | verified |  |
+| 5219 | `Listener` | excluded |  |
 | 5220 | `onVideoSizeChanged` | unmatched |  |
 | 5224 | `onPlaybackStateChanged` | unmatched |  |
 | 5239 | `onPlayerError` | unmatched |  |
@@ -928,7 +928,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 607 | `compare` | fixed |  |
 | 613 | `compare` | fixed |  |
 | 620 | `compare` | fixed |  |
-| 625 | `normalize` | verified | `src\core\JudgeLine.cpp:32` `normalize` |
+| 625 | `normalize` | excluded | `src\core\JudgeLine.cpp:32` `normalize` |
 | 690 | `initSpeedEventsPhi` | fixed | `src\core\JudgeLine.cpp:40` `initSpeedEventsPhi` |
 
 ## `com\wuying\phigros\game\MathUtils.java`
@@ -961,53 +961,53 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 64 | `NativeRenderCommands` | unmatched |  |
-| 66 | `isAvailable` | matched-by-name | `src\platform\FileDialog.cpp:131` `available` (+3) |
-| 174 | `LineState` | unmatched |  |
-| 324 | `LineTimeline` | unmatched |  |
+| 64 | `NativeRenderCommands` | excluded |  |
+| 66 | `isAvailable` | verified | `src\platform\FileDialog.cpp:131` `available` (+3) |
+| 174 | `LineState` | verified |  |
+| 324 | `LineTimeline` | verified |  |
 | 674 | `initNativeStore` | unmatched |  |
 | 679 | `releaseNativeStore` | unmatched |  |
-| 686 | `hasWhiteDefault` | unmatched |  |
+| 686 | `hasWhiteDefault` | verified |  |
 | 693 | `countNonNullLayers` | unmatched |  |
 | 702 | `countSpeedLayers` | unmatched |  |
-| 711 | `hasSpeedLayers` | unmatched |  |
-| 715 | `countNoteControls` | unmatched |  |
-| 719 | `countLineEvents` | unmatched |  |
-| 728 | `countMoveEvents` | unmatched |  |
-| 737 | `countSpeedEvents` | unmatched |  |
-| 746 | `countSpeedLayerEvents` | unmatched |  |
-| 755 | `countColorEvents` | unmatched |  |
-| 764 | `countSpeedBezierData` | unmatched |  |
-| 775 | `countSpeedLayerBezierData` | unmatched |  |
-| 784 | `countColorBezierData` | unmatched |  |
-| 795 | `countGifEvents` | unmatched |  |
-| 804 | `countLineBezierData` | unmatched |  |
-| 813 | `countMoveBezierData` | unmatched |  |
-| 822 | `bezierDataCount` | unmatched |  |
-| 828 | `bezierDataCount` | unmatched |  |
-| 849 | `LineEventWriter` | unmatched |  |
+| 711 | `hasSpeedLayers` | verified |  |
+| 715 | `countNoteControls` | excluded |  |
+| 719 | `countLineEvents` | excluded |  |
+| 728 | `countMoveEvents` | excluded |  |
+| 737 | `countSpeedEvents` | excluded |  |
+| 746 | `countSpeedLayerEvents` | excluded |  |
+| 755 | `countColorEvents` | excluded |  |
+| 764 | `countSpeedBezierData` | excluded |  |
+| 775 | `countSpeedLayerBezierData` | excluded |  |
+| 784 | `countColorBezierData` | excluded |  |
+| 795 | `countGifEvents` | excluded |  |
+| 804 | `countLineBezierData` | excluded |  |
+| 813 | `countMoveBezierData` | excluded |  |
+| 822 | `bezierDataCount` | excluded |  |
+| 828 | `bezierDataCount` | excluded |  |
+| 849 | `LineEventWriter` | excluded |  |
 | 863 | `addAll` | matched-by-name | `src\render\fx\BlockOverlay.cpp:137` `updateAll` |
 | 870 | `add` | fixed |  |
 | 882 | `writeBezier` | unmatched |  |
-| 917 | `MoveEventWriter` | unmatched |  |
+| 917 | `MoveEventWriter` | excluded |  |
 | 933 | `addAll` | matched-by-name | `src\render\fx\BlockOverlay.cpp:137` `updateAll` |
 | 940 | `add` | fixed |  |
 | 954 | `writeBezier` | unmatched |  |
-| 994 | `SpeedEventWriter` | unmatched |  |
+| 994 | `SpeedEventWriter` | excluded |  |
 | 1015 | `addAll` | matched-by-name | `src\render\fx\BlockOverlay.cpp:137` `updateAll` |
 | 1038 | `writeBezier` | unmatched |  |
-| 1075 | `ColorEventWriter` | unmatched |  |
+| 1075 | `ColorEventWriter` | excluded |  |
 | 1093 | `addAll` | matched-by-name | `src\render\fx\BlockOverlay.cpp:137` `updateAll` |
-| 1138 | `GifEventWriter` | unmatched |  |
+| 1138 | `GifEventWriter` | excluded |  |
 | 1148 | `addAll` | matched-by-name | `src\render\fx\BlockOverlay.cpp:137` `updateAll` |
-| 1170 | `NoteControlWriter` | unmatched |  |
+| 1170 | `NoteControlWriter` | excluded |  |
 | 1176 | `addAll` | matched-by-name | `src\render\fx\BlockOverlay.cpp:137` `updateAll` |
-| 1228 | `NoteBucket` | unmatched |  |
+| 1228 | `NoteBucket` | verified |  |
 | 1267 | `setNote` | matched-by-name | `src\chart\PecChartParser.cpp:87` `parseNote` (+1) |
-| 1299 | `syncDynamicStates` | unmatched |  |
+| 1299 | `syncDynamicStates` | verified |  |
 | 1316 | `resetRuntimeState` | unmatched |  |
-| 1331 | `syncDynamicState` | unmatched |  |
-| 1336 | `updateLoopStarts` | unmatched |  |
+| 1331 | `syncDynamicState` | verified |  |
+| 1336 | `updateLoopStarts` | verified |  |
 | 1362 | `initNativeStore` | unmatched |  |
 | 1367 | `releaseNativeStore` | unmatched |  |
 
@@ -1078,10 +1078,10 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
 | 100 | `OfficialLevelEffects` | unmatched |  |
-| 108 | `isAvailable` | matched-by-name | `src\platform\FileDialog.cpp:131` `available` (+3) |
+| 108 | `isAvailable` | verified | `src\platform\FileDialog.cpp:131` `available` (+3) |
 | 117 | `loadRoot` | unmatched |  |
 | 127 | `loadByChart` | fixed |  |
-| 159 | `loadByName` | unmatched |  |
+| 159 | `loadByName` | excluded |  |
 | 166 | `readEffectTables` | fixed |  |
 | 249 | `slashCount` | fixed |  |
 | 259 | `slashAt` | fixed |  |
@@ -1152,8 +1152,8 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 22 | `PlayResult` | verified |  |
-| 37 | `PlayResult` | verified |  |
+| 22 | `PlayResult` | excluded |  |
+| 37 | `PlayResult` | excluded |  |
 | 71 | `isFullCombo` | verified | `include\rechigros\game\PlayResult.hpp:18` `isFullCombo` |
 | 75 | `isAllPerfect` | verified | `include\rechigros\game\PlayResult.hpp:20` `isAllPerfect` |
 
@@ -1301,7 +1301,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 42 | `AssetBitmaps` | verified |  |
 | 44 | `preload` | verified |  |
 | 58 | `get` | fixed | `src\render\text\TextRenderer.cpp:633` `get` |
-| 81 | `cached` | verified |  |
+| 81 | `cached` | excluded |  |
 | 87 | `decodeAndCache` | unmatched |  |
 | 95 | `decode` | excluded | `src\app\UiText.cpp:140` `decode` |
 
@@ -1309,9 +1309,9 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 59 | `Runnable` | unmatched |  |
+| 59 | `Runnable` | excluded |  |
 | 61 | `run` | fixed | `src\app\Application.cpp:427` `run` |
-| 71 | `onCreate` | unmatched |  |
+| 71 | `onCreate` | excluded |  |
 | 95 | `buildUi` | verified |  |
 | 199 | `addStepButton` | verified |  |
 | 209 | `makeButton` | verified |  |
@@ -1322,15 +1322,15 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 270 | `onBackPressed` | verified |  |
 | 275 | `onPause` | verified |  |
 | 282 | `onResume` | verified |  |
-| 296 | `onDestroy` | unmatched |  |
-| 309 | `applyImmersiveMode` | unmatched |  |
+| 296 | `onDestroy` | excluded |  |
+| 309 | `applyImmersiveMode` | excluded |  |
 | 325 | `dp` | fixed | `include\rechigros\app\UiLayout.hpp:31` `dp` (+2) |
 | 329 | `clamp` | fixed |  |
 | 366 | `CalibrationView` | verified |  |
 | 376 | `setAudioOffsetMs` | verified |  |
 | 381 | `setPanelWidthPx` | verified |  |
 | 385 | `resetSmoothClock` | verified |  |
-| 392 | `onDraw` | verified |  |
+| 392 | `onDraw` | excluded |  |
 | 447 | `drawTap` | unmatched |  |
 | 460 | `drawHitEffects` | matched-by-name | `src\app\CalibrationScreen.cpp:345` `drawHitEffects` (+1) |
 | 510 | `drawTouchMarkers` | matched-by-name | `src\app\CalibrationScreen.cpp:409` `drawTouchMarkers` |
@@ -1364,30 +1364,30 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 244 | `onCreate` | unmatched |  |
-| 267 | `onSaveInstanceState` | unmatched |  |
+| 244 | `onCreate` | excluded |  |
+| 267 | `onSaveInstanceState` | excluded |  |
 | 288 | `onNewIntent` | verified |  |
 | 295 | `onResume` | verified |  |
 | 306 | `refreshLocalChartsOnResume` | unmatched |  |
 | 321 | `onPause` | verified |  |
-| 330 | `onDestroy` | unmatched |  |
+| 330 | `onDestroy` | excluded |  |
 | 338 | `onWindowFocusChanged` | verified |  |
 | 344 | `onBackPressed` | verified |  |
-| 364 | `setupRoot` | unmatched |  |
-| 394 | `restoreUiState` | unmatched |  |
-| 423 | `renderRestoredScreen` | unmatched |  |
+| 364 | `setupRoot` | excluded |  |
+| 394 | `restoreUiState` | excluded |  |
+| 423 | `renderRestoredScreen` | excluded |  |
 | 437 | `findLocalRecordById` | unmatched |  |
-| 446 | `applyImmersiveMode` | unmatched |  |
+| 446 | `applyImmersiveMode` | excluded |  |
 | 467 | `renderHome` | verified |  |
 | 571 | `applyHomeLayout` | verified |  |
 | 653 | `openGithub` | verified |  |
 | 661 | `menuButtonLp` | verified |  |
 | 667 | `menuButton` | verified |  |
 | 676 | `renderChartList` | verified |  |
-| 721 | `OnChildAttachStateChangeListener` | unmatched |  |
-| 722 | `onChildViewAttachedToWindow` | unmatched |  |
-| 732 | `onChildViewDetachedFromWindow` | unmatched |  |
-| 799 | `baseScreen` | unmatched |  |
+| 721 | `OnChildAttachStateChangeListener` | excluded |  |
+| 722 | `onChildViewAttachedToWindow` | excluded |  |
+| 732 | `onChildViewDetachedFromWindow` | excluded |  |
+| 799 | `baseScreen` | excluded |  |
 | 807 | `addBackButton` | verified | `src\app\ScreenCommon.cpp:102` `backButton` |
 | 839 | `preloadLocalCovers` | verified |  |
 | 847 | `rememberLocalScrollPosition` | verified |  |
@@ -1399,17 +1399,17 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 909 | `addSearchBox` | verified |  |
 | 923 | `addChartActions` | verified |  |
 | 942 | `setManageModeInPlace` | verified |  |
-| 955 | `notifyVisibleChartItems` | unmatched |  |
-| 966 | `updateVisibleLocalCards` | verified |  |
-| 976 | `updateVisibleLocalCard` | verified |  |
+| 955 | `notifyVisibleChartItems` | excluded |  |
+| 966 | `updateVisibleLocalCards` | excluded |  |
+| 976 | `updateVisibleLocalCard` | excluded |  |
 | 984 | `applyVisibleLocalCard` | verified |  |
 | 994 | `updateSelectionStateView` | verified |  |
-| 1007 | `addOnlinePageControls` | unmatched |  |
+| 1007 | `addOnlinePageControls` | excluded |  |
 | 1034 | `addSideIcon` | verified |  |
 | 1048 | `addDetailTopIcon` | verified |  |
 | 1062 | `renderSettings` | verified |  |
-| 1119 | `OnPreDrawListener` | unmatched |  |
-| 1122 | `onPreDraw` | unmatched |  |
+| 1119 | `OnPreDrawListener` | excluded |  |
+| 1122 | `onPreDraw` | excluded |  |
 | 1134 | `returnFromSettings` | verified |  |
 | 1144 | `settingsRowWidth` | verified |  |
 | 1150 | `applySettingsRowWidths` | verified |  |
@@ -1425,8 +1425,8 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 1332 | `addSwitch` | unmatched |  |
 | 1349 | `addSliderRow` | unmatched |  |
 | 1377 | `addEditRow` | unmatched |  |
-| 1396 | `SimpleWatcher` | unmatched |  |
-| 1397 | `afterTextChanged` | unmatched |  |
+| 1396 | `SimpleWatcher` | excluded |  |
+| 1397 | `afterTextChanged` | excluded |  |
 | 1403 | `addActionRow` | unmatched |  |
 | 1420 | `addDualActions` | unmatched |  |
 | 1435 | `addReplayRow` | matched-by-name | `src\app\SettingsScreen.cpp:558` `replayRow` |
@@ -1439,10 +1439,10 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 1648 | `DetailCanvasHost` | unmatched |  |
 | 1660 | `textInset` | unmatched |  |
 | 1664 | `updateTextSafety` | unmatched |  |
-| 1696 | `onMeasure` | verified |  |
+| 1696 | `onMeasure` | excluded |  |
 | 1713 | `onLayout` | verified |  |
 | 1729 | `SettingsBackdrop` | unmatched |  |
-| 1730 | `onDraw` | verified |  |
+| 1730 | `onDraw` | excluded |  |
 | 1742 | `addDetailText` | unmatched |  |
 | 1751 | `showSearchDialog` | unmatched |  |
 | 1781 | `showPageJumpDialog` | unmatched |  |
@@ -1586,12 +1586,12 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 2770 | `safeFileName` | unmatched |  |
 | 2775 | `extensionOrJpg` | unmatched |  |
 | 2839 | `beforeTextChanged` | unmatched |  |
-| 2840 | `onTextChanged` | unmatched |  |
+| 2840 | `onTextChanged` | excluded |  |
 | 2855 | `ChartTabBar` | unmatched |  |
 | 2859 | `ChartTabBar` | unmatched |  |
 | 2877 | `setState` | matched-by-name | `src\app\LibraryScreen.cpp:214` `state` |
 | 2884 | `setOnTabSelected` | unmatched |  |
-| 2888 | `onDraw` | verified |  |
+| 2888 | `onDraw` | excluded |  |
 | 2927 | `performClick` | verified |  |
 | 2933 | `onTouchEvent` | verified |  |
 | 2944 | `drawSkewRect` | unmatched |  |
@@ -1611,7 +1611,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 3154 | `applyLocalState` | unmatched |  |
 | 3173 | `Vh` | verified |  |
 | 3188 | `ChartCardFrame` | unmatched |  |
-| 3191 | `onMeasure` | verified |  |
+| 3191 | `onMeasure` | excluded |  |
 
 ## `com\wuying\phigros\ui\CoverImageLoader.java`
 
@@ -1621,7 +1621,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 28 | `CoverImageLoader` | unmatched |  |
 | 30 | `load` | fixed | `src\app\CoverCache.cpp:189` `load` (+3) |
 | 64 | `preload` | verified |  |
-| 80 | `cacheKey` | verified |  |
+| 80 | `cacheKey` | excluded |  |
 | 85 | `decodeSampled` | unmatched |  |
 
 ## `com\wuying\phigros\ui\GameDialog.java`
@@ -1629,12 +1629,12 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
 | 62 | `GameDialog` | unmatched |  |
-| 83 | `Builder` | unmatched |  |
+| 83 | `Builder` | excluded |  |
 | 85 | `setTitle` | verified |  |
 | 87 | `setTitle` | verified |  |
 | 88 | `setMessage` | verified |  |
 | 89 | `setMessage` | verified |  |
-| 90 | `setView` | matched-by-name | `src\platform\Gif.cpp:30` `view` |
+| 90 | `setView` | excluded | `src\platform\Gif.cpp:30` `view` |
 | 91 | `setItems` | verified |  |
 | 96 | `setPositiveButton` | unmatched |  |
 | 99 | `setPositiveButton` | unmatched |  |
@@ -1644,37 +1644,37 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 111 | `setNeutralButton` | unmatched |  |
 | 114 | `setCancelable` | verified |  |
 | 115 | `setOnDismissListener` | verified |  |
-| 118 | `create` | verified |  |
+| 118 | `create` | excluded |  |
 | 124 | `show` | verified |  |
-| 131 | `onCreate` | unmatched |  |
+| 131 | `onCreate` | excluded |  |
 | 141 | `configureWindow` | unmatched |  |
 | 177 | `show` | verified |  |
 | 187 | `dismiss` | fixed |  |
-| 205 | `AnimatorListenerAdapter` | unmatched |  |
-| 206 | `onAnimationEnd` | unmatched |  |
-| 213 | `finishDismiss` | unmatched |  |
-| 222 | `runEnter` | unmatched |  |
-| 234 | `AnimatorListenerAdapter` | unmatched |  |
-| 235 | `onAnimationEnd` | unmatched |  |
+| 205 | `AnimatorListenerAdapter` | excluded |  |
+| 206 | `onAnimationEnd` | excluded |  |
+| 213 | `finishDismiss` | excluded |  |
+| 222 | `runEnter` | excluded |  |
+| 234 | `AnimatorListenerAdapter` | excluded |  |
+| 235 | `onAnimationEnd` | excluded |  |
 | 241 | `applyProgress` | matched-by-name | `src\app\UiLayout.cpp:451` `progress` |
-| 255 | `onStop` | unmatched |  |
+| 255 | `onStop` | excluded |  |
 | 261 | `buildContent` | verified |  |
-| 378 | `weightedWrap` | unmatched |  |
+| 378 | `weightedWrap` | excluded |  |
 | 386 | `styleCustomView` | verified |  |
 | 401 | `text` | fixed |  |
 | 411 | `dp` | fixed | `include\rechigros\app\UiLayout.hpp:31` `dp` (+2) |
 | 420 | `ButtonSpec` | verified |  |
-| 442 | `DialogPanel` | unmatched |  |
-| 458 | `addButton` | unmatched |  |
-| 464 | `panelWidth` | verified |  |
-| 469 | `onMeasure` | verified |  |
+| 442 | `DialogPanel` | excluded |  |
+| 458 | `addButton` | excluded |  |
+| 464 | `panelWidth` | excluded |  |
+| 469 | `onMeasure` | excluded |  |
 | 503 | `onLayout` | verified |  |
-| 522 | `rebuildPaths` | unmatched |  |
-| 546 | `applySlant` | unmatched |  |
-| 574 | `onDraw` | verified |  |
+| 522 | `rebuildPaths` | excluded |  |
+| 546 | `applySlant` | excluded |  |
+| 574 | `onDraw` | excluded |  |
 | 584 | `onTouchEvent` | verified |  |
 | 595 | `ButtonCell` | unmatched |  |
-| 618 | `onDraw` | verified |  |
+| 618 | `onDraw` | excluded |  |
 | 632 | `dispatchSetPressed` | unmatched |  |
 | 638 | `setPressed` | unmatched |  |
 | 652 | `PressHighlight` | unmatched |  |
@@ -1686,7 +1686,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 685 | `getOpacity` | unmatched |  |
 | 693 | `ItemRow` | unmatched |  |
 | 695 | `setShift` | unmatched |  |
-| 708 | `onDraw` | verified |  |
+| 708 | `onDraw` | excluded |  |
 | 723 | `SlantBox` | unmatched |  |
 | 728 | `draw` | fixed | `src\render\fx\BadEffectField.cpp:41` `draw` (+10) |
 | 744 | `setAlpha` | unmatched |  |
@@ -1712,7 +1712,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 26 | `invalidate` | matched-by-name | `include\rechigros\app\ChartLibrary.hpp:70` `invalidate` (+1) |
+| 26 | `invalidate` | excluded | `include\rechigros\app\ChartLibrary.hpp:70` `invalidate` (+1) |
 | 28 | `prepare` | verified | `src\app\TriGridBackdrop.cpp:217` `prepare` (+8) |
 | 81 | `fits` | fixed |  |
 | 95 | `build` | fixed | `src\render\fx\FullscreenPass.cpp:70` `build` (+1) |
@@ -1734,36 +1734,36 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 60 | `setTextSize` | unmatched |  |
 | 61 | `setTextSize` | unmatched |  |
 | 67 | `getTextSize` | unmatched |  |
-| 70 | `requestLayout` | unmatched |  |
-| 74 | `onTextChanged` | unmatched |  |
+| 70 | `requestLayout` | excluded |  |
+| 74 | `onTextChanged` | excluded |  |
 | 82 | `hasFixedSize` | unmatched |  |
-| 86 | `onConfigurationChanged` | unmatched |  |
+| 86 | `onConfigurationChanged` | excluded |  |
 | 90 | `displayText` | verified |  |
 | 99 | `alignment` | verified |  |
 | 106 | `prepare` | verified | `src\app\TriGridBackdrop.cpp:217` `prepare` (+8) |
-| 115 | `onMeasure` | verified |  |
+| 115 | `onMeasure` | excluded |  |
 | 136 | `textTop` | verified |  |
 | 142 | `getBaseline` | verified |  |
-| 145 | `onDraw` | verified |  |
-| 175 | `animationsEnabled` | unmatched |  |
-| 180 | `drawCompoundDrawables` | unmatched |  |
-| 192 | `setSelected` | verified |  |
+| 145 | `onDraw` | excluded |  |
+| 175 | `animationsEnabled` | excluded |  |
+| 180 | `drawCompoundDrawables` | excluded |  |
+| 192 | `setSelected` | excluded |  |
 
 ## `com\wuying\phigros\ui\JudgementHistogramView.java`
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 41 | `JudgementHistogramView` | unmatched |  |
-| 46 | `JudgementHistogramView` | unmatched |  |
+| 41 | `JudgementHistogramView` | excluded |  |
+| 46 | `JudgementHistogramView` | excluded |  |
 | 51 | `init` | fixed |  |
 | 57 | `setHistogram` | verified |  |
 | 68 | `setTitle` | verified |  |
 | 73 | `setContentInsets` | verified |  |
 | 83 | `setHistogramTypeface` | verified |  |
 | 88 | `setSourceBitmap` | verified |  |
-| 94 | `onSizeChanged` | unmatched |  |
-| 105 | `onDetachedFromWindow` | unmatched |  |
-| 111 | `onDraw` | verified |  |
+| 94 | `onSizeChanged` | excluded |  |
+| 105 | `onDetachedFromWindow` | excluded |  |
+| 111 | `onDraw` | excluded |  |
 | 127 | `drawBlurredBackdrop` | matched-by-name | `src\app\ResultScreen.cpp:322` `drawBlurredBackdrop` |
 | 142 | `drawPanel` | verified | `src\app\CalibrationScreen.cpp:511` `drawPanel` (+1) |
 | 173 | `drawBars` | verified |  |
@@ -1819,20 +1819,20 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
 | 176 | `extraBool` | unmatched |  |
-| 191 | `onCreate` | unmatched |  |
+| 191 | `onCreate` | excluded |  |
 | 256 | `OnBackPressedCallback` | verified |  |
 | 258 | `handleOnBackPressed` | unmatched |  |
 | 280 | `setLoadingUi` | unmatched |  |
 | 334 | `loadAndStart` | unmatched |  |
 | 469 | `forceGc` | unmatched |  |
 | 480 | `hintSurfaceFrameRateIfPossible` | unmatched |  |
-| 501 | `Callback` | verified |  |
+| 501 | `Callback` | excluded |  |
 | 503 | `surfaceCreated` | unmatched |  |
 | 513 | `surfaceChanged` | unmatched |  |
 | 514 | `surfaceDestroyed` | unmatched |  |
 | 518 | `buildOverlayUiOn` | unmatched |  |
 | 591 | `startUiTicker` | unmatched |  |
-| 594 | `Runnable` | unmatched |  |
+| 594 | `Runnable` | excluded |  |
 | 595 | `run` | fixed | `src\app\Application.cpp:427` `run` |
 | 625 | `stopUiTicker` | unmatched |  |
 | 632 | `applyOverlayStageLayout` | unmatched |  |
@@ -1849,20 +1849,20 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 763 | `onPause` | verified |  |
 | 775 | `onWindowFocusChanged` | verified |  |
 | 788 | `onResume` | verified |  |
-| 798 | `onDestroy` | unmatched |  |
+| 798 | `onDestroy` | excluded |  |
 | 816 | `onExit` | unmatched |  |
 | 830 | `onFinished` | unmatched |  |
 | 940 | `onStageRectChanged` | unmatched |  |
 | 949 | `onResourcesReady` | unmatched |  |
-| 975 | `applyImmersiveMode` | unmatched |  |
+| 975 | `applyImmersiveMode` | excluded |  |
 | 996 | `applyHighRefreshRate` | unmatched |  |
 
 ## `com\wuying\phigros\ui\ReplayManager.java`
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 49 | `ReplayInfo` | unmatched |  |
-| 59 | `ReplayManager` | unmatched |  |
+| 49 | `ReplayInfo` | excluded |  |
+| 59 | `ReplayManager` | excluded |  |
 | 61 | `getPrefs` | verified |  |
 | 67 | `isReplayEnabled` | verified |  |
 | 71 | `setReplayEnabled` | verified |  |
@@ -1895,7 +1895,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
 | 81 | `iconIndex` | verified |  |
-| 92 | `onCreate` | unmatched |  |
+| 92 | `onCreate` | excluded |  |
 | 304 | `stylePanels` | verified |  |
 | 323 | `illustrationScrim` | unmatched |  |
 | 327 | `ShaderFactory` | unmatched |  |
@@ -1907,7 +1907,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 405 | `formatMultiplier` | matched-by-name | `src\app\ResultScreen.cpp:285` `formatMultiplier` |
 | 409 | `addModeTag` | verified |  |
 | 436 | `ModeTagFlow` | verified |  |
-| 441 | `onMeasure` | verified |  |
+| 441 | `onMeasure` | excluded |  |
 | 461 | `onLayout` | verified |  |
 | 483 | `layoutRow` | verified |  |
 | 494 | `setupResponsiveCanvas` | unmatched |  |
@@ -1920,7 +1920,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 662 | `loadGradeImage` | verified |  |
 | 670 | `loadButtonImage` | verified |  |
 | 676 | `loadImageFromAssets` | verified |  |
-| 691 | `setupFullscreen` | unmatched |  |
+| 691 | `setupFullscreen` | excluded |  |
 | 718 | `blurBackground` | unmatched |  |
 | 748 | `gaussianBlur` | unmatched |  |
 | 808 | `clamp` | fixed |  |
@@ -1933,7 +1933,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 846 | `apply` | fixed | `src\core\Easing.cpp:248` `apply` (+2) |
 | 848 | `childAlphaTargets` | verified |  |
 | 860 | `startEnterAnimation` | verified |  |
-| 922 | `onDestroy` | unmatched |  |
+| 922 | `onDestroy` | excluded |  |
 | 928 | `onWindowFocusChanged` | verified |  |
 | 934 | `onBackPressed` | verified |  |
 
@@ -1941,17 +1941,17 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 37 | `onCreate` | unmatched |  |
+| 37 | `onCreate` | excluded |  |
 | 50 | `onCreateView` | unmatched |  |
 | 56 | `onViewCreated` | unmatched |  |
-| 83 | `SimpleWatcher` | unmatched |  |
-| 84 | `afterTextChanged` | unmatched |  |
-| 111 | `SimpleWatcher` | unmatched |  |
-| 112 | `afterTextChanged` | unmatched |  |
-| 138 | `SimpleWatcher` | unmatched |  |
-| 139 | `afterTextChanged` | unmatched |  |
-| 167 | `SimpleWatcher` | unmatched |  |
-| 168 | `afterTextChanged` | unmatched |  |
+| 83 | `SimpleWatcher` | excluded |  |
+| 84 | `afterTextChanged` | excluded |  |
+| 111 | `SimpleWatcher` | excluded |  |
+| 112 | `afterTextChanged` | excluded |  |
+| 138 | `SimpleWatcher` | excluded |  |
+| 139 | `afterTextChanged` | excluded |  |
+| 167 | `SimpleWatcher` | excluded |  |
+| 168 | `afterTextChanged` | excluded |  |
 | 190 | `onResume` | verified |  |
 | 196 | `refreshFromActivity` | unmatched |  |
 | 214 | `parseIntSafe` | verified |  |
@@ -1961,7 +1961,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 242 | `formatFloat` | unmatched |  |
 | 246 | `host` | unmatched |  |
 | 252 | `beforeTextChanged` | unmatched |  |
-| 253 | `onTextChanged` | unmatched |  |
+| 253 | `onTextChanged` | excluded |  |
 
 ## `com\wuying\phigros\ui\SelectChartFragment.java`
 
@@ -1969,18 +1969,18 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | --- | --- | --- | --- |
 | 34 | `onCreateView` | unmatched |  |
 | 40 | `onViewCreated` | unmatched |  |
-| 64 | `SimpleWatcher` | unmatched |  |
-| 65 | `afterTextChanged` | unmatched |  |
-| 73 | `SimpleWatcher` | unmatched |  |
-| 74 | `afterTextChanged` | unmatched |  |
-| 82 | `SimpleWatcher` | unmatched |  |
-| 83 | `afterTextChanged` | unmatched |  |
+| 64 | `SimpleWatcher` | excluded |  |
+| 65 | `afterTextChanged` | excluded |  |
+| 73 | `SimpleWatcher` | excluded |  |
+| 74 | `afterTextChanged` | excluded |  |
+| 82 | `SimpleWatcher` | excluded |  |
+| 83 | `afterTextChanged` | excluded |  |
 | 100 | `onResume` | verified |  |
 | 106 | `refreshFromActivity` | unmatched |  |
 | 153 | `host` | unmatched |  |
 | 157 | `appendLoadedItem` | unmatched |  |
 | 164 | `beforeTextChanged` | unmatched |  |
-| 165 | `onTextChanged` | unmatched |  |
+| 165 | `onTextChanged` | excluded |  |
 
 ## `com\wuying\phigros\ui\SelectLocalChartsFragment.java`
 
@@ -1988,13 +1988,13 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | --- | --- | --- | --- |
 | 57 | `onCreateView` | unmatched |  |
 | 63 | `onViewCreated` | unmatched |  |
-| 85 | `Listener` | verified |  |
+| 85 | `Listener` | excluded |  |
 | 87 | `onOpen` | verified |  |
 | 91 | `onSelectionChanged` | unmatched |  |
 | 100 | `OnScrollListener` | unmatched |  |
 | 101 | `onScrolled` | unmatched |  |
 | 126 | `onResume` | verified |  |
-| 132 | `onDestroy` | unmatched |  |
+| 132 | `onDestroy` | excluded |  |
 | 138 | `refreshFromActivity` | unmatched |  |
 | 163 | `openRecord` | unmatched |  |
 | 177 | `handleBackPressed` | unmatched |  |
@@ -2009,17 +2009,17 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 292 | `confirmDeleteSelected` | unmatched |  |
 | 309 | `exportSelected` | unmatched |  |
 | 329 | `attachTextWatchers` | unmatched |  |
-| 332 | `SimpleWatcher` | unmatched |  |
-| 333 | `afterTextChanged` | unmatched |  |
-| 341 | `SimpleWatcher` | unmatched |  |
-| 342 | `afterTextChanged` | unmatched |  |
-| 349 | `SimpleWatcher` | unmatched |  |
-| 350 | `afterTextChanged` | unmatched |  |
+| 332 | `SimpleWatcher` | excluded |  |
+| 333 | `afterTextChanged` | excluded |  |
+| 341 | `SimpleWatcher` | excluded |  |
+| 342 | `afterTextChanged` | excluded |  |
+| 349 | `SimpleWatcher` | excluded |  |
+| 350 | `afterTextChanged` | excluded |  |
 | 363 | `setTextIfDifferent` | unmatched |  |
 | 370 | `runOnUiThread` | unmatched |  |
 | 377 | `host` | unmatched |  |
 | 383 | `beforeTextChanged` | unmatched |  |
-| 384 | `onTextChanged` | unmatched |  |
+| 384 | `onTextChanged` | excluded |  |
 
 ## `com\wuying\phigros\ui\SelectOnlineChartsFragment.java`
 
@@ -2027,17 +2027,17 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | --- | --- | --- | --- |
 | 70 | `onCreateView` | unmatched |  |
 | 76 | `onViewCreated` | unmatched |  |
-| 85 | `Listener` | verified |  |
+| 85 | `Listener` | excluded |  |
 | 87 | `onDownload` | unmatched |  |
 | 91 | `onItemVisible` | unmatched |  |
 | 100 | `OnScrollListener` | unmatched |  |
 | 101 | `onScrolled` | unmatched |  |
-| 119 | `TextWatcher` | unmatched |  |
+| 119 | `TextWatcher` | excluded |  |
 | 120 | `beforeTextChanged` | unmatched |  |
-| 121 | `onTextChanged` | unmatched |  |
-| 122 | `afterTextChanged` | unmatched |  |
+| 121 | `onTextChanged` | excluded |  |
+| 122 | `afterTextChanged` | excluded |  |
 | 131 | `onResume` | verified |  |
-| 139 | `onDestroy` | unmatched |  |
+| 139 | `onDestroy` | excluded |  |
 | 145 | `reloadOnline` | unmatched |  |
 | 158 | `resetOnlineState` | unmatched |  |
 | 167 | `fetchOnlineIndex` | unmatched |  |
@@ -2094,12 +2094,12 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | --- | --- | --- | --- |
 | 71 | `onCreateView` | unmatched |  |
 | 77 | `onViewCreated` | unmatched |  |
-| 146 | `SimpleWatcher` | unmatched |  |
-| 147 | `afterTextChanged` | unmatched |  |
-| 171 | `SimpleWatcher` | unmatched |  |
-| 172 | `afterTextChanged` | unmatched |  |
-| 198 | `SimpleWatcher` | unmatched |  |
-| 199 | `afterTextChanged` | unmatched |  |
+| 146 | `SimpleWatcher` | excluded |  |
+| 147 | `afterTextChanged` | excluded |  |
+| 171 | `SimpleWatcher` | excluded |  |
+| 172 | `afterTextChanged` | excluded |  |
+| 198 | `SimpleWatcher` | excluded |  |
+| 199 | `afterTextChanged` | excluded |  |
 | 251 | `onResume` | verified |  |
 | 257 | `refreshSkinDropdown` | unmatched |  |
 | 292 | `refreshFromActivity` | unmatched |  |
@@ -2118,7 +2118,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 460 | `formatFloat` | unmatched |  |
 | 464 | `host` | unmatched |  |
 | 470 | `beforeTextChanged` | unmatched |  |
-| 471 | `onTextChanged` | unmatched |  |
+| 471 | `onTextChanged` | excluded |  |
 | 476 | `Filter` | fixed | `src\render\gl\Texture.cpp:69` `setFilter` |
 | 477 | `performFiltering` | unmatched |  |
 | 484 | `publishResults` | unmatched |  |
@@ -2131,13 +2131,13 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | --- | --- | --- | --- |
 | 15 | `SettingsPreviewView` | unmatched |  |
 | 20 | `update` | fixed | `src\chart\Md5.cpp:84` `update` (+6) |
-| 27 | `onDraw` | verified |  |
+| 27 | `onDraw` | excluded |  |
 
 ## `com\wuying\phigros\ui\SettingsSliderView.java`
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 28 | `SettingsSliderView` | unmatched |  |
+| 28 | `SettingsSliderView` | excluded |  |
 | 39 | `setOnValueChanged` | verified |  |
 | 41 | `dp` | fixed | `include\rechigros\app\UiLayout.hpp:31` `dp` (+2) |
 | 43 | `scale` | fixed |  |
@@ -2150,14 +2150,14 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 54 | `left` | fixed | `include\rechigros\render\math\Mat4.hpp:85` `left` |
 | 58 | `right` | fixed | `include\rechigros\render\math\Mat4.hpp:88` `right` |
 | 62 | `parallelogram` | verified |  |
-| 74 | `onDraw` | verified |  |
+| 74 | `onDraw` | excluded |  |
 | 96 | `updateValue` | verified | `src\chart\OfficialChartParser.cpp:20` `value` |
 | 106 | `updateFromX` | verified |  |
 | 111 | `onTouchEvent` | verified |  |
 | 158 | `performClick` | verified |  |
-| 160 | `onKeyDown` | unmatched |  |
-| 172 | `onInitializeAccessibilityNodeInfo` | unmatched |  |
-| 182 | `performAccessibilityAction` | unmatched |  |
+| 160 | `onKeyDown` | excluded |  |
+| 172 | `onInitializeAccessibilityNodeInfo` | excluded |  |
+| 182 | `performAccessibilityAction` | excluded |  |
 
 ## `com\wuying\phigros\ui\SettingsToggleView.java`
 
@@ -2166,10 +2166,10 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 21 | `SettingsToggleView` | unmatched |  |
 | 31 | `dp` | fixed | `include\rechigros\app\UiLayout.hpp:31` `dp` (+2) |
 | 33 | `block` | fixed |  |
-| 45 | `onDraw` | verified |  |
+| 45 | `onDraw` | excluded |  |
 | 79 | `setChecked` | unmatched |  |
-| 105 | `onDetachedFromWindow` | unmatched |  |
-| 112 | `onInitializeAccessibilityNodeInfo` | unmatched |  |
+| 105 | `onDetachedFromWindow` | excluded |  |
+| 112 | `onInitializeAccessibilityNodeInfo` | excluded |  |
 
 ## `com\wuying\phigros\ui\SkewFrameLayout.java`
 
@@ -2187,9 +2187,9 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 100 | `setStraightRightEdge` | unmatched |  |
 | 106 | `setTopWider` | unmatched |  |
 | 112 | `setAccentEdge` | unmatched |  |
-| 120 | `onSizeChanged` | unmatched |  |
-| 126 | `rebuildPath` | unmatched |  |
-| 144 | `onDraw` | verified |  |
+| 120 | `onSizeChanged` | excluded |  |
+| 126 | `rebuildPath` | excluded |  |
+| 144 | `onDraw` | excluded |  |
 | 151 | `dispatchDraw` | unmatched |  |
 | 181 | `setAntialiasedClip` | unmatched |  |
 | 192 | `drawStroke` | unmatched |  |
@@ -2211,7 +2211,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 62 | `getSkinList` | verified |  |
 | 82 | `getSelectedSkinIndex` | verified |  |
 | 86 | `setSelectedSkinIndex` | verified |  |
-| 137 | `isLikelySkinPackage` | verified |  |
+| 137 | `isLikelySkinPackage` | excluded |  |
 | 173 | `deleteSkin` | unmatched |  |
 | 197 | `loadSkinConfig` | verified | `src\render\skin\SkinConfig.cpp:159` `loadSkinConfig` |
 | 215 | `getSkinConfig` | unmatched |  |
@@ -2228,16 +2228,16 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 23 | `TriGridBackgroundView` | unmatched |  |
-| 27 | `TriGridBackgroundView` | unmatched |  |
+| 23 | `TriGridBackgroundView` | excluded |  |
+| 27 | `TriGridBackgroundView` | excluded |  |
 | 32 | `init` | fixed |  |
-| 45 | `Runnable` | unmatched |  |
+| 45 | `Runnable` | excluded |  |
 | 46 | `run` | fixed | `src\app\Application.cpp:427` `run` |
-| 52 | `updateRendering` | unmatched |  |
-| 65 | `onAttachedToWindow` | unmatched |  |
-| 69 | `onDetachedFromWindow` | unmatched |  |
-| 72 | `onWindowVisibilityChanged` | unmatched |  |
-| 75 | `onVisibilityChanged` | unmatched |  |
+| 52 | `updateRendering` | excluded |  |
+| 65 | `onAttachedToWindow` | excluded |  |
+| 69 | `onDetachedFromWindow` | excluded |  |
+| 72 | `onWindowVisibilityChanged` | excluded |  |
+| 75 | `onVisibilityChanged` | excluded |  |
 | 78 | `onPause` | verified |  |
 | 79 | `onResume` | verified |  |
 | 80 | `setBackgroundBitmap` | unmatched |  |
@@ -2265,10 +2265,10 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 76 | `applyTypeface` | unmatched |  |
 | 90 | `useIndependentRenderer` | unmatched |  |
 | 104 | `bindSingleLine` | unmatched |  |
-| 140 | `TextWatcher` | unmatched |  |
+| 140 | `TextWatcher` | excluded |  |
 | 141 | `beforeTextChanged` | unmatched |  |
-| 142 | `onTextChanged` | unmatched |  |
-| 143 | `afterTextChanged` | unmatched |  |
+| 142 | `onTextChanged` | excluded |  |
+| 143 | `afterTextChanged` | excluded |  |
 | 147 | `bindAllSingleLine` | unmatched |  |
 | 167 | `fitSingleLine` | unmatched |  |
 | 172 | `fitSingleLine` | unmatched |  |
@@ -2328,7 +2328,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 18 | `FileUtils` | verified |  |
+| 18 | `FileUtils` | excluded |  |
 | 20 | `queryDisplayName` | unmatched |  |
 | 38 | `stripExtension` | verified | `src\chart\ChartLoader.cpp:379` `stripExtension` |
 
@@ -2336,11 +2336,11 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 25 | `InfoFileUtils` | unmatched |  |
+| 25 | `InfoFileUtils` | excluded |  |
 | 69 | `readInfoFile` | verified |  |
 | 91 | `readInfoFromChartFile` | verified |  |
 | 119 | `buildDifficultyLabel` | verified |  |
-| 139 | `normalizeDifficultyText` | unmatched |  |
+| 139 | `normalizeDifficultyText` | excluded |  |
 | 148 | `inferDifficultyPrefix` | unmatched |  |
 | 292 | `fromKv` | verified |  |
 | 341 | `getObj` | unmatched |  |
@@ -2372,7 +2372,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 64 | `titleOrFileName` | unmatched |  |
 | 69 | `levelOrFallback` | unmatched |  |
 | 80 | `FolderSession` | unmatched |  |
-| 93 | `Page` | verified |  |
+| 93 | `Page` | excluded |  |
 | 103 | `ResolvedDownload` | unmatched |  |
 | 109 | `LanzouClient` | unmatched |  |
 | 368 | `rememberCookies` | unmatched |  |
@@ -2436,14 +2436,14 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 36 | `ZipPackUtils` | unmatched |  |
+| 36 | `ZipPackUtils` | excluded |  |
 | 312 | `normalizeZipEntryName` | verified |  |
 | 439 | `ZipEntryInfo` | verified |  |
 | 447 | `isDirectory` | verified |  |
-| 464 | `BoundedRafInputStream` | unmatched |  |
-| 468 | `BoundedRafInputStream` | unmatched |  |
-| 505 | `close` | verified |  |
-| 510 | `readDummyByte` | unmatched |  |
+| 464 | `BoundedRafInputStream` | excluded |  |
+| 468 | `BoundedRafInputStream` | excluded |  |
+| 505 | `close` | excluded |  |
+| 510 | `readDummyByte` | excluded |  |
 | 517 | `deleteRecursive` | unmatched |  |
 | 530 | `isInfoFile` | verified |  |
 | 538 | `resolveInfoPath` | verified |  |

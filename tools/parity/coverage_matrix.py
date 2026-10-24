@@ -91,7 +91,12 @@ def load_report_verdicts(directory: str):
                     if text.startswith(("match", "matches")):
                         verdict = "match"
                         break
-                    if text.startswith(("exclud", "port-only")):
+                    # The reports spell a deliberate exclusion two ways: "excluded" and
+                    # "DELIBERATE-EXCLUSION". Only the first used to be recognised, so every
+                    # row written the second way counted as unadjudicated even though the
+                    # report had adjudicated it.
+                    if text.startswith(("exclud", "port-only", "deliberate-exclusion",
+                            "deliberate exclusion")):
                         verdict = "excluded"
                         break
                     if text.startswith(("differs", "missing")):
