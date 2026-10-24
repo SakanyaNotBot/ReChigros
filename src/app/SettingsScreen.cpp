@@ -321,6 +321,7 @@ float easeOutCubic(float t) {
 
 enum class BlockKind { Heading, Slider, Switch, Edit, Action, Dual, Replay, Empty, Blank };
 enum class SliderBind {
+  UiScale,
   KeyScale,
   Brightness,
   ScrollSpeed,
@@ -404,6 +405,7 @@ std::vector<std::filesystem::path> listSkinDirectories(const AppContext& context
 
 float sliderValue(const Block& block, const AppContext& context) {
   switch (block.bind) {
+    case SliderBind::UiScale: return context.settings.uiScale;
     case SliderBind::KeyScale: return context.settings.keyScale;
     case SliderBind::Brightness: return 1.0F - context.settings.backgroundDim;
     case SliderBind::ScrollSpeed: return context.settings.scrollSpeed;
@@ -426,6 +428,11 @@ float snapSliderValue(const Block& block, float value) {
 
 void applySliderValue(AppContext& context, const Block& block, float value) {
   switch (block.bind) {
+    case SliderBind::UiScale:
+      context.settings.uiScale = std::clamp(value, 0.85F, 2.0F);
+      // Apply immediately so the slider itself grows under the finger as it is dragged.
+      ui::setInterfaceScale(context.settings.uiScale);
+      break;
     case SliderBind::KeyScale:
       context.settings.keyScale = std::clamp(value, 0.7F, 1.5F);
       break;
@@ -607,6 +614,8 @@ std::vector<Block> buildVideoBlocks(const Metrics& m, AppContext& context) {
   std::vector<Block> blocks;
   BlockBuilder builder{m, blocks};
   builder.heading("画面");
+  builder.slider("video.ui_scale", "界面缩放", SliderBind::UiScale, 0.85F, 2.0F, 0.05F,
+      ValueFormat::TwoDecimals);
   builder.slider("video.key_scale", "按键缩放", SliderBind::KeyScale, 0.7F, 1.5F, 0.01F,
       ValueFormat::TwoDecimals);
   builder.slider("video.brightness", "背景亮度", SliderBind::Brightness, 0.0F, 1.0F, 0.01F,

@@ -47,6 +47,13 @@ struct Settings {
   // The reference starts with replay recording off.
   bool replayEnabled{false};
 
+  // Interface scale. The layout is authored on a fixed design canvas, so on a small phone
+  // or a high-density desktop the rows end up physically small. This multiplies the density
+  // units the interface uses, which enlarges every row, glyph and control together without
+  // changing their proportions. The reference has no such setting because it only ships at
+  // one density; the port exposes it so the picture stays readable on other screens.
+  float uiScale{1.0F};
+
   std::string selectedSkin;
 
   [[nodiscard]] bool load(const std::filesystem::path& file);

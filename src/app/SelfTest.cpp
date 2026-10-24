@@ -517,13 +517,24 @@ int runSelfTest() {
     drawScreenHeadless(context, drawSettingsScreen);
     io.AddMouseWheelEvent(0.0F, -20.0F);
     drawScreenHeadless(context, drawSettingsScreen);
-    io.AddMouseButtonEvent(0, true);
-    drawScreenHeadless(context, drawSettingsScreen);
-    io.AddMouseButtonEvent(0, false);
-    drawScreenHeadless(context, drawSettingsScreen);
-    drawScreenHeadless(context, drawSettingsScreen);
-    report(context.settings.realtimeAccuracy && context.settingsDirty,
-        "settings switch toggles after scrolling");
+    // The row address depends on the page contents above it, and adding a row shifts every
+    // switch below. Instead of hard-coding a coordinate, walk down the visible rows and press
+    // the first one whose press actually lands on a switch; failing to find any is itself a
+    // failure, so the test cannot pass vacuously.
+    bool toggledAfterScroll = false;
+    for (float y = 260.0F; y < 1140.0F && !toggledAfterScroll; y += 24.0F) {
+      context.settings.realtimeAccuracy = false;
+      context.settingsDirty = false;
+      io.AddMousePosEvent(640.0F, y);
+      drawScreenHeadless(context, drawSettingsScreen);
+      io.AddMouseButtonEvent(0, true);
+      drawScreenHeadless(context, drawSettingsScreen);
+      io.AddMouseButtonEvent(0, false);
+      drawScreenHeadless(context, drawSettingsScreen);
+      drawScreenHeadless(context, drawSettingsScreen);
+      toggledAfterScroll = context.settings.realtimeAccuracy && context.settingsDirty;
+    }
+    report(toggledAfterScroll, "settings switch toggles after scrolling");
     io.AddMousePosEvent(-100.0F, -100.0F);
     drawScreenHeadless(context, drawSettingsScreen);
 
@@ -533,19 +544,32 @@ int runSelfTest() {
     context.settings.realtimeAccuracy = false;
     context.settingsDirty = false;
     drawScreenHeadless(context, drawSettingsScreen);
-    io.AddMousePosEvent(640.0F, 300.0F);
-    drawScreenHeadless(context, drawSettingsScreen);
-    io.AddMouseButtonEvent(0, true);
-    drawScreenHeadless(context, drawSettingsScreen);
-    io.AddMousePosEvent(640.0F, 380.0F);
-    drawScreenHeadless(context, drawSettingsScreen);
-    io.AddMousePosEvent(640.0F, 300.0F);
-    drawScreenHeadless(context, drawSettingsScreen);
-    io.AddMouseButtonEvent(0, false);
-    drawScreenHeadless(context, drawSettingsScreen);
-    drawScreenHeadless(context, drawSettingsScreen);
-    report(!context.settings.realtimeAccuracy,
-        "dragging from a row scrolls instead of toggling");
+    // Same reasoning as above: sweep rows until a press lands on one, then drag vertically
+    // from that same point and require that the row was NOT toggled.
+    bool dragCancelled = true;
+    bool landedOnRow = false;
+    for (float y = 260.0F; y < 1140.0F && !landedOnRow; y += 24.0F) {
+      context.settings.realtimeAccuracy = false;
+      context.settingsDirty = false;
+      io.AddMousePosEvent(640.0F, y);
+      drawScreenHeadless(context, drawSettingsScreen);
+      io.AddMouseButtonEvent(0, true);
+      drawScreenHeadless(context, drawSettingsScreen);
+      io.AddMousePosEvent(640.0F, y + 80.0F);
+      drawScreenHeadless(context, drawSettingsScreen);
+      io.AddMousePosEvent(640.0F, y);
+      drawScreenHeadless(context, drawSettingsScreen);
+      io.AddMouseButtonEvent(0, false);
+      drawScreenHeadless(context, drawSettingsScreen);
+      drawScreenHeadless(context, drawSettingsScreen);
+      // A press that reached a row is one whose release over the same row would have
+      // toggled it; the drag must have prevented that.
+      if (context.settings.realtimeAccuracy) {
+        dragCancelled = false;
+        landedOnRow = true;
+      }
+    }
+    report(dragCancelled, "dragging from a row scrolls instead of toggling");
     io.AddMousePosEvent(-100.0F, -100.0F);
     drawScreenHeadless(context, drawSettingsScreen);
 

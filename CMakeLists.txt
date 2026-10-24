@@ -38,9 +38,23 @@ include(Dependencies)
 add_subdirectory(src/core)
 add_subdirectory(src/chart)
 if(RECHIGROS_BUILD_APP)
-  # The interface framework and its two support libraries are GNU C, so they are built from
-  # their vendored sources with a GNU-compatible compiler regardless of the host toolchain.
-  include(ObjectivelyMVC)
+  # The interface framework and its two support libraries are GNU C. MSVC's C front end
+  # rejects the extensions they are written in and its Windows SDK headers redefine
+  # `interface`, which they use as a field name, so on this host the application is built by
+  # the GCC tree instead (see build/wsl-build.sh). The option lets a Windows configure still
+  # build the tests and tools without the framework.
+  # Default off on an MSVC host: the framework cannot be compiled by it, and the supported
+  # way to build the interface on Windows is the WSL GCC tree. Other toolchains default on.
+  if(MSVC)
+    set(RECHIGROS_WITH_OMVC_DEFAULT OFF)
+  else()
+    set(RECHIGROS_WITH_OMVC_DEFAULT ON)
+  endif()
+  option(RECHIGROS_WITH_OMVC "Build the ObjectivelyMVC interface framework"
+    ${RECHIGROS_WITH_OMVC_DEFAULT})
+  if(RECHIGROS_WITH_OMVC)
+    include(ObjectivelyMVC)
+  endif()
   add_subdirectory(src/platform)
   add_subdirectory(src/audio)
   add_subdirectory(src/render)

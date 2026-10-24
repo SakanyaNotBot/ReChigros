@@ -108,6 +108,7 @@ bool Settings::load(const std::filesystem::path& file) {
   chartReveal = boolean("chartReveal", chartReveal);
   storyMode = boolean("storyMode", storyMode);
   replayEnabled = boolean("replayEnabled", replayEnabled);
+  uiScale = number("uiScale", uiScale);
   const auto skin = values.find("selectedSkin");
   if (skin != values.end()) selectedSkin = skin->second;
 
@@ -122,6 +123,9 @@ bool Settings::load(const std::filesystem::path& file) {
   musicSpeed = std::max(0.5F, std::min(musicSpeed, 2.0F));
   audioOffsetMs = std::max(-500, std::min(audioOffsetMs, 500));
   hitOffsetIndicatorMode = std::max(0, std::min(hitOffsetIndicatorMode, 2));
+  // The interface scale is clamped to what the design canvas can absorb: below 0.85 the rows
+  // start colliding, above 2.0 a wide list no longer fits its clipped viewport.
+  uiScale = std::max(0.85F, std::min(uiScale, 2.0F));
   // Revealing chart detail only makes sense with the automatic demonstration, so the
   // reference turns autoplay on when reveal is enabled.
   if (chartReveal && !autoplay) autoplay = true;
@@ -134,6 +138,7 @@ bool Settings::save(const std::filesystem::path& file) const {
     stream << key << '=' << value << '\n';
   };
   write("keyScale", toString(keyScale));
+  write("uiScale", toString(uiScale));
   write("backgroundDim", toString(backgroundDim));
   write("aspectRatio", toString(aspectRatio));
   write("scrollSpeed", toString(scrollSpeed));

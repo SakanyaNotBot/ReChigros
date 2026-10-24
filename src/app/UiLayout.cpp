@@ -185,6 +185,19 @@ void drawFallback(ImDrawList* drawList, ImVec2 topLeft, float pixelSize, ImU32 c
 
 } // namespace
 
+namespace {
+// Read once per frame by every dp() conversion; a plain float is enough because the value
+// only changes when the user moves the slider, never mid-frame.
+float gInterfaceScale = 1.0F;
+} // namespace
+
+void setInterfaceScale(float scale) {
+  if (!std::isfinite(scale) || scale <= 0.0F) return;
+  gInterfaceScale = std::clamp(scale, 0.85F, 2.0F);
+}
+
+float interfaceScale() { return gInterfaceScale; }
+
 Canvas canvas() {
   Canvas result;
   const ImGuiViewport* viewport = ImGui::GetMainViewport();

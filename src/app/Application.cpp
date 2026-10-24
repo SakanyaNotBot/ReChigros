@@ -598,6 +598,10 @@ int Application::run() {
     // The decision is made after the update: a gameplay frame can change screen (result
     // transition) or open a menu, and this flag must never suppress a frame that will draw
     // an interface.
+    // The interface scale is a user preference, so it is published before any screen lays
+    // out this frame. Doing it here rather than at the settings screen keeps the value live
+    // for every screen that reads density units, including the pause menu and the HUD.
+    ui::setInterfaceScale(app_->settings.uiScale);
     const bool imguiFrame = !(imguiSkipIdle_ && gameplayImGuiIdle());
     if (imguiFrame) {
       ImGui_ImplOpenGL3_NewFrame();

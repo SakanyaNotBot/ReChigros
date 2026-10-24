@@ -21,6 +21,13 @@ constexpr float kDesignWidth = 731.0F;
 constexpr float kDesignHeight = 415.0F;
 constexpr float kDensityRatio = 1.75F / (1080.0F / kDesignHeight);
 
+// User-chosen interface scale. The density ratio above is fixed to the reference device, so
+// every row and glyph keeps the reference's proportions; on a small phone or a dense desktop
+// that leaves them physically small. This factor multiplies the density units only, so the
+// whole interface grows together and the layout inside each row is unchanged.
+void setInterfaceScale(float scale);
+[[nodiscard]] float interfaceScale();
+
 struct Canvas {
   float scale{1.0F};
   ImVec2 origin{};
@@ -30,7 +37,9 @@ struct Canvas {
   }
   [[nodiscard]] float units(float design) const { return design * scale; }
   // Density units to pixels.
-  [[nodiscard]] float dp(float value) const { return value * kDensityRatio * scale; }
+  [[nodiscard]] float dp(float value) const {
+    return value * kDensityRatio * scale * interfaceScale();
+  }
 };
 
 // Canvas of the current frame's main viewport.
