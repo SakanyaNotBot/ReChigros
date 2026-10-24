@@ -99,6 +99,37 @@ in landscape is expected to look the same on both applications.
 
 None outstanding.
 
+## Android device verification, second run (the reported defects)
+
+Re-verified after the fixes landed, on the same emulator (Pixel 5 profile, Android 12,
+`1080x2340`, density 440 — a portrait panel, so the forced-landscape path is exercised too).
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Latest APK installs and starts | PASS | `adb install -r` Success, window focused |
+| Forced landscape | PASS | surface is `2340x1080` |
+| Settings page renders | PASS | `evidence/android-v2-settings.png`,
+four tabs and both sliders with their value readouts |
+| **Drag from the middle of a row scrolls** (reported defect #2) | PASS | two middle-drags scrolled from
+界面缩放 down to 谱面流速/判定线粗细 — `evidence/android-v2-scrolled.png` |
+| **Switch reacts to a tap** (reported defect #1) | PASS | tapping 挑战模式 turned it off: the thumb slid back and the list
+re-laid out (`evidence/android-v2-switch-off.png`) |
+| **Checked mark is visible when on** (reported defect #1) | PASS | 挑战模式 and 低分辨率模式 both show a white
+check on the dark track left of the thumb — `evidence/android-v2-switch-on.png` |
+| Low-resolution preview appears when toggled | PASS | enabling 低分辨率模式 drew the reduced-resolution preview region |
+
+The check sits on the track's left end, which is where the reference puts it: the thumb slides
+right when the switch is on, leaving the mark on the dark track where it stays legible. The
+earlier port drew it inside the thumb, so it vanished exactly when the switch was on.
+
+### What could not be checked here
+
+- **No chart pack is installed on the device**, so the play path (chart select → gameplay →
+  result) was not exercised. `开始游玩` stays on the home screen because there is nothing to
+  play; that is the expected behaviour with an empty library, not a defect.
+- This is still an **emulator with SwiftShader software rendering**. Real-GPU shader
+  compilation, high-refresh presentation and real touch latency remain unverified.
+
 ## Android device verification (first run)
 
 Verified on an emulator because no physical device was attached. The emulator is a Pixel 5
