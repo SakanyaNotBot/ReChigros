@@ -38,3 +38,5 @@ xcuserdata/
 # Device performance A/B evidence kept outside the build tree
 /perf-final/
 
+__pycache__/
+*.pyc
