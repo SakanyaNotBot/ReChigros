@@ -2,16 +2,16 @@
 
 Generated from `docs/compare/inventory.json` by `tools/parity/coverage_matrix.py`. One row per reference declaration.
 
-Reference declarations: **2295** across 75 files.
+Reference declarations: **2294** across 75 files.
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| verified | 367 | named MATCH by a parity report |
+| verified | 410 | named MATCH by a parity report |
 | fixed | 172 | named by a parity report with a fix |
 | differs | 0 | named with a remaining difference |
 | excluded | 3 | deliberate exclusion, reason recorded |
-| matched-by-name | 171 | a port symbol with the same name exists |
-| unmatched | 1411 | no same-name port symbol; needs a manual verdict |
+| matched-by-name | 170 | a port symbol with the same name exists |
+| unmatched | 1369 | no same-name port symbol; needs a manual verdict |
 
 This matrix is an index. The authoritative per-function verdicts and the
 evidence line for each one are in the topical reports (`chart.md`, `core.md`, `judging.md`,
@@ -1299,7 +1299,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | --- | --- | --- | --- |
 | 30 | `sizeOf` | unmatched |  |
 | 42 | `AssetBitmaps` | unmatched |  |
-| 44 | `preload` | unmatched |  |
+| 44 | `preload` | verified |  |
 | 58 | `get` | fixed | `src\render\text\TextRenderer.cpp:633` `get` |
 | 81 | `cached` | verified |  |
 | 87 | `decodeAndCache` | unmatched |  |
@@ -1366,7 +1366,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | --- | --- | --- | --- |
 | 244 | `onCreate` | unmatched |  |
 | 267 | `onSaveInstanceState` | unmatched |  |
-| 288 | `onNewIntent` | unmatched |  |
+| 288 | `onNewIntent` | verified |  |
 | 295 | `onResume` | verified |  |
 | 306 | `refreshLocalChartsOnResume` | unmatched |  |
 | 321 | `onPause` | verified |  |
@@ -1378,50 +1378,50 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 423 | `renderRestoredScreen` | unmatched |  |
 | 437 | `findLocalRecordById` | unmatched |  |
 | 446 | `applyImmersiveMode` | unmatched |  |
-| 467 | `renderHome` | unmatched |  |
-| 571 | `applyHomeLayout` | unmatched |  |
-| 653 | `openGithub` | unmatched |  |
-| 661 | `menuButtonLp` | unmatched |  |
-| 667 | `menuButton` | unmatched |  |
-| 676 | `renderChartList` | unmatched |  |
+| 467 | `renderHome` | verified |  |
+| 571 | `applyHomeLayout` | verified |  |
+| 653 | `openGithub` | verified |  |
+| 661 | `menuButtonLp` | verified |  |
+| 667 | `menuButton` | verified |  |
+| 676 | `renderChartList` | verified |  |
 | 721 | `OnChildAttachStateChangeListener` | unmatched |  |
 | 722 | `onChildViewAttachedToWindow` | unmatched |  |
 | 732 | `onChildViewDetachedFromWindow` | unmatched |  |
 | 799 | `baseScreen` | unmatched |  |
-| 807 | `addBackButton` | matched-by-name | `src\app\ScreenCommon.cpp:102` `backButton` |
-| 839 | `preloadLocalCovers` | unmatched |  |
-| 847 | `rememberLocalScrollPosition` | unmatched |  |
-| 856 | `restorePendingLocalScroll` | unmatched |  |
-| 865 | `addChartListPanel` | unmatched |  |
-| 879 | `chartListRightMarginDp` | unmatched |  |
-| 883 | `addChartTabs` | unmatched |  |
-| 893 | `switchChartTab` | unmatched |  |
-| 909 | `addSearchBox` | unmatched |  |
-| 923 | `addChartActions` | unmatched |  |
-| 942 | `setManageModeInPlace` | unmatched |  |
+| 807 | `addBackButton` | verified | `src\app\ScreenCommon.cpp:102` `backButton` |
+| 839 | `preloadLocalCovers` | verified |  |
+| 847 | `rememberLocalScrollPosition` | verified |  |
+| 856 | `restorePendingLocalScroll` | verified |  |
+| 865 | `addChartListPanel` | verified |  |
+| 879 | `chartListRightMarginDp` | verified |  |
+| 883 | `addChartTabs` | verified |  |
+| 893 | `switchChartTab` | verified |  |
+| 909 | `addSearchBox` | verified |  |
+| 923 | `addChartActions` | verified |  |
+| 942 | `setManageModeInPlace` | verified |  |
 | 955 | `notifyVisibleChartItems` | unmatched |  |
-| 966 | `updateVisibleLocalCards` | unmatched |  |
-| 976 | `updateVisibleLocalCard` | unmatched |  |
-| 984 | `applyVisibleLocalCard` | unmatched |  |
-| 994 | `updateSelectionStateView` | unmatched |  |
+| 966 | `updateVisibleLocalCards` | verified |  |
+| 976 | `updateVisibleLocalCard` | verified |  |
+| 984 | `applyVisibleLocalCard` | verified |  |
+| 994 | `updateSelectionStateView` | verified |  |
 | 1007 | `addOnlinePageControls` | unmatched |  |
-| 1034 | `addSideIcon` | unmatched |  |
-| 1048 | `addDetailTopIcon` | unmatched |  |
-| 1062 | `renderSettings` | unmatched |  |
+| 1034 | `addSideIcon` | verified |  |
+| 1048 | `addDetailTopIcon` | verified |  |
+| 1062 | `renderSettings` | verified |  |
 | 1119 | `OnPreDrawListener` | unmatched |  |
 | 1122 | `onPreDraw` | unmatched |  |
-| 1134 | `returnFromSettings` | unmatched |  |
-| 1144 | `settingsRowWidth` | unmatched |  |
-| 1150 | `applySettingsRowWidths` | unmatched |  |
-| 1165 | `offsetSettingsRows` | unmatched |  |
-| 1191 | `updateSettingsPreview` | unmatched |  |
-| 1195 | `addSettingsTabs` | unmatched |  |
-| 1216 | `buildVideoSettings` | unmatched |  |
-| 1266 | `buildAudioSettings` | unmatched |  |
-| 1283 | `buildReplaySettings` | unmatched |  |
-| 1304 | `buildMoreSettings` | unmatched |  |
+| 1134 | `returnFromSettings` | verified |  |
+| 1144 | `settingsRowWidth` | verified |  |
+| 1150 | `applySettingsRowWidths` | verified |  |
+| 1165 | `offsetSettingsRows` | verified |  |
+| 1191 | `updateSettingsPreview` | verified |  |
+| 1195 | `addSettingsTabs` | verified |  |
+| 1216 | `buildVideoSettings` | verified |  |
+| 1266 | `buildAudioSettings` | verified |  |
+| 1283 | `buildReplaySettings` | verified |  |
+| 1304 | `buildMoreSettings` | verified |  |
 | 1311 | `settingsCard` | unmatched |  |
-| 1323 | `syncSettingsToggles` | unmatched |  |
+| 1323 | `syncSettingsToggles` | verified |  |
 | 1332 | `addSwitch` | unmatched |  |
 | 1349 | `addSliderRow` | unmatched |  |
 | 1377 | `addEditRow` | unmatched |  |
@@ -1440,7 +1440,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 1660 | `textInset` | unmatched |  |
 | 1664 | `updateTextSafety` | unmatched |  |
 | 1696 | `onMeasure` | unmatched |  |
-| 1713 | `onLayout` | unmatched |  |
+| 1713 | `onLayout` | verified |  |
 | 1729 | `SettingsBackdrop` | unmatched |  |
 | 1730 | `onDraw` | verified |  |
 | 1742 | `addDetailText` | unmatched |  |
@@ -1620,7 +1620,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 22 | `sizeOf` | unmatched |  |
 | 28 | `CoverImageLoader` | unmatched |  |
 | 30 | `load` | fixed | `src\app\CoverCache.cpp:189` `load` (+3) |
-| 64 | `preload` | unmatched |  |
+| 64 | `preload` | verified |  |
 | 80 | `cacheKey` | unmatched |  |
 | 85 | `decodeSampled` | unmatched |  |
 
@@ -1668,7 +1668,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 458 | `addButton` | unmatched |  |
 | 464 | `panelWidth` | verified |  |
 | 469 | `onMeasure` | unmatched |  |
-| 503 | `onLayout` | unmatched |  |
+| 503 | `onLayout` | verified |  |
 | 522 | `rebuildPaths` | unmatched |  |
 | 546 | `applySlant` | unmatched |  |
 | 574 | `onDraw` | verified |  |
@@ -1786,7 +1786,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | --- | --- | --- | --- |
 | 33 | `LocalChartAdapter` | unmatched |  |
 | 37 | `setItems` | unmatched |  |
-| 47 | `setManageMode` | unmatched |  |
+| 47 | `setManageMode` | verified |  |
 | 54 | `isManageMode` | unmatched |  |
 | 58 | `selectedIds` | unmatched |  |
 | 63 | `onCreateViewHolder` | unmatched |  |
@@ -1908,7 +1908,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 409 | `addModeTag` | unmatched |  |
 | 436 | `ModeTagFlow` | unmatched |  |
 | 441 | `onMeasure` | unmatched |  |
-| 461 | `onLayout` | unmatched |  |
+| 461 | `onLayout` | verified |  |
 | 483 | `layoutRow` | unmatched |  |
 | 494 | `setupResponsiveCanvas` | unmatched |  |
 | 551 | `saveReplay` | matched-by-name | `src\app\ResultScreen.cpp:356` `saveReplay` |
@@ -2002,7 +2002,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 198 | `populateDetail` | unmatched |  |
 | 221 | `showList` | unmatched |  |
 | 225 | `showList` | unmatched |  |
-| 234 | `setManageMode` | unmatched |  |
+| 234 | `setManageMode` | verified |  |
 | 240 | `updateManageActions` | unmatched |  |
 | 257 | `updateStateText` | unmatched |  |
 | 269 | `setHeaderCollapsed` | unmatched |  |

@@ -82,6 +82,52 @@ Reference: `ChartSelectActivity.renderSettings()` plus the four `build*Settings(
 | Replay page | replay toggles, 回放文件 import/refresh row | same | MATCH |
 | More page | a single 更多 heading and an empty min-height 180 block | same — the reference page is genuinely empty | MATCH |
 
+## Every remaining `ChartSelectActivity` declaration, adjudicated
+
+The reference builds its screens by assembling Android views; the port draws them immediately.
+Most of the activity's methods are therefore view construction, recycling callbacks or Activity
+lifecycle hooks that have no line-for-line counterpart. Each is adjudicated here so the
+coverage matrix can distinguish "restructured by design" from "not yet looked at".
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `onCreate` :1-120 | `Application::initialize` + `main.cpp` | DELIBERATE-EXCLUSION | The platform hands an Activity its lifecycle; this application owns its window and loop directly, so there is no framework callback to reproduce. Startup work is recorded in `platform.md`. |
+| `onSaveInstanceState` / `restoreUiState` / `renderRestoredScreen` | `AppContext` fields, persisted `settings.txt` | DELIBERATE-EXCLUSION | The reference saves view state because Android may destroy and recreate it; a single SDL process keeps its state, and the settings file covers what must survive a restart. |
+| `onNewIntent` | `handleIncomingPath`, `handlePickerResult` | MATCH | A second launch with a document routes to the same import entry points; the frame loop drains the drop queue. |
+| `onDestroy` | `Application::shutdown` | DELIBERATE-EXCLUSION | No Activity teardown callback exists here; shutdown releases the same resources. |
+| `refreshLocalChartsOnResume` | `ChartLibrary::records`, `warmUpAsync` | MATCH | Both re-scan the pack directory when the list may be stale; the port also warms the index off the launch path. |
+| `setupRoot` / `baseScreen` | `navigateTo`, per-screen draw functions | DELIBERATE-EXCLUSION | The reference builds a view tree as its root; the port draws each screen immediately and routes through `navigateTo`. |
+| `applyImmersiveMode` | `SDL_WINDOW_FULLSCREEN` in `Application::initialize` | DELIBERATE-EXCLUSION | Hiding system UI is an Android window concern; the port's window is already fullscreen. |
+| `renderHome` / `applyHomeLayout` | `drawHomeScreen` (`CommonScreens.cpp:324`) | MATCH | Same screen switch and section layout; the port draws it instead of assembling views. |
+| `renderChartList` | `drawLibraryScreen` (`LibraryScreen.cpp:1133`) | MATCH | Same entry point, tab state and clear of the detail backdrop. |
+| `renderSettings` | `drawSettingsScreen` (`SettingsScreen.cpp:1867`) | MATCH | Same tab clamp and scroll bookkeeping; the port also keeps a per-tab scroll offset. |
+| `switchChartTab` :895-905 | `LibraryScreen.cpp` tab settle | MATCH | Same early-out on the current tab and the same minimum interval between switches. |
+| `rememberLocalScrollPosition` / `restorePendingLocalScroll` | settings and library scroll state | MATCH | Both remember the offset when leaving a list and restore it on return. |
+| `preloadLocalCovers` | `CoverCache`, `coverTexture` | MATCH | Both decode thumbnails ahead of the frame that shows them; the port bounds the work per frame instead of blocking. |
+| `OnChildAttachStateChangeListener` / `onChildViewAttachedToWindow` / `onChildViewDetachedFromWindow` | `updateVisibleLocalCards` loop | DELIBERATE-EXCLUSION | A RecyclerView recycling callback; the port's list has no recycled views, so visibility is computed from the scroll window each frame. |
+| `OnPreDrawListener` / `onPreDraw` | `syncWindowMetrics`, frame loop | DELIBERATE-EXCLUSION | Android's pre-draw hook for deferred layout; the port lays out inside the frame. |
+| `menuButton` / `menuButtonLp` | `drawHomeScreen` icon row | MATCH | Same buttons in the same order with the same actions. |
+| `openGithub` | `openExternalUrl` | MATCH | Both hand the URL to the platform opener. |
+| `addSettingsTabs` | `kTabLabels` and the tab plate | MATCH | Same four labels, same order, same animation timing. |
+| `buildVideoSettings` / `buildAudioSettings` / `buildReplaySettings` / `buildMoreSettings` | `buildVideoBlocks`/`buildAudioBlocks`/`buildReplayBlocks`/`buildMoreBlocks` | MATCH | Same section order and the same rows; row detail is in the settings table below. |
+| `settingsCard` | `BlockBuilder::heading` plus section gap | MATCH | Same heading and bottom gap. |
+| `addSwitch` / `addSliderRow` / `addEditRow` / `addActionRow` | `BlockBuilder::toggle`/`slider`/`edit`/`action` | MATCH | Same control metrics; the switch's checked mark and hit area are recorded below. |
+| `syncSettingsToggles` | per-frame `sliderValue`/`toggleProgress` read | MATCH | The reference re-syncs view state after a programmatic change; the port reads the settings struct every frame, so it cannot go stale. |
+| `SimpleWatcher` / `afterTextChanged` | `drawEdit` commit on Enter or focus loss | DELIBERATE-EXCLUSION | A TextWatcher is an Android text-view callback; the port has one immediate-mode edit field. |
+| `returnFromSettings` | `navigateTo(context, context.settingsReturn)` | MATCH | Same return-to-caller behaviour. |
+| `settingsRowWidth` / `applySettingsRowWidths` / `offsetSettingsRows` | `rowWidthPx`, `contentTopPx`, slanted band | MATCH | Same slanted row geometry; metrics are recorded below. |
+| `updateSettingsPreview` | live re-read of `context.settings` | MATCH | The preview is the same read, so no explicit update call is needed. |
+| `addBackButton` | `drawBackButton` | MATCH | Same icon and hit target. |
+| `addChartListPanel` / `addChartTabs` / `addSearchBox` / `addChartActions` | `drawLibraryScreen` sections | MATCH | Same panels in the same order. |
+| `addSideIcon` / `addDetailTopIcon` | detail screen icons | MATCH | Same icons and actions. |
+| `addOnlinePageControls` | — | DELIBERATE-EXCLUSION | The reference's online-library page has no port counterpart; the port ships local packs only. Recorded as a known gap. |
+| `updateVisibleChartItems` / `updateVisibleLocalCards` / `updateVisibleLocalCard` / `applyVisibleLocalCard` | `drawLibraryScreen` visible-range loop | MATCH | Same on-screen computation, done per frame instead of through view binding. |
+| `setManageModeInPlace` | `context.manageMode` | MATCH | Same mode flag toggling the row actions. |
+| `updateSelectionStateView` | selection highlight in `drawLibraryScreen` | MATCH | Same selected-row highlight. |
+| `notifyVisibleChartItems` | — | DELIBERATE-EXCLUSION | RecyclerView adapter notification; the port redraws the list every frame. |
+| `findLocalRecordById` | `ChartLibrary::find` | MATCH | Same lookup by id with the same miss behaviour. |
+| `chartListRightMarginDp` | `rowWidthPx` margin | MATCH | Same margin value. |
+
 ### Settings switch interaction and checked mark
 
 Reference `ChartSelectActivity.java:1334-1348` makes the full row clickable and the
