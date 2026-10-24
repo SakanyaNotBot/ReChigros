@@ -15,6 +15,28 @@ the same result).
 
 ---
 
+## This round: judgement-side units re-verified line by line
+
+Each row is a behaviour compared against the reference body, not a name match.
+
+| Unit | Reference | Port | Verdict |
+| --- | --- | --- | --- |
+| Judgement classification | `calcJudgement` :2840-2851 | `JudgementEngine::calculate` :125-143 | MATCH — six branches in the same order, `<` for perfect/good and `<=` for bad, DRAG/FLICK stop at MISS after the perfect test, HOLD stops at MISS after the good test |
+| Judgement commit | `commitJudgement` :2853-2934 | `JudgementEngine::commit` :151-208 | MATCH — duplicate guard, the seven note fields cleared, `clicked` only for perfect/good, the hold-fx condition, count indices, combo reset, good early/late split, AP/FC flags, Welford update, max combo, and the offset/indicator call order |
+| Score | `getScore` :427-438 | `JudgementEngine::score` :255-265 | MATCH — 0.65 good weight, challenge drops the combo term, non-finite → 0, clamp to [0,1e6], round |
+| Accuracy / realtime accuracy | :468-486 | :267-276 | MATCH — same numerator, denominator total vs judged, non-finite fallbacks (0 vs 1) |
+| Spatial late window | `getSpatialJudgeWindowSec` :2754-2770 | `spatialJudgeWindow` :295-300 | MATCH — full bad inside 0.9, linear taper with the perfect window, 0 at 1.9 |
+| Late-miss limit | `officialLateMissLimitSec` :2818-2834 | `lateMissLimitSec` :324-333 | MATCH — drag 0.1, flick perfect×1.75, hold and tap use the good window |
+| Candidate replacement | `officialCheckNoteCandidateReplaces` :2772-2795, `officialCheckFlickCandidateReplaces` :2797-2807 | :302-322 | MATCH — both start with `!hasCurrent`, the 0.01 s tolerance, the distance tie-break, and the drag/flick final rule |
+| Judge position scale | `officialJudgePositionScalePx` :2537-2542 | `judgePositionScalePx` :339-345 | MATCH — `screenH*0.1`, then `stageH*0.1`, then `PGRW*stageW`, finally 1 |
+| Touch scan and selection | :10060-10119 | `GameplaySession::judgeNewTouches` :540-592 | MATCH — same skip set, asymmetric window (`good` early, `bad` late), the 1.9 spatial cutoff, the practice-aware perfect window, and flick not setting `isJudged` |
+| Hold activation | `activateHoldAfterHead` :9694-9712 | `GameplaySession::activateHold` :199-225 | MATCH — every field set, forced offset/indicator recording, head burst at the hit time |
+| Hold tail settlement | :10442-10468 | `settleHoldTails` :786-803 | MATCH — the 0.22 early settle, `clicked` set once at the note time, the two-pass prejudge/settle structure |
+| Miss scan | :10475-10489 | `detectMisses` :805-819 | MATCH — cursor stops at the first active hold, fake notes skipped, fixed 0.25 miss delta |
+
+Not yet compared on this side: replay reconstruction details beyond the model table above, and
+the practice-mode panel itself (display-side, covered in `ui.md`).
+
 ## Answers to the ten briefed questions
 
 ### 1. Autoplay diff convention — FIXED
