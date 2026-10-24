@@ -384,6 +384,34 @@ These are noted so a future reader does not mistake them for divergences.
    particle positions do not. Inherent to the runtime change and deliberate so the port is
    deterministic across its own runs.
 
+### The official block composite pipeline
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `syncOfficialBlocksToTime` | block phase sync on a seek | MATCH | Same re-derivation of every zone's phase from the new chart time, so a backward seek does not replay a one-shot fade. |
+| `blockCompositeUsable` | `BlockCompositePass::ready()` plus `allocated()` | MATCH | Same "program built and targets allocated" test before the composite may run. |
+| `ensureBlockComposite` / `releaseBlockComposite` | `BlockCompositePass::prepare` / `release` | MATCH | Same lazy prepare per asset root and the same release on teardown. |
+| `uploadBlockMaterialUniforms` | `uploadMaterials` (`BlockCompositePass.cpp:333`) | MATCH | Same upload of the three material arrays; the rows are pinned to the shader's declaration order. |
+| `updateTouchSlots` / `uploadBlockUniforms` | `TouchState` handling in `BlockCompositePass::draw` | MATCH | Same "held points in, uniforms out" step, with the shine on wall time so a paused chart does not freeze it. The reference keeps a per-finger slot with a show/hide animation; the port uploads the live points directly. |
+| `putMaskVertex` / `emitMaskQuad` / `renderBlockMasks` | `appendQuad` / `collectMaskQuads` / `rasteriseMasks` | MATCH | Same interleaved vertex build and the same two-target rasterisation. The float-versus-vertex index bug in this path is fixed and recorded below. |
+| `emitHoverQuad` | `BlockOverlay::appendHoverQuads` | MATCH | Same one soft quad per held point written into the second mask's alpha channel, which is the channel the composite's hover term reads. |
+| `blockGlowRingWeight` | `BlockCompositePass::glowRingWeight` | MATCH | Same ring weighting: each ring carries its remaining reach over the sum of all reaches, so the innermost ring dominates. |
+| `runBlockPipelineInto` / `runBlockPrepasses` | `draw` / `runPrepasses` | MATCH | Same compose, edge and glow pre-passes followed by the composite, with the caller's framebuffer and viewport restored afterwards. |
+| `drawSolidRectRot` | rotated solid rect draw | MATCH | Same rotated filled rectangle used by the practice panel. |
+
+### Shader upgrading and the fullscreen quad
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `loadResPackFromAssets` | res-pack load in the texture cache | MATCH | Same read of the pack's texture set with the same missing-entry fallback. |
+| `createQuadPos` / `createNdcQuadPos` / `createQuadUv` | fullscreen quad geometry in `FullscreenQuad` | MATCH | Same two-triangle quad in clip space and the same UV set; the NDC variant exists because one path already works in clip space. |
+| `updateQuadUv` / `updateQuadUvNdc` | quad UV upload | MATCH | Same UV buffer update with and without the NDC flip. |
+| `hasVersionDirective` / `containsIdentifier` | directive and identifier tests in `ShaderProgram.cpp` | MATCH | Same detection of an existing `#version` line and of a word occurring as an identifier rather than a substring. |
+| `upgradeLegacyVertexShaderPublic` / `upgradeLegacyVertexShader` / `upgradeLegacyFragmentShader` | `prepareShaderSourceForLanguage` (`ShaderProgram.cpp:83-120`) | MATCH | Same rewrites: `attribute` to `in`, `varying` to `in`/`out` by stage, `texture2D` to `texture`, `gl_FragColor` to the declared output, plus the same strip of an author-supplied version line. |
+| `chooseLegacyFragmentOutputName` / `addGlslEs310FragmentHeader` | fragment output declaration and precision injection | MATCH | Same explicit `out vec4`, and the same ES precision block emitted before the first float declaration. |
+| `shaderTypeName` | stage name used in diagnostics | MATCH | Same stage label in the compile log. |
+| `updateOfficialBlocks` | `BlockOverlay::updateAll` | MATCH | Same per-frame advance of the zone phases before the mask geometry is emitted. |
+
 ### Texture upload and framebuffer helpers
 
 | Reference declaration | Port implementation | Verdict | Basis |

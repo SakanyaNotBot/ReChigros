@@ -6,12 +6,12 @@ Reference declarations: **2261** across 75 files.
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| verified | 1331 | named MATCH by a parity report |
+| verified | 1361 | named MATCH by a parity report |
 | fixed | 196 | named by a parity report with a fix |
 | differs | 0 | named with a remaining difference |
 | excluded | 383 | deliberate exclusion, reason recorded |
 | matched-by-name | 137 | a port symbol with the same name exists |
-| unmatched | 77 | no same-name port symbol; needs a manual verdict |
+| unmatched | 47 | no same-name port symbol; needs a manual verdict |
 
 This matrix is an index. The authoritative per-function verdicts and the
 evidence line for each one are in the topical reports (`chart.md`, `core.md`, `judging.md`,
@@ -831,44 +831,44 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 14137 | `uploadGifFramesFromPreloaded` | verified |  |
 | 14190 | `uploadBitmapAsTexture` | verified |  |
 | 14194 | `uploadBitmapAsTexture` | verified |  |
-| 14218 | `loadResPackFromAssets` | unmatched |  |
+| 14218 | `loadResPackFromAssets` | verified |  |
 | 14230 | `resolveFloat` | verified | `src\render\skin\SkinConfig.cpp:406` `resolveFloat` |
 | 14240 | `resolveBool` | verified | `src\render\skin\SkinConfig.cpp:413` `resolveBool` |
 | 14245 | `parseSkinColor` | verified |  |
 | 14276 | `cropHoldBodyTexture` | verified |  |
 | 14317 | `loadSkinTexture` | verified |  |
-| 14329 | `createQuadPos` | unmatched |  |
-| 14345 | `createNdcQuadPos` | unmatched |  |
-| 14360 | `createQuadUv` | unmatched |  |
-| 14377 | `updateQuadUv` | unmatched |  |
-| 14401 | `updateQuadUvNdc` | unmatched |  |
+| 14329 | `createQuadPos` | verified |  |
+| 14345 | `createNdcQuadPos` | verified |  |
+| 14360 | `createQuadUv` | verified |  |
+| 14377 | `updateQuadUv` | verified |  |
+| 14401 | `updateQuadUvNdc` | verified |  |
 | 14423 | `buildProgram` | matched-by-name | `src\app\TriGridBackdrop.cpp:124` `buildProgram` |
 | 14448 | `compileShader` | verified |  |
 | 14464 | `prepareShaderSource` | verified | `src\render\gl\ShaderProgram.cpp:123` `prepareShaderSource` |
-| 14475 | `hasVersionDirective` | unmatched |  |
-| 14485 | `upgradeLegacyVertexShaderPublic` | unmatched |  |
-| 14490 | `upgradeLegacyVertexShader` | unmatched |  |
-| 14497 | `upgradeLegacyFragmentShader` | unmatched |  |
-| 14508 | `chooseLegacyFragmentOutputName` | unmatched |  |
-| 14519 | `containsIdentifier` | unmatched |  |
-| 14525 | `addGlslEs310FragmentHeader` | unmatched |  |
-| 14572 | `shaderTypeName` | unmatched |  |
-| 14832 | `updateOfficialBlocks` | unmatched |  |
-| 14867 | `syncOfficialBlocksToTime` | unmatched |  |
-| 14877 | `blockCompositeUsable` | unmatched |  |
-| 14909 | `ensureBlockComposite` | unmatched |  |
-| 15110 | `releaseBlockComposite` | unmatched |  |
-| 15171 | `uploadBlockMaterialUniforms` | unmatched |  |
-| 15236 | `updateTouchSlots` | unmatched |  |
-| 15300 | `uploadBlockUniforms` | unmatched |  |
-| 15325 | `putMaskVertex` | unmatched |  |
-| 15333 | `emitMaskQuad` | unmatched |  |
-| 15358 | `emitHoverQuad` | unmatched |  |
-| 15372 | `renderBlockMasks` | unmatched |  |
-| 15543 | `blockGlowRingWeight` | unmatched |  |
-| 15555 | `runBlockPipelineInto` | unmatched |  |
-| 15568 | `runBlockPrepasses` | unmatched |  |
-| 15674 | `drawSolidRectRot` | unmatched |  |
+| 14475 | `hasVersionDirective` | verified |  |
+| 14485 | `upgradeLegacyVertexShaderPublic` | verified |  |
+| 14490 | `upgradeLegacyVertexShader` | verified |  |
+| 14497 | `upgradeLegacyFragmentShader` | verified |  |
+| 14508 | `chooseLegacyFragmentOutputName` | verified |  |
+| 14519 | `containsIdentifier` | verified |  |
+| 14525 | `addGlslEs310FragmentHeader` | verified |  |
+| 14572 | `shaderTypeName` | verified |  |
+| 14832 | `updateOfficialBlocks` | verified |  |
+| 14867 | `syncOfficialBlocksToTime` | verified |  |
+| 14877 | `blockCompositeUsable` | verified |  |
+| 14909 | `ensureBlockComposite` | verified |  |
+| 15110 | `releaseBlockComposite` | verified |  |
+| 15171 | `uploadBlockMaterialUniforms` | verified |  |
+| 15236 | `updateTouchSlots` | verified |  |
+| 15300 | `uploadBlockUniforms` | verified |  |
+| 15325 | `putMaskVertex` | verified |  |
+| 15333 | `emitMaskQuad` | verified |  |
+| 15358 | `emitHoverQuad` | verified |  |
+| 15372 | `renderBlockMasks` | verified |  |
+| 15543 | `blockGlowRingWeight` | verified |  |
+| 15555 | `runBlockPipelineInto` | verified |  |
+| 15568 | `runBlockPrepasses` | verified |  |
+| 15674 | `drawSolidRectRot` | verified |  |
 | 15680 | `renderOfficialBlockComposite` | unmatched |  |
 | 15715 | `drawBlockCompositeQuad` | unmatched |  |
 | 15839 | `isTouchInsideBlock` | unmatched |  |
