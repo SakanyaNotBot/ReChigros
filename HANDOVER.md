@@ -66,7 +66,7 @@ wsl -e bash -lc 'cd /mnt/e/ReChigros; export LD_LIBRARY_PATH=$HOME/wsl-prefix/li
 | 框架三件套编译进应用 | **已完成**（WSL GCC 树 `BUILD=0`） |
 | C / C++ 桥接分层 | **已完成**：`MvcSettings.c`（纯 C，含框架头）+ `MvcSettingsBridge.cpp`（只转发 C ABI） |
 | 设置页结构（tabs / 行 / Checkbox） | **已实现并编译通过** |
-| 像素级验证接入 | **未完成**（还没把设置页接进冒烟程序的回读断言） |
+| 像素级验证接入 | **已完成**：`rechigros_omvc_settings_probe` → `PROBE PASS`（8 行、543 亮像素） |
 
 **关键设计**：框架头文件绝不能进 C++ 编译单元——它把 `interface` 当结构体成员名，和
 Windows SDK 的同名宏冲突。所以分成 C 实现 + C++ 转发两层，C++ 侧只看到普通函数声明。
@@ -76,6 +76,17 @@ Windows SDK 的同名宏冲突。所以分成 C 实现 + C++ 转发两层，C++ 
 - 三个框架静态库必须**全部显式链接**（`objectivelymvc objectivelygpu objectively`）。
   只写 `objectivelymvc` 时，`release` 等符号在链接期缺失。
 - `MSVC` 树上 `RECHIGROS_WITH_OMVC` 默认 OFF，MVC 相关源文件条件编译，不影响 Windows 构建。
+- **首帧构建条件不能只比 tab 号**：`tab` 默认 0、首次调用也传 0，`if (tab != current)` 恒假，
+  `buildList` 永远不执行，页面空白但一切"成功"。要用独立的 `built` 标志。
+
+**设置页探针**（`rechigros_omvc_settings_probe`）是这块的验收工具：
+
+```bash
+wsl -e bash -lc 'cd /mnt/e/ReChigros; export LD_LIBRARY_PATH=$HOME/wsl-prefix/lib; \
+  SDL_VIDEODRIVER=offscreen build/wsl-release/src/tools/rechigros_omvc_settings_probe'
+```
+
+它打印行数、变化像素数、明亮像素数，三项都非零才 `PROBE PASS`。改动设置页后必须跑它。
 
 ### MVC 出图：已打通（这是接界面迁移的前提）
 

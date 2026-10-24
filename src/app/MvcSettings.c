@@ -29,11 +29,15 @@ typedef struct {
   ViewController *viewController;
   Theme *theme;
   Stylesheet *stylesheet;
+  RenderDevice *device;
+  Framebuffer *framebuffer;
   View *root;
   StackView *list;
   Font *bodyFont;
   Font *headingFont;
   int tab;
+  // -1 means "no tab has been built yet"; 0 is a valid tab, so the default cannot be 0.
+  bool built;
   bool ready;
 } MvcSettingsState;
 
@@ -131,8 +135,11 @@ bool rechigros_mvc_settings_available(void) { return true; }
 bool rechigros_mvc_settings_begin(void *sdlWindow, int width, int height, int tab) {
   SDL_Window *window = (SDL_Window *) sdlWindow;
   if (!ensurePage(window, width, height)) return false;
-  if (tab != gSettings.tab) {
+  // The first call must build the list even for tab 0, so "already built" is tracked
+  // separately from the current tab: comparing tab numbers alone skips that first build.
+  if (!gSettings.built || tab != gSettings.tab) {
     gSettings.tab = tab;
+    gSettings.built = true;
     buildList(tab);
   }
   return true;
@@ -149,6 +156,55 @@ bool rechigros_mvc_settings_draw(void) {
   $(gSettings.controller, render);
   $(device, endFrame);
   return true;
+}
+
+// Reads the page's framebuffer back into `destination` as tightly packed RGBA8 and returns
+// the pixel count, or 0 on failure. The probe uses this to prove the page actually painted
+// something: a correctly sequenced render that draws nothing still reports success.
+int rechigros_mvc_settings_read_pixels(unsigned char *destination, int capacity) {
+  if (!gSettings.ready || gSettings.framebuffer == NULL || gSettings.device == NULL) return 0;
+  if (destination == NULL || capacity <= 0) return 0;
+
+  SDL_GPUTexture *colour = $(gSettings.framebuffer, resolveColorTexture, 0)->texture;
+  if (colour == NULL) return 0;
+
+  const int width = gSettings.framebuffer->size.w;
+  const int height = gSettings.framebuffer->size.h;
+  const int byteCount = width * height * 4;
+  if (byteCount <= 0 || byteCount > capacity) return 0;
+
+  SDL_GPUDevice *gpu = gSettings.device->device;
+  SDL_GPUTransferBuffer *readback = SDL_CreateGPUTransferBuffer(gpu,
+      &(SDL_GPUTransferBufferCreateInfo) {
+        .usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD,
+        .size = (Uint32) byteCount,
+      });
+  if (readback == NULL) return 0;
+
+  SDL_GPUCommandBuffer *copy = SDL_AcquireGPUCommandBuffer(gpu);
+  SDL_GPUCopyPass *copyPass = SDL_BeginGPUCopyPass(copy);
+  SDL_GPUTextureRegion region = { 0 };
+  region.texture = colour;
+  region.w = (Uint32) width;
+  region.h = (Uint32) height;
+  region.d = 1;
+  SDL_GPUTextureTransferInfo target = { 0 };
+  target.transfer_buffer = readback;
+  SDL_DownloadFromGPUTexture(copyPass, &region, &target);
+  SDL_EndGPUCopyPass(copyPass);
+  SDL_GPUFence *fence = SDL_SubmitGPUCommandBufferAndAcquireFence(copy);
+  SDL_WaitForGPUFences(gpu, true, &fence, 1);
+  SDL_ReleaseGPUFence(gpu, fence);
+
+  const unsigned char *mapped = SDL_MapGPUTransferBuffer(gpu, readback, false);
+  if (mapped == NULL) {
+    SDL_ReleaseGPUTransferBuffer(gpu, readback);
+    return 0;
+  }
+  memcpy(destination, mapped, (size_t) byteCount);
+  SDL_UnmapGPUTransferBuffer(gpu, readback);
+  SDL_ReleaseGPUTransferBuffer(gpu, readback);
+  return byteCount;
 }
 
 // Number of rows on the current tab, used by the smoke test to prove the page has content.
@@ -177,6 +233,8 @@ static bool ensurePage(SDL_Window *window, int width, int height) {
   });
   if (framebuffer == NULL) return false;
   $(device, setFramebuffer, framebuffer);
+  gSettings.device = device;
+  gSettings.framebuffer = framebuffer;
 
   gSettings.controller = $(alloc(WindowController), initWithDevice, device);
   if (gSettings.controller == NULL) return false;
@@ -234,4 +292,5 @@ void rechigros_mvc_settings_shutdown(void) {
     gSettings.theme = NULL;
   }
   gSettings.ready = false;
+  gSettings.built = false;
 }

@@ -43,6 +43,19 @@ if(TARGET objectivelymvc)
     objectivelymvc objectivelygpu objectively ${RECHIGROS_SDL_TARGET})
 endif()
 
+# Settings page probe: stands the migrated page up off-screen and reads the framebuffer back,
+# so "the page compiles" can never be mistaken for "the page draws".
+if(TARGET objectivelymvc)
+  add_executable(rechigros_omvc_settings_probe
+    omvc_settings_probe.c "${PROJECT_SOURCE_DIR}/src/app/MvcSettings.c")
+  set_source_files_properties(omvc_settings_probe.c "${PROJECT_SOURCE_DIR}/src/app/MvcSettings.c"
+    PROPERTIES LANGUAGE C)
+  set_target_properties(rechigros_omvc_settings_probe PROPERTIES
+    C_STANDARD 11 C_EXTENSIONS ON)
+  target_link_libraries(rechigros_omvc_settings_probe PRIVATE
+    objectivelymvc objectivelygpu objectively ${RECHIGROS_SDL_TARGET})
+endif()
+
 # Recording encoder check: pushes synthetic frames through the video encoder and verifies a
 # playable file comes out, so the encode path is gated independently of the renderer.
 add_executable(rechigros_record_check record_check.cpp ../app/VideoEncoder.cpp)
