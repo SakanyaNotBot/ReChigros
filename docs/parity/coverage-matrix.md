@@ -2,16 +2,16 @@
 
 Generated from `docs/compare/inventory.json` by `tools/parity/coverage_matrix.py`. One row per reference declaration.
 
-Reference declarations: **2294** across 75 files.
+Reference declarations: **2293** across 75 files.
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| verified | 410 | named MATCH by a parity report |
-| fixed | 172 | named by a parity report with a fix |
+| verified | 432 | named MATCH by a parity report |
+| fixed | 173 | named by a parity report with a fix |
 | differs | 0 | named with a remaining difference |
 | excluded | 3 | deliberate exclusion, reason recorded |
-| matched-by-name | 170 | a port symbol with the same name exists |
-| unmatched | 1369 | no same-name port symbol; needs a manual verdict |
+| matched-by-name | 169 | a port symbol with the same name exists |
+| unmatched | 1347 | no same-name port symbol; needs a manual verdict |
 
 This matrix is an index. The authoritative per-function verdicts and the
 evidence line for each one are in the topical reports (`chart.md`, `core.md`, `judging.md`,
@@ -295,21 +295,21 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 143 | `setReplayPlayback` | verified | `include\rechigros\game\GameplaySession.hpp:73` `replayPlayback` (+2) |
 | 150 | `sortReplayEntriesByTime` | verified |  |
 | 159 | `isReplayPlayback` | matched-by-name | `include\rechigros\game\GameplaySession.hpp:73` `replayPlayback` (+2) |
-| 163 | `beginIntro` | unmatched |  |
-| 171 | `beginIntroWithAudioResume` | unmatched |  |
-| 178 | `scheduleIntroAutoResume` | unmatched |  |
-| 184 | `cancelIntroAutoResume` | unmatched |  |
-| 190 | `isIntroGenerationCurrent` | unmatched |  |
+| 163 | `beginIntro` | verified |  |
+| 171 | `beginIntroWithAudioResume` | verified |  |
+| 178 | `scheduleIntroAutoResume` | verified |  |
+| 184 | `cancelIntroAutoResume` | verified |  |
+| 190 | `isIntroGenerationCurrent` | verified |  |
 | 194 | `computeIntroLineScale` | matched-by-name | `src\render\scene\Transition.cpp:64` `introLineScale` |
-| 228 | `elapsedIntroSeconds` | unmatched |  |
+| 228 | `elapsedIntroSeconds` | verified |  |
 | 235 | `smoothStep01` | matched-by-name | `src\render\scene\HudPass.cpp:72` `smoothStep01` (+1) |
-| 240 | `outroUiProgress` | unmatched |  |
-| 248 | `elapsedOutroSeconds` | unmatched |  |
-| 253 | `isInOutroLineCollapse` | unmatched |  |
-| 260 | `shouldHideNonLineStageElementsForOutro` | unmatched |  |
-| 265 | `shouldHideStoryboardElementsForOutro` | unmatched |  |
-| 269 | `computeOutroLineCollapseScale` | matched-by-name | `src\render\scene\Transition.cpp:85` `outroLineCollapseScale` |
-| 276 | `computeOutroPlainLineScaleX` | unmatched |  |
+| 240 | `outroUiProgress` | verified |  |
+| 248 | `elapsedOutroSeconds` | verified |  |
+| 253 | `isInOutroLineCollapse` | verified |  |
+| 260 | `shouldHideNonLineStageElementsForOutro` | verified |  |
+| 265 | `shouldHideStoryboardElementsForOutro` | verified |  |
+| 269 | `computeOutroLineCollapseScale` | verified | `src\render\scene\Transition.cpp:85` `outroLineCollapseScale` |
+| 276 | `computeOutroPlainLineScaleX` | verified |  |
 | 283 | `computeStageTextureAlpha` | matched-by-name | `src\render\scene\Transition.cpp:107` `stageTextureAlpha` |
 | 306 | `computeSideArtworkAlpha` | matched-by-name | `src\render\scene\Transition.cpp:120` `sideArtworkAlpha` |
 | 314 | `hasIntroAudioReleaseElapsed` | unmatched |  |
@@ -329,18 +329,18 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 462 | `getMissCount` | unmatched |  |
 | 466 | `getAccuracyInternal` | verified |  |
 | 476 | `getRealtimeAccuracyInternal` | verified |  |
-| 818 | `PreloadedGif` | unmatched |  |
+| 818 | `PreloadedGif` | verified |  |
 | 1020 | `setJudgeLineWidth` | unmatched |  |
-| 1443 | `applyBlockTextureWrap` | unmatched |  |
-| 1454 | `applyTextureBilinearFilter` | unmatched |  |
-| 1464 | `applyTexturePointFilter` | unmatched |  |
-| 1474 | `maxFragTextureUnits` | unmatched |  |
+| 1443 | `applyBlockTextureWrap` | verified |  |
+| 1454 | `applyTextureBilinearFilter` | verified |  |
+| 1464 | `applyTexturePointFilter` | verified |  |
+| 1474 | `maxFragTextureUnits` | verified |  |
 | 1552 | `GameRenderer` | verified | `src\render\GameRenderer.cpp:1064` `GameRenderer` |
 | 1726 | `sanitizeOfficialScreenDpi` | unmatched |  |
 | 1735 | `sanitizeHitOffsetIndicatorMode` | unmatched |  |
-| 1742 | `preloadGifTextures` | unmatched |  |
-| 1759 | `decodeGifFrames` | unmatched |  |
-| 1812 | `uploadPreloadedGifTextures` | unmatched |  |
+| 1742 | `preloadGifTextures` | verified |  |
+| 1759 | `decodeGifFrames` | verified |  |
+| 1812 | `uploadPreloadedGifTextures` | verified |  |
 | 1877 | `onDoubleTap` | unmatched |  |
 | 1886 | `isInPauseHitArea` | unmatched |  |
 | 1893 | `computeRevealTransformedRect` | unmatched |  |
@@ -827,7 +827,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 14078 | `loadTextureFromFileSafe` | unmatched |  |
 | 14084 | `loadTextureFromFileSafe` | unmatched |  |
 | 14098 | `decodeBitmapDownsampled` | unmatched |  |
-| 14116 | `loadGifTexture` | unmatched |  |
+| 14116 | `loadGifTexture` | verified |  |
 | 14137 | `uploadGifFramesFromPreloaded` | unmatched |  |
 | 14190 | `uploadBitmapAsTexture` | unmatched |  |
 | 14194 | `uploadBitmapAsTexture` | unmatched |  |
@@ -886,7 +886,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 26 | `HitOffsetIndicator` | verified | `src\core\HitOffsetIndicator.cpp:9` `HitOffsetIndicator` |
+| 26 | `HitOffsetIndicator` | fixed | `src\core\HitOffsetIndicator.cpp:9` `HitOffsetIndicator` |
 | 34 | `reset` | fixed | `include\rechigros\audio\Mixer.hpp:147` `reset` (+9) |
 | 51 | `addHit` | verified | `include\rechigros\game\JudgementEngine.hpp:115` `isHit` (+1) |
 | 73 | `update` | fixed | `src\chart\Md5.cpp:84` `update` (+6) |
@@ -1621,7 +1621,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 28 | `CoverImageLoader` | unmatched |  |
 | 30 | `load` | fixed | `src\app\CoverCache.cpp:189` `load` (+3) |
 | 64 | `preload` | verified |  |
-| 80 | `cacheKey` | unmatched |  |
+| 80 | `cacheKey` | verified |  |
 | 85 | `decodeSampled` | unmatched |  |
 
 ## `com\wuying\phigros\ui\GameDialog.java`

@@ -122,7 +122,10 @@ bool Settings::load(const std::filesystem::path& file) {
   soundEffectVolume = std::max(0.0F, std::min(soundEffectVolume, 5.0F));
   musicSpeed = std::max(0.5F, std::min(musicSpeed, 2.0F));
   audioOffsetMs = std::max(-500, std::min(audioOffsetMs, 500));
-  hitOffsetIndicatorMode = std::max(0, std::min(hitOffsetIndicatorMode, 2));
+  // An out-of-range mode falls back to "disabled" rather than to the nearest valid value:
+  // the reference's sanitizer does the same, and clamping would turn a corrupt 7 into a
+  // visible line indicator instead of turning the feature off.
+  if (hitOffsetIndicatorMode < 0 || hitOffsetIndicatorMode > 2) hitOffsetIndicatorMode = 0;
   // The interface scale is clamped to what the design canvas can absorb: below 0.85 the rows
   // start colliding, above 2.0 a wide list no longer fits its clipped viewport.
   uiScale = std::max(0.85F, std::min(uiScale, 2.0F));

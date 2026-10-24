@@ -772,7 +772,9 @@ void testSettingsDefaultsPersistenceAndClamps() {
   requireNear(high.soundEffectVolume, 5.0F, "sound effect volume clamps to 500 percent");
   requireNear(high.musicSpeed, 2.0F, "music speed clamps to the top");
   require(high.audioOffsetMs == 500, "audio offset clamps to the top");
-  require(high.hitOffsetIndicatorMode == 2, "hit offset indicator mode clamps to the top");
+  // The reference's sanitizer maps an out-of-range mode to "disabled" rather than to the
+  // nearest valid value, so a stored 7 turns the indicator off instead of into a line mark.
+  require(high.hitOffsetIndicatorMode == 0, "out-of-range indicator mode falls back to disabled");
   requireNear(high.aspectRatio, 5.0F, "stage aspect clamps to the top");
 
   Settings low;
@@ -789,7 +791,7 @@ void testSettingsDefaultsPersistenceAndClamps() {
   requireNear(low.soundEffectVolume, 0.0F, "sound effect volume clamps to zero");
   requireNear(low.musicSpeed, 0.5F, "music speed clamps to the bottom");
   require(low.audioOffsetMs == -500, "audio offset clamps to the bottom");
-  require(low.hitOffsetIndicatorMode == 0, "hit offset indicator mode clamps to the bottom");
+  require(low.hitOffsetIndicatorMode == 0, "negative indicator mode falls back to disabled");
   requireNear(low.aspectRatio, 0.5F, "stage aspect clamps to the bottom");
 
   // Zero means "follow the window"; a non-finite stored ratio is repaired to it as well.

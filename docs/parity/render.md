@@ -386,6 +386,27 @@ These are noted so a future reader does not mistake them for divergences.
 
 ---
 
+## 6a. `GameRenderer` helper declarations with no same-name port symbol
+
+`GameRenderer.java` is the largest single source of unadjudicated declarations (518), because
+it is one 16k-line class whose helpers the port distributed across the renderer, the gameplay
+session and the screen layer. The entries below were checked directly; each names the port
+code that carries the behaviour.
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `sanitizeHitOffsetIndicatorMode` :1738-1743 | `Settings::load` (`Settings.cpp:125-128`) | **FIXED** | The reference maps any out-of-range mode to `HIT_OFFSET_INDICATOR_DISABLED` (0); the port clamped instead, so a corrupt value of 7 became the line indicator (2) rather than turning the feature off. The port now applies the same out-of-range-to-disabled rule. |
+| `sanitizeOfficialScreenDpi` :1728-1736 | `Application::initialize` display-DPI block | MATCH | Same four-step fallback chain: `densityDpi`, then `density * 160`, then `xdpi`, then `ydpi`, then the reference DPI constant; every step also rejects non-finite and non-positive values. The port reads SDL's display scale first because that is this platform's equivalent of `densityDpi`. |
+| `isMenuVisible` | `GameRuntime::Pause::Menu` check | MATCH | Same predicate over the pause state. |
+| `shouldResumeAudioOnActivityResume` | `AudioEngine` resume path | DELIBERATE-EXCLUSION | An Android lifecycle hook; the port resumes the stream from the pause state machine instead. |
+| `setReplayRecorder` | `GameplaySession::setReplayRecording` | MATCH | Same attach-point for the recorder. |
+| `beginIntro` / `beginIntroWithAudioResume` / `scheduleIntroAutoResume` / `cancelIntroAutoResume` / `isIntroGenerationCurrent` | `GameScreen` intro state | MATCH | Same intro timeline and the same guard that a superseded intro generation cannot resume the audio. |
+| `elapsedIntroSeconds` / `outroUiProgress` / `elapsedOutroSeconds` / `isInOutroLineCollapse` / `shouldHideNonLineStageElementsForOutro` / `shouldHideStoryboardElementsForOutro` | `GameScreen` outro state | MATCH | Same outro timeline and the same element-hiding predicates; the reveal and collapse curves are recorded further down. |
+| `computeOutroPlainLineScaleX` | `computeOutroLineCollapseScale` companion | MATCH | Same per-line scale split for the plain and textured cases. |
+| `getPerfectCount` / `getGoodCount` / `getBadCount` / `getMissCount` | `JudgementEngine::result().perfect` and friends | MATCH | The reference exposes four getters over `judgeCounts`; the port reads the same four fields from the result struct. |
+| `PreloadedGif` / `preloadGifTextures` / `decodeGifFrames` / `uploadPreloadedGifTextures` | `GifTexture` cache in the renderer | MATCH | Same "decode every frame of a `.gif` line texture once, then upload once" behaviour; the port keeps the frames in a renderer-side cache keyed by path. |
+| `applyBlockTextureWrap` / `applyTextureBilinearFilter` / `applyTexturePointFilter` / `maxFragTextureUnits` | `TextureCache`, `BlockCompositePass` sampling setup | MATCH | Same wrap and filter policy per texture class; the composite's point-versus-bilinear choice is recorded in `game_renderer_residual.md`. |
+
 ## 7. Deliberate exclusions
 
 1. **`prprVideo` playback.** The data model is complete (`Chart.hpp:24`,
