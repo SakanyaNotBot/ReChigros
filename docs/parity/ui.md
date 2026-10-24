@@ -82,6 +82,47 @@ Reference: `ChartSelectActivity.renderSettings()` plus the four `build*Settings(
 | Replay page | replay toggles, 回放文件 import/refresh row | same | MATCH |
 | More page | a single 更多 heading and an empty min-height 180 block | same — the reference page is genuinely empty | MATCH |
 
+## CalibrationActivity and ResultActivity: every declaration adjudicated
+
+Both are Android activities that build their screens by assembling views. The port draws them
+immediately, so the view-construction names have no counterpart. Each entry names the port
+code that carries the behaviour; the settlement backdrop's blur was verified constant by
+constant against `ResultActivity.java:727-760`.
+
+### `CalibrationActivity.java` → `CalibrationScreen`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `Runnable` / `onCreate` / `onDestroy` / `applyImmersiveMode` | `drawCalibrationScreen`, screen routing | DELIBERATE-EXCLUSION | Activity lifecycle and immersive mode; the port's calibration page is a draw function in an already-fullscreen window. |
+| `buildUi` / `addStepButton` / `makeButton` / `matchWrap` | `CalibrationScreen` button row | MATCH | Same step buttons with the same increments and the same layout. |
+| `setAudioOffsetMs` (2) / `refreshValueViews` | `context.calibration.offsetMs` write-through | MATCH | Same single value driving the readout and the applied offset. |
+| `finishWithResult` | `navigateTo` back with the offset committed | MATCH | Both write the offset into the settings and return to the caller. |
+| `CalibrationView` / `onTouchEvent` | `CalibrationScreen` input handling | MATCH | Same tap-to-calibrate hit test and the same marker clamping. |
+| `setPanelWidthPx` | panel width in `CalibrationScreen` | MATCH | Same width rule. |
+| `resetSmoothClock` | `SmoothingClock` reset | MATCH | Same reset of the beat clock on loop restart. |
+| `currentNoteY` / `currentLoopTime` / `currentMarkerProgress` / `noteDrawProgressForLoopTime` / `noteMarkerProgressForLoopTime` / `tapYForProgress` | `CalibrationScreen` note position math | MATCH | Same loop phase → progress → Y mapping. |
+| `rememberRenderedTapPosition` | recorded tap position | MATCH | Same "remember where the tap landed for the bias sample" step. |
+| `touchMarkerLineWidth` / `indicatorColor` / `TouchMarker` | marker drawing | MATCH | Same line width and the same indicator colour. |
+| `loadAssetBitmap` / `splitHitFxFrames` / `loadHitFxGrid` / `CalibrationHitEffect` | hit-effect atlas in the renderer | MATCH | Same grid slicing of the hit-effect sheet and the same playback. |
+| `getSeconds` | `SmoothingClock::seconds` | MATCH | Same seconds accessor with the same bias smoothing. |
+| `resetBiasHistory` / `addBias` | bias history in `CalibrationScreen` | MATCH | Same rolling average of the tapped offsets, and the same reset between runs. |
+
+### `ResultActivity.java` → `ResultScreen`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `onCreate` / `onDestroy` | `drawResultScreen`, screen routing | DELIBERATE-EXCLUSION | Activity lifecycle; the port's result page is a draw function reached through `navigateTo`, and the artwork decode is owned by the texture cache. |
+| `iconIndex` | grade index in `ResultScreen` | MATCH | Same score/FC thresholds selecting the same grade bitmap. |
+| `stylePanels` / `styleCornerButton` / `styleChipButton` / `bindPressFeedback` | `ResultScreen` drawing helpers | MATCH | Same panel, corner-button and chip styling; press feedback is the shared immediate-mode press state. |
+| `setupModeTags` / `addModeTag` / `ModeTagFlow` / `layoutRow` | mode tags in `ResultScreen` | MATCH | Same tag set (autoplay/challenge/mirror/practice/replay) laid out in the same wrapping row. |
+| `setupResponsiveCanvas` | `ui::canvas` | MATCH | Same design-canvas mapping with uniform scale and centring. |
+| `applyPhigrosFont` | `UiFontCache` + `drawLabel` | MATCH | Same bundled face applied to the same labels. |
+| `setupJudgementHistogramOverlay` / `toggleJudgementHistogram` / `showJudgementHistogram` / `hideJudgementHistogram` | histogram overlay in `ResultScreen` | MATCH | Same overlay toggle and the same bin rendering from `judgementOffsetBins`. |
+| `loadGradeImage` / `loadButtonImage` / `loadImageFromAssets` | `TextureCache` loaders | MATCH | Same asset paths and the same missing-asset fallback. |
+| `setupFullscreen` / `applyImmersiveMode` | SDL fullscreen window | DELIBERATE-EXCLUSION | Android system-UI concerns; the port's window is already fullscreen. |
+| `blurBackground` / `gaussianBlur` | `TextureCache::blurredBackdropFor` | MATCH | Identical recipe: a third-size copy, three separable box passes, radius `max(4, round(w * 0.05 / 3))`, bilinear upsample. Checked constant for constant. |
+| `AlphaTarget` / `childAlphaTargets` / `startEnterAnimation` | `ResultScreen` enter animation | MATCH | Same staggered per-element alpha ramp driven by the same easing set. |
+
 ## GameDialog: every declaration adjudicated
 
 The reference implements its dialogs as a hand-drawn skewed panel inside a custom `ViewGroup`.

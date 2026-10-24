@@ -214,6 +214,43 @@ are for the tree at the time of writing).
 | 4.67 | `selectJudgeLineArray` — `judgeLineList`/`JudgeLineList`/`judgeLines`/`judgeLinesList`, then `lines`, validated by shape | 2216-2238 | 967 | **FIXED** — the port accepted the keys in one flat list including `lines`, so an unrelated `lines` array could win over a valid `judgeLineList`. The reference validates the first candidate by shape before falling back, and the port now does too. |
 | 4.68 | Bezier LUTs built once per distinct control-point set and shared | 177-323 | 154-169 | MATCH (port builds per event; identical curve, more compute — Remaining risk) |
 
+## ChartLoader, SkinManager and TriGridBackgroundView: every declaration adjudicated
+
+### `ChartLoader.java` → `src/chart/ChartLoader.cpp`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `equalsIgnoreCase` / `getAsString` / `getAsBoolean` / `getAsJsonArray` / `isNumberArray` / `getCell` | json alias helpers in `ChartLoader.cpp` | MATCH | Same case-insensitive key lookup, array/boolean coercion and "missing means default" rule; the helpers are inlined. |
+| `parseIntSafe` / `parseFloatSafe` | `value<int>` / `value<double>` | MATCH | Same non-finite and non-numeric fallback to the supplied default. |
+| `parsePrprBpmSegments` / `addPrprBpmSegment` | `ChartLoader.cpp:205-276` | MATCH | Same accumulation: sorted by start beat, `deltaBeat` clamped at 0, `startTime = lastTime + beatTime * deltaBeat`, `beatTime = 60 / (bpm == 0 ? 120 : bpm)`. Checked line by line. |
+| `parsePrprVideo` / `resolvePrprResource` / `parsePrprScaleType` / `parsePrprVideoAttachLine` | `parsePrprVideos` (`ChartLoader.cpp:760-800`) | MATCH | Same field set, same resolution against the chart directory and the same scale-type enum. |
+| `PrprFloatAnim` / `parsePrprFloatAnim` / `fillPrprLineEventEasing` | `PrprFloatAnim` in `src/game/PrprEffect.hpp` | MATCH | Same three-shape anim (constant, keyframe list, reference string) and the same easing fill. |
+
+### `SkinManager.java` → `src/render/skin/SkinConfig.cpp`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `SkinEntry` / `isBuiltin` | `SkinConfig` + built-in default | MATCH | Same notion of a built-in entry that cannot be deleted. |
+| `getPrefs` / `getSkinsRoot` / `getSkinDir` | `context.dataRoot / "skins"` | MATCH | Same root and the same per-skin subdirectory naming. |
+| `getSkinList` | directory scan in `SettingsScreen` | MATCH | Same sorted listing with the built-in entry first. |
+| `getSelectedSkinIndex` / `setSelectedSkinIndex` | `settings.selectedSkin` (name, not index) | MATCH | The reference stores an index, the port stores the name; both resolve to the same skin, and the name form survives a list reorder, which the index form does not. |
+| `isLikelySkinPackage` / `containsSkinConfigKeys` | `isSkinArchive` (`ImportCore.cpp`) | MATCH | Same "contains `respack.json`/`skin.json`/the config keys" test used to classify a dropped archive. |
+| `deleteSkin` / `deleteRecursive` | `platform::removeRecursively` | MATCH | Same recursive delete with the same refusal to remove the built-in entry. |
+| `getSkinConfig` | `SkinConfig::load` | MATCH | Same resolution order: `info.yml` first, then `skin.json`, then no config. |
+| `parseYmlConfig` / `stripYmlQuotes` | `parseYamlLike` + `stripQuotes` (`SkinConfig.cpp:33,306-343`) | MATCH | Same line parse: trim, skip blanks and `#`, split on the first `:`, strip matching quotes. |
+| `isSkinAssetName` | skin asset lookup in `SkinConfig` | MATCH | Same accepted asset names and fallback order. |
+
+### `TriGridBackgroundView.java` → `src/app/TriGridBackdrop.cpp`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `TriGridBackgroundView` (2 constructors) | `TriGridBackdrop` | DELIBERATE-EXCLUSION | An Android `View` subclass; the port owns a renderer object, so there is no view to construct. |
+| `Runnable` / `updateRendering` | per-frame backdrop draw | DELIBERATE-EXCLUSION | The reference posts render invalidation; the port draws the backdrop every frame. |
+| `onAttachedToWindow` / `onDetachedFromWindow` / `onWindowVisibilityChanged` / `onVisibilityChanged` | renderer lifetime | DELIBERATE-EXCLUSION | View attach/detach callbacks; the backdrop's GL resources live as long as the renderer. |
+| `setBackgroundBitmap` / `setPendingBackground` / `swapPendingBackground` | `TriGridBackdrop::setSource` | MATCH | Same "hand over the new artwork, swap it in next frame, never tear mid-frame" contract. |
+| `TriGridRenderer` / `onSurfaceCreated` / `onSurfaceChanged` | `TriGridBackdrop::initialize` / `resize` | MATCH | Same program creation and the same size-dependent state. |
+| `createProgram` / `compileShader` | `shader::build` in the renderer | MATCH | Same compile/link with the same failure logging. |
+
 ### Every remaining `RpeChartParser` declaration, adjudicated
 
 The reference factors its parsing into many small `private static` helpers. The port keeps the
