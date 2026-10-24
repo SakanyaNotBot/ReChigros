@@ -107,6 +107,71 @@ if(RECHIGROS_BUILD_APP)
   target_link_libraries(imgui PUBLIC ${RECHIGROS_SDL_TARGET})
 endif()
 
+# SDL3_ttf and SDL3_image: the interface framework renders text through SDL_ttf and decodes
+# its bitmap resources through SDL_image. They are built from source next to SDL3 so the
+# application never depends on a system copy that may be a different SDL3 major version.
+if(RECHIGROS_BUILD_APP)
+  # SDL3 can come from a local source tree, a system package or FetchContent, and each of
+  # those spells its targets differently. SDL_ttf/SDL_image require the canonical
+  # SDL3::SDL3 and SDL3::Headers names, so they are aliased onto whatever this tree got.
+  if(NOT TARGET SDL3::Headers)
+    add_library(SDL3::Headers INTERFACE)
+    target_link_libraries(SDL3::Headers INTERFACE ${RECHIGROS_SDL_TARGET})
+  endif()
+  if(NOT TARGET SDL3::SDL3)
+    add_library(SDL3::SDL3 INTERFACE)
+    target_link_libraries(SDL3::SDL3 INTERFACE ${RECHIGROS_SDL_TARGET})
+  endif()
+
+  # Unpacked once into the shared cache; the extract directory is the archive's own stem.
+  rechigros_download("sdl3_ttf/SDL3_ttf-3.2.2.tar.gz"
+    "https://github.com/libsdl-org/SDL_ttf/releases/download/release-3.2.2/SDL3_ttf-3.2.2.tar.gz"
+    "63547D58D0185C833213885B635A2C0548201CC8F301E6587C0BE1A67E1E045D")
+  rechigros_download("sdl3_image/SDL3_image-3.2.4.tar.gz"
+    "https://github.com/libsdl-org/SDL_image/releases/download/release-3.2.4/SDL3_image-3.2.4.tar.gz"
+    "A725BD6D04261FDDA0DD8D950659E1DC15A8065D025275EF460D32AE7DCFC182")
+  file(ARCHIVE_EXTRACT INPUT "${RECHIGROS_DOWNLOAD_DIR}/sdl3_ttf/SDL3_ttf-3.2.2.tar.gz"
+    DESTINATION "${RECHIGROS_DOWNLOAD_DIR}/sdl3_ttf")
+  file(ARCHIVE_EXTRACT INPUT "${RECHIGROS_DOWNLOAD_DIR}/sdl3_image/SDL3_image-3.2.4.tar.gz"
+    DESTINATION "${RECHIGROS_DOWNLOAD_DIR}/sdl3_image")
+
+  # SDL_ttf/SDL_image key their target names off BUILD_SHARED_LIBS, which this project never
+  # sets; without an explicit value they would look for SDL3::SDL3-shared and re-run
+  # find_package against a system install.
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+  set(SDLTTF_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+  set(SDLIMAGE_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+  set(SDL_TTF_SHARED OFF CACHE BOOL "" FORCE)
+  set(SDL_TTF_STATIC ON CACHE BOOL "" FORCE)
+  set(SDL_TTF_INSTALL OFF CACHE BOOL "" FORCE)
+  set(SDL_TTF_SAMPLES OFF CACHE BOOL "" FORCE)
+  set(SDL_TTF_TESTS OFF CACHE BOOL "" FORCE)
+  set(SDLTTF_SAMPLES OFF CACHE BOOL "" FORCE)
+  # Harfbuzz (complex text shaping) and plutosvg (colour emoji) are optional: this interface
+  # draws CJK and Latin labels from one bundled face with no shaping or emoji, so both are
+  # switched off rather than vendoring their sources.
+  set(SDLTTF_HARFBUZZ OFF CACHE BOOL "" FORCE)
+  set(SDLTTF_PLUTOSVG OFF CACHE BOOL "" FORCE)
+  # Freetype is not optional for SDL_ttf. Vendoring it avoids requiring a system copy on
+  # every host, which the packaged platforms cannot provide.
+  set(SDLTTF_VENDORED ON CACHE BOOL "" FORCE)
+  set(SDLTTF_STRICT OFF CACHE BOOL "" FORCE)
+  add_subdirectory("${RECHIGROS_DOWNLOAD_DIR}/sdl3_ttf/SDL3_ttf-3.2.2"
+    "${CMAKE_BINARY_DIR}/third_party/SDL3_ttf")
+
+  set(SDL_IMAGE_SHARED OFF CACHE BOOL "" FORCE)
+  set(SDL_IMAGE_STATIC ON CACHE BOOL "" FORCE)
+  set(SDL_IMAGE_INSTALL OFF CACHE BOOL "" FORCE)
+  set(SDL_IMAGE_SAMPLES OFF CACHE BOOL "" FORCE)
+  set(SDL_IMAGE_TESTS OFF CACHE BOOL "" FORCE)
+  set(SDL_IMAGE_VENDORED OFF CACHE BOOL "" FORCE)
+  set(SDLIMAGE_VENDORED OFF CACHE BOOL "" FORCE)
+  set(SDLIMAGE_SAMPLES OFF CACHE BOOL "" FORCE)
+  set(SDLIMAGE_TESTS OFF CACHE BOOL "" FORCE)
+  add_subdirectory("${RECHIGROS_DOWNLOAD_DIR}/sdl3_image/SDL3_image-3.2.4"
+    "${CMAKE_BINARY_DIR}/third_party/SDL3_image")
+endif()
+
 if(NOT ANDROID AND NOT IOS)
   set(GLAD_BASE "${JSDELIVR}/JoeyDeVries/LearnOpenGL@master")
   rechigros_download("glad/include/glad/glad.h" "${GLAD_BASE}/includes/glad/glad.h" "83AC58D5E5C25042ED2512418F0920F2BFF74C3B9561EA8A77CA614490CF81C2")

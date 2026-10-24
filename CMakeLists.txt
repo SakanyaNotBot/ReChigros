@@ -12,6 +12,10 @@ option(RECHIGROS_BUILD_TESTS "Build core regression tests" ON)
 option(RECHIGROS_USE_SYSTEM_SDL "Use an installed SDL3 package" OFF)
 option(RECHIGROS_ENABLE_ASAN "Enable AddressSanitizer in supported toolchains" OFF)
 option(RECHIGROS_ENABLE_LTO "Enable interprocedural optimisation for release builds" ON)
+# The interface framework is GNU C and cannot be compiled by MSVC's C front end. On a
+# Windows host this points at a clang that can, and the framework's three libraries are
+# built from it as static archives.
+set(RECHIGROS_GNU_C_COMPILER "" CACHE FILEPATH "clang used for the GNU C interface framework")
 
 # Windows SDK headers define min/max as macros, which breaks std::min/std::max in
 # every translation unit that includes a platform header before the STL ones.
@@ -34,6 +38,9 @@ include(Dependencies)
 add_subdirectory(src/core)
 add_subdirectory(src/chart)
 if(RECHIGROS_BUILD_APP)
+  # The interface framework and its two support libraries are GNU C, so they are built from
+  # their vendored sources with a GNU-compatible compiler regardless of the host toolchain.
+  include(ObjectivelyMVC)
   add_subdirectory(src/platform)
   add_subdirectory(src/audio)
   add_subdirectory(src/render)
