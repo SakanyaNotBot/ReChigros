@@ -278,6 +278,16 @@ std::vector<std::uint8_t> buildScenePixels(int width, int height, bool includeHu
         // A white band near the bottom edge stands in for the score line.
         red = green = blue = 245;
       }
+      const int flashX = x - width * 9 / 10;
+      const int flashY = y - height / 2;
+      if (flashX * flashX + flashY * flashY < 18 * 18) {
+        red = green = blue = 255;
+      }
+      if ((flashX - 48) * (flashX - 48) + (flashY - 26) * (flashY - 26) < 5 * 5) {
+        red = 255;
+        green = 235;
+        blue = 160;
+      }
       pixels[offset + 0] = red;
       pixels[offset + 1] = green;
       pixels[offset + 2] = blue;
@@ -464,6 +474,10 @@ int main(int argc, char** argv) {
         dumpTarget(pass.effectTarget(), options.outputDirectory / "05_effect_edge_glow.png");
         dumpTarget(pass.pingTarget(0), options.outputDirectory / "06_ping0.png");
         dumpTarget(pass.pingTarget(1), options.outputDirectory / "07_ping1.png");
+        const FrameState prepassState = captureState();
+        std::cout << "  prepass blend restored off: "
+                  << (prepassState.blend ? "FAIL" : "PASS") << std::endl;
+        if (prepassState.blend) exitCode = 11;
 
         if (!options.prepassOnly) {
           // 4) The composite over the scene, into an off-screen target.

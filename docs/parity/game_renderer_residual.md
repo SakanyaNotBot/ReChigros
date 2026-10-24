@@ -187,6 +187,62 @@ filed here rather than as a `DIFFERS` row on `officialLevelStartEase`.
   `>>>` must be reproduced with `std::uint32_t` and a logical shift. `frame` must come from
   `floor(chartTimeSec * 30.0)`.
 
+## Follow-up: zone hit-effect distortion
+
+The distortion complaint was rechecked as one behavioural pipeline, rather than inferred from
+uniform names. Reference citations below are `GameRenderer.java` lines.
+
+### Scene inclusion and ordering — MATCH
+
+The reference renders the complete scene, including hit effects and particles, into the scene
+copy before sampling it in the composite (`:15683-15714`). Its effect-chain route makes the
+same requirement explicit at `:4307-4331`. The port submits hit effects at
+`src/render/GameRenderer.cpp:1554-1556`, before the composite consumes the scene texture at
+`:1640`; no call-site change is needed. The composite shader then snaps and displaces that
+scene at `assets/official_shaders/block_composite.glsl:232-246`, with the reference material
+parameters `activeST = (0.8,0.3)`, `activeSpeed = 1.5`, `activeStr = 0.15`,
+`backgroundPixelScale = 6` and `sparkDisplace = 2.39` (`:15181-15184`, `:15224-15231`,
+`:15921`) reproduced by `src/render/fx/BlockCompositePass.cpp:20-47`, `:434-452`.
+
+### Fixed divergences
+
+| Behaviour | Reference | Previous port | Correction |
+| --- | --- | --- | --- |
+| Glow ping-pong filtering | `/4` targets are Point, together with the mask and compose targets (`:15011-15034`) | The two ping targets used bilinear filtering, blending each dilation neighbourhood | `src/render/fx/BlockCompositePass.cpp:227-230` now uses Point for both ping targets; only `effectRT` remains bilinear. This restores the discrete stepped expansion used by the warped silhouette. |
+| Prepass blend-state restoration | `runBlockPrepasses` only re-enables blending when it was previously enabled (`:15597-15599`, `:15665-15673`) | The port also only re-enabled it, leaving it disabled when the caller had disabled it | `src/render/fx/BlockCompositePass.cpp:400-402` now restores either state. A standalone probe calling `runPrepasses` with blending off therefore gets its original state back. |
+| Composite destination viewport | The caller binds the destination and sets its exact viewport (`:15562-15567`, `:15711-15714`) | `draw` overwrote that viewport with `(0,0,width_,height_)` before drawing, even when the caller had supplied another rectangle | `src/render/fx/BlockCompositePass.cpp:427-430` now uses the saved caller viewport. This is necessary for destination subrects and avoids an extra difference between direct and probe rendering. |
+
+The mask geometry itself needs no viewport repair: the reference maps screen pixels to NDC
+using the full view (`:15327-15357`) and binds each `/8` target with its own dimensions
+(`:15485-15496`). The port uses the same mapping at
+`src/render/fx/BlockCompositePass.cpp:83-115`; `gl::Framebuffer::bind()` already sets the
+bound target's viewport (`src/render/gl/Framebuffer.cpp:61-64`), so its mask draw at
+`src/render/fx/BlockCompositePass.cpp:312-319` has the required `/8` viewport.
+
+The mask channel layout and additive accumulation, `0.09/0.12` subtract gate, compose → edge
+→ five glow passes, `(5-i)/15` weights, final G-only write, noise-map Point/wrap state and
+composite sampler inputs agree with the corresponding reference bodies (`:15000-15034`,
+`:15177-15235`, `:15383-15535`, `:15540-15673`, `:15721-15816`). Both shader assets were also
+read; their active-body sampling equations are identical.
+
+### Remaining separately scoped gap
+
+Touch-hover state is not part of hit-effect distortion. Nevertheless, the reference uploads
+live touch positions and animates the shine (`:15246-15321`, `:15807-15814`), while the port
+sets `touchCount = 0` and `touchShineValue = 0` at
+`src/render/fx/BlockCompositePass.cpp:442-443`. Reproducing it requires touch-slot state and
+input wiring beyond this compositor; it must not be represented as completed by this fix.
+
+### Verification
+
+`rechigros_block_probe` passes with Point glow targets and the corrected state/viewport
+handling. Its scene now includes a high-contrast flash core and a displaced particle inside
+the active zone. `08_composite.png` shows both warped by the zone rather than passing through
+unchanged. Prepass returns with blending disabled as required; presented and off-screen
+composites differ on 0.000000% of sampled channels. The exact evidence is generated under
+`build/probe-fixed/`. A physical-device gameplay capture is still outstanding, so this is
+not a claim of GPU-independent pixel equality.
+
 ## Items I could not resolve
 
 None. All 26 declarations were resolved to a verdict with a cited port location or a

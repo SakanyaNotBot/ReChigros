@@ -987,6 +987,21 @@ void drawSwitch(const DrawContext& draw, const Block& block, float left, float t
   const float thumbX = bodyX + m.dp(31.0F) * progress;
   skewedBlock(draw.drawList, thumbX, bodyY, m.dp(35.0F), bodyHeight,
       bodyHeight * kToggleSkewFactor, ui::argb(0xFFFFFFFFU));
+  if (progress > 0.01F) {
+    const float alpha = std::clamp(progress, 0.0F, 1.0F);
+    const ImU32 markColor = ui::fade(ui::argb(0xFF303338U), alpha);
+    ImVec2 mark[3] = {
+        ImVec2(thumbX + m.dp(13.0F), bodyY + m.dp(13.0F)),
+        ImVec2(thumbX + m.dp(17.0F), bodyY + m.dp(17.0F)),
+        ImVec2(thumbX + m.dp(24.0F), bodyY + m.dp(8.0F)),
+    };
+    const float markWidth = m.dp(2.0F);
+    draw.drawList->AddPolyline(mark, 3, markColor, 0, markWidth);
+    for (const ImVec2& point : mark) {
+      draw.drawList->AddCircleFilled(point, markWidth * 0.5F, markColor, 8);
+    }
+  }
+  draw.controlRects.push_back({left, top, left + draw.rowWidth, top + rowPressHeight});
 }
 
 void drawEdit(const DrawContext& draw, const Block& block, float left, float top) {

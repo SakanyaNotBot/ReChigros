@@ -326,6 +326,10 @@ void setupCaptureScreen(AppContext& context, const std::string& spec, float aspe
     if (screen == "settings-replay") context.settingsTab = 2;
     if (screen == "settings-more") context.settingsTab = 3;
     context.settingsReturn = Screen::Home;
+    if (screen == "settings-replay-on") {
+      context.settingsTab = 2;
+      context.settings.replayEnabled = true;
+    }
     context.screen = Screen::Settings;
     return;
   }

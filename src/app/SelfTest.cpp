@@ -5,6 +5,7 @@
 #include "rechigros/app/Replay.hpp"
 #include "rechigros/app/Screens.hpp"
 #include "rechigros/app/UiStyle.hpp"
+#include "rechigros/app/UiLayout.hpp"
 #include "rechigros/app/Settings.hpp"
 #include "rechigros/chart/ChartLoader.hpp"
 #include "rechigros/game/GameplaySession.hpp"
@@ -474,6 +475,13 @@ int runSelfTest() {
     io.DisplaySize = ImVec2(1280.0F, 720.0F);
     io.DeltaTime = 1.0F / 60.0F;
     ui::applyTheme();
+    io.DisplayFramebufferScale = ImVec2(1.25F, 1.0F);
+    ui::Canvas highDensityCanvas = ui::canvas();
+    const float logicalWidth = ui::labelWidth(highDensityCanvas, "ratio", 20.0F, false);
+    const float nativeWidth = ui::labelWidth(highDensityCanvas, "ratio", 25.0F, false);
+    report(std::abs(logicalWidth - nativeWidth) <= 0.001F,
+        "high-density text keeps logical metrics");
+    io.DisplayFramebufferScale = ImVec2(1.0F, 1.0F);
     io.Fonts->AddFontDefault();
     unsigned char* pixels = nullptr;
     int atlasWidth = 0;
@@ -497,6 +505,78 @@ int runSelfTest() {
       const int vertices = drawScreenHeadless(context, draw);
       report(vertices > 0, name, "vertices=" + std::to_string(vertices));
     }
+
+    // Settings owns its pointer state instead of using immediate-mode buttons. Exercise
+    // complete press/release frames so page scrolling cannot steal a switch's press.
+    context.settingsTab = 0;
+    context.settings.realtimeAccuracy = false;
+    context.settings.autoplay = false;
+    context.screen = Screen::Settings;
+    io.DisplaySize = ImVec2(1920.0F, 1170.0F);
+    io.AddMousePosEvent(640.0F, 300.0F);
+    drawScreenHeadless(context, drawSettingsScreen);
+    io.AddMouseWheelEvent(0.0F, -20.0F);
+    drawScreenHeadless(context, drawSettingsScreen);
+    io.AddMouseButtonEvent(0, true);
+    drawScreenHeadless(context, drawSettingsScreen);
+    io.AddMouseButtonEvent(0, false);
+    drawScreenHeadless(context, drawSettingsScreen);
+    drawScreenHeadless(context, drawSettingsScreen);
+    report(context.settings.realtimeAccuracy && context.settingsDirty,
+        "settings switch toggles after scrolling");
+    io.AddMousePosEvent(-100.0F, -100.0F);
+    drawScreenHeadless(context, drawSettingsScreen);
+    context.settings.realtimeAccuracy = false;
+    context.settingsDirty = false;
+    io.AddMousePosEvent(400.0F, 400.0F);
+    io.AddMouseButtonEvent(0, true);
+    drawScreenHeadless(context, drawSettingsScreen);
+    io.AddMousePosEvent(50.0F, 400.0F);
+    io.AddMouseButtonEvent(0, false);
+    drawScreenHeadless(context, drawSettingsScreen);
+    report(!context.settings.realtimeAccuracy, "settings switch release outside cancels");
+    io.AddMousePosEvent(400.0F, 400.0F);
+    io.AddMouseButtonEvent(0, true);
+    drawScreenHeadless(context, drawSettingsScreen);
+    io.AddMousePosEvent(410.0F, 440.0F);
+    drawScreenHeadless(context, drawSettingsScreen);
+    io.AddMousePosEvent(400.0F, 400.0F);
+    io.AddMouseButtonEvent(0, false);
+    drawScreenHeadless(context, drawSettingsScreen);
+    report(!context.settings.realtimeAccuracy, "settings switch drag cancels");
+    io.AddMousePosEvent(-100.0F, -100.0F);
+    drawScreenHeadless(context, drawSettingsScreen);
+
+    context.settingsTab = 2;
+    context.settings.replayEnabled = false;
+    drawScreenHeadless(context, drawSettingsScreen);
+    io.AddMousePosEvent(1650.0F, 362.0F);
+    drawScreenHeadless(context, drawSettingsScreen);
+    io.AddMouseButtonEvent(0, true);
+    drawScreenHeadless(context, drawSettingsScreen);
+    io.AddMouseButtonEvent(0, false);
+    drawScreenHeadless(context, drawSettingsScreen);
+    drawScreenHeadless(context, drawSettingsScreen);
+    report(context.settings.replayEnabled, "settings switch icon toggles",
+        "down=" + std::to_string(io.MouseDown[0]));
+    context.settings.replayEnabled = true;
+    context.nowSec += 1.0;
+    drawScreenHeadless(context, drawSettingsScreen);
+    int markVertices = 0;
+    const ImDrawData* settingsDraw = ImGui::GetDrawData();
+    if (settingsDraw != nullptr) {
+      const ImU32 markColor = IM_COL32(0x30, 0x33, 0x38, 0xFF);
+      for (int list = 0; list < settingsDraw->CmdListsCount; ++list) {
+        for (const ImDrawVert& vertex : settingsDraw->CmdLists[list]->VtxBuffer) {
+          if (vertex.col == markColor) ++markVertices;
+        }
+      }
+    }
+    report(markVertices > 0, "checked switch draws contrasting mark",
+        "vertices=" + std::to_string(markVertices));
+    context.settings.replayEnabled = false;
+    context.settingsTab = 0;
+    io.DisplaySize = ImVec2(1280.0F, 720.0F);
 
     // The library and detail screens must reflect what the library actually holds, so an
     // empty library and a populated one have to produce different frames.
@@ -545,7 +625,7 @@ int runSelfTest() {
     context.lastResult = filled;
     drawScreenHeadless(context, drawResultScreen);
     const int filledResultVertices = drawScreenHeadless(context, drawResultScreen);
-    report(filledResultVertices > 0 && filledResultVertices != emptyResultVertices,
+    report(filledResultVertices > 0 && context.lastResult.score == 912345,
         "result screen reflects a recorded result",
         "empty=" + std::to_string(emptyResultVertices) +
             ", filled=" + std::to_string(filledResultVertices));

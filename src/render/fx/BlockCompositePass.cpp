@@ -226,7 +226,7 @@ void BlockCompositePass::resize(int width, int height) noexcept {
   compose_.color().setFilter(false);
   for (auto& target : ping_) {
     target.resize(reducedSize(width_, EFFECT_DIVISOR), reducedSize(height_, EFFECT_DIVISOR));
-    target.color().setFilter(true);
+    target.color().setFilter(false);
   }
   effect_.resize(reducedSize(width_, EFFECT_DIVISOR), reducedSize(height_, EFFECT_DIVISOR));
   effect_.color().setFilter(true);
@@ -399,7 +399,7 @@ void BlockCompositePass::runPrepasses(float chartTimeSec) {
 
   glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFbo));
   glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
-  if (blendWasOn) glEnable(GL_BLEND);
+  if (blendWasOn) glEnable(GL_BLEND); else glDisable(GL_BLEND);
 }
 
 void BlockCompositePass::draw(gl::Texture& scene, float chartTimeSec) {
@@ -426,7 +426,7 @@ void BlockCompositePass::draw(gl::Texture& scene, float chartTimeSec) {
   // below re-binds the caller's target explicitly.
   runPrepasses(chartTimeSec);
   glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFbo));
-  glViewport(0, 0, width_, height_);
+  glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
   glDisable(GL_BLEND);
   glDisable(GL_DEPTH_TEST);
   glDisable(GL_SCISSOR_TEST);

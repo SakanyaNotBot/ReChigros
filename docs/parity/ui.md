@@ -82,6 +82,38 @@ Reference: `ChartSelectActivity.renderSettings()` plus the four `build*Settings(
 | Replay page | replay toggles, 回放文件 import/refresh row | same | MATCH |
 | More page | a single 更多 heading and an empty min-height 180 block | same — the reference page is genuinely empty | MATCH |
 
+### Settings switch interaction and checked mark
+
+Reference `ChartSelectActivity.java:1334-1348` makes the full row clickable and the
+`SettingsToggleView` keeps a press until a click completes on release. Reference
+`SettingsToggleView.java:47-71` draws the track, moving thumb and a three-segment
+checked path with the same animation progress.
+
+| Behaviour | Evidence | Verdict |
+| --- | --- | --- |
+| Press/release contract | `SettingsScreen.cpp:787-807` captures the row on press and submits only when released inside; the row is `dp(80) x dp(56)` within a minimum `dp(68)` row on both sides | MATCH |
+| Scroll ownership | The baseline omitted switch rows from `controlRects`; scrolling therefore claimed the press before `pressReleased` could accept it | FIXED — `SettingsScreen.cpp:1005` registers the full row; self-test covers a switch after scrolling and an icon click |
+| Cancel paths | Release outside or after a drag must not toggle | MATCH — self-test covers both paths |
+| Checked mark | The reference uses a 1.5 dp stroke through `(13,13) → (17,17) → (24,8)`, with opacity following progress | FIXED — the port was missing the entire path; `SettingsScreen.cpp:990-1003` draws it after the thumb, following `thumbX` and fading with progress |
+
+The reference draws its white mark over the white thumb and anchors it at the track's left
+edge, so a fully checked mark has no visible contrast. The port deliberately corrects that
+visual defect: the same path uses the track colour, is on the moving thumb and has rounded
+caps. See the parent report §4a.
+
+### Text at a high-density framebuffer
+
+Reference `UiTypography.java:26-28` and `GameTextView.java:45-54` derive text size in final
+device pixels. The interface canvas is in logical coordinates while the backend scales its
+vertices by `DisplayFramebufferScale`. The previous glyph cache used only logical pixels,
+which necessarily magnified cached glyph textures whenever drawable pixels exceeded window
+coordinates. `UiLayout.cpp:14-19,93-150,273-334` now rasterises at logical size multiplied
+by framebuffer scale, converts advances and metrics back to logical units, and snaps quads on
+the device-pixel grid. Pointer coordinates and layout remain logical. A 1:1 capture is not
+re-scaled or given a larger font. The self-test checks that 20 logical dp at 1.25x has the
+same advance as 25 physical dp at 1x; a physical-device screenshot is still required to
+validate that end-to-end output.
+
 ## 4. Chart detail (`java_detail.png`, `java_detail2.png`)
 
 Reference: `ChartSelectActivity.renderDetail()`.

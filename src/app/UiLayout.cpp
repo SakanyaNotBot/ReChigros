@@ -11,6 +11,13 @@ namespace {
 constexpr float kPi = 3.14159265358979323846F;
 constexpr float kDegreesToRadians = kPi / 180.0F;
 
+ImVec2 framebufferScale() {
+  if (ImGui::GetCurrentContext() == nullptr) return ImVec2(1.0F, 1.0F);
+  const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
+  return ImVec2(std::isfinite(scale.x) && scale.x > 0.0F ? scale.x : 1.0F,
+      std::isfinite(scale.y) && scale.y > 0.0F ? scale.y : 1.0F);
+}
+
 struct PanelShape {
   ImVec2 points[4]{};
   float width{};
@@ -85,6 +92,8 @@ void drawAccent(ImDrawList* drawList, const Canvas& c, const PanelShape& shape,
 
 float measureRun(std::string_view text, float pixelSize, bool bold) {
   UiFontCache& fonts = fontCache();
+  const ImVec2 scale = framebufferScale();
+  pixelSize *= scale.x;
   float width = 0.0F;
   std::uint32_t previous = 0;
   std::size_t index = 0;
@@ -94,8 +103,8 @@ float measureRun(std::string_view text, float pixelSize, bool bold) {
     index += length;
     if (length == 0) break;
     if (codepoint == '\n') break;
-    if (previous != 0) width += fonts.kerning(previous, codepoint, pixelSize, bold);
-    width += fonts.advance(codepoint, pixelSize, bold);
+    if (previous != 0) width += fonts.kerning(previous, codepoint, pixelSize, bold) / scale.x;
+    width += fonts.advance(codepoint, pixelSize, bold) / scale.x;
     previous = codepoint;
   }
   return width;
@@ -106,6 +115,8 @@ void drawRun(ImDrawList* drawList, std::string_view text, float x, float baselin
   UiFontCache& fonts = fontCache();
   const std::uint64_t texture = fonts.textureId();
   if (texture == 0) return;
+  const ImVec2 scale = framebufferScale();
+  pixelSize *= scale.x;
   float pen = x;
   std::uint32_t previous = 0;
   std::size_t index = 0;
@@ -115,21 +126,23 @@ void drawRun(ImDrawList* drawList, std::string_view text, float x, float baselin
     index += length;
     if (length == 0) break;
     if (codepoint == '\n') break;
-    if (previous != 0) pen += fonts.kerning(previous, codepoint, pixelSize, bold);
+    if (previous != 0) pen += fonts.kerning(previous, codepoint, pixelSize, bold) / scale.x;
     if (codepoint != ' ') {
       const UiFontCache::Glyph* glyph = fonts.glyph(codepoint, pixelSize, bold);
       if (glyph != nullptr && glyph->width > 0.0F) {
-        // The atlas holds a glyph rasterised on the pixel grid, so the quad is snapped to
-        // whole pixels: sampling it from a half-pixel offset makes the linear filter spread
-        // the coverage across two pixels, which reads as a blurry, fattened stroke.
-        const ImVec2 min(std::round(pen + glyph->offsetX),
-            std::round(baseline + glyph->offsetY));
-        const ImVec2 max(std::round(min.x + glyph->width), std::round(min.y + glyph->height));
+        // Snapping in device pixels avoids both a half-texel offset at 1:1 and magnification
+        // of an atlas rasterised at logical size on a high-density framebuffer.
+        const ImVec2 min(std::round((pen + glyph->offsetX / scale.x) * scale.x) / scale.x,
+            std::round((baseline + glyph->offsetY / scale.y) * scale.y) / scale.y);
+        const ImVec2 max(std::round((pen + (glyph->offsetX + glyph->width) / scale.x)
+                * scale.x) / scale.x,
+            std::round((baseline + (glyph->offsetY + glyph->height) / scale.y)
+                * scale.y) / scale.y);
         drawList->AddImage(static_cast<ImTextureID>(texture), min, max,
             ImVec2(glyph->u0, glyph->v0), ImVec2(glyph->u1, glyph->v1), color);
       }
     }
-    pen += fonts.advance(codepoint, pixelSize, bold);
+    pen += fonts.advance(codepoint, pixelSize, bold) / scale.x;
     previous = codepoint;
   }
 }
@@ -145,7 +158,8 @@ std::string_view truncateWithEllipsis(std::string_view text, float pixelSize, bo
   while (index < text.size()) {
     std::size_t length = 0;
     const std::uint32_t codepoint = UiFontCache::decode(text, index, length);
-    const float advance = fontCache().advance(codepoint, pixelSize, bold);
+    const float advance = fontCache().advance(
+        codepoint, pixelSize * framebufferScale().x, bold) / framebufferScale().x;
     if (width + advance + ellipsis > available) break;
     width += advance;
     index += length;
@@ -256,13 +270,16 @@ float labelWidth(const Canvas& c, std::string_view text, float sizeDp, bool bold
 float labelLineHeight(const Canvas& c, float sizeDp) {
   const float pixelSize = c.dp(sizeDp);
   if (!fontCache().ready()) return pixelSize / c.scale;
-  return (fontCache().ascent(pixelSize) + fontCache().descent(pixelSize)) / c.scale;
+  const ImVec2 scale = framebufferScale();
+  return (fontCache().ascent(pixelSize * scale.x) + fontCache().descent(pixelSize * scale.x))
+      / (scale.y * c.scale);
 }
 
 void drawLabelLine(ImDrawList* drawList, const Canvas& c, ImVec2 designTopLeft,
     std::string_view text, float sizeDp, bool bold, ImU32 color, ImVec2* measured) {
   const float pixelSize = c.dp(sizeDp);
   const ImVec2 origin = c.point(designTopLeft.x, designTopLeft.y);
+  const ImVec2 scale = framebufferScale();
   if (!fontCache().ready()) {
     ImVec2 extent;
     drawFallback(drawList, origin, pixelSize, color, text, &extent);
@@ -273,8 +290,8 @@ void drawLabelLine(ImDrawList* drawList, const Canvas& c, ImVec2 designTopLeft,
     return;
   }
   UiFontCache& fonts = fontCache();
-  const float ascent = fonts.ascent(pixelSize);
-  const float descent = fonts.descent(pixelSize);
+  const float ascent = fonts.ascent(pixelSize * scale.x) / scale.y;
+  const float descent = fonts.descent(pixelSize * scale.x) / scale.y;
   drawRun(drawList, text, origin.x, origin.y + ascent, pixelSize, bold, color);
   if (measured != nullptr) {
     measured->x = measureRun(text, pixelSize, bold) / c.scale;
@@ -304,8 +321,9 @@ float drawLabel(ImDrawList* drawList, const Canvas& c, const Box& designBox, std
 
   UiFontCache& fonts = fontCache();
   float textWidth = measureRun(text, pixelSize, style.bold);
-  const float ascent = fonts.ascent(pixelSize);
-  const float descent = fonts.descent(pixelSize);
+  const ImVec2 scale = framebufferScale();
+  const float ascent = fonts.ascent(pixelSize * scale.x) / scale.y;
+  const float descent = fonts.descent(pixelSize * scale.x) / scale.y;
 
   // Fit-to-width shrinks the text so a fixed box never clips it, matching the reference
   // label behaviour. Ellipsis truncates instead, which long chart names use.

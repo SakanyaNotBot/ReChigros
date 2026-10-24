@@ -298,6 +298,18 @@ timing error, and a difference that appears only on the exact half-millisecond b
 **Port:** rounds with `floor(x + 0.5)` after the same float narrowing the reference performs, so
 both spellings print the same digits. Covered by boundary assertions in `tests/CoreTests.cpp`.
 
+### The settings checked mark is white on white and stays behind the moving thumb
+
+`SettingsToggleView.java:47-71` draws a white check stroke after a white thumb. Its
+coordinates use the track's fixed `x` instead of `thumbX`, so a fully enabled switch leaves
+that white mark behind the moving thumb, over the white thumb's initial position. The mark
+cannot reliably communicate the checked state.
+
+**Port:** the same three-segment path follows the thumb, uses the contrasting track colour,
+and fades with switch progress. Its stroke remains legible after antialiasing. This preserves
+the intended checked-state cue rather than reproducing invisible white-on-white pixels.
+Covered by the settings interaction self-test and the enabled replay-switch capture.
+
 ### A declared-but-unread constant
 
 `HOLD_DESTROY_DELAY = 0.250` is declared in the reference and never read — one occurrence in the
