@@ -27,6 +27,13 @@ set(RECHIGROS_APP_SOURCES
   ImportDialogs.cpp
   SelfTest.cpp)
 
+# The ObjectivelyMVC-backed settings screen exists only when the framework is built, which
+# the MSVC tree cannot do (the framework is GNU C). The source is plain C, so it is added as
+# C, matching the framework's own compilation unit.
+if(TARGET objectivelymvc)
+  list(APPEND RECHIGROS_APP_SOURCES MvcSettings.c MvcSettingsBridge.cpp)
+endif()
+
 if(ANDROID)
   add_library(ReChigros SHARED ${RECHIGROS_APP_SOURCES})
   set_target_properties(ReChigros PROPERTIES OUTPUT_NAME main)
@@ -34,6 +41,12 @@ else()
   add_executable(ReChigros ${RECHIGROS_APP_SOURCES})
 endif()
 
+if(TARGET objectivelymvc)
+  # All three framework archives are named explicitly: they reference each other in both
+  # directions (Theme pulls Objectively; the GPU device pulls Objectively's Object), and the
+  # static linker only resolves symbols that are still pending when it reaches an archive.
+  target_link_libraries(ReChigros PRIVATE objectivelymvc objectivelygpu objectively)
+endif()
 target_include_directories(ReChigros PRIVATE "${PROJECT_SOURCE_DIR}/include")
 target_link_libraries(ReChigros PRIVATE
   ${RECHIGROS_SDL_TARGET}

@@ -1,30 +1,17 @@
 #pragma once
 
-// Bridge between the application's screen layer and the ObjectivelyMVC view hierarchy.
+// C++-callable surface of the ObjectivelyMVC settings screen.
 //
-// The framework is GNU C and is compiled as C, so its headers cannot be included from the
-// C++ screen files directly: the framework's headers define `interface` as a member, and
-// several C++ standard headers cannot be combined with them in one translation unit. This
-// header therefore exposes an opaque handle and plain C-style entry points, and keeps every
-// framework type inside MvcSettings.cpp.
+// The framework is GNU C: its headers declare `interface` as a struct member name, which
+// collides with the Windows SDK macro of the same name, so they are never included from a
+// C++ translation unit. The implementation lives in MvcSettings.c behind these C-ABI calls.
 
 namespace rechigros::app {
 
-struct AppContext;
+// True when the framework is linked into this binary and can host the screen.
+[[nodiscard]] bool mvcSettingsAvailable();
 
-// Builds (or rebuilds) the settings view hierarchy for the given tab, bound to the live
-// settings in `context`. Returns true when the framework is available and the view was
-// created; false means the caller must fall back to the immediate-mode screen.
-bool mvcSettingsAvailable();
-
-// Brings the settings hierarchy up to date with the context and renders it into the current
-// GPU frame. Returns true when it drew; false means the caller should draw the old screen.
-bool mvcSettingsRender(AppContext& context, int tab);
-
-// Routes one SDL event to the settings hierarchy.
-void mvcSettingsHandleEvent(const void* sdlEvent);
-
-// Releases the settings hierarchy. Called on shutdown or when leaving the screen.
+// Releases the view hierarchy and every framework object it owns.
 void mvcSettingsShutdown();
 
 } // namespace rechigros::app
