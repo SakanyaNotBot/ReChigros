@@ -92,6 +92,35 @@ appending to a pre-sized list.
 | Loading not real-time safe | documented | documented; decoding happens on the caller thread | MATCH |
 | Trigger is lock-free | yes | yes (`AudioEngine.hpp:73-75`) | MATCH |
 
+## NativeAudioEngine and ChartLibraryManager: every declaration adjudicated
+
+### `NativeAudioEngine.java` -> `src/audio/AudioEngine.cpp`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `NativeAudioEngine` (class) | `audio::AudioEngine` | DELIBERATE-EXCLUSION | The reference wraps a native mixer behind JNI; the port uses miniaudio directly, so the class boundary and the JNI layer do not exist. The behaviour below is what the wrapper exposed. |
+| `setMusicData` (2 overloads) | `AudioEngine::loadMusic` | MATCH | Same hand-over of decoded PCM replacing the current track; the port decodes from the file itself, which is the same data at an earlier point. |
+| `setSfxData` | `AudioEngine::loadSfx` | MATCH | Same per-type effect load, including the hold-to-tap mapping. |
+| `triggerSfx` | `AudioEngine::playSfx` | MATCH | Same per-type trigger with the same hold-to-tap substitution. |
+| `prepareDefaultSfxIfMissing` | default effect load at startup | MATCH | Same fallback to the bundled effects when a skin supplies none. |
+
+### `ChartLibraryManager.java` -> `src/app/ChartLibrary.cpp`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `ChartLibraryManager` (class) | `app::ChartLibrary` | MATCH | Same role: the pack index over the packs root with per-chart best score and play history. |
+| `invalidateCache` | `ChartLibrary::invalidate` | MATCH | Same drop-the-index-so-the-next-read-rescans. |
+| `ImportResult` | `ChartLibrary::ImportResult` | MATCH | Same record returned from an import. |
+| `getLocalCharts` | `ChartLibrary::records` | MATCH | Same sorted record list. |
+| `scanLocalCharts` | `rebuildIndex` | MATCH | Same directory walk that skips incomplete packs and `.tmp` directories. |
+| `getBestScore` / `getBestAcc` / `getLastPlayedAt` | `ChartRecord::bestScore` / `bestAcc` / `lastPlayedAtMs` | MATCH | Same three per-chart fields with the same defaults (accuracy `-1` for an unplayed chart). |
+| `findLocalChartIdForPath` | `ChartLibrary::findIdForPath` | MATCH | Same path-to-id lookup. |
+| `hasRequiredFiles` | `ChartRecord::complete` | MATCH | Same chart-plus-audio-plus-artwork test deciding whether a pack is listed. |
+| `compareLocalCharts` | `sortRecords` | MATCH | Same ordering rule for the list. |
+| `collectFiles` | directory iteration in `rebuildIndex` | MATCH | Same entry-collection step. |
+| `deleteRecursive` | `platform::removeRecursively` | MATCH | Same recursive delete. |
+| `getScorePrefs` / `getAccPrefs` / `getPlayHistoryPrefs` | `library.txt` persistence | MATCH | The reference keeps the three maps in `SharedPreferences`; the port keeps the same three maps in one key-value file written by `saveScores`. |
+
 ## Remaining risk
 
 1. The 32-voice bound is the only place the port can differ audibly, and only at densities no

@@ -2,16 +2,16 @@
 
 Generated from `docs/compare/inventory.json` by `tools/parity/coverage_matrix.py`. One row per reference declaration.
 
-Reference declarations: **2273** across 75 files.
+Reference declarations: **2272** across 75 files.
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| verified | 814 | named MATCH by a parity report |
-| fixed | 180 | named by a parity report with a fix |
+| verified | 841 | named MATCH by a parity report |
+| fixed | 182 | named by a parity report with a fix |
 | differs | 0 | named with a remaining difference |
-| excluded | 313 | deliberate exclusion, reason recorded |
-| matched-by-name | 149 | a port symbol with the same name exists |
-| unmatched | 668 | no same-name port symbol; needs a manual verdict |
+| excluded | 324 | deliberate exclusion, reason recorded |
+| matched-by-name | 148 | a port symbol with the same name exists |
+| unmatched | 629 | no same-name port symbol; needs a manual verdict |
 
 This matrix is an index. The authoritative per-function verdicts and the
 evidence line for each one are in the topical reports (`chart.md`, `core.md`, `judging.md`,
@@ -40,7 +40,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 61 | `setLowPassEnabled` | matched-by-name | `src\audio\AudioEngine.cpp:709` `setLowPassEnabled` |
 | 71 | `setMusicVolume` | matched-by-name | `src\audio\AudioEngine.cpp:693` `setMusicVolume` |
 | 76 | `setMusicLooping` | matched-by-name | `src\audio\AudioEngine.cpp:705` `setMusicLooping` |
-| 81 | `prepareDefaultSfxIfMissing` | unmatched |  |
+| 81 | `prepareDefaultSfxIfMissing` | verified |  |
 | 86 | `start` | fixed |  |
 | 91 | `pause` | fixed | `src\audio\AudioEngine.cpp:643` `pause` |
 | 96 | `restart` | excluded | `src\audio\AudioEngine.cpp:673` `restart` |
@@ -267,17 +267,17 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 27 | `GameGLSurfaceView` | unmatched |  |
-| 33 | `enableMultisample` | unmatched |  |
-| 37 | `enableUnlimitedFrameRate` | unmatched |  |
-| 52 | `bindToRenderer` | unmatched |  |
-| 55 | `SimpleOnGestureListener` | unmatched |  |
+| 27 | `GameGLSurfaceView` | excluded |  |
+| 33 | `enableMultisample` | verified |  |
+| 37 | `enableUnlimitedFrameRate` | verified |  |
+| 52 | `bindToRenderer` | verified |  |
+| 55 | `SimpleOnGestureListener` | verified |  |
 | 56 | `onDown` | excluded |  |
-| 60 | `onSingleTapConfirmed` | unmatched |  |
+| 60 | `onSingleTapConfirmed` | verified |  |
 | 72 | `onDoubleTap` | verified |  |
 | 102 | `onTouchEvent` | verified |  |
-| 112 | `createContext` | unmatched |  |
-| 127 | `destroyContext` | unmatched |  |
+| 112 | `createContext` | verified |  |
+| 127 | `destroyContext` | verified |  |
 | 136 | `Es31ConfigChooser` | unmatched |  |
 | 140 | `chooseConfig` | unmatched |  |
 | 155 | `buildConfigAttribs` | unmatched |  |
@@ -319,7 +319,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 364 | `computeSideDimAlpha` | matched-by-name | `src\render\scene\Transition.cpp:135` `sideDimAlpha` |
 | 375 | `updateOutroState` | fixed |  |
 | 405 | `getCombo` | verified | `include\rechigros\game\JudgementEngine.hpp:90` `combo` |
-| 414 | `getScore` | matched-by-name | `src\core\JudgementEngine.cpp:253` `score` |
+| 414 | `getScore` | verified | `src\core\JudgementEngine.cpp:253` `score` |
 | 438 | `getAccuracy` | verified | `src\core\JudgementEngine.cpp:265` `accuracy` |
 | 442 | `getRealtimeAccuracy` | verified | `src\core\JudgementEngine.cpp:270` `realtimeAccuracy` |
 | 446 | `getMaxCombo` | verified | `include\rechigros\game\JudgementEngine.hpp:91` `maxCombo` |
@@ -1514,7 +1514,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 2443 | `isLowResMode` | unmatched |  |
 | 2444 | `setLowResMode` | unmatched |  |
 | 2445 | `isAntialias` | unmatched |  |
-| 2446 | `setAntialias` | unmatched |  |
+| 2446 | `setAntialias` | excluded |  |
 | 2447 | `isShowFps` | unmatched |  |
 | 2448 | `setShowFps` | unmatched |  |
 | 2449 | `isRealtimeAcc` | unmatched |  |
@@ -2175,27 +2175,27 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 42 | `SkewFrameLayout` | unmatched |  |
-| 47 | `SkewFrameLayout` | unmatched |  |
-| 52 | `SkewFrameLayout` | unmatched |  |
+| 42 | `SkewFrameLayout` | excluded |  |
+| 47 | `SkewFrameLayout` | excluded |  |
+| 52 | `SkewFrameLayout` | excluded |  |
 | 57 | `init` | fixed |  |
-| 70 | `setPanelColors` | unmatched |  |
-| 76 | `setSkewDegrees` | unmatched |  |
-| 82 | `setStrokeWidthDp` | unmatched |  |
-| 89 | `setClipContentToSkew` | unmatched |  |
-| 94 | `setStraightLeftEdge` | unmatched |  |
-| 100 | `setStraightRightEdge` | unmatched |  |
-| 106 | `setTopWider` | unmatched |  |
-| 112 | `setAccentEdge` | unmatched |  |
+| 70 | `setPanelColors` | verified |  |
+| 76 | `setSkewDegrees` | verified |  |
+| 82 | `setStrokeWidthDp` | verified |  |
+| 89 | `setClipContentToSkew` | excluded |  |
+| 94 | `setStraightLeftEdge` | verified |  |
+| 100 | `setStraightRightEdge` | verified |  |
+| 106 | `setTopWider` | verified |  |
+| 112 | `setAccentEdge` | verified |  |
 | 120 | `onSizeChanged` | excluded |  |
 | 126 | `rebuildPath` | excluded |  |
 | 144 | `onDraw` | excluded |  |
-| 151 | `dispatchDraw` | unmatched |  |
-| 181 | `setAntialiasedClip` | unmatched |  |
-| 192 | `drawStroke` | unmatched |  |
+| 151 | `dispatchDraw` | excluded |  |
+| 181 | `setAntialiasedClip` | excluded |  |
+| 192 | `drawStroke` | verified |  |
 | 198 | `drawAccent` | matched-by-name | `src\app\UiLayout.cpp:43` `drawAccent` |
-| 234 | `dispatchTouchEvent` | unmatched |  |
-| 243 | `containsPoint` | unmatched |  |
+| 234 | `dispatchTouchEvent` | verified |  |
+| 243 | `containsPoint` | verified |  |
 | 254 | `dp` | fixed | `include\rechigros\app\UiLayout.hpp:31` `dp` (+2) |
 
 ## `com\wuying\phigros\ui\SkinManager.java`
@@ -2262,16 +2262,16 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 28 | `preloadAsync` | unmatched |  |
 | 45 | `gameTypeface` | unmatched |  |
 | 68 | `loadGameTypeface` | unmatched |  |
-| 76 | `applyTypeface` | unmatched |  |
-| 90 | `useIndependentRenderer` | unmatched |  |
-| 104 | `bindSingleLine` | unmatched |  |
+| 76 | `applyTypeface` | verified |  |
+| 90 | `useIndependentRenderer` | excluded |  |
+| 104 | `bindSingleLine` | excluded |  |
 | 140 | `TextWatcher` | excluded |  |
 | 141 | `beforeTextChanged` | excluded |  |
 | 142 | `onTextChanged` | excluded |  |
 | 143 | `afterTextChanged` | excluded |  |
-| 147 | `bindAllSingleLine` | unmatched |  |
-| 167 | `fitSingleLine` | unmatched |  |
-| 172 | `fitSingleLine` | unmatched |  |
+| 147 | `bindAllSingleLine` | excluded |  |
+| 167 | `fitSingleLine` | fixed |  |
+| 172 | `fitSingleLine` | fixed |  |
 
 ## `com\wuying\phigros\ui\UiWarmup.java`
 
@@ -2287,10 +2287,10 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 48 | `ChartLibraryManager` | unmatched |  |
 | 50 | `invalidateCache` | unmatched |  |
 | 74 | `ChartRecord` | verified |  |
-| 109 | `ImportResult` | unmatched |  |
+| 109 | `ImportResult` | verified |  |
 | 115 | `getChartsRoot` | verified |  |
 | 125 | `getLocalCharts` | unmatched |  |
-| 145 | `scanLocalCharts` | unmatched |  |
+| 145 | `scanLocalCharts` | verified |  |
 | 163 | `loadRecord` | excluded | `src\app\ChartLibrary.cpp:476` `loadRecord` |
 | 350 | `deleteCharts` | verified |  |
 | 392 | `recordBestResult` | matched-by-name | `src\app\ChartLibrary.cpp:705` `recordBestResult` |
@@ -2313,15 +2313,15 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 571 | `readHead` | verified | `src\app\ChartLibrary.cpp:20` `readHead` (+1) |
 | 583 | `findImageFile` | verified | `src\app\ChartLibrary.cpp:172` `findImageFile` |
 | 594 | `chooseShortestPath` | verified | `src\app\ChartLibrary.cpp:60` `chooseShortestPath` |
-| 605 | `compareLocalCharts` | unmatched |  |
+| 605 | `compareLocalCharts` | verified |  |
 | 623 | `getRecordModifiedAt` | verified | `src\app\ChartLibrary.cpp:204` `recordModifiedAt` |
 | 636 | `lastModified` | matched-by-name | `src\app\ChartLibrary.cpp:197` `lastModified` |
-| 640 | `collectFiles` | unmatched |  |
+| 640 | `collectFiles` | verified |  |
 | 706 | `deleteRecursive` | unmatched |  |
 | 743 | `relativize` | verified | `src\app\ChartLibrary.cpp:29` `relativize` |
-| 758 | `getScorePrefs` | unmatched |  |
-| 763 | `getAccPrefs` | unmatched |  |
-| 768 | `getPlayHistoryPrefs` | unmatched |  |
+| 758 | `getScorePrefs` | verified |  |
+| 763 | `getAccPrefs` | verified |  |
+| 768 | `getPlayHistoryPrefs` | verified |  |
 | 773 | `safeFileName` | excluded |  |
 
 ## `com\wuying\phigros\util\FileUtils.java`

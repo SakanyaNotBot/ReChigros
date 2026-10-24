@@ -273,6 +273,46 @@ behaviour that the interface depends on is pinned.
 | `onConfigurationChanged` / `animationsEnabled` | `Application` density refresh, `Settings` | DELIBERATE-EXCLUSION | Configuration and animation-scale changes are Android system settings; the port re-reads density each frame and has no system animation scale. |
 | `drawCompoundDrawables` / `setSelected` | per-screen icon drawing | DELIBERATE-EXCLUSION | Compound drawables are an Android `TextView` feature; icons are drawn explicitly where the reference would attach them. |
 
+## SkewFrameLayout, UiTypography and GameGLSurfaceView: every declaration adjudicated
+
+These three are the Android view/platform glue for the interface. Each maps either onto a
+layout helper or onto a piece of the platform layer.
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `SkewFrameLayout` (3 constructors) | `skewedBlock` (`SettingsScreen.cpp:138`) | DELIBERATE-EXCLUSION | A custom `ViewGroup` that draws a skewed panel; the port draws the skew inline with `skewedBlock` and has no widget. |
+| `setPanelColors` | fill and stroke colours at the draw site | MATCH | Same fill and stroke palette. |
+| `setSkewDegrees` | `kSlope` (tan 15°) and `kToggleSkewFactor` | MATCH | Same 15° slant, expressed as a slope constant. |
+| `setStrokeWidthDp` / `drawStroke` | stroke draw in `skewedBlock` callers | MATCH | Same dp stroke, skipped when the colour alpha or the width is zero. |
+| `setClipContentToSkew` / `setAntialiasedClip` | clip and antialias handling | DELIBERATE-EXCLUSION | Android clip-path API for keeping children inside the skew; the port's skewed quads are drawn with the surrounding scissor instead. |
+| `setStraightLeftEdge` / `setStraightRightEdge` / `setTopWider` / `setAccentEdge` | per-block quad shaping in `skewedBlock` callers | MATCH | Same four panel variants (straight edge, top-wider, accent edge), each produced by its own quad. |
+| `dispatchDraw` | per-frame draw | DELIBERATE-EXCLUSION | `ViewGroup` draw dispatch; the port draws the block inline. |
+| `dispatchTouchEvent` / `containsPoint` :245-254 | rectangle hit test in `pressReleased` | MATCH (different shape) | The reference walks the skewed edge, so it narrows the hit region toward the slanted side; the port tests the row's bounding rectangle. The difference is the triangular sliver at each end of a row, which the row-based hit target deliberately covers so a tap near the edge still registers. |
+
+### `UiTypography.java`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `UiTypography` (class) | `ui::TextStyle` + `Canvas::dp` | DELIBERATE-EXCLUSION | A static helper class over Android `Context`; the port folds the same conversions into the layout helpers. |
+| `px` :26-28 | `Canvas::dp` / the density product | MATCH | Same `designDp * density`, and the density itself is the reference's 1.75 scaled by the user's interface zoom. |
+| `preloadAsync` / `gameTypeface` / `loadGameTypeface` | `UiFontCache::initialize` | MATCH | Same one-time load of the bundled face, decoded before the first frame so the first screen is not stalled. |
+| `applyTypeface` | face selection in `UiFontCache` | MATCH | Same face applied to every label, with the same bold synthesised when asked. |
+| `useIndependentRenderer` | renderer choice | DELIBERATE-EXCLUSION | Selects the canvas-based text renderer on Android; the port has one text renderer. |
+| `bindSingleLine` / `bindAllSingleLine` | label draw call sites | DELIBERATE-EXCLUSION | Attaches layout/text listeners so a fit re-runs on change; the port fits every frame, so there is nothing to bind. |
+| `fitSingleLine` (2 overloads) :170 | the bisection in `UiLayout.cpp:348-363` | **FIXED** | The reference bisects for the largest size that still fits. The port ran three proportional steps, which did not converge for a label whose width shrinks non-linearly, so fitted text settled smaller than the reference. The bisection is now the same. |
+
+### `GameGLSurfaceView.java`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `GameGLSurfaceView` | SDL GL context | DELIBERATE-EXCLUSION | A `GLSurfaceView` subclass; SDL owns the context and surface lifecycle. |
+| `enableMultisample` | swap-chain MSAA attributes | MATCH | Same multisample request, applied through the platform's GL attributes. |
+| `enableUnlimitedFrameRate` | `SDL_GL_SetSwapInterval(0)` | MATCH | Same "do not block on vsync" switch, exposed as the swap-interval diagnostic. |
+| `bindToRenderer` | renderer attachment | MATCH | Same renderer bound to the surface. |
+| `SimpleOnGestureListener` / `onSingleTapConfirmed` | tap routing in `processEvents` | MATCH | Same single-tap confirmation used for the play-field taps. |
+| `createContext` / `destroyContext` | context creation and teardown | MATCH | Same create/destroy points. |
+| `Es31ConfigChooser` / `chooseConfig` / `buildConfigAttribs` | GL context attributes | MATCH | Same ES 3.1 request with the same fallbacks; on the packaged platforms the attribute block in `Application::initialize` carries them. |
+
 ## ChartSelectActivity: list, detail, dialogs and file pickers
 
 | Reference declaration | Port implementation | Verdict | Basis |
