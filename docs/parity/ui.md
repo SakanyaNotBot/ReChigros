@@ -273,6 +273,45 @@ behaviour that the interface depends on is pinned.
 | `onConfigurationChanged` / `animationsEnabled` | `Application` density refresh, `Settings` | DELIBERATE-EXCLUSION | Configuration and animation-scale changes are Android system settings; the port re-reads density each frame and has no system animation scale. |
 | `drawCompoundDrawables` / `setSelected` | per-screen icon drawing | DELIBERATE-EXCLUSION | Compound drawables are an Android `TextView` feature; icons are drawn explicitly where the reference would attach them. |
 
+### Hit effects and the chart card surfaces
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `isMenuVisible` | `GameRuntime::Pause::Menu` | MATCH | Same pause-mode predicate. |
+| `setReplayRecorder` | `GameplaySession::setReplayRecording` | MATCH | Same attach point. |
+| `getPerfectCount` / `getGoodCount` / `getBadCount` / `getMissCount` | `JudgementEngine::result()` | MATCH | Same four counters. |
+| `sanitizeOfficialScreenDpi` | `Application::initialize` DPI block | MATCH | Same fallback chain. |
+| `sanitizeHitOffsetIndicatorMode` | `Settings::load` | **FIXED** | Out-of-range now falls back to disabled; the port had clamped. |
+| `resetNativeRenderBucketRuntimeState` | `Chart::resetRuntime` | MATCH | Same per-run reset. |
+| `renderGameplayFrame` / `renderSceneDirect` | `GameRenderer::render` | MATCH | Same frame composition and direct scene path. |
+| `blockCompositeHasWork` | `Chart::hasLiveBlock` | MATCH | Same live-block question. |
+| `drawAmetrineVignette` / `ametrineHudVignetteFactor` | `fx::AmetrineVignette` | MATCH | Same inline vignette and HUD factor. |
+| `getOrLoadFileTexture` | `TextureCache::load` | MATCH | Same load-once cache. |
+| `getOrCreateTextTexture` / `createHudTextTexture` (5) | `TextRenderer::glyphStrip` | **DIFFERENT BY DESIGN** | String-per-texture cache versus glyph strip per size. Same pixels, no per-value upload. |
+| `measureHudTextWidth` | `TextRenderer::measure` | MATCH | Same advance-width sum. |
+| `officialHudUnitPx` / `officialHudX` / `officialHudY` | `scene::hudUnit` / `hudX` / `hudY` | MATCH | Same centred mapping on the 1000-unit canvas. |
+| `getJudgeOffset` | `GameplaySession::touchPosition` | MATCH | Same normalised distance pipeline; the full comparison is in the note-geometry section. |
+| `spawnHoldHeadHitEffect` / `spawnHoldBodyHitEffect` | hold hit-effect spawn | MATCH | Same effect spawn for a hold head and its body, with the same alpha and part count. |
+| `hasHitEffectTint` :10735-10737 | `Note::tintR/G/B` presence test | MATCH | Same one-flag presence check. |
+| `hitEffectTintR` / `hitEffectTintG` / `hitEffectTintB` :10739-10749 | tint fallback in the hit-effect draw | MATCH | Same rule per channel: use the note's tint only when the flag is set and the channel is finite, otherwise the caller's fallback. |
+| `getLineRotDeg` :10751-10764 | `pose.rotationDeg` (`NoteBatch.cpp:294`) | MATCH | Same `rotateDeg + (isAbove ? 0 : 180)`, with the same 0 fallback when the line or its state is missing. |
+| `computeNoteHeadPositionOnLine` | `resolveNoteGeometry` head position | MATCH | Same head position from the along-line offset and the line rotation. |
+
+## ChartSelectActivity: the tab bar and card surfaces
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `setSongName` / `setDifficulty` / `setChartOffsetMs` / `persistSelectedChartInfo` | `ChartLibrary::updateInfo` | MATCH | Same three-field edit written back to the info file and the index. |
+| `getMusicVolumePct` / `setMusicVolumePct` / `getSfxVolumePct` / `setSfxVolumePct` / `clampPctToMul` | `Settings` multiplier with `x100` display and a 0..5 clamp on write | MATCH | The reference clamps 0..500 percent then divides by 100; the port stores the multiplier and clamps it to 0..5. Identical over every reachable value. |
+| `loadPersistedSettings` / `editPrefs` | `Settings::load` / `Settings::save` | MATCH | Same read and write of every setting with the same defaults. |
+| `clampFinite` / `clampInt` | clamp helpers in `Settings`/`SettingsScreen` | MATCH | Same finite clamp and integer clamp. |
+| `restartMarquee` | marquee restart in the label draw | MATCH | Same restart of the scrolling text cycle. |
+| `stableId` | stable chart id | MATCH | Same stable id derived from the pack, so a re-scan keeps the selection. |
+| `shortDifficulty` | difficulty abbreviation | MATCH | Same abbreviation table (`EZ`/`HD`/`IN`/`AT` and the numeric fallbacks). |
+| `ChartTabBar` (2 constructors) / `setOnTabSelected` / `drawSkewRect` / `tabProgress` / `selectedAmount` / `centerFor` | the library tab bar in `LibraryScreen` | MATCH | Same skewed tab plate with the same selection animation (`tabProgress` drives the same width interpolation) and the same centred label. |
+| `ChartCardAdapter` (2 constructors) / `getItemId` / `findLocalPosition` / `bindHolder` / `applyLocalState` | chart card drawing in `drawLibraryScreen` | MATCH | Same card content and the same per-card state (selected, manage mode); the adapter's view recycling has no counterpart because the port draws only the visible range. |
+| `ChartCardFrame` | chart card panel draw | MATCH | Same skewed card panel behind each row. |
+
 ## Video settings, the result page, replays and calibration: residuals
 
 ### `SelectVideoFragment.java`

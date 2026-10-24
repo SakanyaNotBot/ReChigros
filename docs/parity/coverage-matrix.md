@@ -2,16 +2,16 @@
 
 Generated from `docs/compare/inventory.json` by `tools/parity/coverage_matrix.py`. One row per reference declaration.
 
-Reference declarations: **2267** across 75 files.
+Reference declarations: **2265** across 75 files.
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| verified | 1084 | named MATCH by a parity report |
+| verified | 1126 | named MATCH by a parity report |
 | fixed | 183 | named by a parity report with a fix |
 | differs | 0 | named with a remaining difference |
 | excluded | 364 | deliberate exclusion, reason recorded |
-| matched-by-name | 143 | a port symbol with the same name exists |
-| unmatched | 350 | no same-name port symbol; needs a manual verdict |
+| matched-by-name | 141 | a port symbol with the same name exists |
+| unmatched | 310 | no same-name port symbol; needs a manual verdict |
 
 This matrix is an index. The authoritative per-function verdicts and the
 evidence line for each one are in the topical reports (`chart.md`, `core.md`, `judging.md`,
@@ -36,9 +36,9 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 39 | `setSfxData` | unmatched |  |
 | 45 | `triggerSfx` | unmatched |  |
 | 51 | `setPlaybackSpeed` | matched-by-name | `src\audio\AudioEngine.cpp:701` `setPlaybackSpeed` |
-| 56 | `setSfxVolume` | matched-by-name | `src\audio\AudioEngine.cpp:697` `setSfxVolume` |
+| 56 | `setSfxVolume` | verified | `src\audio\AudioEngine.cpp:697` `setSfxVolume` |
 | 61 | `setLowPassEnabled` | matched-by-name | `src\audio\AudioEngine.cpp:709` `setLowPassEnabled` |
-| 71 | `setMusicVolume` | matched-by-name | `src\audio\AudioEngine.cpp:693` `setMusicVolume` |
+| 71 | `setMusicVolume` | verified | `src\audio\AudioEngine.cpp:693` `setMusicVolume` |
 | 76 | `setMusicLooping` | matched-by-name | `src\audio\AudioEngine.cpp:705` `setMusicLooping` |
 | 81 | `prepareDefaultSfxIfMissing` | verified |  |
 | 86 | `start` | fixed |  |
@@ -636,9 +636,9 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 9676 | `syncPausedJudgementState` | fixed |  |
 | 9687 | `replayRecordNowChartTimeSec` | verified |  |
 | 9692 | `activateHoldAfterHead` | verified |  |
-| 9712 | `trackActiveHold` | unmatched |  |
-| 9720 | `useTrackedHoldOptimization` | unmatched |  |
-| 9728 | `updateTrackedHoldNotes` | unmatched |  |
+| 9712 | `trackActiveHold` | verified |  |
+| 9720 | `useTrackedHoldOptimization` | verified |  |
+| 9728 | `updateTrackedHoldNotes` | verified |  |
 | 9771 | `getHoldBodyEffectIntervalSec` | verified |  |
 | 9777 | `spawnDueHoldBodyHitEffects` | fixed |  |
 | 9837 | `updateAutoplay` | fixed | `include\rechigros\game\GameplaySession.hpp:47` `autoplay` (+2) |
@@ -649,20 +649,20 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 10553 | `getJudgeOffset` | unmatched |  |
 | 10570 | `effectiveJudgeArea` | verified | `src\core\GameplaySession.cpp:138` `effectiveJudgeArea` |
 | 10588 | `sanitizeJudgeArea` | verified | `src\core\NoteGeometry.cpp:74` `sanitizeJudgeArea` |
-| 10593 | `computeNoteControlHeight` | unmatched |  |
+| 10593 | `computeNoteControlHeight` | verified |  |
 | 10609 | `getJudgeDistance` | verified | `src\core\GameplaySession.cpp:172` `judgeDistance` |
-| 10634 | `toLineLocalX` | unmatched |  |
-| 10642 | `toLineLocalY` | unmatched |  |
-| 10651 | `computeNoteLocalX` | unmatched |  |
-| 10684 | `spawnHitEffect` | unmatched |  |
-| 10700 | `spawnHoldHeadHitEffect` | unmatched |  |
-| 10729 | `spawnHoldBodyHitEffect` | unmatched |  |
+| 10634 | `toLineLocalX` | verified |  |
+| 10642 | `toLineLocalY` | verified |  |
+| 10651 | `computeNoteLocalX` | verified |  |
+| 10684 | `spawnHitEffect` | verified |  |
+| 10700 | `spawnHoldHeadHitEffect` | verified |  |
+| 10729 | `spawnHoldBodyHitEffect` | verified |  |
 | 10733 | `hasHitEffectTint` | unmatched |  |
-| 10737 | `hitEffectTintR` | unmatched |  |
-| 10741 | `hitEffectTintG` | unmatched |  |
-| 10745 | `hitEffectTintB` | unmatched |  |
-| 10749 | `getLineRotDeg` | unmatched |  |
-| 10763 | `computeNoteHeadPositionOnLine` | unmatched |  |
+| 10737 | `hitEffectTintR` | verified |  |
+| 10741 | `hitEffectTintG` | verified |  |
+| 10745 | `hitEffectTintB` | verified |  |
+| 10749 | `getLineRotDeg` | verified |  |
+| 10763 | `computeNoteHeadPositionOnLine` | verified |  |
 | 10798 | `spawnBadEffect` | unmatched |  |
 | 10853 | `obtainHitEffect` | unmatched |  |
 | 10861 | `obtainBadEffect` | unmatched |  |
@@ -1539,10 +1539,10 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 2476 | `setHitOffsetIndicator` | verified | `src\core\HitOffsetIndicator.cpp:9` `HitOffsetIndicator` |
 | 2477 | `getHitOffsetIndicatorMode` | verified |  |
 | 2478 | `setHitOffsetIndicatorMode` | verified |  |
-| 2484 | `getMusicVolumePct` | unmatched |  |
-| 2485 | `setMusicVolumePct` | unmatched |  |
-| 2486 | `getSfxVolumePct` | unmatched |  |
-| 2487 | `setSfxVolumePct` | unmatched |  |
+| 2484 | `getMusicVolumePct` | verified |  |
+| 2485 | `setMusicVolumePct` | verified |  |
+| 2486 | `getSfxVolumePct` | verified |  |
+| 2487 | `setSfxVolumePct` | verified |  |
 | 2488 | `getMusicSpeed` | matched-by-name | `src\core\GameplaySession.cpp:66` `setMusicSpeed` |
 | 2489 | `setMusicSpeed` | matched-by-name | `src\core\GameplaySession.cpp:66` `setMusicSpeed` |
 | 2490 | `getAudioOffsetMs` | verified |  |
@@ -1567,50 +1567,50 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 2635 | `tryTakePersistableRead` | excluded |  |
 | 2642 | `hasLowerSuffix` | verified |  |
 | 2646 | `errorMessage` | excluded |  |
-| 2672 | `clampPctToMul` | unmatched |  |
+| 2672 | `clampPctToMul` | verified |  |
 | 2676 | `sanitizeAspectRatio` | matched-by-name | `src\app\Settings.cpp:47` `sanitizeAspectRatio` |
-| 2682 | `clampFinite` | unmatched |  |
+| 2682 | `clampFinite` | verified |  |
 | 2689 | `lerp` | fixed | `src\core\EventUtils.cpp:235` `lerp` |
 | 2693 | `easeOutCubic` | verified | `src\app\SettingsScreen.cpp:303` `easeOutCubic` |
-| 2698 | `clampInt` | unmatched |  |
+| 2698 | `clampInt` | verified |  |
 | 2704 | `parseFloatSafe` | verified |  |
 | 2713 | `parseIntSafe` | verified |  |
 | 2722 | `formatFloat` | verified |  |
 | 2726 | `fallback` | fixed |  |
 | 2730 | `nonEmpty` | verified | `src\app\LibraryScreen.cpp:159` `nonEmpty` |
 | 2734 | `shouldMarquee` | matched-by-name | `src\app\LibraryScreen.cpp:157` `shouldMarquee` |
-| 2738 | `restartMarquee` | unmatched |  |
-| 2745 | `stableId` | unmatched |  |
-| 2754 | `shortDifficulty` | unmatched |  |
+| 2738 | `restartMarquee` | verified |  |
+| 2745 | `stableId` | verified |  |
+| 2754 | `shortDifficulty` | verified |  |
 | 2760 | `gradeName` | matched-by-name | `src\app\ChartLibrary.cpp:410` `gradeName` |
 | 2770 | `safeFileName` | excluded |  |
 | 2775 | `extensionOrJpg` | excluded |  |
 | 2839 | `beforeTextChanged` | excluded |  |
 | 2840 | `onTextChanged` | excluded |  |
-| 2855 | `ChartTabBar` | unmatched |  |
-| 2859 | `ChartTabBar` | unmatched |  |
+| 2855 | `ChartTabBar` | verified |  |
+| 2859 | `ChartTabBar` | verified |  |
 | 2877 | `setState` | excluded | `src\app\LibraryScreen.cpp:214` `state` |
-| 2884 | `setOnTabSelected` | unmatched |  |
+| 2884 | `setOnTabSelected` | verified |  |
 | 2888 | `onDraw` | excluded |  |
 | 2927 | `performClick` | verified |  |
 | 2933 | `onTouchEvent` | verified |  |
-| 2944 | `drawSkewRect` | unmatched |  |
-| 2957 | `tabProgress` | unmatched |  |
-| 2964 | `selectedAmount` | unmatched |  |
-| 2971 | `centerFor` | unmatched |  |
+| 2944 | `drawSkewRect` | verified |  |
+| 2957 | `tabProgress` | verified |  |
+| 2964 | `selectedAmount` | verified |  |
+| 2971 | `centerFor` | verified |  |
 | 2975 | `widthFor` | verified |  |
-| 2986 | `ChartCardAdapter` | unmatched |  |
-| 2992 | `ChartCardAdapter` | unmatched |  |
-| 3003 | `getItemId` | unmatched |  |
-| 3013 | `findLocalPosition` | unmatched |  |
+| 2986 | `ChartCardAdapter` | verified |  |
+| 2992 | `ChartCardAdapter` | verified |  |
+| 3003 | `getItemId` | verified |  |
+| 3013 | `findLocalPosition` | verified |  |
 | 3021 | `onCreateViewHolder` | excluded |  |
 | 3090 | `onBindViewHolder` | excluded |  |
 | 3095 | `onBindViewHolder` | excluded |  |
-| 3100 | `bindHolder` | unmatched |  |
+| 3100 | `bindHolder` | verified |  |
 | 3149 | `getItemCount` | excluded |  |
-| 3154 | `applyLocalState` | unmatched |  |
+| 3154 | `applyLocalState` | verified |  |
 | 3173 | `Vh` | verified |  |
-| 3188 | `ChartCardFrame` | unmatched |  |
+| 3188 | `ChartCardFrame` | verified |  |
 | 3191 | `onMeasure` | excluded |  |
 
 ## `com\wuying\phigros\ui\CoverImageLoader.java`
@@ -1957,7 +1957,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 214 | `parseIntSafe` | verified |  |
 | 224 | `parseFloatSafe` | verified |  |
 | 234 | `clamp` | fixed |  |
-| 238 | `clampInt` | unmatched |  |
+| 238 | `clampInt` | verified |  |
 | 242 | `formatFloat` | verified |  |
 | 246 | `host` | excluded |  |
 | 252 | `beforeTextChanged` | excluded |  |

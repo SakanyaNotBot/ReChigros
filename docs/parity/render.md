@@ -384,6 +384,30 @@ These are noted so a future reader does not mistake them for divergences.
    particle positions do not. Inherent to the runtime change and deliberate so the port is
    deterministic across its own runs.
 
+### Note geometry and the judge-offset computation
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `isMenuVisible` | `GameRuntime::Pause::Menu` | MATCH | Same pause-mode predicate. |
+| `setReplayRecorder` | `GameplaySession::setReplayRecording` | MATCH | Same attach point. |
+| `getPerfectCount` / `getGoodCount` / `getBadCount` / `getMissCount` | `JudgementEngine::result()` | MATCH | Same four counters. |
+| `sanitizeOfficialScreenDpi` | `Application::initialize` DPI block | MATCH | Same fallback chain. |
+| `sanitizeHitOffsetIndicatorMode` | `Settings::load` | **FIXED** | Out-of-range now falls back to disabled; the port had clamped. |
+| `resetNativeRenderBucketRuntimeState` | `Chart::resetRuntime` | MATCH | Same per-run reset. |
+| `renderGameplayFrame` / `renderSceneDirect` | `GameRenderer::render` | MATCH | Same frame composition and direct scene path. |
+| `blockCompositeHasWork` | `Chart::hasLiveBlock` | MATCH | Same live-block question. |
+| `drawAmetrineVignette` / `ametrineHudVignetteFactor` | `fx::AmetrineVignette` | MATCH | Same inline vignette and HUD factor. |
+| `getOrLoadFileTexture` | `TextureCache::load` | MATCH | Same load-once cache. |
+| `getOrCreateTextTexture` / `createHudTextTexture` (5) | `TextRenderer::glyphStrip` | **DIFFERENT BY DESIGN** | String-per-texture cache versus glyph strip per size. Same pixels, no per-value upload. |
+| `measureHudTextWidth` | `TextRenderer::measure` | MATCH | Same advance-width sum. |
+| `officialHudUnitPx` / `officialHudX` / `officialHudY` | `scene::hudUnit` / `hudX` / `hudY` | MATCH | Same centred mapping on the 1000-unit canvas. |
+| `trackActiveHold` / `useTrackedHoldOptimization` / `updateTrackedHoldNotes` | active-hold tracking in `GameplaySession` | MATCH | Same "keep only the holds that are actually down" tracking used to skip per-frame work for finished holds. |
+| `getJudgeOffset` :10556-10570 | `GameplaySession::touchPosition` (`:152-171`) | MATCH | Same pipeline: fill the line state, project the touch into line-local space with the line rotation, compute the note's local x, then divide the absolute difference by the effective judge area. Both return an unbounded value (the reference `Float.MAX_VALUE`, the port `numeric_limits::max`) when the line or state is missing. |
+| `computeNoteControlHeight` :10595-10609 | `resolveNoteGeometry` (`src/game/NoteGeometry.cpp`) | MATCH | Same base distance `(note.floorPosition - lineFp) * PGRH * (PGRBEAT / bpm) * stageH * speed`, then the same `rpeControlHeightFromBasePx` conversion with the note's y offset. The control-height table itself is in `core.md` section 5a. |
+| `toLineLocalX` / `toLineLocalY` | line-local projection in `touchPosition` | MATCH | Same rotation by the line angle into line-local coordinates (`toLineLocalX` is the along-line axis the port computes as `alongPixels`). |
+| `computeNoteLocalX` | `geometry.alongLineOffsetPx` | MATCH | Same per-note local x from the incline and x controls; a hold keeps its raw offset on both sides. |
+| `spawnHitEffect` | hit-effect spawn in the renderer | MATCH | Same spawn of the hit effect at the judged note with the same tint. |
+
 ### The gameplay update and the background blur
 
 | Reference declaration | Port implementation | Verdict | Basis |
