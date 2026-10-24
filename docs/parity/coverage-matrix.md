@@ -2,16 +2,16 @@
 
 Generated from `docs/compare/inventory.json` by `tools/parity/coverage_matrix.py`. One row per reference declaration.
 
-Reference declarations: **2261** across 75 files.
+Reference declarations: **2190** across 75 files.
 
 | Status | Count | Meaning |
 | --- | --- | --- |
-| verified | 1361 | named MATCH by a parity report |
+| verified | 1440 | named MATCH by a parity report |
 | fixed | 196 | named by a parity report with a fix |
 | differs | 0 | named with a remaining difference |
-| excluded | 383 | deliberate exclusion, reason recorded |
-| matched-by-name | 137 | a port symbol with the same name exists |
-| unmatched | 47 | no same-name port symbol; needs a manual verdict |
+| excluded | 398 | deliberate exclusion, reason recorded |
+| matched-by-name | 66 | a port symbol with the same name exists |
+| unmatched | 24 | no same-name port symbol; needs a manual verdict |
 
 This matrix is an index. The authoritative per-function verdicts and the
 evidence line for each one are in the topical reports (`chart.md`, `core.md`, `judging.md`,
@@ -35,20 +35,20 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 34 | `setMusicData` | verified |  |
 | 39 | `setSfxData` | verified |  |
 | 45 | `triggerSfx` | verified |  |
-| 51 | `setPlaybackSpeed` | matched-by-name | `src\audio\AudioEngine.cpp:701` `setPlaybackSpeed` |
+| 51 | `setPlaybackSpeed` | verified | `src\audio\AudioEngine.cpp:701` `setPlaybackSpeed` |
 | 56 | `setSfxVolume` | verified | `src\audio\AudioEngine.cpp:697` `setSfxVolume` |
-| 61 | `setLowPassEnabled` | matched-by-name | `src\audio\AudioEngine.cpp:709` `setLowPassEnabled` |
+| 61 | `setLowPassEnabled` | verified | `src\audio\AudioEngine.cpp:709` `setLowPassEnabled` |
 | 71 | `setMusicVolume` | verified | `src\audio\AudioEngine.cpp:693` `setMusicVolume` |
-| 76 | `setMusicLooping` | matched-by-name | `src\audio\AudioEngine.cpp:705` `setMusicLooping` |
+| 76 | `setMusicLooping` | verified | `src\audio\AudioEngine.cpp:705` `setMusicLooping` |
 | 81 | `prepareDefaultSfxIfMissing` | verified |  |
 | 86 | `start` | fixed |  |
 | 91 | `pause` | fixed | `src\audio\AudioEngine.cpp:643` `pause` |
 | 96 | `restart` | excluded | `src\audio\AudioEngine.cpp:673` `restart` |
-| 101 | `restartPaused` | matched-by-name | `src\audio\AudioEngine.cpp:681` `restartPaused` |
-| 106 | `seekTo` | matched-by-name | `src\audio\AudioEngine.cpp:431` `seekTo` |
+| 101 | `restartPaused` | verified | `src\audio\AudioEngine.cpp:681` `restartPaused` |
+| 106 | `seekTo` | verified | `src\audio\AudioEngine.cpp:431` `seekTo` |
 | 112 | `stop` | fixed | `src\audio\AudioEngine.cpp:648` `stop` |
-| 117 | `getPlayheadSeconds` | matched-by-name | `src\audio\AudioEngine.cpp:459` `playheadSeconds` (+1) |
-| 122 | `getMusicDurationSeconds` | matched-by-name | `src\audio\AudioEngine.cpp:728` `getMusicDurationSeconds` |
+| 117 | `getPlayheadSeconds` | verified | `src\audio\AudioEngine.cpp:459` `playheadSeconds` (+1) |
+| 122 | `getMusicDurationSeconds` | verified | `src\audio\AudioEngine.cpp:728` `getMusicDurationSeconds` |
 
 ## `com\wuying\phigros\game\BpmTimeline.java`
 
@@ -173,7 +173,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 186 | `intCircIn` | verified | `src\core\Easing.cpp:73` `intCircIn` |
 | 187 | `intBackIn` | verified | `src\core\Easing.cpp:75` `intBackIn` |
 | 188 | `intElasticIn` | verified | `src\core\Easing.cpp:90` `intElasticIn` |
-| 189 | `elasticFAntideriv` | matched-by-name | `src\core\Easing.cpp:81` `elasticFAntideriv` |
+| 189 | `elasticFAntideriv` | verified | `src\core\Easing.cpp:81` `elasticFAntideriv` |
 | 198 | `intBounceIn` | verified | `src\core\Easing.cpp:119` `intBounceIn` |
 | 200 | `bounceHAntideriv` | verified | `src\core\Easing.cpp:92` `bounceHAntideriv` |
 | 226 | `intSineOut` | verified |  |
@@ -203,9 +203,9 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 317 | `lookupBezierLut` | verified | `src\core\Easing.cpp:348` `lookupBezierLut` |
 | 330 | `bezierCacheKey` | excluded |  |
 | 339 | `cubicBezierYforX` | verified | `src\core\Easing.cpp:284` `cubicBezierYForX` |
-| 398 | `bezierSampleX` | matched-by-name | `src\core\Easing.cpp:131` `bezierSampleX` |
+| 398 | `bezierSampleX` | verified | `src\core\Easing.cpp:131` `bezierSampleX` |
 | 403 | `bezierSampleY` | verified |  |
-| 407 | `bezierSlopeX` | matched-by-name | `src\core\Easing.cpp:136` `bezierSlopeX` |
+| 407 | `bezierSlopeX` | verified | `src\core\Easing.cpp:136` `bezierSlopeX` |
 
 ## `com\wuying\phigros\game\EventCursor.java`
 
@@ -220,16 +220,16 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 9 | `EventUtils` | fixed |  |
 | 16 | `containsEventTime` | verified | `src\core\EventUtils.cpp:17` `containsEventTime` |
 | 24 | `eventStarted` | verified | `src\core\EventUtils.cpp:23` `eventStarted` |
-| 28 | `laterLineEventStarted` | matched-by-name | `src\core\EventUtils.cpp:25` `laterLineEventStarted` |
-| 37 | `laterMoveEventStarted` | matched-by-name | `src\core\EventUtils.cpp:29` `laterMoveEventStarted` |
-| 46 | `laterColorEventStarted` | matched-by-name | `src\core\EventUtils.cpp:33` `laterColorEventStarted` |
-| 55 | `laterTextEventStarted` | matched-by-name | `src\core\EventUtils.cpp:37` `laterTextEventStarted` |
-| 64 | `laterGifEventStarted` | matched-by-name | `src\core\EventUtils.cpp:41` `laterGifEventStarted` |
+| 28 | `laterLineEventStarted` | verified | `src\core\EventUtils.cpp:25` `laterLineEventStarted` |
+| 37 | `laterMoveEventStarted` | verified | `src\core\EventUtils.cpp:29` `laterMoveEventStarted` |
+| 46 | `laterColorEventStarted` | verified | `src\core\EventUtils.cpp:33` `laterColorEventStarted` |
+| 55 | `laterTextEventStarted` | verified | `src\core\EventUtils.cpp:37` `laterTextEventStarted` |
+| 64 | `laterGifEventStarted` | verified | `src\core\EventUtils.cpp:41` `laterGifEventStarted` |
 | 73 | `findEvent` | verified | `src\core\EventUtils.cpp:45` `findEvent` (+1) |
 | 88 | `lerp` | fixed | `src\core\EventUtils.cpp:235` `lerp` |
 | 92 | `getEventVal` | fixed | `src\core\EventUtils.cpp:244` `getEventVal` (+1) |
 | 135 | `getMoveEventVal1` | verified | `src\core\EventUtils.cpp:320` `getMoveEventVal1` (+1) |
-| 165 | `getMoveEventVal2` | matched-by-name | `src\core\EventUtils.cpp:391` `getMoveEventVal2` (+1) |
+| 165 | `getMoveEventVal2` | verified | `src\core\EventUtils.cpp:391` `getMoveEventVal2` (+1) |
 | 195 | `speedAt` | verified | `src\core\EventUtils.cpp:740` `speedAt` |
 | 200 | `start` | fixed |  |
 | 201 | `end` | fixed |  |
@@ -247,7 +247,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 566 | `applyRawRpeEasing` | verified |  |
 | 597 | `getEventVal` | fixed | `src\core\EventUtils.cpp:244` `getEventVal` (+1) |
 | 656 | `getMoveEventVal1` | verified | `src\core\EventUtils.cpp:320` `getMoveEventVal1` (+1) |
-| 707 | `getMoveEventVal2` | matched-by-name | `src\core\EventUtils.cpp:391` `getMoveEventVal2` (+1) |
+| 707 | `getMoveEventVal2` | verified | `src\core\EventUtils.cpp:391` `getMoveEventVal2` (+1) |
 | 758 | `getColorVal` | verified | `src\core\EventUtils.cpp:462` `getColorVal` (+1) |
 | 762 | `getColorValInto` | verified |  |
 | 833 | `getTextVal` | fixed | `src\core\EventUtils.cpp:552` `getTextVal` (+1) |
@@ -287,22 +287,22 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
 | 104 | `isMenuVisible` | verified |  |
-| 109 | `setPracticeEnabled` | matched-by-name | `include\rechigros\game\JudgementEngine.hpp:56` `setPracticeEnabled` |
-| 115 | `setPracticeSpeed` | matched-by-name | `src\app\GameScreen.cpp:872` `setPracticeSpeed` |
-| 124 | `getPracticeSpeed` | matched-by-name | `src\app\GameScreen.cpp:872` `setPracticeSpeed` |
+| 109 | `setPracticeEnabled` | verified | `include\rechigros\game\JudgementEngine.hpp:56` `setPracticeEnabled` |
+| 115 | `setPracticeSpeed` | verified | `src\app\GameScreen.cpp:872` `setPracticeSpeed` |
+| 124 | `getPracticeSpeed` | verified | `src\app\GameScreen.cpp:872` `setPracticeSpeed` |
 | 128 | `shouldResumeAudioOnActivityResume` | excluded |  |
 | 138 | `setReplayRecorder` | verified |  |
 | 143 | `setReplayPlayback` | verified | `include\rechigros\game\GameplaySession.hpp:73` `replayPlayback` (+2) |
 | 150 | `sortReplayEntriesByTime` | verified |  |
-| 159 | `isReplayPlayback` | matched-by-name | `include\rechigros\game\GameplaySession.hpp:73` `replayPlayback` (+2) |
+| 159 | `isReplayPlayback` | verified | `include\rechigros\game\GameplaySession.hpp:73` `replayPlayback` (+2) |
 | 163 | `beginIntro` | verified |  |
 | 171 | `beginIntroWithAudioResume` | verified |  |
 | 178 | `scheduleIntroAutoResume` | verified |  |
 | 184 | `cancelIntroAutoResume` | verified |  |
 | 190 | `isIntroGenerationCurrent` | verified |  |
-| 194 | `computeIntroLineScale` | matched-by-name | `src\render\scene\Transition.cpp:64` `introLineScale` |
+| 194 | `computeIntroLineScale` | verified | `src\render\scene\Transition.cpp:64` `introLineScale` |
 | 228 | `elapsedIntroSeconds` | verified |  |
-| 235 | `smoothStep01` | matched-by-name | `src\render\scene\HudPass.cpp:72` `smoothStep01` (+1) |
+| 235 | `smoothStep01` | verified | `src\render\scene\HudPass.cpp:72` `smoothStep01` (+1) |
 | 240 | `outroUiProgress` | verified |  |
 | 248 | `elapsedOutroSeconds` | verified |  |
 | 253 | `isInOutroLineCollapse` | verified |  |
@@ -310,13 +310,13 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 265 | `shouldHideStoryboardElementsForOutro` | verified |  |
 | 269 | `computeOutroLineCollapseScale` | verified | `src\render\scene\Transition.cpp:85` `outroLineCollapseScale` |
 | 276 | `computeOutroPlainLineScaleX` | verified |  |
-| 283 | `computeStageTextureAlpha` | matched-by-name | `src\render\scene\Transition.cpp:107` `stageTextureAlpha` |
-| 306 | `computeSideArtworkAlpha` | matched-by-name | `src\render\scene\Transition.cpp:120` `sideArtworkAlpha` |
+| 283 | `computeStageTextureAlpha` | verified | `src\render\scene\Transition.cpp:107` `stageTextureAlpha` |
+| 306 | `computeSideArtworkAlpha` | verified | `src\render\scene\Transition.cpp:120` `sideArtworkAlpha` |
 | 314 | `hasIntroAudioReleaseElapsed` | verified |  |
 | 320 | `introDimMix` | verified |  |
-| 335 | `outroDimMix` | matched-by-name | `src\render\scene\Transition.cpp:80` `outroDimMix` |
-| 351 | `computeBackgroundDimAlpha` | matched-by-name | `src\render\scene\Transition.cpp:127` `backgroundDimAlpha` |
-| 364 | `computeSideDimAlpha` | matched-by-name | `src\render\scene\Transition.cpp:135` `sideDimAlpha` |
+| 335 | `outroDimMix` | verified | `src\render\scene\Transition.cpp:80` `outroDimMix` |
+| 351 | `computeBackgroundDimAlpha` | verified | `src\render\scene\Transition.cpp:127` `backgroundDimAlpha` |
+| 364 | `computeSideDimAlpha` | verified | `src\render\scene\Transition.cpp:135` `sideDimAlpha` |
 | 375 | `updateOutroState` | fixed |  |
 | 405 | `getCombo` | verified | `include\rechigros\game\JudgementEngine.hpp:90` `combo` |
 | 414 | `getScore` | verified | `src\core\JudgementEngine.cpp:253` `score` |
@@ -398,17 +398,17 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 2965 | `recordHitOffsetIndicator` | verified |  |
 | 2983 | `recordJudgementDetailOffset` | verified |  |
 | 3007 | `judgementDetailRangeMs` | verified | `src\core\JudgementEngine.cpp:350` `judgementDetailRangeMs` |
-| 3013 | `judgementDetailBinWidthMs` | matched-by-name | `src\core\JudgementEngine.cpp:355` `judgementDetailBinWidthMs` |
+| 3013 | `judgementDetailBinWidthMs` | verified | `src\core\JudgementEngine.cpp:355` `judgementDetailBinWidthMs` |
 | 3017 | `buildPlayResult` | verified |  |
 | 3038 | `buildReplayPlaybackResult` | verified |  |
 | 3060 | `hasJudgementOffsetData` | verified |  |
 | 3068 | `onSurfaceCreated` | excluded |  |
 | 3341 | `onSurfaceChanged` | excluded |  |
-| 3390 | `computeStageRect` | matched-by-name | `src\render\fx\BlockCompositePass.cpp:237` `setStageRect` |
+| 3390 | `computeStageRect` | verified | `src\render\fx\BlockCompositePass.cpp:237` `setStageRect` |
 | 3507 | `chartRevealCenterX` | verified |  |
 | 3511 | `chartRevealCenterY` | verified |  |
 | 3515 | `updateFrameChartRevealState` | verified |  |
-| 3550 | `isChartRevealCameraActive` | matched-by-name | `src\app\GameScreen.cpp:80` `chartRevealCameraActive` |
+| 3550 | `isChartRevealCameraActive` | verified | `src\app\GameScreen.cpp:80` `chartRevealCameraActive` |
 | 3554 | `shouldRevealHiddenChartObjects` | verified |  |
 | 3558 | `chartRevealHiddenFloorAlpha` | verified |  |
 | 3568 | `currentChartRevealScale` | verified |  |
@@ -784,8 +784,8 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 13212 | `pause` | fixed | `src\audio\AudioEngine.cpp:643` `pause` |
 | 13225 | `markPlaybackBlocked` | excluded |  |
 | 13231 | `onPlaybackReleased` | excluded |  |
-| 13238 | `seekTo` | matched-by-name | `src\audio\AudioEngine.cpp:431` `seekTo` |
-| 13250 | `setPlaybackSpeed` | matched-by-name | `src\audio\AudioEngine.cpp:701` `setPlaybackSpeed` |
+| 13238 | `seekTo` | verified | `src\audio\AudioEngine.cpp:431` `seekTo` |
+| 13250 | `setPlaybackSpeed` | verified | `src\audio\AudioEngine.cpp:701` `setPlaybackSpeed` |
 | 13262 | `updateVideoSize` | excluded |  |
 | 13282 | `maybeSamplePlayerPosition` | excluded |  |
 | 13291 | `samplePlayerPosition` | excluded |  |
@@ -907,9 +907,9 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | --- | --- | --- | --- |
 | 99 | `resolveFather` | verified | `src\core\JudgeLine.cpp:25` `resolveFather` |
 | 107 | `sec2beat` | fixed | `src\core\JudgeLine.cpp:20` `sec2beat` |
-| 112 | `globalSec2beat` | matched-by-name | `src\core\JudgeLine.cpp:22` `globalSec2beat` |
+| 112 | `globalSec2beat` | verified | `src\core\JudgeLine.cpp:22` `globalSec2beat` |
 | 118 | `beat2sec` | fixed | `src\core\JudgeLine.cpp:23` `beat2sec` |
-| 123 | `globalBeat2sec` | matched-by-name | `src\core\JudgeLine.cpp:24` `globalBeat2sec` |
+| 123 | `globalBeat2sec` | verified | `src\core\JudgeLine.cpp:24` `globalBeat2sec` |
 | 167 | `NoteControlPoint` | verified |  |
 | 170 | `NoteControlPoint` | verified |  |
 | 174 | `NoteControlPoint` | verified |  |
@@ -953,8 +953,8 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 189 | `lifeAlpha` | verified |  |
 | 200 | `sizeAt` | verified | `src\core\MessageParticleField.cpp:131` `sizeAt` |
 | 207 | `bandAlpha` | verified | `src\core\MessageParticleField.cpp:47` `bandAlpha` |
-| 225 | `dotCount` | unmatched |  |
-| 227 | `dotAt` | unmatched |  |
+| 225 | `dotCount` | verified |  |
+| 227 | `dotAt` | verified |  |
 | 228 | `clamp01` | verified | `src\core\Easing.cpp:142` `clamp01` (+6) |
 
 ## `com\wuying\phigros\game\NativeRenderCommands.java`
@@ -965,8 +965,8 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 66 | `isAvailable` | verified | `src\platform\FileDialog.cpp:131` `available` (+3) |
 | 174 | `LineState` | excluded |  |
 | 324 | `LineTimeline` | verified |  |
-| 674 | `initNativeStore` | unmatched |  |
-| 679 | `releaseNativeStore` | unmatched |  |
+| 674 | `initNativeStore` | excluded |  |
+| 679 | `releaseNativeStore` | excluded |  |
 | 686 | `hasWhiteDefault` | verified |  |
 | 693 | `countNonNullLayers` | verified |  |
 | 702 | `countSpeedLayers` | verified |  |
@@ -986,30 +986,30 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 822 | `bezierDataCount` | excluded |  |
 | 828 | `bezierDataCount` | excluded |  |
 | 849 | `LineEventWriter` | excluded |  |
-| 863 | `addAll` | matched-by-name | `src\render\fx\BlockOverlay.cpp:137` `updateAll` |
+| 863 | `addAll` | excluded | `src\render\fx\BlockOverlay.cpp:137` `updateAll` |
 | 870 | `add` | fixed |  |
-| 882 | `writeBezier` | unmatched |  |
+| 882 | `writeBezier` | excluded |  |
 | 917 | `MoveEventWriter` | excluded |  |
-| 933 | `addAll` | matched-by-name | `src\render\fx\BlockOverlay.cpp:137` `updateAll` |
+| 933 | `addAll` | excluded | `src\render\fx\BlockOverlay.cpp:137` `updateAll` |
 | 940 | `add` | fixed |  |
-| 954 | `writeBezier` | unmatched |  |
+| 954 | `writeBezier` | excluded |  |
 | 994 | `SpeedEventWriter` | excluded |  |
-| 1015 | `addAll` | matched-by-name | `src\render\fx\BlockOverlay.cpp:137` `updateAll` |
-| 1038 | `writeBezier` | unmatched |  |
+| 1015 | `addAll` | excluded | `src\render\fx\BlockOverlay.cpp:137` `updateAll` |
+| 1038 | `writeBezier` | excluded |  |
 | 1075 | `ColorEventWriter` | excluded |  |
-| 1093 | `addAll` | matched-by-name | `src\render\fx\BlockOverlay.cpp:137` `updateAll` |
+| 1093 | `addAll` | excluded | `src\render\fx\BlockOverlay.cpp:137` `updateAll` |
 | 1138 | `GifEventWriter` | excluded |  |
-| 1148 | `addAll` | matched-by-name | `src\render\fx\BlockOverlay.cpp:137` `updateAll` |
+| 1148 | `addAll` | excluded | `src\render\fx\BlockOverlay.cpp:137` `updateAll` |
 | 1170 | `NoteControlWriter` | excluded |  |
-| 1176 | `addAll` | matched-by-name | `src\render\fx\BlockOverlay.cpp:137` `updateAll` |
-| 1228 | `NoteBucket` | verified |  |
-| 1267 | `setNote` | matched-by-name | `src\chart\PecChartParser.cpp:87` `parseNote` (+1) |
+| 1176 | `addAll` | excluded | `src\render\fx\BlockOverlay.cpp:137` `updateAll` |
+| 1228 | `NoteBucket` | excluded |  |
+| 1267 | `setNote` | excluded | `src\chart\PecChartParser.cpp:87` `parseNote` (+1) |
 | 1299 | `syncDynamicStates` | verified |  |
 | 1316 | `resetRuntimeState` | verified |  |
 | 1331 | `syncDynamicState` | verified |  |
 | 1336 | `updateLoopStarts` | verified |  |
-| 1362 | `initNativeStore` | unmatched |  |
-| 1367 | `releaseNativeStore` | unmatched |  |
+| 1362 | `initNativeStore` | excluded |  |
+| 1367 | `releaseNativeStore` | excluded |  |
 
 ## `com\wuying\phigros\game\OfficialBlock.java`
 
@@ -1042,8 +1042,8 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 46 | `parse` | fixed | `src\chart\PecChartParser.cpp:248` `parse` (+4) |
 | 62 | `parseRoot` | verified | `include\rechigros\app\Replay.hpp:97` `root` (+2) |
 | 100 | `call` | fixed |  |
-| 151 | `parseBlockAreas` | matched-by-name | `src\chart\OfficialChartParser.cpp:125` `parseBlockAreas` |
-| 245 | `parseJudgeLine` | matched-by-name | `src\chart\RpeChartParser.cpp:806` `parseJudgeLine` |
+| 151 | `parseBlockAreas` | verified | `src\chart\OfficialChartParser.cpp:125` `parseBlockAreas` |
+| 245 | `parseJudgeLine` | verified | `src\chart\RpeChartParser.cpp:806` `parseJudgeLine` |
 | 303 | `parseNotes` | verified | `src\chart\OfficialChartParser.cpp:44` `parseNotes` (+1) |
 | 344 | `parseLineEvents1D` | verified |  |
 | 372 | `parseMoveComponentEvents` | verified |  |
@@ -1051,7 +1051,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 448 | `unpackV1MoveEvents` | verified |  |
 | 479 | `ensureCoverage` | verified | `src\chart\OfficialChartParser.cpp:28` `ensureCoverage` (+1) |
 | 502 | `defaultSpeedEvents` | verified |  |
-| 546 | `parseEventTime` | matched-by-name | `src\chart\RpeChartParser.cpp:105` `eventTime` |
+| 546 | `parseEventTime` | verified | `src\chart\RpeChartParser.cpp:105` `eventTime` |
 | 556 | `getAsDouble` | fixed |  |
 | 565 | `getAsInt` | fixed |  |
 | 574 | `getAsBool` | fixed |  |
@@ -1069,7 +1069,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 84 | `evaluate` | fixed | `src\core\OfficialEase.cpp:80` `evaluate` (+2) |
 | 89 | `evaluate` | fixed | `src\core\OfficialEase.cpp:80` `evaluate` (+2) |
 | 117 | `bezier01` | verified | `src\core\OfficialEase.cpp:29` `bezier01` |
-| 142 | `sampleX` | unmatched |  |
+| 142 | `sampleX` | verified |  |
 | 146 | `sampleY` | verified |  |
 | 150 | `derivativeX` | matched-by-name | `src\core\OfficialEase.cpp:28` `derivativeX` |
 
@@ -1177,7 +1177,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 34 | `PrprVideo` | excluded |  |
 | 52 | `emptyEvents` | verified |  |
 | 57 | `alphaAt` | matched-by-name | `src\render\fx\BadEffectField.cpp:8` `alphaAt` |
-| 61 | `dimAt` | unmatched |  |
+| 61 | `dimAt` | verified |  |
 | 65 | `resetCursors` | verified | `src\core\JudgeLine.cpp:44` `resetCursors` |
 | 72 | `eval` | fixed |  |
 | 80 | `sanitizeScaleType` | matched-by-name | `include\rechigros\game\PrprEffect.hpp:48` `sanitizeScaleType` |
@@ -1206,7 +1206,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 306 | `assignSpeedBezierLuts` | verified |  |
 | 323 | `equalsAnyIgnoreCase` | verified |  |
 | 393 | `parseAttachUiElementId` | verified |  |
-| 413 | `parseJudgeLine` | matched-by-name | `src\chart\RpeChartParser.cpp:806` `parseJudgeLine` |
+| 413 | `parseJudgeLine` | verified | `src\chart\RpeChartParser.cpp:806` `parseJudgeLine` |
 | 607 | `parse` | fixed | `src\chart\PecChartParser.cpp:248` `parse` (+4) |
 | 664 | `getEventTime` | matched-by-name | `src\chart\RpeChartParser.cpp:105` `eventTime` |
 | 675 | `parseOffsetSeconds` | verified |  |
@@ -1297,7 +1297,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 30 | `sizeOf` | unmatched |  |
+| 30 | `sizeOf` | verified |  |
 | 42 | `AssetBitmaps` | verified |  |
 | 44 | `preload` | verified |  |
 | 58 | `get` | fixed | `src\render\text\TextRenderer.cpp:633` `get` |
@@ -1429,7 +1429,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 1397 | `afterTextChanged` | excluded |  |
 | 1403 | `addActionRow` | verified |  |
 | 1420 | `addDualActions` | verified |  |
-| 1435 | `addReplayRow` | matched-by-name | `src\app\SettingsScreen.cpp:558` `replayRow` |
+| 1435 | `addReplayRow` | verified | `src\app\SettingsScreen.cpp:558` `replayRow` |
 | 1459 | `rowBase` | verified |  |
 | 1466 | `smallButton` | verified |  |
 | 1483 | `applyDetailBackground` | verified |  |
@@ -1450,7 +1450,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 1816 | `showSkinSelectDialog` | verified |  |
 | 1829 | `deleteSelectedSkin` | verified |  |
 | 1844 | `selectedSkinName` | verified |  |
-| 1851 | `hitOffsetLabel` | matched-by-name | `src\app\SettingsScreen.cpp:370` `hitOffsetLabel` |
+| 1851 | `hitOffsetLabel` | verified | `src\app\SettingsScreen.cpp:370` `hitOffsetLabel` |
 | 1858 | `cycleHitOffsetMode` | verified |  |
 | 1864 | `loadOnlineIndex` | excluded |  |
 | 1899 | `confirmDownload` | excluded |  |
@@ -1464,7 +1464,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 2037 | `confirmDeleteSelected` | verified |  |
 | 2057 | `startSelectedRecord` | verified |  |
 | 2061 | `startSelectedRecord` | verified |  |
-| 2071 | `playReplay` | matched-by-name | `src\app\ResultScreen.cpp:378` `playReplay` |
+| 2071 | `playReplay` | verified | `src\app\ResultScreen.cpp:378` `playReplay` |
 | 2098 | `startPlay` | verified |  |
 | 2102 | `startPlay` | verified |  |
 | 2115 | `putPlaySettings` | verified |  |
@@ -1502,12 +1502,12 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 2423 | `setKeyScale` | verified |  |
 | 2424 | `getScrollSpeed` | verified |  |
 | 2425 | `setScrollSpeed` | verified |  |
-| 2426 | `isMirrorX` | matched-by-name | `include\rechigros\render\math\Mat4.hpp:58` `mirrorX` |
-| 2427 | `setMirrorX` | matched-by-name | `include\rechigros\render\math\Mat4.hpp:58` `mirrorX` |
-| 2428 | `isAutoplay` | matched-by-name | `include\rechigros\game\GameplaySession.hpp:47` `autoplay` (+2) |
+| 2426 | `isMirrorX` | verified | `include\rechigros\render\math\Mat4.hpp:58` `mirrorX` |
+| 2427 | `setMirrorX` | verified | `include\rechigros\render\math\Mat4.hpp:58` `mirrorX` |
+| 2428 | `isAutoplay` | verified | `include\rechigros\game\GameplaySession.hpp:47` `autoplay` (+2) |
 | 2429 | `setAutoplay` | verified | `include\rechigros\game\GameplaySession.hpp:47` `autoplay` (+2) |
-| 2438 | `isChallengeMode` | matched-by-name | `include\rechigros\game\JudgementEngine.hpp:43` `challengeMode` |
-| 2439 | `setChallengeMode` | matched-by-name | `include\rechigros\game\JudgementEngine.hpp:43` `challengeMode` |
+| 2438 | `isChallengeMode` | verified | `include\rechigros\game\JudgementEngine.hpp:43` `challengeMode` |
+| 2439 | `setChallengeMode` | verified | `include\rechigros\game\JudgementEngine.hpp:43` `challengeMode` |
 | 2440 | `getBackgroundDim` | verified |  |
 | 2441 | `setBackgroundDim` | verified |  |
 | 2442 | `setJudgeLineWidth` | verified |  |
@@ -1533,9 +1533,9 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 2470 | `setMultiPressHighlight` | verified |  |
 | 2471 | `isApfcIndicator` | verified |  |
 | 2472 | `setApfcIndicator` | verified |  |
-| 2473 | `isJudgementDetailDistribution` | matched-by-name | `include\rechigros\game\JudgementEngine.hpp:40` `setJudgementDetailDistribution` |
-| 2474 | `setJudgementDetailDistribution` | matched-by-name | `include\rechigros\game\JudgementEngine.hpp:40` `setJudgementDetailDistribution` |
-| 2475 | `isHitOffsetIndicator` | matched-by-name | `src\core\HitOffsetIndicator.cpp:9` `HitOffsetIndicator` |
+| 2473 | `isJudgementDetailDistribution` | verified | `include\rechigros\game\JudgementEngine.hpp:40` `setJudgementDetailDistribution` |
+| 2474 | `setJudgementDetailDistribution` | verified | `include\rechigros\game\JudgementEngine.hpp:40` `setJudgementDetailDistribution` |
+| 2475 | `isHitOffsetIndicator` | verified | `src\core\HitOffsetIndicator.cpp:9` `HitOffsetIndicator` |
 | 2476 | `setHitOffsetIndicator` | verified | `src\core\HitOffsetIndicator.cpp:9` `HitOffsetIndicator` |
 | 2477 | `getHitOffsetIndicatorMode` | verified |  |
 | 2478 | `setHitOffsetIndicatorMode` | verified |  |
@@ -1543,8 +1543,8 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 2485 | `setMusicVolumePct` | verified |  |
 | 2486 | `getSfxVolumePct` | verified |  |
 | 2487 | `setSfxVolumePct` | verified |  |
-| 2488 | `getMusicSpeed` | matched-by-name | `src\core\GameplaySession.cpp:66` `setMusicSpeed` |
-| 2489 | `setMusicSpeed` | matched-by-name | `src\core\GameplaySession.cpp:66` `setMusicSpeed` |
+| 2488 | `getMusicSpeed` | verified | `src\core\GameplaySession.cpp:66` `setMusicSpeed` |
+| 2489 | `setMusicSpeed` | verified | `src\core\GameplaySession.cpp:66` `setMusicSpeed` |
 | 2490 | `getAudioOffsetMs` | verified |  |
 | 2491 | `setAudioOffsetMs` | verified |  |
 | 2492 | `isReplayEnabled` | verified |  |
@@ -1554,8 +1554,8 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 2539 | `isApfcIndicatorEnabled` | verified |  |
 | 2545 | `editPrefs` | verified |  |
 | 2549 | `isReadyToStart` | verified |  |
-| 2555 | `iconButton` | matched-by-name | `src\app\UiStyle.cpp:192` `iconButton` |
-| 2565 | `glassPanel` | matched-by-name | `src\app\UiLayout.cpp:182` `glassPanel` |
+| 2555 | `iconButton` | verified | `src\app\UiStyle.cpp:192` `iconButton` |
+| 2565 | `glassPanel` | verified | `src\app\UiLayout.cpp:182` `glassPanel` |
 | 2575 | `rectPanel` | matched-by-name | `src\app\UiLayout.cpp:191` `rectPanel` |
 | 2581 | `text` | fixed |  |
 | 2585 | `text` | fixed |  |
@@ -1617,12 +1617,12 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 22 | `sizeOf` | unmatched |  |
-| 28 | `CoverImageLoader` | unmatched |  |
+| 22 | `sizeOf` | verified |  |
+| 28 | `CoverImageLoader` | verified |  |
 | 30 | `load` | fixed | `src\app\CoverCache.cpp:189` `load` (+3) |
 | 64 | `preload` | verified |  |
 | 80 | `cacheKey` | excluded |  |
-| 85 | `decodeSampled` | unmatched |  |
+| 85 | `decodeSampled` | verified |  |
 
 ## `com\wuying\phigros\ui\GameDialog.java`
 
@@ -1697,10 +1697,10 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 21 | `GameTextOverlay` | unmatched |  |
+| 21 | `GameTextOverlay` | verified |  |
 | 28 | `configure` | verified |  |
-| 37 | `setColors` | unmatched |  |
-| 42 | `captureExternalColor` | unmatched |  |
+| 37 | `setColors` | verified |  |
+| 42 | `captureExternalColor` | verified |  |
 | 45 | `draw` | fixed | `src\render\fx\BadEffectField.cpp:41` `draw` (+10) |
 | 79 | `setAlpha` | verified |  |
 | 80 | `setColorFilter` | verified |  |
@@ -1784,11 +1784,11 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 
 | Line | Reference declaration | Status | Port symbol |
 | --- | --- | --- | --- |
-| 33 | `LocalChartAdapter` | unmatched |  |
+| 33 | `LocalChartAdapter` | verified |  |
 | 37 | `setItems` | verified |  |
 | 47 | `setManageMode` | verified |  |
-| 54 | `isManageMode` | unmatched |  |
-| 58 | `selectedIds` | unmatched |  |
+| 54 | `isManageMode` | verified |  |
+| 58 | `selectedIds` | verified |  |
 | 63 | `onCreateViewHolder` | excluded |  |
 | 70 | `onBindViewHolder` | excluded |  |
 | 97 | `getItemCount` | excluded |  |
@@ -1904,14 +1904,14 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 350 | `styleChipButton` | verified |  |
 | 358 | `bindPressFeedback` | verified |  |
 | 373 | `setupModeTags` | verified |  |
-| 405 | `formatMultiplier` | matched-by-name | `src\app\ResultScreen.cpp:285` `formatMultiplier` |
+| 405 | `formatMultiplier` | verified | `src\app\ResultScreen.cpp:285` `formatMultiplier` |
 | 409 | `addModeTag` | verified |  |
 | 436 | `ModeTagFlow` | verified |  |
 | 441 | `onMeasure` | excluded |  |
 | 461 | `onLayout` | verified |  |
 | 483 | `layoutRow` | verified |  |
 | 494 | `setupResponsiveCanvas` | verified |  |
-| 551 | `saveReplay` | matched-by-name | `src\app\ResultScreen.cpp:356` `saveReplay` |
+| 551 | `saveReplay` | verified | `src\app\ResultScreen.cpp:356` `saveReplay` |
 | 588 | `applyPhigrosFont` | verified |  |
 | 593 | `setupJudgementHistogramOverlay` | verified |  |
 | 631 | `toggleJudgementHistogram` | verified |  |
@@ -1925,10 +1925,10 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 748 | `gaussianBlur` | verified |  |
 | 808 | `clamp` | fixed |  |
 | 810 | `pack` | fixed |  |
-| 811 | `allEase` | matched-by-name | `src\app\ResultScreen.cpp:63` `allEase` |
-| 820 | `delayedSquare` | matched-by-name | `src\app\ResultScreen.cpp:74` `delayedSquare` |
-| 827 | `levelSizeEase` | matched-by-name | `src\app\ResultScreen.cpp:81` `levelSizeEase` |
-| 832 | `buttonEase` | matched-by-name | `src\app\ResultScreen.cpp:86` `buttonEase` |
+| 811 | `allEase` | verified | `src\app\ResultScreen.cpp:63` `allEase` |
+| 820 | `delayedSquare` | verified | `src\app\ResultScreen.cpp:74` `delayedSquare` |
+| 827 | `levelSizeEase` | verified | `src\app\ResultScreen.cpp:81` `levelSizeEase` |
+| 832 | `buttonEase` | verified | `src\app\ResultScreen.cpp:86` `buttonEase` |
 | 845 | `AlphaTarget` | verified |  |
 | 846 | `apply` | fixed | `src\core\Easing.cpp:248` `apply` (+2) |
 | 848 | `childAlphaTargets` | verified |  |
@@ -2084,7 +2084,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 219 | `buildReplayItem` | verified |  |
 | 343 | `toggleReplaySelection` | verified |  |
 | 352 | `loadAssetBitmap` | verified |  |
-| 360 | `playReplay` | matched-by-name | `src\app\ResultScreen.cpp:378` `playReplay` |
+| 360 | `playReplay` | verified | `src\app\ResultScreen.cpp:378` `playReplay` |
 | 434 | `dp` | fixed | `include\rechigros\app\UiLayout.hpp:31` `dp` (+2) |
 | 438 | `host` | excluded |  |
 
@@ -2293,8 +2293,8 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 145 | `scanLocalCharts` | verified |  |
 | 163 | `loadRecord` | excluded | `src\app\ChartLibrary.cpp:476` `loadRecord` |
 | 350 | `deleteCharts` | verified |  |
-| 392 | `recordBestResult` | matched-by-name | `src\app\ChartLibrary.cpp:705` `recordBestResult` |
-| 413 | `recordPlayTime` | matched-by-name | `src\app\ChartLibrary.cpp:716` `recordPlayTime` |
+| 392 | `recordBestResult` | verified | `src\app\ChartLibrary.cpp:705` `recordBestResult` |
+| 413 | `recordPlayTime` | verified | `src\app\ChartLibrary.cpp:716` `recordPlayTime` |
 | 421 | `getBestScore` | verified |  |
 | 426 | `getBestAcc` | verified |  |
 | 432 | `getLastPlayedAt` | verified |  |
@@ -2315,7 +2315,7 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 594 | `chooseShortestPath` | verified | `src\app\ChartLibrary.cpp:60` `chooseShortestPath` |
 | 605 | `compareLocalCharts` | verified |  |
 | 623 | `getRecordModifiedAt` | verified | `src\app\ChartLibrary.cpp:204` `recordModifiedAt` |
-| 636 | `lastModified` | matched-by-name | `src\app\ChartLibrary.cpp:197` `lastModified` |
+| 636 | `lastModified` | verified | `src\app\ChartLibrary.cpp:197` `lastModified` |
 | 640 | `collectFiles` | verified |  |
 | 706 | `deleteRecursive` | verified |  |
 | 743 | `relativize` | verified | `src\app\ChartLibrary.cpp:29` `relativize` |
@@ -2343,10 +2343,10 @@ evidence line for each one are in the topical reports (`chart.md`, `core.md`, `j
 | 139 | `normalizeDifficultyText` | excluded |  |
 | 148 | `inferDifficultyPrefix` | fixed |  |
 | 292 | `fromKv` | verified |  |
-| 341 | `getObj` | unmatched |  |
+| 341 | `getObj` | verified |  |
 | 351 | `getStr` | verified |  |
 | 368 | `safe` | excluded |  |
-| 373 | `parseIntOrNull` | unmatched |  |
+| 373 | `parseIntOrNull` | verified |  |
 | 383 | `getInt` | verified | `src\app\Settings.cpp:31` `parseInt` |
 | 398 | `getBool` | verified | `src\app\Settings.cpp:41` `parseBool` |
 | 418 | `firstNonEmpty` | verified | `src\app\InfoFile.cpp:46` `firstNonEmpty` |

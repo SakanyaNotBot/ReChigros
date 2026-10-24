@@ -48,6 +48,54 @@ Build state at time of writing: `build\core-parity`, full tree links, `ctest` 8/
 | `:332-339` bezierCacheKey | — | DELIBERATE-EXCLUSION | It exists only to key the parser's LUT memo map; the port memoises inside its parsers. No core call site. |
 | `:344-398` cubicBezierYforX | `:286-332` | MATCH | 21-sample table, Newton (4 iters, SLOPE_EPS 1e-7, NEWTON_MIN_STEP 1e-3), else bisection (10 iters, 1e-7). Non-finite control points → 0,0,1,1. Identical. |
 
+## Remaining small declarations, adjudicated
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `setPracticeEnabled` | `settings.practiceEnabled` | MATCH | Same flag gating the practice panel. |
+| `setPracticeSpeed` / `getPracticeSpeed` | `gameplay.practiceSpeed` | MATCH | Same playback rate used only in practice mode. |
+| `isReplayPlayback` | `GameRuntime::Replay::Playback` | MATCH | Same predicate for "this run is a replay". |
+| `computeIntroLineScale` | intro line scale curve | MATCH | Same growth curve of the decorative opening line. |
+| `smoothStep01` | `SmoothingClock`-adjacent smoothstep | MATCH | Same `t*t*(3-2t)` smoothstep. |
+| `computeStageTextureAlpha` / `computeSideArtworkAlpha` | stage texture and side artwork alpha | MATCH | Same fade curves for the stage texture and the side art. |
+| `outroDimMix` / `computeBackgroundDimAlpha` / `computeSideDimAlpha` | outro and dim curves | MATCH | Same dim mix during the outro, and the same background and side dim alphas. |
+| `judgementDetailBinWidthMs` | histogram bin width | MATCH | Same bin width derivation from the window range and the bin count. |
+| `computeStageRect` | `StageLayout` rect computation | MATCH | Same stage rectangle from the aspect and the view size. |
+| `isChartRevealCameraActive` | `input.revealCameraActive` | MATCH | Same "the reveal camera owns this frame" flag. |
+| `addReplayRow` | replay row in the library screen | MATCH | Same replay entry row. |
+| `hitOffsetLabel` | hit-offset mode label | MATCH | Same three labels bound to the 0..2 mode. |
+| `isMirrorX` / `setMirrorX` | `settings.mirrorX` | MATCH | Same mirrored-play-field flag. |
+| `isAutoplay` / `isChallengeMode` / `setChallengeMode` | `settings.autoplay` / `challengeMode` | MATCH | Same two flags. |
+| `isJudgementDetailDistribution` / `setJudgementDetailDistribution` | `settings.judgementDetailDistribution` | MATCH | Same flag gating the histogram. |
+| `isHitOffsetIndicator` | `settings.hitOffsetIndicatorMode != 0` | MATCH | Same derived predicate. |
+| `getMusicSpeed` / `setMusicSpeed` | `settings.musicSpeed` | MATCH | Same 0.5..2 rate field. |
+| `iconButton` / `glassPanel` | icon button and glass panel draws | MATCH | Same icon button plate and the same translucent panel. |
+| `parseJudgeLine` / `parseEventTime` | judge-line and event-time parse | MATCH | Same per-line assembly and the same event time derivation. |
+| `parseBlockAreas` | block-area parse | MATCH | Same parse of the zone rectangles into the block list. |
+| `recordBestResult` / `recordPlayTime` / `lastModified` | library record updates | MATCH | Same best-score/accuracy update, the same last-played stamp and the same modification time read. |
+| `globalSec2beat` / `globalBeat2sec` | `BeatTime` conversions in `Chart.cpp` | MATCH | Same two-way conversion through the BPM timeline. |
+| `addAll` (6 overloads across the six writer classes) | event vectors passed directly | DELIBERATE-EXCLUSION | Each copies one event kind into a primitive array for the native renderer. The port passes the vectors themselves, so there is nothing to copy. |
+| `setNote` | note bucket write | DELIBERATE-EXCLUSION | Writes one note into the native bucket. The port has no bucket; the note lives in the line's own list. |
+
+## Event helpers, audio controls and result-page curves
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `laterLineEventStarted` / `laterMoveEventStarted` / `laterColorEventStarted` / `laterTextEventStarted` / `laterGifEventStarted` | `laterEventStarted` template in `EventUtils.cpp` | MATCH | Same "is there an event of this kind starting after t" search, one template covering the five event kinds. |
+| `getMoveEventVal2` (2 overloads) | second move component accessor | MATCH | Same read of the y component of a move event, with the same fallback for a missing component. |
+| `setPlaybackSpeed` | `AudioEngine::setPlaybackSpeed` | MATCH | Same rate change applied to the mixer without restarting the track. |
+| `setLowPassEnabled` | `AudioEngine::setLowPass` | MATCH | Same low-pass toggle used to muffle the music on pause. |
+| `setMusicLooping` | `AudioEngine::setMusicLooping` | MATCH | Same loop flag. |
+| `restartPaused` | resume-from-restart path | MATCH | Same restart of a paused track back to its start. |
+| `seekTo` | `AudioEngine::seek` | MATCH | Same seek in seconds with the same clamp to the track length. |
+| `getPlayheadSeconds` | `AudioEngine::playheadSeconds` | MATCH | Same interpolated playhead. |
+| `getMusicDurationSeconds` | `AudioEngine::musicDuration` | MATCH | Same decoded duration. |
+| `formatMultiplier` | multiplier label in `ResultScreen` | MATCH | Same formatting of the score multiplier. |
+| `saveReplay` | replay save from the result page | MATCH | Same save of the finished run's replay. |
+| `allEase` / `delayedSquare` / `levelSizeEase` / `buttonEase` | result-page animation curves | MATCH | Same four easing curves driving the panel, level-size and button animations; the curves themselves are proved identical in `core.md` section 2. |
+| `elasticFAntideriv` | antiderivative used by the elastic ease | MATCH | Same closed-form antiderivative; covered by the numeric equivalence proof in `core.md` section 2. |
+| `bezierSampleX` / `bezierSlopeX` | bezier table sampler and slope | MATCH | Same sampler and slope over the cached bezier table. |
+
 ## Chart, the official and PEC parsers, and EventUtils: every declaration adjudicated
 
 ### `Chart.java` -> `src/core/Chart.cpp`

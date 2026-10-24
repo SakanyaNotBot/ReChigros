@@ -863,6 +863,14 @@ another report say so rather than repeating it.
 
 ---
 
+### The last native-store declarations
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `initNativeStore` (2 overloads) | renderer construction | DELIBERATE-EXCLUSION | Allocates the native-side scratch store that mirrors the Java chart across JNI. The port renders in-process, so the store does not exist; the renderer's own lifetime covers the same resources. |
+| `releaseNativeStore` (2 overloads) | renderer teardown | DELIBERATE-EXCLUSION | Frees that store; same reasoning. |
+| `writeBezier` (3 overloads) | LUT ownership on each event record | DELIBERATE-EXCLUSION | Copies a bezier LUT into the flat float buffer the native side reads. The port keeps each LUT on its event, so nothing is copied. Row-level equivalence of the event records is in `core.md` section 14. |
+
 ## NativeRenderCommands: every declaration adjudicated
 
 The reference crosses a JNI boundary: `NativeRenderCommands` packs the chart into primitive

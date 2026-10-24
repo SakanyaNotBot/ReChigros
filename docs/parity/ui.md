@@ -312,6 +312,24 @@ behaviour that the interface depends on is pinned.
 | `ChartCardAdapter` (2 constructors) / `getItemId` / `findLocalPosition` / `bindHolder` / `applyLocalState` | chart card drawing in `drawLibraryScreen` | MATCH | Same card content and the same per-card state (selected, manage mode); the adapter's view recycling has no counterpart because the port draws only the visible range. |
 | `ChartCardFrame` | chart card panel draw | MATCH | Same skewed card panel behind each row. |
 
+## Small-file residuals: overlays, thumbnails and accessors
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `dimAt` | `PrprVideo::dimAt` (`src/game/PrprEffect.cpp`) | MATCH | Same clamped event evaluation of the video's dim value at a chart time. |
+| `sizeOf` | thumbnail size helper in `CoverCache` | MATCH | Same target size rule for a decoded thumbnail. |
+| `CoverImageLoader` (class) | `CoverCache` | MATCH | Same thumbnail cache keyed by chart id. |
+| `decodeSampled` | downsampled decode | MATCH | Same decode straight to the thumbnail size instead of full size then scale. |
+| `GameTextOverlay` (class) | storyboard text overlay in `GameRenderer` | MATCH | Same attach-UI text element drawn over the play field. |
+| `setColors` | overlay colour assignment | MATCH | Same per-element colour. |
+| `captureExternalColor` | external colour capture | MATCH | Same sampling of the colour the overlay inherits. |
+| `LocalChartAdapter` (class) | chart card drawing in `drawLibraryScreen` | MATCH | Same list adapter role; the port draws the visible range directly. |
+| `isManageMode` | `context.manageMode` | MATCH | Same mode flag. |
+| `selectedIds` | selection set | MATCH | Same selected-id set. |
+| `getObj` | json object accessor in the info parser | MATCH | Same object lookup with a missing-value guard. |
+| `parseIntOrNull` | nullable integer parse | MATCH | Same parse that yields nothing on a non-numeric value instead of zero. |
+| `dotCount` / `dotAt` | particle count and accessor in `MessageParticleField` | MATCH | Same live dot count and the same indexed accessor. |
+
 ## Video settings, the result page, replays and calibration: residuals
 
 ### `SelectVideoFragment.java`
