@@ -12,6 +12,7 @@
 #include <cmath>
 #include <fstream>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -45,32 +46,54 @@ const json* object(const json& source, std::initializer_list<const char*> keys) 
 
 double number(const json& source, std::initializer_list<const char*> keys, double fallback) {
   const auto* value = field(source, keys);
-  if (!value) return fallback;
+  if (!value || value->is_structured()) return fallback;
   try {
     if (value->is_number()) return value->get<double>();
     if (value->is_boolean()) return value->get<bool>() ? 1.0 : 0.0;
-    if (value->is_string()) return std::stod(value->get<std::string>());
+    if (value->is_string()) {
+      const std::string text = value->get<std::string>();
+      std::size_t consumed = 0;
+      const double parsed = std::stod(text, &consumed);
+      return consumed > 0 ? parsed : fallback;
+    }
   } catch (const std::exception&) {
   }
   return fallback;
 }
 
+// Numeric accessor semantics: a fractional value truncates toward zero, it does not round.
 int integer(const json& source, std::initializer_list<const char*> keys, int fallback) {
-  const auto result = number(source, keys, std::numeric_limits<double>::quiet_NaN());
-  return std::isfinite(result) ? static_cast<int>(std::llround(result)) : fallback;
+  const auto* value = field(source, keys);
+  if (!value || value->is_structured()) return fallback;
+  if (value->is_number()) {
+    const double result = value->get<double>();
+    if (!std::isfinite(result)) return fallback;
+    return static_cast<int>(result);
+  }
+  if (value->is_boolean()) return value->get<bool>() ? 1 : 0;
+  if (value->is_string()) {
+    try {
+      const std::string text = value->get<std::string>();
+      std::size_t consumed = 0;
+      const int parsed = std::stoi(text, &consumed);
+      return consumed > 0 ? parsed : fallback;
+    } catch (const std::exception&) {
+      return fallback;
+    }
+  }
+  return fallback;
 }
 
 bool boolean(const json& source, std::initializer_list<const char*> keys, bool fallback) {
   const auto* value = field(source, keys);
   if (!value) return fallback;
   if (value->is_boolean()) return value->get<bool>();
-  if (value->is_number()) return value->get<double>() != 0.0;
+  // A numeric flag converts through the integer view, so a fraction below one is false.
+  if (value->is_number()) return static_cast<int>(value->get<double>()) != 0;
   if (value->is_string()) {
-    auto text = value->get<std::string>();
-    std::transform(text.begin(), text.end(), text.begin(),
-        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (text == "true") return true;
-    if (text == "false") return false;
+    const auto text = value->get<std::string>();
+    if (text == "true" || text == "True" || text == "TRUE") return true;
+    if (text == "false" || text == "False" || text == "FALSE") return false;
     try { return std::stoi(text) != 0; } catch (const std::exception&) {}
   }
   return fallback;
@@ -82,26 +105,38 @@ std::string stringValue(const json& source, std::initializer_list<const char*> k
   return value && value->is_string() ? value->get<std::string>() : std::move(fallback);
 }
 
+// Reads an RPE beat value: a number, or an array whose first two entries are a whole beat
+// and a numerator over the third, then quantises it to thousandths before scaling to ticks.
 double parseBeat(const json* value) {
   if (!value || value->is_null()) return 0.0;
   double beat{};
   try {
     if (value->is_number()) beat = value->get<double>();
-    else if (value->is_string()) beat = std::stod(value->get<std::string>());
-    else if (value->is_array()) {
+    else if (value->is_string()) {
+      std::size_t consumed = 0;
+      const std::string text = value->get<std::string>();
+      beat = std::stod(text, &consumed);
+      if (consumed == 0) beat = 0.0;
+    } else if (value->is_array()) {
+      const auto component = [&value](std::size_t index) {
+        return index < value->size() && (*value)[index].is_number()
+            ? (*value)[index].get<double>() : 0.0;
+      };
       if (value->size() >= 3) {
-        const auto a = (*value)[0].get<double>();
-        const auto b = (*value)[1].get<double>();
-        const auto c = (*value)[2].get<double>();
-        beat = a + (c == 0.0 ? 0.0 : b / c);
-      } else if (value->size() == 2) beat = (*value)[0].get<double>() + (*value)[1].get<double>();
-      else if (value->size() == 1) beat = (*value)[0].get<double>();
+        const auto denominator = component(2);
+        beat = denominator == 0.0 ? component(0) : component(0) + component(1) / denominator;
+      } else if (value->size() == 2) {
+        beat = component(0) + component(1);
+      } else if (value->size() == 1) {
+        beat = component(0);
+      }
     }
   } catch (const json::exception&) {
     beat = 0.0;
   }
   if (!std::isfinite(beat)) beat = 0.0;
-  return std::round(beat * 1000.0) / 1000.0 * 32.0;
+  // Round half up rather than to nearest-even so the tie-break matches the source format.
+  return std::floor(beat * 1000.0 + 0.5) / 1000.0 * 32.0;
 }
 
 const json* eventTime(const json& event, bool start) {
@@ -251,14 +286,31 @@ std::vector<MoveEvent> parseMoveEvents(const json& source, const BpmConverter& b
     event.startTime = bpm.normBeat(parseBeat(eventTime(item, true)), lineBpm);
     event.endTime = bpm.normBeat(parseBeat(eventTime(item, false)), lineBpm);
     if (event.endTime < event.startTime) event.endTime = event.startTime;
-    const auto start = vec2(field(item, {"start", "startValue"}),
-        {number(item, {"start", "startX", "x0"}, 0.0), number(item, {"start2", "startY", "y0"}, 0.0)});
-    const auto end = vec2(field(item, {"end", "endValue"}),
-        {number(item, {"end", "endX", "x1"}, start[0]), number(item, {"end2", "endY", "y1"}, start[1])});
-    event.start = start[0] / RPE_WIDTH; event.end = end[0] / RPE_WIDTH;
-    event.start2 = start[1] / RPE_HEIGHT; event.end2 = end[1] / RPE_HEIGHT;
+    // The vector form is taken only when both ends are arrays; otherwise every component is
+    // read as a scalar, with the stage centre as the implicit start.
+    const auto* startArray = field(item, {"start", "startValue"});
+    const auto* endArray = field(item, {"end", "endValue"});
+    double startX = 0.5;
+    double startY = 0.5;
+    double endX = 0.5;
+    double endY = 0.5;
+    if (startArray != nullptr && endArray != nullptr && startArray->is_array()
+        && endArray->is_array() && startArray->size() >= 2 && endArray->size() >= 2) {
+      const auto start = vec2(startArray, {0.5, 0.5});
+      const auto end = vec2(endArray, start);
+      startX = start[0]; startY = start[1]; endX = end[0]; endY = end[1];
+    } else {
+      startX = number(item, {"start", "startX", "x0"}, 0.5);
+      endX = number(item, {"end", "endX", "x1"}, startX);
+      startY = number(item, {"start2", "startY", "y0"}, 0.5);
+      endY = number(item, {"end2", "endY", "y1"}, startY);
+    }
+    event.start = startX / RPE_WIDTH; event.end = endX / RPE_WIDTH;
+    event.start2 = startY / RPE_HEIGHT; event.end2 = endY / RPE_HEIGHT;
     parseEasing(event, item); result.push_back(std::move(event));
   }
+  std::stable_sort(result.begin(), result.end(),
+      [](const MoveEvent& a, const MoveEvent& b) { return a.startTime < b.startTime; });
   return result;
 }
 
@@ -660,9 +712,13 @@ std::vector<JudgeLine::NoteControlPoint> parseControls(const json& line,
     raw.push_back({static_cast<float>(number(item, {"x", "X"}, 0.0)),
         static_cast<float>(controlValue), std::clamp(integer(item, {"easing", "ease", "easingType"}, 1) - 1, 0, 28)});
   }
-  std::stable_sort(raw.begin(), raw.end(), [](const auto& a, const auto& b) { return a.x < b.x; });
+  // The "no controls" sentinel is a two-entry ramp from x=0 to x>=10000 holding the default
+  // throughout; it is recognised in authored order, before the list is ordered by x.
   if (raw.size() == 2 && std::abs(raw[0].x) < 1e-6F && raw[1].x >= 10000.0F
-      && std::abs(raw[0].value - fallback) < 1e-6F && std::abs(raw[1].value - fallback) < 1e-6F) return {};
+      && std::abs(raw[0].value - fallback) < 1e-6F && std::abs(raw[1].value - fallback) < 1e-6F) {
+    return {};
+  }
+  std::stable_sort(raw.begin(), raw.end(), [](const auto& a, const auto& b) { return a.x < b.x; });
   std::vector<JudgeLine::NoteControlPoint> result;
   result.reserve(raw.size());
   for (std::size_t i = 0; i < raw.size(); ++i) {
@@ -706,18 +762,18 @@ std::array<float, 3> rgb(const json* value, bool& valid) {
   return result;
 }
 
-Note parseNote(const json& source, const BpmConverter& bpm, double lineBpm) {
+// Returns an empty result for a note whose authored type is outside 1..4, which is how a
+// malformed entry is discarded rather than silently turned into a tap.
+std::optional<Note> parseNote(const json& source, const BpmConverter& bpm, double lineBpm) {
   Note note;
-  auto type = integer(source, {"type", "noteType", "note"}, 1);
-  if (type < 1 || type > 4) {
-    if (type >= 0 && type <= 3) ++type;
-  }
+  const auto type = integer(source, {"type", "noteType", "note"}, 1);
+  if (type < 1 || type > 4) return std::nullopt;
   switch (type) {
     case 1: note.type = NOTE_TAP; break;
     case 2: note.type = NOTE_HOLD; break;
     case 3: note.type = NOTE_FLICK; break;
     case 4: note.type = NOTE_DRAG; break;
-    default: note.type = NOTE_TAP; break;
+    default: return std::nullopt;
   }
   const auto globalBeat = parseBeat(field(source, {"time", "startTime", "t"}));
   note.rpeGlobalBeat = globalBeat; note.time = bpm.normBeat(globalBeat, lineBpm);
@@ -783,15 +839,23 @@ void parseNotes(const json& source, const BpmConverter& bpm, double lineBpm, Jud
   const auto* above = array(source, {"notesAbove", "NotesAbove"});
   const auto* below = array(source, {"notesBelow", "NotesBelow"});
   if (above != nullptr || below != nullptr) {
-    if (above) for (const auto& item : *above) if (item.is_object()) line.notesAbove.push_back(parseNote(item, bpm, lineBpm));
-    if (below) for (const auto& item : *below) if (item.is_object()) line.notesBelow.push_back(parseNote(item, bpm, lineBpm));
+    if (above) for (const auto& item : *above) {
+      if (!item.is_object()) continue;
+      if (auto note = parseNote(item, bpm, lineBpm)) line.notesAbove.push_back(std::move(*note));
+    }
+    if (below) for (const auto& item : *below) {
+      if (!item.is_object()) continue;
+      if (auto note = parseNote(item, bpm, lineBpm)) line.notesBelow.push_back(std::move(*note));
+    }
     return;
   }
   if (const auto* notes = array(source, {"notes", "noteList", "Notes"})) {
-    for (const auto& item : *notes) if (item.is_object()) {
+    for (const auto& item : *notes) {
+      if (!item.is_object()) continue;
       auto note = parseNote(item, bpm, lineBpm);
-      if (noteAbove(item, true)) line.notesAbove.push_back(std::move(note));
-      else line.notesBelow.push_back(std::move(note));
+      if (!note) continue;
+      if (noteAbove(item, true)) line.notesAbove.push_back(std::move(*note));
+      else line.notesBelow.push_back(std::move(*note));
     }
   }
 }

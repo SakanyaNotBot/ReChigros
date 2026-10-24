@@ -91,6 +91,35 @@ std::filesystem::path cacheRoot() {
   return root;
 }
 
+std::filesystem::path publicVideoDirectory() {
+  // Each platform keeps user-visible media in a different place, so the location is asked for
+  // rather than guessed. When the platform reports nothing usable the per-user directory is used,
+  // which always exists and is always writable.
+  std::filesystem::path directory;
+#if defined(_WIN32)
+  if (const char* known = SDL_GetUserFolder(SDL_FOLDER_VIDEOS)) {
+    directory = pathFromUtf8(known);
+  }
+#elif defined(__ANDROID__)
+  // Android has no user-facing video folder outside shared storage; the app's own external files
+  // directory is what the system exposes to a non-privileged app.
+  if (const char* external = SDL_GetAndroidExternalStoragePath()) directory = pathFromUtf8(external);
+#elif defined(__APPLE__)
+  if (const char* home = SDL_getenv("HOME")) {
+    directory = pathFromUtf8(home) / "Movies";
+  }
+#else
+  if (const char* home = SDL_getenv("HOME")) {
+    directory = pathFromUtf8(home) / "Videos";
+  }
+#endif
+  std::error_code error;
+  if (!directory.empty() && std::filesystem::is_directory(directory, error)) return directory;
+  const auto fallback = userDataRoot() / "recordings";
+  std::filesystem::create_directories(fallback, error);
+  return fallback;
+}
+
 std::filesystem::path executablePath() {
   std::error_code error;
   const auto self = std::filesystem::read_symlink("/proc/self/exe", error);

@@ -5,54 +5,18 @@
 #include "rechigros/game/GameConstants.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
+#include <limits>
 #include <random>
 #include <thread>
 #include <unordered_map>
 
 namespace rechigros::game {
 namespace {
+constexpr double PI = 3.14159265358979323846;
 template<class T> void sortEvents(std::vector<T>& events){ std::stable_sort(events.begin(),events.end(),[](const T&a,const T&b){return a.startTime<b.startTime;}); }
-double progress(double time,double begin,double end){ return end<=begin?1.0:std::clamp((time-begin)/(end-begin),0.0,1.0); }
-double eased(const EasingSpec& event,double p){
-  if(event.bezier) return event.bezierLut.empty()?Easing::cubicBezierYForX(p,event.bezierPoints[0],event.bezierPoints[1],event.bezierPoints[2],event.bezierPoints[3]):Easing::lookupBezierLut(event.bezierLut,p);
-  return Easing::clampedTween(Easing::rpeEasingToTweenId(event.type),p,event.left,event.right);
-}
-template<class T> const T* activeEvent(double time,const std::vector<T>& list,EventCursor& cursor){
-  if(list.empty()) return nullptr;
-  if(cursor.index>=list.size() || time<list[cursor.index].startTime) cursor.index=0;
-  while(cursor.index+1<list.size() && time>=list[cursor.index+1].startTime) ++cursor.index;
-  return &list[cursor.index];
-}
-double lineValue(double time,const std::vector<LineEvent>& list,EventCursor& cursor,double fallback){
-  const auto* event=activeEvent(time,list,cursor); if(!event)return fallback;
-  if(time<event->startTime)return fallback; if(time>=event->endTime)return event->end;
-  const auto p=eased(*event,progress(time,event->startTime,event->endTime)); return event->start+(event->end-event->start)*p;
-}
-double moveValue(double time,const std::vector<MoveEvent>& list,EventCursor& cursor,double fallback,bool second){
-  const auto* event=activeEvent(time,list,cursor); if(!event)return fallback;
-  if(time<event->startTime)return fallback; const auto a=second?event->start2:event->start,b=second?event->end2:event->end;
-  if(time>=event->endTime)return b; return a+(b-a)*eased(*event,progress(time,event->startTime,event->endTime));
-}
-const ColorEvent* colorValue(double time,const std::vector<ColorEvent>& list,EventCursor& cursor,std::array<float,3>& value){
-  const auto* event=activeEvent(time,list,cursor);if(!event||time<event->startTime)return nullptr;
-  const auto p=time>=event->endTime?1.0:eased(*event,progress(time,event->startTime,event->endTime));
-  const float startChannel[3]={event->startR,event->startG,event->startB};
-  const float endChannel[3]={event->endR,event->endG,event->endB};
-  for(std::size_t i=0;i<value.size();++i)value[i]=startChannel[i]+(endChannel[i]-startChannel[i])*static_cast<float>(p);
-  return event;
-}
-std::string textValue(double time,const std::vector<TextEvent>& list,EventCursor& cursor,const std::string& fallback){
-  const auto* event=activeEvent(time,list,cursor);if(!event||time<event->startTime)return fallback;
-  if(time>=event->endTime&&!event->endText.empty())return event->endText;
-  return event->text;
-}
-float gifValue(double time,const std::vector<GifEvent>& list,EventCursor& cursor){
-  const auto* event=activeEvent(time,list,cursor);if(!event||time<event->startTime)return std::numeric_limits<float>::quiet_NaN();
-  if(time>=event->endTime)return static_cast<float>(event->end);
-  const auto p=eased(*event,progress(time,event->startTime,event->endTime));return static_cast<float>(event->start+(event->end-event->start)*p);
-}
 }
 
 double JudgeLine::sec2beat(double second)const noexcept{return second/(PGR_BEAT/std::max(1e-9,bpm));}
@@ -83,35 +47,138 @@ void JudgeLine::resetCursors()noexcept{
   for(auto& l:eventLayers){l.curRotate.reset();l.curMoveX.reset();l.curMoveY.reset();l.curMove1.reset();l.curMove2.reset();l.curDisappear.reset();} lastStateTimeSec_=std::numeric_limits<double>::quiet_NaN();
 }
 JudgeLine::State JudgeLine::fillState(double second,float aspect){
-  if(second==lastStateTimeSec_)return lastState_; const auto beat=sec2beat(second); State state; double cx=0,cy=0;
+  if(second==lastStateTimeSec_)return lastState_;
+  const auto beat=sec2beat(second);
+  State state;
+  state.floorPosition=EventUtils::getFloorPosition(beat,speedEvents,speedEventLayers);
+
+  float rotate=0.0F;
+  float alpha=0.0F;
+  // cx/cy are the judge-line centre in a stage-local, y-up space: 0 is the centre of the
+  // play field, +1 the top edge. Every branch below produces that space.
+  double cx=0.0,cy=0.0;
+
   if(!eventLayers.empty()){
+    float rotateSum=0.0F;
+    float alphaSum=0.0F;
     for(auto& layer:eventLayers){
-      state.rotateDeg+=static_cast<float>(lineValue(beat,layer.judgeLineRotateEvents,layer.curRotate,0));
-      // A layer that carries either axis of the split move tracks resolves both axes from
-      // those tracks; the packed move events are only the fallback for layers without them.
+      rotateSum+=static_cast<float>(EventUtils::getEventVal(beat,layer.judgeLineRotateEvents,layer.curRotate));
+      // Layers carry move on either a split X/Y pair of 1D tracks or a packed 2D track. Both
+      // report a centre offset directly here, so neither is shifted; a layer with any split
+      // data resolves both axes from it, and an axis with no events contributes zero.
       const bool splitMove=!layer.judgeLineMoveXEvents.empty()||!layer.judgeLineMoveYEvents.empty();
-      const double lx=splitMove?lineValue(beat,layer.judgeLineMoveXEvents,layer.curMoveX,0.0)
-          :moveValue(beat,layer.judgeLineMoveEvents,layer.curMove1,0,false);
-      const double ly=splitMove?lineValue(beat,layer.judgeLineMoveYEvents,layer.curMoveY,0.0)
-          :moveValue(beat,layer.judgeLineMoveEvents,layer.curMove2,0,true);
-      if(std::isfinite(lx))cx+=lx;
-      if(std::isfinite(ly))cy+=ly;
-      state.alpha+=static_cast<float>(lineValue(beat,layer.judgeLineDisappearEvents,layer.curDisappear,0));
+      float lx=0.0F;
+      float ly=0.0F;
+      if(splitMove){
+        lx=static_cast<float>(EventUtils::getEventVal(beat,layer.judgeLineMoveXEvents,layer.curMoveX));
+        ly=static_cast<float>(EventUtils::getEventVal(beat,layer.judgeLineMoveYEvents,layer.curMoveY));
+      }else if(!layer.judgeLineMoveEvents.empty()){
+        lx=static_cast<float>(EventUtils::getMoveEventVal1(beat,layer.judgeLineMoveEvents,layer.curMove1));
+        ly=static_cast<float>(EventUtils::getMoveEventVal2(beat,layer.judgeLineMoveEvents,layer.curMove2));
+      }
+      if(!std::isfinite(lx))lx=0.0F;
+      if(!std::isfinite(ly))ly=0.0F;
+      cx+=lx;
+      cy+=ly;
+      const float layerAlpha=static_cast<float>(EventUtils::getEventVal(beat,layer.judgeLineDisappearEvents,layer.curDisappear));
+      alphaSum+=std::isfinite(layerAlpha)?layerAlpha:0.0F;
     }
-    state.yNorm=static_cast<float>(0.5-cy);state.xNorm=static_cast<float>(0.5+cx);
+    rotate=invertRotation?-rotateSum:rotateSum;
+    alpha=alphaSum;
   }else{
-    state.rotateDeg=static_cast<float>(lineValue(beat,judgeLineRotateEvents,curRotate_,0));state.xNorm=static_cast<float>(moveValue(beat,judgeLineMoveEvents,curMove1_,0.5,false));state.yNorm=static_cast<float>(moveValue(beat,judgeLineMoveEvents,curMove2_,0.5,true));state.alpha=static_cast<float>(lineValue(beat,judgeLineDisappearEvents,curDisappear_,0));cx=state.xNorm-0.5;cy=0.5-state.yNorm;
+    rotate=static_cast<float>(EventUtils::getEventVal(beat,judgeLineRotateEvents,curRotate_));
+    if(invertRotation)rotate=-rotate;
+    // The packed move stream carries normalised 0..1 positions; the centre offset is what
+    // the parent transform below consumes.
+    float x=static_cast<float>(EventUtils::getMoveEventVal1(beat,judgeLineMoveEvents,curMove1_));
+    float y=static_cast<float>(EventUtils::getMoveEventVal2(beat,judgeLineMoveEvents,curMove2_));
+    alpha=static_cast<float>(EventUtils::getEventVal(beat,judgeLineDisappearEvents,curDisappear_));
+    if(!std::isfinite(x))x=0.5F;
+    if(!std::isfinite(y))y=0.5F;
+    cx=x-0.5;
+    cy=y-0.5;
   }
-  if(invertRotation)state.rotateDeg=-state.rotateDeg;
-  state.scaleX=static_cast<float>(lineValue(beat,judgeLineScaleXEvents,curScaleX_,moveValue(beat,judgeLineScaleEvents,curScale1_,1,false)));
-  state.scaleY=static_cast<float>(lineValue(beat,judgeLineScaleYEvents,curScaleY_,moveValue(beat,judgeLineScaleEvents,curScale2_,1,true)));
-  if(!judgeLineInclineEvents.empty())state.inclineSinr=static_cast<float>(std::sin(lineValue(beat,judgeLineInclineEvents,curIncline_,0)));
-  state.colorR=PERFECT_COLOR[0];state.colorG=PERFECT_COLOR[1];state.colorB=PERFECT_COLOR[2];state.anchorX=anchorX;state.anchorY=anchorY;state.text=text;state.floorPosition=EventUtils::getFloorPosition(beat,speedEvents,speedEventLayers);
-  if(!texture.empty()||!text.empty()||!judgeLineTextEvents.empty()||attachUiElementId!=0)state.colorR=state.colorG=state.colorB=1;
-  std::array<float,3> eventColor{};if(colorValue(beat,judgeLineColorEvents,curColor_,eventColor)){state.colorR=eventColor[0];state.colorG=eventColor[1];state.colorB=eventColor[2];state.hasColorEvent=true;}
-  state.text=textValue(beat,judgeLineTextEvents,curText_,state.text);state.gifPosition=gifValue(beat,gifEvents,curGif_);
-  if(fatherLine){const auto parent=fatherLine->fillState(second,aspect);const auto radians=parent.rotateDeg*3.14159265358979323846/180.0;const auto safeAspect=aspect>1e-6F?aspect:16.0F/9.0F;const auto nx=cx*std::cos(radians)+(cy*std::sin(radians))/safeAspect+(parent.xNorm-0.5);const auto ny=cy*std::cos(radians)-(cx*std::sin(radians))*safeAspect+(0.5-parent.yNorm);state.xNorm=static_cast<float>(nx+0.5);state.yNorm=static_cast<float>(0.5-ny);if(rotateWithFather)state.rotateDeg+=parent.rotateDeg;}
-  if(state.alpha<0 && static_cast<int>(std::floor(-state.alpha))==1)state.hideLine=state.hideNotes=true;
+
+  if(!std::isfinite(rotate))rotate=0.0F;
+  if(!std::isfinite(alpha))alpha=0.0F;
+
+  float sx=1.0F;
+  float sy=1.0F;
+  if(!judgeLineScaleXEvents.empty()||!judgeLineScaleYEvents.empty()){
+    // A list that is present but empty resolves to 0, which is what the reference's own
+    // evaluator returns for an absent stream; it is not a fallback to 1.
+    sx=static_cast<float>(EventUtils::getEventVal(beat,judgeLineScaleXEvents,curScaleX_));
+    sy=static_cast<float>(EventUtils::getEventVal(beat,judgeLineScaleYEvents,curScaleY_));
+  }else if(!judgeLineScaleEvents.empty()){
+    sx=static_cast<float>(EventUtils::getMoveEventVal1(beat,judgeLineScaleEvents,curScale1_));
+    sy=static_cast<float>(EventUtils::getMoveEventVal2(beat,judgeLineScaleEvents,curScale2_));
+  }
+  if(!std::isfinite(sx))sx=1.0F;
+  if(!std::isfinite(sy))sy=1.0F;
+
+  float inclineSinr=std::numeric_limits<float>::quiet_NaN();
+  if(!judgeLineInclineEvents.empty()){
+    const double angle=EventUtils::getEventVal(beat,judgeLineInclineEvents,curIncline_);
+    if(std::isfinite(angle))inclineSinr=static_cast<float>(std::sin(angle));
+  }
+
+  float r=PERFECT_COLOR[0];
+  float g=PERFECT_COLOR[1];
+  float b=PERFECT_COLOR[2];
+  bool hasColorEvent=false;
+  // A line that draws artwork, storyboard text or an attached UI element is tinted white so
+  // the asset keeps its own colours.
+  if(!texture.empty()||!text.empty()||!judgeLineTextEvents.empty()||attachUiElementId!=0)r=g=b=1.0F;
+  if(!judgeLineColorEvents.empty()){
+    std::array<float,3> eventColor{};
+    if(EventUtils::getColorVal(beat,judgeLineColorEvents,curColor_,eventColor)){
+      r=eventColor[0];g=eventColor[1];b=eventColor[2];hasColorEvent=true;
+    }
+  }
+
+  std::string resolvedText=text;
+  if(!judgeLineTextEvents.empty()&&!EventUtils::getTextVal(beat,judgeLineTextEvents,curText_,resolvedText)){
+    resolvedText.clear();
+  }
+  float resolvedGifPosition=std::numeric_limits<float>::quiet_NaN();
+  if(!gifEvents.empty())resolvedGifPosition=EventUtils::getGifVal(beat,gifEvents,curGif_);
+
+  if(fatherLine!=nullptr){
+    const auto parent=fatherLine->fillState(second,aspect);
+    const double fx=static_cast<double>(parent.xNorm)-0.5;
+    const double fy=0.5-static_cast<double>(parent.yNorm);
+    const double radians=static_cast<double>(parent.rotateDeg)*PI/180.0;
+    const double cosine=std::cos(radians);
+    const double sine=std::sin(radians);
+    double safeAspect=static_cast<double>(aspect);
+    if(!std::isfinite(safeAspect)||safeAspect<=1e-6)safeAspect=16.0/9.0;
+    // The child offset is expressed in stage units, so it is de-normalised by the stage
+    // aspect before it is rotated in the parent's frame and re-normalised afterwards.
+    const double nx=cx*cosine+(cy*sine)/safeAspect+fx;
+    const double ny=cy*cosine-(cx*sine)*safeAspect+fy;
+    cx=nx;
+    cy=ny;
+    if(rotateWithFather)rotate+=parent.rotateDeg;
+  }
+
+  state.rotateDeg=rotate;
+  state.xNorm=static_cast<float>(cx+0.5);
+  state.yNorm=static_cast<float>(0.5-cy);
+  state.alpha=alpha;
+  state.scaleX=sx;
+  state.scaleY=sy;
+  state.inclineSinr=inclineSinr;
+  state.colorR=r;
+  state.colorG=g;
+  state.colorB=b;
+  state.anchorX=anchorX;
+  state.anchorY=anchorY;
+  state.text=std::move(resolvedText);
+  state.hasColorEvent=hasColorEvent;
+  state.gifPosition=resolvedGifPosition;
+  // A negative alpha in [-1,-2) is the authored "hide" encoding; other negatives only carry
+  // their integer part as metadata for chart extensions.
+  if(state.alpha<0.0F&&static_cast<int>(std::floor(-state.alpha))==1)state.hideLine=state.hideNotes=true;
   lastState_=state;lastStateTimeSec_=second;return state;
 }
 float JudgeLine::calcNoteControl(float height,int type,float fallback)const noexcept{

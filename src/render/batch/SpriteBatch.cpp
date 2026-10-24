@@ -256,6 +256,15 @@ void SpriteBatch::setClip(bool enabled, const math::Rect& rect) noexcept {
   clipBottom_ = rect.bottom();
 }
 
+void SpriteBatch::setScissor(bool enabled, float left, float top, float right,
+    float bottom) noexcept {
+  scissorEnabled_ = enabled;
+  scissorLeft_ = left;
+  scissorTop_ = top;
+  scissorRight_ = right;
+  scissorBottom_ = bottom;
+}
+
 void SpriteBatch::discard() noexcept { count_ = 0; }
 
 void SpriteBatch::flush(const math::Mat4& projection, const gl::Texture& texture,
@@ -285,7 +294,25 @@ void SpriteBatch::flush(const math::Mat4& projection, const gl::Texture& texture
   glActiveTexture(GL_TEXTURE0);
 
   glBindVertexArray(vao_);
+  // A scissor confines the submission to the play field, which is what stops judge lines and
+  // notes from drawing outside the stage. The rectangle arrives in the top-left origin space
+  // the geometry uses and is converted here to GL's bottom-left origin against the current
+  // viewport height.
+  GLint viewport[4] = {0, 0, 0, 0};
+  glGetIntegerv(GL_VIEWPORT, viewport);
+  if (scissorEnabled_) {
+    const int targetHeight = viewport[3];
+    const int left = static_cast<int>(std::floor(scissorLeft_));
+    const int right = static_cast<int>(std::ceil(scissorRight_));
+    const int top = static_cast<int>(std::floor(scissorTop_));
+    const int bottom = static_cast<int>(std::ceil(scissorBottom_));
+    const int width = std::max(0, right - left);
+    const int height = std::max(0, bottom - top);
+    glEnable(GL_SCISSOR_TEST);
+    glScissor(left, targetHeight - bottom, width, height);
+  }
   glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, count_);
+  if (scissorEnabled_) glDisable(GL_SCISSOR_TEST);
   glBindVertexArray(0);
   count_ = 0;
 }

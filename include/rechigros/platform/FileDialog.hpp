@@ -29,6 +29,10 @@ public:
   // Shows a picker for a skin / resource package archive.
   [[nodiscard]] static std::filesystem::path openSkinPackage();
 
+  // Shows a picker for an output directory and returns the chosen folder. Empty when the
+  // picker is dismissed or the platform offers no directory picker.
+  [[nodiscard]] static std::filesystem::path pickDirectory();
+
   // Shows a multi-selection picker over the loose files a chart is built from (chart
   // document, audio track, illustration). Returns the chosen files; empty means the
   // dialog was cancelled or the platform has no multi-selection picker.

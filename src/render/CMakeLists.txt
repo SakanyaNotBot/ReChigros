@@ -10,11 +10,14 @@ add_library(rechigros_render STATIC
   skin/SkinConfig.cpp
   batch/SpriteBatch.cpp
   text/TextRenderer.cpp
+  fx/AmetrineVignette.cpp
   fx/BloomPass.cpp
   fx/FullscreenPass.cpp  fx/FxaaPass.cpp
   fx/BadEffectField.cpp
   fx/BlockCompositePass.cpp
   fx/BlockOverlay.cpp
+  fx/BlockedComboField.cpp
+  fx/ClickEffectField.cpp
   fx/DsGridPass.cpp
   fx/HitEffect.cpp
   fx/KaleidoBackdropPass.cpp
@@ -25,6 +28,7 @@ add_library(rechigros_render STATIC
   scene/StageLayout.cpp
   scene/LinePass.cpp
   scene/NoteBatch.cpp
+  scene/ChartDebugOverlay.cpp
   scene/HudPass.cpp
   scene/Transition.cpp
   scene/PauseBackdrop.cpp)

@@ -5,6 +5,7 @@
 #include "rechigros/render/fx/DsGridPass.hpp"
 #include "rechigros/render/scene/NoteBatch.hpp"
 #include "rechigros/render/fx/PrprChain.hpp"
+#include "rechigros/render/scene/HudPass.hpp"
 #include "rechigros/render/scene/PauseBackdrop.hpp"
 #include "rechigros/render/scene/Transition.hpp"
 
@@ -468,6 +469,48 @@ int main() {
       if (!matched) break;
     }
     require(matched, "windowed block advancing matches the whole-list pass");
+  }
+
+  // --- HUD numeric readouts -------------------------------------------------
+  {
+    // The score is always seven digits, padded and clamped.
+    require(formatScore(0) == "0000000", "score 0 is seven digits");
+    require(formatScore(1234) == "0001234", "score is left padded");
+    require(formatScore(1000000) == "1000000", "a perfect score is seven digits");
+    require(formatScore(-5) == "0000000", "a negative score clamps to zero");
+    require(formatScore(2000000) == "1000000", "an oversized score clamps to a million");
+
+    // The accuracy is a percentage in hundredths with a two digit fraction.
+    require(formatAccuracyHundredths(0) == "0.00%", "accuracy 0");
+    require(formatAccuracyHundredths(10000) == "100.00%", "accuracy 100");
+    require(formatAccuracyHundredths(6534) == "65.34%", "accuracy keeps its hundredths");
+    require(formatAccuracyHundredths(5) == "0.05%", "a small fraction keeps its zero");
+    require(formatAccuracyHundredths(-1) == "0.00%", "a negative accuracy clamps");
+    require(formatAccuracyHundredths(99999) == "100.00%", "an oversized accuracy clamps");
+  }
+
+  {
+    // The displayed score catches up over a 50 ms window: a frame of a quarter window moves
+    // the display a quarter of the way, and a frame at or beyond the window snaps to target.
+    using rechigros::render::scene::approachDisplayValue;
+    require(close(approachDisplayValue(0.0, 100.0, 0.0), 0.0, 1e-12),
+        "a zero length frame does not move the display");
+    require(close(approachDisplayValue(0.0, 100.0, 25.0), 50.0, 1e-9),
+        "a quarter window moves a quarter of the way");
+    require(close(approachDisplayValue(0.0, 100.0, 50.0), 100.0, 1e-9),
+        "a full window reaches the target");
+    require(close(approachDisplayValue(0.0, 100.0, 500.0), 100.0, 1e-9),
+        "a long frame saturates instead of overshooting");
+    require(close(approachDisplayValue(0.0, 100.0, -10.0), 0.0, 1e-12),
+        "a negative frame does not move the display");
+    // A not-a-number target clears the readout; a not-a-number current adopts the target.
+    const double cleared = approachDisplayValue(0.0, std::nan(""), 16.0);
+    require(std::isnan(cleared), "a non-finite target clears the display");
+    require(close(approachDisplayValue(std::nan(""), 100.0, 16.0), 100.0, 1e-9),
+        "a non-finite display adopts the target");
+    // Within a ten-thousandth of the target the display snaps, so it cannot creep forever.
+    require(close(approachDisplayValue(99.99999, 100.0, 16.0), 100.0, 1e-12),
+        "a near target snaps exactly");
   }
 
   if (g_failures != 0) {

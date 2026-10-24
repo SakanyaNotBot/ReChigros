@@ -16,8 +16,12 @@ namespace {
 // The atlas holds every glyph the interface shows at a given window size. Interface text
 // is a few hundred distinct codepoints per screen at a handful of sizes, so this stays
 // mostly empty unless a very large library list is scrolled quickly.
-constexpr int kAtlasWidth = 2048;
-constexpr int kAtlasHeight = 1024;
+constexpr int kAtlasInitialWidth = 2048;
+constexpr int kAtlasInitialHeight = 1024;
+// Upper bound on growth. A larger atlas than this is not a plausible amount of distinct text
+// for this interface, so growth stops and the atlas falls back to clearing.
+constexpr int kAtlasMaxWidth = 8192;
+constexpr int kAtlasMaxHeight = 8192;
 constexpr int kGlyphPadding = 1;
 
 std::uint32_t quantiseSize(float pixelSize) {
@@ -66,6 +70,11 @@ struct UiFontCache::Impl {
   int shelfX{};
   int shelfY{};
   int rowHeight{};
+  // Current atlas dimensions. They start at the initial size and grow when the packed text
+  // outgrows them; every cached glyph records UVs against these, so a growth that moved
+  // glyphs would invalidate them, and growth therefore only extends the shelf space.
+  int atlasWidth{kAtlasInitialWidth};
+  int atlasHeight{kAtlasInitialHeight};
   std::vector<std::uint8_t> scratch;
   std::unordered_map<Key, Glyph, KeyHash> glyphs;
 
@@ -74,18 +83,53 @@ struct UiFontCache::Impl {
   }
 
   const Glyph* rasterise(const Key& key, float pixelSize);
-  void clearAtlas() {
-    if (texture == 0 || !render::gl::contextAvailable()) return;
+
+  // Allocates a new, larger atlas texture and clears it. Growth doubles the smaller of the
+  // two dimensions so the shelf area keeps up with the glyph count; it stops at the maximum.
+  bool reallocateAtlas(int width, int height) {
+    if (texture == 0 || !render::gl::contextAvailable()) return false;
+    if (width <= 0 || height <= 0) return false;
     std::vector<std::uint8_t> empty(
-        static_cast<std::size_t>(kAtlasWidth) * kAtlasHeight * 4, 0);
+        static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4U, 0);
     glBindTexture(GL_TEXTURE_2D, texture);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kAtlasWidth, kAtlasHeight, GL_RGBA,
-        GL_UNSIGNED_BYTE, empty.data());
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+        empty.data());
     glBindTexture(GL_TEXTURE_2D, 0);
-    glyphs.clear();
+    atlasWidth = width;
+    atlasHeight = height;
     shelfX = 0;
     shelfY = 0;
     rowHeight = 0;
+    // Every glyph's recorded UVs are relative to the previous size, so they all have to be
+    // re-rasterised into the new one. The entries keep their identity, so pointers handed out
+    // earlier stay valid and simply receive their new coordinates.
+    const auto cached = std::move(glyphs);
+    glyphs.clear();
+    for (const auto& [key, glyph] : cached) {
+      (void)glyph;
+      rasterise(key, static_cast<float>(key.sizeKey) / 8.0F);
+    }
+    return true;
+  }
+
+  // Grows the atlas by one doubling step. Returns false when it is already at the maximum and
+  // the caller has to fall back to discarding the contents.
+  bool growAtlas() {
+    if (atlasWidth >= kAtlasMaxWidth && atlasHeight >= kAtlasMaxHeight) return false;
+    int width = atlasWidth;
+    int height = atlasHeight;
+    if (width <= height && width < kAtlasMaxWidth) {
+      width *= 2;
+    } else if (height < kAtlasMaxHeight) {
+      height *= 2;
+    } else {
+      return false;
+    }
+    return reallocateAtlas(std::min(width, kAtlasMaxWidth), std::min(height, kAtlasMaxHeight));
+  }
+
+  void clearAtlas() {
+    if (!reallocateAtlas(atlasWidth, atlasHeight)) return;
   }
 };
 
@@ -114,7 +158,7 @@ bool UiFontCache::initialize(const std::filesystem::path& assetRoot) {
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, kAtlasWidth, kAtlasHeight, 0, GL_RGBA,
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, impl_->atlasWidth, impl_->atlasHeight, 0, GL_RGBA,
       GL_UNSIGNED_BYTE, nullptr);
   glBindTexture(GL_TEXTURE_2D, 0);
   impl_->ready = true;
@@ -258,37 +302,51 @@ const UiFontCache::Glyph* UiFontCache::Impl::rasterise(const Key& key, float pix
   stbtt_MakeCodepointBitmap(&info, bitmap.data(), glyphWidth, glyphHeight, glyphWidth, scale,
       scale, codepoint);
 
-  // Synthesised bold: dilate the coverage by a size-proportional radius, which is how a
-  // stroked pass thickens a glyph without a second face in the font file.
+  // Synthesised bold: thicken the glyph by stamping it at a small set of offsets around the
+  // centre and keeping the largest coverage. Taking the maximum leaves the antialiased edge
+  // where it is, so the stroke grows outward rather than gaining a translucent halo, which
+  // is what made the bold weight read as blurry.
   int radius = 0;
   if (key.bold != 0) radius = boldRadius(pixelSize);
   const int width = glyphWidth + radius * 2;
   const int height = glyphHeight + radius * 2;
   std::vector<std::uint8_t> expanded(static_cast<std::size_t>(width) * height, 0);
+  // The centre plus eight compass offsets: each edge direction gains the same thickness, so
+  // a horizontal, vertical and diagonal stroke all widen alike.
+  static constexpr int kDirections[9][2] = {
+      {0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1},
+      {1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
   for (int row = 0; row < glyphHeight; ++row) {
     for (int column = 0; column < glyphWidth; ++column) {
-      const int value = bitmap[static_cast<std::size_t>(row) * glyphWidth + column];
+      const auto value = bitmap[static_cast<std::size_t>(row) * glyphWidth + column];
       if (value == 0) continue;
-      for (int offsetY = -radius; offsetY <= radius; ++offsetY) {
-        for (int offsetX = -radius; offsetX <= radius; ++offsetX) {
-          if (offsetX * offsetX + offsetY * offsetY > radius * radius) continue;
-          const int targetX = column + offsetX + radius;
-          const int targetY = row + offsetY + radius;
-          auto& target = expanded[static_cast<std::size_t>(targetY) * width + targetX];
-          if (value > target) target = static_cast<std::uint8_t>(value);
-        }
+      for (const auto& direction : kDirections) {
+        const int targetX = column + direction[0] * radius + radius;
+        const int targetY = row + direction[1] * radius + radius;
+        auto& target = expanded[static_cast<std::size_t>(targetY) * width + targetX];
+        if (value > target) target = static_cast<std::uint8_t>(value);
       }
     }
   }
 
-  // Shelf packing. The atlas is cleared when it runs out of room, which only happens when
-  // a very large amount of distinct text is drawn at once.
-  if (shelfX + width + kGlyphPadding > kAtlasWidth) {
+  // Shelf packing. When a row does not fit, continue on the next shelf; when the atlas runs
+  // out of shelves it is grown rather than cleared. Clearing would drop every cached glyph
+  // and force the next frames to re-rasterise the whole interface, which showed up as a
+  // multi-second stall the first time a screen introduced new text sizes.
+  if (shelfX + width + kGlyphPadding > atlasWidth) {
     shelfX = 0;
     shelfY += rowHeight + kGlyphPadding;
     rowHeight = 0;
   }
-  if (shelfY + height + kGlyphPadding > kAtlasHeight) clearAtlas();
+  if (shelfY + height + kGlyphPadding > atlasHeight) {
+    if (!growAtlas()) {
+      clearAtlas();
+    } else if (shelfX + width + kGlyphPadding > atlasWidth) {
+      shelfX = 0;
+      shelfY += rowHeight + kGlyphPadding;
+      rowHeight = 0;
+    }
+  }
 
   const int targetX = shelfX;
   const int targetY = shelfY;
@@ -310,10 +368,10 @@ const UiFontCache::Glyph* UiFontCache::Impl::rasterise(const Key& key, float pix
   result.height = static_cast<float>(height);
   result.offsetX = static_cast<float>(x0 - radius);
   result.offsetY = static_cast<float>(y0 - radius);
-  result.u0 = static_cast<float>(targetX) / static_cast<float>(kAtlasWidth);
-  result.v0 = static_cast<float>(targetY) / static_cast<float>(kAtlasHeight);
-  result.u1 = static_cast<float>(targetX + width) / static_cast<float>(kAtlasWidth);
-  result.v1 = static_cast<float>(targetY + height) / static_cast<float>(kAtlasHeight);
+  result.u0 = static_cast<float>(targetX) / static_cast<float>(atlasWidth);
+  result.v0 = static_cast<float>(targetY) / static_cast<float>(atlasHeight);
+  result.u1 = static_cast<float>(targetX + width) / static_cast<float>(atlasWidth);
+  result.v1 = static_cast<float>(targetY + height) / static_cast<float>(atlasHeight);
 
   shelfX += width + kGlyphPadding;
   rowHeight = std::max(rowHeight, height);

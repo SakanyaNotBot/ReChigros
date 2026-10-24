@@ -119,6 +119,10 @@ if (Test-Path -LiteralPath $plistPath) {
         $landscape = ($plistText -match 'UIInterfaceOrientationLandscapeLeft') -and
                      ($plistText -match 'UIInterfaceOrientationLandscapeRight')
         Write-Check 'Info.plist supports landscape' $landscape
+        # The interface is laid out on a wide canvas, so portrait must not be offered at all;
+        # otherwise the window can come up in an orientation the layout was never drawn for.
+        $portrait = ($plistText -match 'UIInterfaceOrientationPortrait')
+        Write-Check 'Info.plist does not offer portrait' (-not $portrait)
     }
 }
 

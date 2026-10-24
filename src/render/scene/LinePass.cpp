@@ -19,14 +19,6 @@ float clamp01(float value) {
   if (value > 1.0F) return 1.0F;
   return value;
 }
-
-float normalizeAlpha(float alpha) {
-  if (!std::isfinite(alpha)) return 1.0F;
-  if (alpha <= 0.0F) return 0.0F;
-  // Some editors store alpha in 0..255.
-  if (alpha > 1.5F) return clamp01(alpha / 255.0F);
-  return clamp01(alpha);
-}
 } // namespace
 
 void evaluateLines(const game::Chart& chart, const StageLayout& layout, double chartTimeSec,

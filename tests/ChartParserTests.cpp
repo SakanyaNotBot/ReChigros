@@ -113,8 +113,8 @@ int main() {
     // A non-positive judgeArea falls back to 1.
     require(close(fieldLine.notesAbove[6].judgeArea, 1.0), "RPE judgeArea fallback");
 
-    // Note type promotion: 0..3 are promoted to 1..4, so type 0 becomes a Tap and
-    // type 2 becomes a Hold (not a Flick).
+    // Note type mapping. RPE numbers 1..4 map onto the game's own constants, and a type
+    // outside that range discards the note rather than turning it into a tap.
     const auto types = rechigros::chart::RpeChartParser::parse(std::string_view{R"json(
     {"META":{"offset":0,"RPEVersion":160},"BPMList":[{"bpm":120,"startTime":[0,0,1]}],
      "judgeLineList":[{"bpmfactor":1,"notesAbove":[
@@ -123,9 +123,9 @@ int main() {
        {"type":4,"startTime":[2,0,1]}
      ]}]})json"});
     const auto& typeLine = *types.judgeLineList.at(0);
-    require(typeLine.notesAbove[0].type == NOTE_TAP, "RPE type 0 promotes to tap");
-    require(typeLine.notesAbove[1].type == NOTE_HOLD, "RPE type 2 promotes to hold");
-    require(typeLine.notesAbove[2].type == NOTE_DRAG, "RPE type 4 stays drag");
+    require(typeLine.notesAbove.size() == 2, "RPE out-of-range note type is dropped");
+    require(typeLine.notesAbove[0].type == NOTE_HOLD, "RPE type 2 maps to hold");
+    require(typeLine.notesAbove[1].type == NOTE_DRAG, "RPE type 4 maps to drag");
 
     // Explicit notesAbove/notesBelow take precedence: a populated `notes` array is ignored
     // whenever either split key is present, even if both split arrays are empty.
@@ -885,6 +885,103 @@ int main() {
       require(expected.scaleEvents.size() == actual.scaleEvents.size(),
           "parallel block scale event count matches");
     }
+  }
+
+  // --- extra.json storyboard parsing ---------------------------------------
+  {
+    const auto packDir = rechigros::test::scratchDirectory("chart-prpr");
+    std::error_code ignored;
+    std::filesystem::create_directories(packDir, ignored);
+    {
+      std::ofstream out(packDir / "chart.json", std::ios::binary);
+      out << R"({"formatVersion":3,"judgeLineList":[]})";
+    }
+    {
+      // A video declares its start as a beat triple under `time`, a named scale, and an
+      // alpha track whose value is carried by `start`/`end` spans.
+      std::ofstream out(packDir / "extra.json", std::ios::binary);
+      out << R"({
+        "bpm": [ { "time": [0,0,1], "bpm": 60 } ],
+        "videos": [ {
+          "path": "bg.mp4",
+          "time": [2,0,1],
+          "scale": "inside",
+          "alpha": [ { "startTime": [0,0,1], "endTime": [1,0,1], "start": 0.0, "end": 1.0 } ],
+          "dim": 0.25,
+          "attach": { "line": 3 }
+        } ],
+        "effects": [ {
+          "shader": "official_bloom",
+          "start": [0,0,1], "end": [4,0,1],
+          "vars": { "k": 0.5, "v": [0.1, 0.2] }
+        } ]
+      })";
+    }
+    {
+      std::ofstream out(packDir / "bg.mp4", std::ios::binary);
+      out << "not a real video";
+    }
+    const auto chart = rechigros::chart::ChartLoader::loadFromFile(packDir / "chart.json");
+    require(chart != nullptr, "a chart with extra.json loads");
+    if (chart != nullptr) {
+      require(chart->prprEffects.size() == 1, "one storyboard effect is read");
+      if (chart->prprEffects.size() == 1) {
+        const auto& effect = chart->prprEffects.front();
+        require(effect.shader == "official_bloom", "the shader name is kept");
+        // 60 BPM: four beats is four seconds.
+        require(close(effect.endTime, 4.0), "the effect span converts beats at the pack BPM");
+        require(effect.variables.size() == 2, "both effect variables are read");
+        const auto scalar = effect.variables.find("k");
+        require(scalar != effect.variables.end() && !scalar->second.animated(),
+            "a scalar variable stays constant");
+        const auto vector = effect.variables.find("v");
+        require(vector != effect.variables.end() && vector->second.values.size() == 2,
+            "a numeric array becomes a vector");
+      }
+      require(chart->prprVideos.size() == 1, "one storyboard video is read");
+      if (chart->prprVideos.size() == 1) {
+        const auto& video = chart->prprVideos.front();
+        require(close(video.startTimeSec, 2.0), "the video start is a beat triple");
+        require(video.scaleType == rechigros::game::PrprVideo::Inside,
+            "a named scale maps to the inside placement");
+        require(video.alphaEvents.size() == 1, "the alpha track keeps its span");
+        require(close(video.dimDefault, 0.25), "a scalar dim becomes the default");
+        require(video.attachLineIndex == 3, "the attached line index is read");
+      }
+      // The pack root follows extra.json, which is what the shader and video paths use.
+      require(chart->packDir == packDir, "the pack root is the extra.json directory");
+    }
+    std::filesystem::remove_all(packDir, ignored);
+  }
+
+  // --- file-backed storyboard shader ---------------------------------------
+  {
+    const auto packDir = rechigros::test::scratchDirectory("chart-shader");
+    std::error_code ignored;
+    std::filesystem::create_directories(packDir, ignored);
+    {
+      std::ofstream out(packDir / "chart.json", std::ios::binary);
+      out << R"({"formatVersion":3,"judgeLineList":[]})";
+    }
+    {
+      std::ofstream out(packDir / "extra.json", std::ios::binary);
+      out << R"({ "bpm": 120, "effects": [
+        { "shader": "/glitch.frag", "start": 0, "end": 8 },
+        { "shader": "builtin_preset", "start": 0, "end": 8 } ] })";
+    }
+    {
+      std::ofstream out(packDir / "glitch.frag", std::ios::binary);
+      out << "void main(){}";
+    }
+    const auto chart = rechigros::chart::ChartLoader::loadFromFile(packDir / "chart.json");
+    require(chart != nullptr, "a chart with a file-backed shader loads");
+    if (chart != nullptr) {
+      require(chart->prprShaderSources.size() == 1,
+          "only the file-backed shader contributes a source");
+      require(chart->prprShaderSources.contains("/glitch.frag"),
+          "the source is keyed by the authored shader name");
+    }
+    std::filesystem::remove_all(packDir, ignored);
   }
 
   std::cout << "All ReChigros chart parser tests passed\n";

@@ -277,7 +277,8 @@ void HitEffectField::spawnHoldHead(game::Chart& chart, const game::HoldHeadBurst
 }
 
 void HitEffectField::draw(batch::SpriteBatch& out, const math::Mat4& projection,
-    gl::Texture& sheet, const gl::Texture& whiteTexture, double visualTimeSec) const {
+    gl::Texture& sheet, const gl::Texture& whiteTexture, double visualTimeSec,
+    bool mirrorU) const {
   if (effects_.empty()) return;
   const int frames = atlas_.frames();
   if (frames <= 0 || !sheet.valid()) return;
@@ -304,6 +305,10 @@ void HitEffectField::draw(batch::SpriteBatch& out, const math::Mat4& projection,
         static_cast<float>(column + 1) / static_cast<float>(atlas_.columns) - halfU;
     const float v0 = static_cast<float>(row) / static_cast<float>(atlas_.rows) + halfV;
     const float v1 = static_cast<float>(row + 1) / static_cast<float>(atlas_.rows) - halfV;
+    // A reflected play field mirrors the artwork too; swapping the frame's horizontal
+    // UVs undoes that without moving the frame inside its sheet cell.
+    const float drawU0 = mirrorU ? u1 : u0;
+    const float drawU1 = mirrorU ? u0 : u1;
 
     // The sheet is only rotated when the skin asks for it and the note carries an
     // explicit tint; that is the same gate the reference applies.
@@ -311,7 +316,7 @@ void HitEffectField::draw(batch::SpriteBatch& out, const math::Mat4& projection,
     const bool applyTint = style_.tinted;
     out.addQuad(effect.x, effect.y, effectSize, effectSize, rotation,
         applyTint ? effect.red : 1.0F, applyTint ? effect.green : 1.0F,
-        applyTint ? effect.blue : 1.0F, effect.alpha, u0, v0, u1, v1);
+        applyTint ? effect.blue : 1.0F, effect.alpha, drawU0, v0, drawU1, v1);
   }
   if (!out.empty()) out.flush(projection, sheet, nullptr);
 

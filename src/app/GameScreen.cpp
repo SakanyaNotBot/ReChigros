@@ -36,6 +36,9 @@ constexpr double kIntroLineDurationSec = 55.0 / 60.0;
 // The music is released when the opening buffer ends (reference INTRO_AUDIO_DELAY_MS).
 constexpr double kIntroEndSec = 1.083;
 constexpr double kOutroDurationSec = 1.7;
+// The resume fade that runs after the countdown, before the music restarts. The field stays
+// frozen through it, so a resume never shows a stale frame.
+constexpr double kResumeFadeoutSeconds = 0.25;
 // The HUD start and exit tweens are 40 frames long, like the play field's.
 constexpr double kHudIntroDurationSec = 40.0 / 60.0;
 constexpr double kHudOutroDurationSec = 40.0 / 60.0;
@@ -180,6 +183,13 @@ void applyPracticeSeek(AppContext& context, double targetChartTime) {
   game.playheadSec = target + game.chartOffsetSec + game.userOffsetSec;
   if (context.audio != nullptr && game.musicLoaded) context.audio->seek(game.playheadSec);
   game.chartTimeSec = target;
+  // A seek replaces the position outright, so the drawing clock restarts from the new one
+  // instead of correcting towards it. Its own discontinuity detection only catches large jumps;
+  // a small forward seek would otherwise be treated as normal advance and the extrapolated
+  // position would briefly run ahead of where the run actually is.
+  game.smoothClock.reset(game.playheadSec, context.nowSec);
+  game.smoothClockValid = true;
+  game.smoothedPlayheadSec = game.playheadSec;
   game.lastCounts[0] = game.lastCounts[1] = game.lastCounts[2] = game.lastCounts[3] = 0;
 }
 
@@ -1507,6 +1517,10 @@ bool gameEnter(AppContext& context) {
   game.pause = GameRuntime::Pause::None;
   game.chartTimeSec = 0.0;
   game.visualTimeSec = 0.0;
+  // A new run starts from an unprimed drawing clock: its first frame takes the reported playhead
+  // as the reference instead of correcting against the previous run's position.
+  game.smoothClockValid = false;
+  game.smoothedPlayheadSec = 0.0;
   return true;
 }
 
@@ -1526,6 +1540,37 @@ void gameLeave(AppContext& context) {
   game.replayPlayback = false;
 }
 
+// Advances the drawing clock for this frame. The correction itself lives in SmoothingClock so it
+// can be tested without a renderer or an audio device.
+void updateSmoothedClock(AppContext& context) {
+  auto& game = context.game;
+  if (!game.musicLoaded) {
+    // No stream to follow: the frame clock already produced the playhead.
+    game.smoothedPlayheadSec = game.playheadSec;
+    game.smoothClockValid = false;
+    return;
+  }
+  if (!game.smoothClockValid) {
+    game.smoothClockValid = true;
+    game.smoothClock.reset(game.playheadSec, context.nowSec);
+    game.smoothedPlayheadSec = game.playheadSec;
+    return;
+  }
+  game.smoothedPlayheadSec = game.smoothClock.advance(game.playheadSec, context.nowSec,
+      static_cast<double>(game.musicSpeed));
+}
+
+// Restores a run that was paused before gameplay became stable. The music never reached a
+// playhead worth returning to, so the run starts over: reloading rebuilds the session and
+// playback state, and the fresh entry replays the opening transition from its first frame.
+void restartRunFromZero(AppContext& context) {
+  if (!gameEnter(context)) {
+    notify(context, context.loadError.empty() ? "谱面加载失败" : context.loadError);
+    return;
+  }
+  context.screen = Screen::Game;
+}
+
 void gameUpdate(AppContext& context, float frameDeltaSec) {
   auto& game = context.game;
   if (!game.loaded || !game.chart) return;
@@ -1541,10 +1586,43 @@ void gameUpdate(AppContext& context, float frameDeltaSec) {
         game.countdownElapsedSec -= 1.0;
         --game.countdown;
         if (game.countdown <= 0) {
-          game.pause = GameRuntime::Pause::None;
+          // The countdown hands over to the fadeout state rather than straight to play: the
+          // field stays frozen while the backdrop fades, and the music only restarts once that
+          // fade completes. A pause taken in this window still belongs to the same run.
+          game.pause = GameRuntime::Pause::Fadeout;
+          game.countdown = 0;
+          game.countdownElapsedSec = 0.0;
           game.pauseElapsedSec = 0.0;
-          if (context.audio != nullptr && game.musicLoaded) context.audio->play();
+          game.fadeoutElapsedSec = 0.0;
         }
+      }
+    } else if (game.pause == GameRuntime::Pause::Fadeout) {
+      game.fadeoutElapsedSec += delta;
+      if (game.fadeoutElapsedSec >= kResumeFadeoutSeconds) {
+        game.pause = GameRuntime::Pause::None;
+        game.pauseElapsedSec = 0.0;
+        game.fadeoutElapsedSec = 0.0;
+        if (game.pauseResumesFromZero) {
+          game.pauseResumesFromZero = false;
+          game.pausePlayheadValid = false;
+          restartRunFromZero(context);
+          return;
+        }
+        // Resuming rewinds to the playhead captured when the pause began. The audio stream was
+        // stopped for the whole pause, so without this seek the run would continue from wherever
+        // the stream happened to be rather than where the player paused.
+        if (game.pausePlayheadValid && context.audio != nullptr && game.musicLoaded) {
+          game.playheadSec = game.pausePlayheadSec;
+          game.chartTimeSec = game.playheadSec - game.chartOffsetSec - game.userOffsetSec;
+          context.audio->seek(game.playheadSec);
+          // The prediction ran against a frozen position for the whole pause, so the drawing
+          // clock restarts from the resumed playhead instead of correcting across the gap.
+          game.smoothClock.reset(game.playheadSec, context.nowSec);
+          game.smoothClockValid = true;
+          game.smoothedPlayheadSec = game.playheadSec;
+        }
+        game.pausePlayheadValid = false;
+        if (context.audio != nullptr && game.musicLoaded) context.audio->play();
       }
     }
     if (game.seekRequestSec >= 0.0) {
@@ -1585,9 +1663,19 @@ void gameUpdate(AppContext& context, float frameDeltaSec) {
     game.playheadSec += delta;
   }
   game.chartTimeSec = game.playheadSec - game.chartOffsetSec - game.userOffsetSec;
+  updateSmoothedClock(context);
   game.visualTimeSec += delta;
 
   if (game.inOutro) {
+    // The settlement page draws the artwork as a heavily blurred backdrop, which needs the image
+    // decoded and blurred. Doing that on its first frame stalls visibly, so it is prepared here
+    // on the frame the exit starts, where the one-off cost is hidden by the transition.
+    if (!game.outroBlurPrepared) {
+      game.outroBlurPrepared = true;
+      const auto record = context.library.find(context.play.chartId);
+      const auto& art = record ? record->bgFile : context.play.bgFile;
+      if (!art.empty()) (void)context.textures.blurredBackdropFor(art);
+    }
     game.outroElapsedSec += delta;
     if (game.outroElapsedSec >= kOutroDurationSec) finishGame(context);
     return;
@@ -1624,16 +1712,15 @@ void gameUpdate(AppContext& context, float frameDeltaSec) {
     if (context.audio != nullptr) context.audio->triggerSoundEffect(type);
   }
 
+  // The run ends when the music reaches the end of the track, and nothing else decides it: the
+  // playhead is compared with the duration. A run whose music failed to load has no counterpart
+  // in the reference, which cannot begin gameplay without decoded audio, so the chart's own end
+  // time terminates it rather than leaving it running forever.
   bool ended = false;
-  if (context.audio != nullptr && game.musicLoaded) {
-    // The mixer clock can keep advancing after the decoded track ran out, so the
-    // end of the song is detected from the playhead against the known duration.
-    ended = game.musicDurationSec > 0.0
-        && game.playheadSec >= game.musicDurationSec - 0.02;
-  }
-  if (!ended) {
-    ended = game.session.finished(game.chartTimeSec)
-        || game.chartTimeSec >= game.chart->chartEndTimeSec + 0.4;
+  if (game.musicDurationSec > 0.0) {
+    ended = game.playheadSec >= game.musicDurationSec;
+  } else {
+    ended = game.chartTimeSec >= game.chart->chartEndTimeSec;
   }
   if (ended) {
     game.inOutro = true;
@@ -1647,8 +1734,13 @@ void gameRender(AppContext& context) {
   auto& game = context.game;
   if (!game.loaded || !game.chart || context.renderer == nullptr) return;
   render::RenderFrameInput input;
-  input.chartTimeSec = game.chartTimeSec;
-  input.playheadSec = game.playheadSec;
+  // The play field is drawn from the smoothed clock, which hides the audio callback's reporting
+  // interval. Judgement already ran this frame against the unsmoothed playhead, so a note's drawn
+  // position never changes when it will be judged.
+  input.chartTimeSec = game.musicLoaded
+      ? game.smoothedPlayheadSec - game.chartOffsetSec - game.userOffsetSec
+      : game.chartTimeSec;
+  input.playheadSec = game.musicLoaded ? game.smoothedPlayheadSec : game.playheadSec;
   input.visualTimeSec = game.visualTimeSec;
   input.userOffsetSec = game.userOffsetSec;
   input.dpi = context.displayDpi;
@@ -1667,6 +1759,9 @@ void gameRender(AppContext& context) {
   input.multiPressHighlight = context.settings.multiPressHighlight;
   input.storyMode = context.settings.storyMode;
   input.chartReveal = context.settings.chartReveal;
+  // The chart-debug overlay marks judge lines and notes on the play field, which is what the
+  // reference's debug switch shows.
+  input.showChartDebug = context.settings.showDebugInfo;
   switch (game.pause) {
     case GameRuntime::Pause::Menu:
       input.pause.mode = render::PauseMode::Menu;
@@ -1675,6 +1770,13 @@ void gameRender(AppContext& context) {
     case GameRuntime::Pause::Countdown:
       input.pause.mode = render::PauseMode::Countdown;
       input.pause.elapsedSec = static_cast<float>(game.pauseElapsedSec);
+      break;
+    case GameRuntime::Pause::Fadeout:
+      // The fade is its own mode so the renderer can keep the countdown's retreating backdrop
+      // while excluding the antialias pass, which the reference suppresses in this window.
+      input.pause.mode = render::PauseMode::FadeOut;
+      input.pause.elapsedSec = static_cast<float>(
+          game.pauseElapsedSec + kResumeFadeoutSeconds - game.fadeoutElapsedSec);
       break;
     default: input.pause.mode = render::PauseMode::None; break;
   }
@@ -1766,10 +1868,17 @@ void drawGameOverlay(AppContext& context) {
 void gameTogglePause(AppContext& context) {
   auto& game = context.game;
   if (!game.loaded || game.finished || game.inOutro) return;
+  // A pause taken before gameplay starts, or while the opening transition is still running,
+  // cannot resume from where it stopped: the music has no stable playhead yet. Such a run
+  // restarts from the beginning when it resumes, so the frozen playhead is forced to zero here
+  // instead of being captured from the audio engine.
+  const bool beforeGameplay = game.inIntro || game.chartTimeSec < 0.0;
   if (game.pause == GameRuntime::Pause::None) {
     game.pause = GameRuntime::Pause::Menu;
     game.pauseElapsedSec = 0.0;
-    game.pausePlayheadSec = game.playheadSec;
+    game.pausePlayheadSec = beforeGameplay ? 0.0 : game.playheadSec;
+    game.pausePlayheadValid = true;
+    game.pauseResumesFromZero = beforeGameplay;
     game.session.cancelTouches();
     if (context.audio != nullptr && game.musicLoaded) context.audio->pause();
   } else if (game.pause == GameRuntime::Pause::Menu) {

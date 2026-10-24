@@ -19,6 +19,10 @@ public:
   PauseBackdropPass& operator=(const PauseBackdropPass&) = delete;
 
   bool prepare(const std::filesystem::path& assetRoot);
+  // Allocates the pyramid and output targets for this view size ahead of the first pause.
+  // Driver-side allocation and texture creation on this scale costs a noticeable stall, so
+  // doing it during initialisation keeps the frame where the player pauses smooth.
+  bool warmUp(int viewWidth, int viewHeight);
   void release() noexcept;
   [[nodiscard]] bool ready() const noexcept { return ready_; }
 

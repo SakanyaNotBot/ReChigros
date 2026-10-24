@@ -16,11 +16,21 @@ struct StageLayout {
   // than the play field.
   bool hasSideBlanks{false};
   bool fullscreen{false};
+  // Reflects the play field about its centre for demo mode. Only geometry that
+  // belongs to the field is reflected; the HUD and the side bands are not.
+  bool mirror{false};
 
   [[nodiscard]] float centerX() const noexcept { return stage.x + stage.width * 0.5F; }
   [[nodiscard]] float centerY() const noexcept { return stage.y + stage.height * 0.5F; }
   [[nodiscard]] math::Mat4 projection() const noexcept {
     return math::Mat4::orthoTopLeft(viewWidth, viewHeight);
+  }
+  // Projection for play-field geometry: `projection()` plus the mirror reflection.
+  // Notes, judge lines and hit effects all go through it, so they reflect together,
+  // while the HUD keeps `projection()` and therefore stays unmirrored.
+  [[nodiscard]] math::Mat4 stageProjection() const noexcept {
+    const math::Mat4 base = projection();
+    return mirror ? base * math::Mat4::mirrorX(centerX()) : base;
   }
 };
 

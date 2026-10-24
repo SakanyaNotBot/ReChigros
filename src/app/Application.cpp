@@ -161,6 +161,12 @@ Application::Application(int argc, char** argv) {
       if (index + 1 < argc && argv[index + 1] != nullptr) {
         screenSetup_ = argv[++index];
       }
+    } else if (argument == "--record") {
+      // Records the chart argument to this path and exits, so a recording can be produced without
+      // driving the interface. The same code path the button uses runs; only the trigger differs.
+      if (index + 1 < argc && argv[index + 1] != nullptr) {
+        recordOutputPath_ = pathFromUtf8(argv[++index]);
+      }
     } else if (argument == "--fixed-delta") {
       fixedDelta_ = true;
     } else if (argument == "--gl-debug") {
@@ -278,13 +284,26 @@ bool Application::initialize() {
   // every scale the layout uses.
   displayDpi_ = 380.0F;
   {
-    // SDL3 exposes the window content scale instead of a physical diagonal DPI. The
-    // layout only needs a stable density for the glyph cache, so the scale is mapped
-    // to the same range the DPI value used.
+    // The play field scales some geometry by the display density, and the density is only
+    // meaningful when it is a positive finite number. Each source is tried in turn so a
+    // platform report of zero or a not-a-number cannot reach the renderer: the window
+    // content scale first, then the drawable pixel ratio, then the reference density.
     const float scale = SDL_GetWindowDisplayScale(window_);
     if (std::isfinite(scale) && scale > 0.0F) {
       displayDpi_ = 96.0F * scale;
+    } else {
+      int windowWidth = 0;
+      int windowHeight = 0;
+      int pixelWidth = 0;
+      int pixelHeight = 0;
+      SDL_GetWindowSize(window_, &windowWidth, &windowHeight);
+      SDL_GetWindowSizeInPixels(window_, &pixelWidth, &pixelHeight);
+      if (windowWidth > 0 && windowHeight > 0 && pixelWidth > 0) {
+        const float ratio = static_cast<float>(pixelWidth) / static_cast<float>(windowWidth);
+        if (std::isfinite(ratio) && ratio > 0.0F) displayDpi_ = 96.0F * ratio;
+      }
     }
+    if (!std::isfinite(displayDpi_) || displayDpi_ <= 0.0F) displayDpi_ = 380.0F;
   }
   // Density is driven by the interface scale, not the raw display DPI: the layout grows
   // its text by the interface scale, and a glyph atlas built at the base size is then
@@ -405,6 +424,10 @@ bool Application::initialize() {
   app_->playOverrides.mirrorX = mirrorOverride_;
   app_->playOverrides.autoplay = autoplayOverride_;
   updateAudioFromSettings();
+  // Scanning the pack directory reads and parses every pack's metadata. Doing it here rather
+  // than on demand keeps it off the first frame that shows a screen needing the library,
+  // which is otherwise the single most expensive frame in the session.
+  (void)app_->library.records();
 
   // A capture run can open a specific screen with representative state, so a single
   // screen can be inspected and compared without walking the interface by hand.
@@ -423,7 +446,38 @@ bool Application::initialize() {
       handleIncomingPath(*app_, initialPath_);
     }
   }
+  if (!recordOutputPath_.empty()) runRecording(*app_);
   return true;
+}
+
+void Application::runRecording(AppContext& context) {
+  // A command-line recording runs the whole encode before the interface exists, so it can be used
+  // from a script. It uses the same session the button drives, with the defaults the page offers.
+  if (!context.game.loaded || context.game.chart == nullptr || context.renderer == nullptr) {
+    std::cerr << "record: no chart is loaded\n";
+    return;
+  }
+  RecordSession::Settings settings;
+  settings.outputDirectory = recordOutputPath_.parent_path();
+  settings.fileName = recordOutputPath_.stem().string();
+  if (settings.outputDirectory.empty()) settings.outputDirectory = std::filesystem::current_path();
+  const bool h265 = recordOutputPath_.extension() == ".265";
+  settings.codec = h265 ? VideoEncoder::Codec::H265 : VideoEncoder::Codec::H264;
+
+  std::string error;
+  if (!context.recording.start(context, settings, error)) {
+    std::cerr << "record: " << error << '\n';
+    return;
+  }
+  // Drive the session to completion here: there is no interface to share the frame budget with.
+  while (context.recording.step(context)) {
+  }
+  if (context.recording.state() == RecordSession::State::Finished) {
+    std::cout << "RECORD PASS path=" << context.recording.outputPath().string()
+              << " frames=" << context.recording.renderedFrames() << '\n';
+  } else {
+    std::cout << "RECORD FAIL reason=" << context.recording.error() << '\n';
+  }
 }
 
 int Application::run() {
@@ -459,6 +513,14 @@ int Application::run() {
     app_->fps = smoothedFps_;
 
     processEvents(running);
+    // Time spent in event dispatch is otherwise invisible: it sits between the frame start
+    // and the swap, so a stall there is attributed to neither the scene nor the present.
+    if (!frameStatsPath_.empty()) {
+      const auto afterEvents = SDL_GetPerformanceCounter();
+      lastEventMs_ = static_cast<double>(afterEvents - counter) * 1000.0
+          / static_cast<double>(frequency);
+      eventCounter_ = afterEvents;
+    }
     if (!running) break;
     if (suspended_) {
       SDL_Delay(10);
@@ -491,9 +553,17 @@ int Application::run() {
     pollGpuTimer();
     beginGpuTimer();
 
+    const auto beforeUpdate = SDL_GetPerformanceCounter();
     if (app_->screen == Screen::Game) {
       gameUpdate(*app_, delta);
     }
+    const auto afterUpdate = SDL_GetPerformanceCounter();
+    // Split the frame so a stall can be attributed: the update phase, the interface phase and
+    // the scene draw are separate costs and only their sum was measured before.
+    const auto toMs = [frequency](std::uint64_t from, std::uint64_t to) {
+      return static_cast<double>(to - from) * 1000.0 / static_cast<double>(frequency);
+    };
+    updateMs_ = toMs(beforeUpdate, afterUpdate);
 
     // The decision is made after the update: a gameplay frame can change screen (result
     // transition) or open a menu, and this flag must never suppress a frame that will draw
@@ -508,8 +578,7 @@ int Application::run() {
     if (app_->screen == Screen::Game) {
       gameRender(*app_);
       if (imguiFrame) drawGameOverlay(*app_);
-    } else {
-      glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    } else {      glBindFramebuffer(GL_FRAMEBUFFER, 0);
       glViewport(0, 0, app_->drawableWidth, app_->drawableHeight);
       if (backdrop_ != nullptr && backdrop_->ready()) {
         // The chart detail page supplies its own artwork behind the grid.
@@ -540,6 +609,17 @@ int Application::run() {
       drawCurrentScreen();
     }
     if (imguiFrame) drawToast(*app_);
+    // A recording advances outside the gameplay loop: it owns its own chart clock and renders
+    // offscreen, so it must not also run through the interactive path. The overlay is drawn on top
+    // of whatever screen is up, and it carries the cancel action.
+    if (imguiFrame) {
+      (void)updateRecording(*app_);
+      drawRecordingProgress(*app_);
+    }
+
+    // The draw phase is measured on its own so a stall there is distinguishable from one in
+    // the update phase.
+    drawMs_ = toMs(afterUpdate, SDL_GetPerformanceCounter());
 
     if (app_->quitRequested) running = false;
 
@@ -590,6 +670,9 @@ int Application::run() {
       sample.screen = static_cast<int>(app_->screen);
       sample.nowSec = app_->nowSec;
       sample.swapMs = swapMs;
+      sample.eventMs = lastEventMs_;
+      sample.updateMs = updateMs_;
+      sample.drawMs = drawMs_;
       sample.wallSec = static_cast<double>(postSwapCounter - runStartCounter_)
           / static_cast<double>(runFrequency_);
       frameSamples_.push_back(sample);
@@ -645,13 +728,24 @@ void Application::updateBatchMode() {
       up.key.down = false;
       SDL_PushEvent(&up);
     };
-    if (gameFrames == 200) pushEscape();
-    if (gameFrames == 215 && game.pause == GameRuntime::Pause::Menu) pauseMenuSeen_ = true;
-    if (gameFrames == 225) pushEscape();
-    if (gameFrames == 240 && game.pause == GameRuntime::Pause::Countdown) {
-      pauseCountdownSeen_ = true;
+    // The pause cycle runs as soon as the opening transition has finished rather than at a
+    // fixed frame number. Charts differ in length, and a short fixture reaches its exit
+    // animation before a late frame, which would leave the pause untested.
+    if (pauseCycleStartFrame_ < 0 && game.loaded && !game.inIntro && !game.inOutro
+        && !game.finished) {
+      pauseCycleStartFrame_ = gameFrames;
     }
-    if (gameFrames > 300 && game.pause == GameRuntime::Pause::None) pauseResumedSeen_ = true;
+    if (pauseCycleStartFrame_ >= 0) {
+      const int step = gameFrames - pauseCycleStartFrame_;
+      if (step == 2) pushEscape();
+      if (step == 12 && game.pause == GameRuntime::Pause::Menu) pauseMenuSeen_ = true;
+      if (step == 20) pushEscape();
+      if (step == 30 && (game.pause == GameRuntime::Pause::Countdown
+                            || game.pause == GameRuntime::Pause::Fadeout)) {
+        pauseCountdownSeen_ = true;
+      }
+      if (step > 60 && game.pause == GameRuntime::Pause::None) pauseResumedSeen_ = true;
+    }
   }
 
   // Replay playback drives the touch pipeline from the recorded events, so the
@@ -776,6 +870,17 @@ void Application::printBatchSummary() {
   }
   if (!initialPath_.empty()) {
     std::cout << "chart: " << app_->play.songName << " / " << app_->play.difficulty << '\n';
+    // The level effect a chart resolves to decides the HUD suppression and the scene extras,
+    // so it is reported for verification runs: a chart whose effect fails to select looks
+    // ordinary in a screenshot apart from the missing effect.
+    if (app_->game.chart != nullptr) {
+      const auto& effects = app_->game.chart->levelEffects;
+      std::cout << "level-effect: "
+                << (effects != nullptr ? effects->effectName() : std::string("none"))
+                << " hideHud=" << (effects != nullptr && effects->hideHud() ? 1 : 0)
+                << " lowPassOnBlock=" << (effects != nullptr && effects->lowPassOnBlock() ? 1 : 0)
+                << " passes=" << app_->game.chart->prprEffects.size() << '\n';
+    }
     std::cout << "practice: enabled=" << (app_->game.practice ? 1 : 0)
               << " perfectMs=" << app_->game.practiceWindows.perfectMs()
               << " active=" << (app_->game.practiceWindows.active(app_->game.practice, app_->game.challenge) ? 1 : 0) << '\n';
@@ -849,12 +954,13 @@ void Application::writeFrameStats() const {
   }
   std::ofstream csv(frameStatsPath_);
   if (csv) {
-    csv << "index,interval_ms,cpu_ms,screen,now_sec,gpu_ms,swap_ms,wall_sec\n";
+    csv << "index,interval_ms,cpu_ms,screen,now_sec,gpu_ms,swap_ms,wall_sec,event_ms,update_ms,draw_ms\n";
     for (std::size_t index = 0; index < frameSamples_.size(); ++index) {
       const FrameSample& sample = frameSamples_[index];
       csv << index << ',' << sample.intervalMs << ',' << sample.cpuMs << ','
           << sample.screen << ',' << sample.nowSec << ',' << sample.gpuMs << ','
-          << sample.swapMs << ',' << sample.wallSec << '\n';
+          << sample.swapMs << ',' << sample.wallSec << ',' << sample.eventMs << ','
+          << sample.updateMs << ',' << sample.drawMs << '\n';
     }
   }
   std::cout << "FRAME-STATS frames=" << frameSamples_.size()
@@ -1095,6 +1201,7 @@ void Application::drawCurrentScreen() {
     case Screen::Library: drawLibraryScreen(*app_); break;
     case Screen::Detail: drawDetailScreen(*app_); break;
     case Screen::Settings: drawSettingsScreen(*app_); break;
+    case Screen::Render: drawRenderScreen(*app_); break;
     case Screen::Calibration: drawCalibrationScreen(*app_); break;
     case Screen::Result: drawResultScreen(*app_); break;
     case Screen::Game: break;

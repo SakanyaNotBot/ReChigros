@@ -91,7 +91,10 @@ bool copyAsset(const std::filesystem::path& assetRoot, const std::string& relati
 
 // Creates a small library so every screen has content when the caller did not supply one.
 void ensureLibrary(AppContext& context) {
-  if (!context.library.records(true).empty()) return;
+  // A capture opens the library that is already on disk. The scan is not forced: it is only
+  // needed when nothing has been read yet, and forcing it here re-read every pack a second
+  // time before the first frame is drawn.
+  if (!context.library.records().empty()) return;
   const auto assetRoot = platform::assetRoot();
   const auto packsRoot = context.library.packsRoot();
   std::error_code error;
@@ -117,7 +120,7 @@ void ensureLibrary(AppContext& context) {
 }
 
 std::string firstChartId(AppContext& context) {
-  const auto& records = context.library.records(true);
+  const auto& records = context.library.records();
   if (records.empty()) return {};
   return records.front().id;
 }
@@ -129,7 +132,7 @@ std::string chartIdForName(AppContext& context, const std::string& name) {
     std::string needle = name;
     std::transform(needle.begin(), needle.end(), needle.begin(),
         [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
-    for (const auto& record : context.library.records(true)) {
+    for (const auto& record : context.library.records()) {
       std::string haystack = record.songName;
       std::transform(haystack.begin(), haystack.end(), haystack.begin(),
           [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
@@ -171,6 +174,12 @@ void applyReferenceSettings(AppContext& context, float aspectRatioOverride) {
   settings.chartReveal = false;
   settings.storyMode = true;
   settings.replayEnabled = false;
+  // An explicitly requested mode wins over the capture defaults, so a capture can reproduce
+  // a state the reference screenshots were not taken in.
+  if (context.playOverrides.mirrorX) settings.mirrorX = true;
+  if (context.playOverrides.autoplay) settings.autoplay = true;
+  if (context.playOverrides.challenge) settings.challengeMode = true;
+  if (context.playOverrides.practice) settings.practiceMode = true;
 }
 
 void populatePlay(AppContext& context, const std::string& chartId) {
@@ -233,11 +242,19 @@ void setupResult(AppContext& context, const std::string& chartId) {
 }
 
 void startCaptureChart(AppContext& context, bool practice) {
-  if (context.library.records(true).empty()) return;
+  if (context.library.records().empty()) return;
   context.playOverrides.autoplay = true;
   startChart(context, practice);
+  // Reported so a capture can be checked for the level effect it should carry: a chart whose
+  // effect fails to select renders without the effect and without the HUD suppression, which
+  // a screenshot alone cannot tell apart from a chart that genuinely has none.
+  if (context.game.chart != nullptr) {
+    const auto& effects = context.game.chart->levelEffects;
+    std::printf("capture-level-effect: %s hideHud=%d song=%s\n",
+        effects != nullptr ? effects->effectName().c_str() : "none",
+        effects != nullptr && effects->hideHud() ? 1 : 0, context.play.songName.c_str());
+  }
 }
-
 } // namespace
 
 void setupCaptureScreen(AppContext& context, const std::string& spec, float aspectRatioOverride) {
@@ -262,20 +279,40 @@ void setupCaptureScreen(AppContext& context, const std::string& spec, float aspe
     context.libraryTab = 0;
     context.manageMode = false;
     context.selectedIds.clear();
-    context.library.invalidate();
     context.screen = Screen::Library;
+    return;
+  }
+  if (screen == "render") {
+    // The recording page describes the chart that is open, so the detail page's chart is loaded
+    // first and the page is entered the same way the button does.
+    if (!chartId.empty()) {
+      openChartDetail(context, chartId);
+      context.renderReturn = Screen::Detail;
+      context.screen = Screen::Render;
+    }
     return;
   }
   if (screen == "library-online") {
     context.libraryTab = 1;
+    context.manageMode = false;
+    context.selectedIds.clear();
     context.screen = Screen::Library;
     return;
   }
+  if (screen == "library-unpublished") {
+    context.libraryTab = 2;
+    context.manageMode = false;
+    context.selectedIds.clear();
+    context.screen = Screen::Library;
+    return;
+  }
+  // Selection state of the local tab. Distinct from the catalogue's unpublished page, which
+  // is a different screen and carries no selection at all.
   if (screen == "library-manage") {
     context.libraryTab = 0;
     context.manageMode = true;
     context.selectedIds.clear();
-    const auto& records = context.library.records(true);
+    const auto& records = context.library.records();
     if (records.size() > 1) {
       context.selectedIds.push_back(records[0].id);
       context.selectedIds.push_back(records[2].id);

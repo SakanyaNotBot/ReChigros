@@ -14,7 +14,7 @@
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
             android:exported="true"
             android:launchMode="singleInstance"
-            android:screenOrientation="sensorLandscape">
+            android:screenOrientation="landscape">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -27,6 +27,39 @@
                 <data android:scheme="content" android:mimeType="application/json" />
                 <data android:scheme="content" android:mimeType="text/plain" />
                 <data android:scheme="content" android:mimeType="application/octet-stream" />
+            </intent-filter>
+            <!-- Chart, replay and resource packages opened from a file manager arrive as
+                 file:// paths, so each extension the importer understands needs its own
+                 filter; a file:// URI carries no MIME type for the system to match on. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="*"
+                    android:scheme="file"
+                    android:mimeType="*/*"
+                    android:pathPattern=".*\\.cgrp" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="*"
+                    android:scheme="file"
+                    android:mimeType="*/*"
+                    android:pathPattern=".*\\.zip" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="*"
+                    android:scheme="file"
+                    android:mimeType="*/*"
+                    android:pathPattern=".*\\.pez" />
             </intent-filter>
         </activity>
     </application>

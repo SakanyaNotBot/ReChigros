@@ -32,6 +32,10 @@ public:
   // composite(). Returns false when the GL resources are unavailable.
   bool begin(int viewWidth, int viewHeight);
 
+  // Allocates the reduced-resolution targets for this view size ahead of the first pause, so
+  // the frame where the player pauses does not pay for the driver-side allocation.
+  void warmUp(int viewWidth, int viewHeight);
+
   [[nodiscard]] int width() const noexcept;
   [[nodiscard]] int height() const noexcept;
 

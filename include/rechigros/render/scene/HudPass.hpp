@@ -128,6 +128,20 @@ struct HudHitOffset {
   int markCount{};
 };
 
+// Numeric readouts. The score is always seven digits and the accuracy is a percentage in
+// hundredths, both clamped the same way the HUD's own layout expects.
+[[nodiscard]] std::string formatScore(int value);
+[[nodiscard]] std::string formatAccuracyHundredths(int hundredths);
+// Catch-up of a displayed value towards its target: `deltaMs` is the frame's elapsed
+// milliseconds and the step saturates after the catch-up window.
+[[nodiscard]] double approachDisplayValue(double current, double target, double deltaMs) noexcept;
+
+// Canvas-space anchors of the two combo widgets, as ui-Y on the 1000-unit tall canvas.
+inline constexpr float kComboNumberUiY = 452.0F;
+inline constexpr float kComboLabelUiY = 405.0F;
+// The combo label fades out ahead of the rest of the HUD during the exit animation.
+[[nodiscard]] float comboLabelOutroAlpha(float outroProgress) noexcept;
+
 // Draws the in-game HUD exactly where the play field's HUD canvas places it: pause
 // button and progress bar, song title bottom-left, difficulty bottom-right, score
 // top-right, optional accuracy, and the centre combo number/label. `alpha` scales the

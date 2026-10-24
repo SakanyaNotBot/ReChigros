@@ -34,8 +34,10 @@ public:
       float rotationDeg, float u0, float v0, float u1, float v1, const gl::Texture* texture);
 
   // Drops expired copies, then draws the rest, flushing once per texture change.
+  // `mirrorU` swaps the horizontal UVs so a mirrored play field keeps the note artwork
+  // the right way round.
   void draw(batch::SpriteBatch& out, const math::Mat4& projection, double visualTimeSec,
-      const gl::Texture& fallback);
+      const gl::Texture& fallback, bool mirrorU = false);
 
   [[nodiscard]] int size() const noexcept { return static_cast<int>(effects_.size()); }
 

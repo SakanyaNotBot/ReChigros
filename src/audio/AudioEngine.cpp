@@ -26,8 +26,10 @@ constexpr std::uint32_t kPeriodFrames = 256;
 constexpr std::uint32_t kPeriodCount = 2;
 /// Upper bound on effects sounding at the same time.
 constexpr std::uint32_t kMaxVoices = 32;
-/// Depth of the lock-free effect queue. Triggers are dropped when it is full.
-constexpr std::size_t kSfxQueueCapacity = 1024;
+/// Depth of the lock-free effect queue. Triggers are dropped when it is full. The index
+/// registers are 32-bit, so the capacity matches them and the ring arithmetic stays in one
+/// type.
+constexpr std::uint32_t kSfxQueueCapacity = 1024;
 /// Indexed by note type, so index 0 stays unused.
 constexpr std::size_t kBankCount = 5;
 constexpr double kNoSeek = -1.0;

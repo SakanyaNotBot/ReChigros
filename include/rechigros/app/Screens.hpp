@@ -28,6 +28,13 @@ void drawHomeScreen(AppContext& context);
 void drawLibraryScreen(AppContext& context);
 void drawDetailScreen(AppContext& context);
 void drawSettingsScreen(AppContext& context);
+// Recording configuration: the parameters a render uses, the start action and its progress.
+void drawRenderScreen(AppContext& context);
+// Draws the recording progress overlay above the current screen, and advances the recording.
+// Returns true while a recording is running.
+bool updateRecording(AppContext& context);
+// Draws the modal progress plate with its cancel action.
+void drawRecordingProgress(AppContext& context);
 void drawCalibrationScreen(AppContext& context);
 void drawResultScreen(AppContext& context);
 void drawGameOverlay(AppContext& context);

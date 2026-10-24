@@ -119,8 +119,12 @@ void drawRun(ImDrawList* drawList, std::string_view text, float x, float baselin
     if (codepoint != ' ') {
       const UiFontCache::Glyph* glyph = fonts.glyph(codepoint, pixelSize, bold);
       if (glyph != nullptr && glyph->width > 0.0F) {
-        const ImVec2 min(pen + glyph->offsetX, baseline + glyph->offsetY);
-        const ImVec2 max(min.x + glyph->width, min.y + glyph->height);
+        // The atlas holds a glyph rasterised on the pixel grid, so the quad is snapped to
+        // whole pixels: sampling it from a half-pixel offset makes the linear filter spread
+        // the coverage across two pixels, which reads as a blurry, fattened stroke.
+        const ImVec2 min(std::round(pen + glyph->offsetX),
+            std::round(baseline + glyph->offsetY));
+        const ImVec2 max(std::round(min.x + glyph->width), std::round(min.y + glyph->height));
         drawList->AddImage(static_cast<ImTextureID>(texture), min, max,
             ImVec2(glyph->u0, glyph->v0), ImVec2(glyph->u1, glyph->v1), color);
       }

@@ -77,6 +77,13 @@ public:
   void setClip(bool enabled, const math::Rect& rect) noexcept;
   [[nodiscard]] bool clipEnabled() const noexcept { return clipEnabled_; }
 
+  // Confines the submitted draw to a rectangle of the current render target, in the same
+  // pixel space the geometry is projected into. Unlike setClip, which drops whole sprites,
+  // this clips partially covered ones, which is what confines the play field's overflow to
+  // the stage. A disabled scissor restores the whole target.
+  void setScissor(bool enabled, float left, float top, float right, float bottom) noexcept;
+  [[nodiscard]] bool scissorEnabled() const noexcept { return scissorEnabled_; }
+
   // Uploads and draws everything accumulated, then clears. The body sampler falls
   // back to the primary texture when none is supplied.
   void flush(const math::Mat4& projection, const gl::Texture& texture,
@@ -103,6 +110,10 @@ private:
   bool allocFailure_{};
   float clipLeft_{}, clipTop_{}, clipRight_{}, clipBottom_{};
   math::Rect clipRect_{};
+  // Pixel-space scissor applied while the batch is submitted. The rectangle is stored in the
+  // top-left origin space the geometry uses and converted to GL's bottom-left origin on use.
+  bool scissorEnabled_{};
+  float scissorLeft_{}, scissorTop_{}, scissorRight_{}, scissorBottom_{};
 };
 
 } // namespace rechigros::render::batch

@@ -31,11 +31,25 @@ struct PrprEffect {
   bool global{false};
 };
 
+// A storyboard video background. Times are absolute chart seconds; the video itself begins
+// at `startTimeSec`, and the alpha/dim tracks are evaluated on that same absolute timeline
+// rather than being offset from the video's own start.
 struct PrprVideo {
+  enum ScaleType : int { CropCenter = 0, Inside = 1, Fit = 2 };
+
   std::string path;
-  double startTime{};
-  double endTime{};
-  float alpha{1.0F};
-  bool loop{false};
+  double startTimeSec{};
+  int scaleType{CropCenter};
+  float alphaDefault{1.0F};
+  std::vector<LineEvent> alphaEvents;
+  float dimDefault{0.0F};
+  std::vector<LineEvent> dimEvents;
+  // Judge line the video is parented to, or -1 when it is not attached to one.
+  int attachLineIndex{-1};
+
+  // Only the three defined placements survive; anything else means crop-centre.
+  [[nodiscard]] static int sanitizeScaleType(int value) noexcept {
+    return value == Inside || value == Fit ? value : CropCenter;
+  }
 };
 } // namespace rechigros::game

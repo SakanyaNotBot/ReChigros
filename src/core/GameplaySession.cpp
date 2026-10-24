@@ -33,6 +33,7 @@ void GameplaySession::setChart(Chart* chart, bool challengeMode) {
   autoNoteIndex_ = 0;
   challengeTimeSum_ = 0.0;
   frameTimeIndex_ = frameTimeCount_ = 0;
+  challengeTimingStarted_ = false;
   frameTimes_.fill(0.0);
   soundEvents_.clear();
   cancelTouches();
@@ -63,6 +64,10 @@ void GameplaySession::setViewport(Viewport viewport) noexcept {
   if (!std::isfinite(viewport.scrollSpeed)) viewport.scrollSpeed = 1.0F;
   if (!std::isfinite(viewport.keyScale) || viewport.keyScale <= 0.0F) viewport.keyScale = 1.0F;
   viewport_ = viewport;
+}
+
+void GameplaySession::setMusicSpeed(double value) noexcept {
+  musicSpeed_ = std::isfinite(value) && value > 0.0 ? value : 1.0;
 }
 
 void GameplaySession::setAutoplay(bool value) noexcept {
@@ -249,7 +254,9 @@ void GameplaySession::recordJudgement(const Note& note, JudgementEngine::Judgeme
   // signed timing delta.
   const bool atFrameTime = entry.type == ReplayJudgement::Type::HoldRelease
       || judgement == JudgementEngine::Judgement::Miss;
-  entry.timeSec = atFrameTime ? chartTimeSec : note.sect - diffSec;
+  entry.timeSec = atFrameTime
+      ? chartTimeSec
+      : JudgementEngine::chartTimeForJudgementDiff(note, diffSec, chartTimeSec);
   recordedReplay_.push_back(entry);
 }
 
@@ -261,7 +268,7 @@ void GameplaySession::recordHoldPress(const Note& note, bool perfect, double dif
   entry.noteIndex = note.sortedIndex;
   entry.judgement = perfect ? static_cast<int>(JudgementEngine::Judgement::Perfect)
                             : static_cast<int>(JudgementEngine::Judgement::Good);
-  entry.timeSec = note.sect - diffSec;
+  entry.timeSec = JudgementEngine::chartTimeForJudgementDiff(note, diffSec, note.sect);
   recordedReplay_.push_back(entry);
 }
 
@@ -275,6 +282,18 @@ void GameplaySession::recordMissingHoldPresses() {
 
 bool GameplaySession::touchBlocked(std::int64_t id) const noexcept {
   return blockedTouchIds_.find(id) != blockedTouchIds_.end();
+}
+
+std::vector<std::array<float, 2>> GameplaySession::blockedTouchPositions() const {
+  std::vector<std::array<float, 2>> positions;
+  if (blockedTouchIds_.empty()) return positions;
+  positions.reserve(blockedTouchIds_.size());
+  for (const auto id : blockedTouchIds_) {
+    const auto it = touches_.find(id);
+    if (it == touches_.end() || it->second == nullptr) continue;
+    positions.push_back({it->second->x, it->second->y});
+  }
+  return positions;
 }
 
 void GameplaySession::updateBlocks(double time, float frameDeltaSec) {
@@ -312,7 +331,13 @@ void GameplaySession::updateBlocks(double time, float frameDeltaSec) {
 
 void GameplaySession::updateChallengeTiming(float delta) noexcept {
   if (!challengeMode_) return;
-  if (!std::isfinite(delta) || delta <= 0.0F) delta = 0.0F;
+  // The first frame only establishes the reference instant: there is no previous frame to
+  // measure against, so it contributes no sample to the average.
+  if (!challengeTimingStarted_) {
+    challengeTimingStarted_ = true;
+    return;
+  }
+  if (!std::isfinite(delta) || delta <= 0.0F) delta = 1.0F / 60.0F;
   frameTimes_[frameTimeIndex_] = static_cast<double>(delta);
   frameTimeIndex_ = (frameTimeIndex_ + 1) % frameTimes_.size();
   frameTimeCount_ = std::min(frameTimeCount_ + 1, frameTimes_.size());
@@ -323,7 +348,10 @@ void GameplaySession::updateChallengeTiming(float delta) noexcept {
 
 void GameplaySession::update(double time, float frameDelta) {
   if (!chart_) return;
-  updateChallengeTiming(frameDelta);
+  // The challenge window tracks recent frame durations to absorb jitter in a human press.
+  // Autoplay and replay do not judge from input, so they leave the window at its base value.
+  const bool manualJudging = !replayPlayback_ && !autoplay_;
+  if (manualJudging) updateChallengeTiming(frameDelta);
   updateBlocks(time, frameDelta);
   judgement_.setChallengeTimeSum(challengeTimeSum_);
   judgement_.setVisualTime(time);
@@ -344,8 +372,10 @@ void GameplaySession::update(double time, float frameDelta) {
       auto& note = *notes[autoNoteIndex_];
       if (note.judgeResult < 0) {
         if (note.type == NOTE_HOLD) {
+          // The hold head is hit at its own note time, not at the frame that noticed it, so
+          // the head burst sits where the head is drawn and the recorded delta is zero.
           soundEvents_.push_back(NOTE_TAP);
-          activateHold(note, true, time, 0.0, false);
+          activateHold(note, true, note.sect, 0.0, false);
         } else {
           commitNote(note, JudgementEngine::Judgement::Perfect, time - note.sect, time, false);
         }
@@ -452,11 +482,18 @@ double GameplaySession::holdBodyIntervalSec(const Note& note) noexcept {
   return 0.5 * 60.0 / bpm;
 }
 
+double GameplaySession::realFrameDeltaSec(float frameDeltaSec) const noexcept {
+  // The chart clock advances at `musicSpeed` times real time, so the real time a frame took
+  // is the chart delta divided by that speed. A non-positive or absurdly large result means
+  // the clock stalled or jumped, and the nominal frame duration is used instead.
+  double realDelta = static_cast<double>(frameDeltaSec) / std::max(0.001, musicSpeed_);
+  if (!(realDelta > 0.0) || realDelta > 0.1) realDelta = 1.0 / 60.0;
+  return realDelta;
+}
+
 void GameplaySession::updateHoldBodyBursts(double time, float frameDeltaSec) {
   if (holdFxNotes_.empty()) return;
-  double realDelta = static_cast<double>(frameDeltaSec);
-  if (!std::isfinite(realDelta) || realDelta <= 0.0) realDelta = 1.0 / 60.0;
-  if (realDelta > 0.1) realDelta = 0.1;
+  const double realDelta = realFrameDeltaSec(frameDeltaSec);
   for (std::size_t index = 0; index < holdFxNotes_.size();) {
     Note* note = holdFxNotes_[index];
     // A judged or released hold stops producing body feedback; the note is dropped from the
@@ -469,8 +506,8 @@ void GameplaySession::updateHoldBodyBursts(double time, float frameDeltaSec) {
       continue;
     }
     if (time <= note->sect) {
-      // The reference zeroes the timer every frame while the note has not started, so the
-      // first burst lands one interval after max(note time, head hit).
+      // The timer is cleared every frame while the hold has not started, so the first burst
+      // lands one interval after max(note time, head hit).
       note->holdFxTimerSec = 0.0;
       ++index;
       continue;
@@ -483,6 +520,8 @@ void GameplaySession::updateHoldBodyBursts(double time, float frameDeltaSec) {
     }
     note->holdFxTimerSec += realDelta;
     if (note->holdFxTimerSec >= interval - 1.0e-5) {
+      // One burst per crossing: the timer restarts from zero, so a long frame never emits
+      // more than a single burst however many intervals it covered.
       holdBodyBursts_.push_back({note->sortedIndex, time, note->holdPerfect});
       note->holdFxTimerSec = 0.0;
       // The queue is drained by the renderer each frame; keep a bound so a build that does
@@ -778,13 +817,6 @@ void GameplaySession::detectMisses(double time) {
     }
     break;
   }
-}
-
-bool GameplaySession::finished(double time) const noexcept {
-  if (!chart_ || chart_->allNotesSorted.empty()) return false;
-  const auto result = judgement_.result();
-  return result.perfect + result.good + result.bad + result.miss >= result.totalNotes
-      && time >= chart_->chartEndTimeSec;
 }
 
 std::vector<int> GameplaySession::takeSoundEvents() {

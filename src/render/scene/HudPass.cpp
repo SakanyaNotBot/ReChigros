@@ -86,6 +86,8 @@ float sampleCurve(const float* samples, int count, float t) {
   return samples[index] + (samples[index + 1] - samples[index]) * fraction;
 }
 
+} // namespace
+
 std::string formatScore(int value) {
   const int clamped = std::clamp(value, 0, 1000000);
   char buffer[16];
@@ -99,6 +101,8 @@ std::string formatAccuracyHundredths(int hundredths) {
   std::snprintf(buffer, sizeof(buffer), "%d.%02d%%", value / 100, value % 100);
   return buffer;
 }
+
+namespace {
 
 // Number of codepoints in a UTF-8 string; the reference counts Java chars, which only
 // differs for supplementary codepoints.
@@ -420,13 +424,18 @@ float computeRootScale(float introProgress, float outroProgress) {
   return sampleCurve(kLevelStartRootScaleY, count, introProgress);
 }
 
-// Combo label fades out faster than the rest of the HUD during the exit animation.
-float comboLabelOutroAlpha(float outroProgress) {
+} // namespace
+
+float comboLabelOutroAlpha(float outroProgress) noexcept {
+  // The label clears faster than the rest of the HUD, so its own fade window is shorter than
+  // the HUD exit and it is already gone by the time the field starts blurring out.
   if (outroProgress <= 0.0F) return 1.0F;
   const float progress = std::clamp(
       outroProgress * kIntroDurationSec / kComboLabelOutroFadeSec, 0.0F, 1.0F);
   return 1.0F - smoothStep01(progress);
 }
+
+namespace {
 
 // Score and accuracy catch-up state; only active when the score-jump effect is on.
 struct ScoreDisplayState {
@@ -440,19 +449,26 @@ ScoreDisplayState& scoreDisplayState() {
   return state;
 }
 
-double approachDisplayValue(double current, double target, double stepFraction) {
+} // namespace
+
+double approachDisplayValue(double current, double target, double deltaMs) noexcept {
   if (!std::isfinite(target)) return std::numeric_limits<double>::quiet_NaN();
   if (!std::isfinite(current)) return target;
-  const double fraction = std::clamp(stepFraction, 0.0, 1.0);
-  const double next = current + (target - current) * fraction;
+  // The step is the elapsed fraction of the catch-up window, saturating at one frame's
+  // worth so a long frame cannot overshoot the target.
+  double factor = deltaMs / 50.0;
+  if (!std::isfinite(factor) || factor < 0.0) factor = 0.0;
+  if (factor > 1.0) factor = 1.0;
+  const double next = current + (target - current) * factor;
   if (std::abs(target - next) < 0.0001) return target;
   return next;
 }
 
+namespace {
+
 // Advances the displayed score/accuracy and returns the values to draw.
 void updateDisplayValues(const HudValues& values, int& scoreOut, int& accuracyHundredthsOut) {
   ScoreDisplayState& state = scoreDisplayState();
-  double stepFraction = 0.5;
   double deltaMs = 50.0;
   if (std::isfinite(values.visualTimeSec)) {
     if (state.lastUpdateSec >= 0.0 && values.visualTimeSec >= state.lastUpdateSec) {
@@ -460,8 +476,6 @@ void updateDisplayValues(const HudValues& values, int& scoreOut, int& accuracyHu
     }
     state.lastUpdateSec = values.visualTimeSec;
   }
-  deltaMs = std::clamp(deltaMs, 0.0, 100.0);
-  stepFraction = deltaMs / 50.0;
 
   const int scoreTarget = std::clamp(values.score, 0, 1000000);
   const double accuracyTarget = values.showAccuracy ? values.accuracy
@@ -472,9 +486,8 @@ void updateDisplayValues(const HudValues& values, int& scoreOut, int& accuracyHu
     state.displayAccuracy = accuracyTarget;
   } else {
     state.displayScore = approachDisplayValue(state.displayScore, static_cast<double>(scoreTarget),
-        stepFraction);
-    state.displayAccuracy = approachDisplayValue(state.displayAccuracy, accuracyTarget,
-        stepFraction);
+        deltaMs);
+    state.displayAccuracy = approachDisplayValue(state.displayAccuracy, accuracyTarget, deltaMs);
   }
 
   const int displayScore = std::isfinite(state.displayScore)
@@ -644,7 +657,9 @@ void drawHitOffsetIndicator(batch::SpriteBatch& batch, const StageLayout& layout
   const bool lineMode = hitOffset.mode == 2;
   const bool canDraw = textures.white != nullptr && textures.white->valid();
   if (lineMode) {
-    const float bottomSafety = (hasArrow ? arrowHeight : 0.0F) + dp * 5.0F;
+    // The pointer keeps its footprint even when its texture is unavailable, so the line
+    // clears the same space either way and does not shift when an asset is missing.
+    const float bottomSafety = arrowHeight + dp * 5.0F;
     const float lineY = viewHeight - bottomSafety;
     const float half = lineHalfWidth;
     const float perfectX = std::clamp(
@@ -702,9 +717,9 @@ void drawHitOffsetIndicator(batch::SpriteBatch& batch, const StageLayout& layout
   const float arrowBelowArc = endpointCos * std::max(0.0F, radius - arrowRadius);
   const float arrowHalfBounds = 0.5F * std::sqrt(arrowWidth * arrowWidth +
       arrowHeight * arrowHeight);
-  const float bottomSafety = hasArrow
-      ? std::max(dp * 3.0F, arrowBelowArc + arrowHalfBounds + dp * 2.0F)
-      : dp * 3.0F;
+  // The pointer's footprint is reserved whether or not its texture loaded, so the dial sits
+  // at the same height on every device rather than jumping when an asset is missing.
+  const float bottomSafety = std::max(dp * 3.0F, arrowBelowArc + arrowHalfBounds + dp * 2.0F);
   const float baseY = viewHeight - arcHeight - bottomSafety + radius;
   if (canDraw) {
     batch.begin();
@@ -806,9 +821,12 @@ void drawHud(batch::SpriteBatch& batch, text::TextRenderer& text, const StageLay
 
   HudCanvas canvas{layout};
   canvas.unit = hudUnit(layout);
-  canvas.halfUiW = layout.stage.height > 1.0e-6F
-      ? layout.stage.width / layout.stage.height * 500.0F
-      : 500.0F;
+  // The HUD canvas follows the stage's actual aspect. A degenerate stage cannot express one,
+  // so it falls back to the 16:9 reference aspect rather than to a bare half-height.
+  const float hudAspect = layout.stage.height > 1.0e-6F
+      ? layout.stage.width / layout.stage.height
+      : 16.0F / 9.0F;
+  canvas.halfUiW = hudAspect * 500.0F;
   canvas.rootY = layout.centerY();
   canvas.rootScale = computeRootScale(values.introProgress, values.outroProgress);
   const float comboAlpha = comboLabelOutroAlpha(values.outroProgress);
@@ -960,7 +978,9 @@ void drawHud(batch::SpriteBatch& batch, text::TextRenderer& text, const StageLay
     }
   }
 
-  // Combo number and label, both centred, only once the combo reaches three.
+  // Combo number and label, both centred, only once the combo reaches three. A failed level
+  // challenge replaces them with the distorted block field, which the caller draws over the
+  // same anchor; the plain widgets are suppressed by `showCombo` in that state.
   if (values.combo >= 3 && values.showCombo) {
     const std::string label =
         transforms.element[static_cast<std::size_t>(HudElement::ComboLabel)].text.empty()

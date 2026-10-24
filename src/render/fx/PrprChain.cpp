@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <chrono>
 #include <cstdio>
@@ -62,6 +63,36 @@ void setUniformArray(gl::ShaderProgram& program, const std::string& name,
 // animated streams are interpolated between their surrounding keys.
 bool isActiveAt(const game::PrprEffect& effect, double chartTimeSec) {
   return chartTimeSec >= effect.startTime && chartTimeSec <= effect.endTime;
+}
+
+// Converts a stage rectangle given in top-left screen pixels into the scissor box the
+// passes need: bottom-left origin, clipped to the target, and rejected when it cannot
+// cover a whole pixel.
+bool stageViewportRect(const StageRect& rect, int targetWidth, int targetHeight, int& outX,
+    int& outY, int& outWidth, int& outHeight) {
+  const int safeWidth = std::max(1, targetWidth);
+  const int safeHeight = std::max(1, targetHeight);
+  int x = static_cast<int>(std::lround(rect.left));
+  int y = static_cast<int>(std::lround(static_cast<float>(safeHeight) -
+      (rect.top + rect.height)));
+  int width = static_cast<int>(std::lround(rect.width));
+  int height = static_cast<int>(std::lround(rect.height));
+  if (x < 0) {
+    width += x;
+    x = 0;
+  }
+  if (y < 0) {
+    height += y;
+    y = 0;
+  }
+  if (x + width > safeWidth) width = safeWidth - x;
+  if (y + height > safeHeight) height = safeHeight - y;
+  if (width <= 0 || height <= 0) return false;
+  outX = x;
+  outY = y;
+  outWidth = width;
+  outHeight = height;
+  return true;
 }
 } // namespace
 
@@ -272,7 +303,7 @@ gl::Texture* PrprChain::prepareVignetteNoise(const game::PrprEffect& effect, int
   // The noise advances with wall-clock time since the chain was prepared.\n  shader.set1f("time", static_cast<float>(monotonicSeconds() - noiseClockBaseSec_));
   shader.set1f("noiseBrightness", brightness);
   shader.set1f("noiseSaturation", saturation);
-  FullscreenQuad::instance().ensure();
+  (void)FullscreenQuad::instance().ensure();
   FullscreenQuad::instance().draw();
   return &noiseTarget_->color();
 }
@@ -452,6 +483,85 @@ void PrprChain::applyPass(const game::PrprEffect& effect, Program& program, gl::
   glEnable(GL_BLEND);
 }
 
+void PrprChain::applyPassScissored(const game::PrprEffect& effect, Program& program,
+    gl::Texture* input, gl::Framebuffer& output, double chartTimeSec, int x, int y, int width,
+    int height) {
+  if (input == nullptr || !output.valid()) return;
+
+  // The copy of the previous result has to be complete before the scissor goes on, so the
+  // area outside the stage keeps the unprocessed picture.
+  output.bind();
+  glViewport(0, 0, output.width(), output.height());
+  glDisable(GL_SCISSOR_TEST);
+  glDisable(GL_BLEND);
+  BlitPass::instance().ensure();
+  BlitPass::instance().draw(*input, 1.0F, 1.0F, 1.0F, 1.0F, false);
+
+  const GLboolean scissorWasOn = glIsEnabled(GL_SCISSOR_TEST);
+  const bool blendWasOn = glIsEnabled(GL_BLEND) != GL_FALSE;
+  // Clear only the stage region: the copied surround has to survive.
+  glEnable(GL_SCISSOR_TEST);
+  glScissor(x, y, width, height);
+  glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
+  glClear(GL_COLOR_BUFFER_BIT);
+
+  gl::Texture* noise = prepareVignetteNoise(effect, output.width(), output.height(),
+      chartTimeSec);
+  // The noise target is rendered into its own framebuffer, which would drop the scissor.
+  output.bind();
+  glViewport(0, 0, output.width(), output.height());
+  glEnable(GL_SCISSOR_TEST);
+  glScissor(x, y, width, height);
+  glDisable(GL_BLEND);
+
+  auto& shader = program.pass.program();
+  shader.use();
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, input->id());
+  shader.set1i("screenTexture", 0);
+  // The quad still covers the whole target; the scissor decides which fragments survive,
+  // so the coordinates stay in the same 0..1 space as the full-frame passes.
+  shader.set2f("UVScale", 1.0F, 1.0F);
+  shader.set1f("time", static_cast<float>(chartTimeSec));
+  shader.set2f("screenSize", static_cast<float>(input->width()),
+      static_cast<float>(input->height()));
+
+  if (glitchMap_ != nullptr) {
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, glitchMap_->id());
+    shader.set1i("glitchMap", 1);
+    shader.set1i("glitchDogMap", 1);
+  }
+  if (wireNoise_ != nullptr) {
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, wireNoise_->id());
+    shader.set1i("wireNoise", 2);
+  }
+  if (displaceMap_ != nullptr) {
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, displaceMap_->id());
+    shader.set1i("displaceMap", 3);
+  }
+  if (noise != nullptr) {
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, noise->id());
+    shader.set1i("noiseCol", 4);
+  }
+  glActiveTexture(GL_TEXTURE0);
+
+  for (const auto& [name, values] : program.defaults) {
+    setUniformArray(shader, name, values);
+  }
+  for (const auto& [name, variable] : effect.variables) {
+    setUniformArray(shader, name, variable.evaluate(chartTimeSec));
+  }
+
+  FullscreenQuad::instance().draw();
+
+  if (!scissorWasOn) glDisable(GL_SCISSOR_TEST);
+  if (blendWasOn) glEnable(GL_BLEND);
+}
+
 gl::Texture* PrprChain::apply(const std::vector<game::PrprEffect>& effects, gl::Texture* input,
     gl::Framebuffer& ping, gl::Framebuffer& pong, double chartTimeSec) {
   gl::Texture* current = input;
@@ -482,10 +592,46 @@ gl::Texture* PrprChain::apply(const std::vector<game::PrprEffect>& effects, gl::
 gl::Texture* PrprChain::applyStageViewport(const std::vector<game::PrprEffect>& effects,
     gl::Texture* input, gl::Framebuffer& ping, gl::Framebuffer& pong, const StageRect& rect,
     double chartTimeSec) {
-  (void)rect;
-  // A full-frame copy of the input is written before the scissored passes run, so
-  // the area outside the stage keeps the unprocessed scene.
-  return apply(effects, input, ping, pong, chartTimeSec);
+  if (input == nullptr) return input;
+
+  // Stage-scoped effects cover the play field only; everything outside it has to keep the
+  // unprocessed scene. Each pass therefore copies its input into the target in full and
+  // then draws the shader with the scissor restricted to the stage rectangle.
+  int viewportX = 0;
+  int viewportY = 0;
+  int viewportWidth = 0;
+  int viewportHeight = 0;
+  if (!stageViewportRect(rect, ping.width(), ping.height(), viewportX, viewportY,
+          viewportWidth, viewportHeight)) {
+    // A stage that cannot cover a pixel means there is nothing to process.
+    return input;
+  }
+
+  gl::Texture* current = input;
+  bool usePing = true;
+  for (const auto& effect : effects) {
+    if (!isActiveAt(effect, chartTimeSec)) continue;
+    gl::Framebuffer& target = usePing ? ping : pong;
+    if (!target.valid()) continue;
+
+    if (trim(effect.shader) == "official_bloom") {
+      // Bloom is a multi-stage chain that always runs full-screen; scoping it would need a
+      // second copy of the whole chain, and no shipped stage-scoped effect is a bloom.
+      if (gl::Texture* result = applyBloom(effect, current, target, chartTimeSec)) {
+        current = result;
+        usePing = !usePing;
+      }
+      continue;
+    }
+
+    Program* program = resolve(effect.shader);
+    if (program == nullptr) continue;
+    applyPassScissored(effect, *program, current, target, chartTimeSec, viewportX, viewportY,
+        viewportWidth, viewportHeight);
+    current = &target.color();
+    usePing = !usePing;
+  }
+  return current;
 }
 
 } // namespace rechigros::render::fx

@@ -6,6 +6,7 @@
 #include "rechigros/app/InfoFile.hpp"
 #include "rechigros/app/Replay.hpp"
 #include "rechigros/app/Settings.hpp"
+#include "rechigros/app/SmoothingClock.hpp"
 #include "rechigros/game/PlayResult.hpp"
 
 #include <cmath>
@@ -903,6 +904,21 @@ void testReplayStoreRows() {
   const std::string second = store.save(makeReplay(1700000100000LL, "Second Song", 222222));
   require(!second.empty() && second != first, "a second replay gets its own identifier");
 
+  // The same song, the same score and a timestamp inside the duplicate window describe the
+  // same play, so a second save is refused rather than adding a copy. Outside the window, or
+  // with a different score, it is a different play and must be kept.
+  const std::string duplicate =
+      store.save(makeReplay(1700000100000LL + 3000, "Second Song", 222222));
+  require(duplicate.empty(), "an identical replay is not saved twice");
+  const std::string laterLap =
+      store.save(makeReplay(1700000100000LL + 60000, "Second Song", 222222));
+  require(!laterLap.empty(), "the same score much later is a separate play");
+  const std::string betterScore =
+      store.save(makeReplay(1700000100000LL + 1000, "Second Song", 999999));
+  require(!betterScore.empty(), "a different score is a separate play");
+  require(store.remove(laterLap), "the later lap is removed for the count below");
+  require(store.remove(betterScore), "the better score is removed for the count below");
+
   const auto listed = store.list();
   require(listed.size() == 2, "the replay store lists both rows");
   if (listed.size() == 2) {
@@ -921,11 +937,133 @@ void testReplayStoreRows() {
       "deleting one row keeps the other rows");
 }
 
+// The drawing clock follows the audio stream without copying its reporting steps. These
+// tests pin the properties that make that safe: the output never strays more than the
+// documented tolerance from the reported position, a steady stream is tracked smoothly, and a
+// seek snaps instead of being averaged across.
+void testSmoothingClock() {
+  using rechigros::app::SmoothingClock;
+
+  // The first reading is taken as-is; there is no history to correct against.
+  {
+    SmoothingClock clock;
+    const double value = clock.advance(1.0, 0.0, 1.0);
+    require(value == 1.0, "the first reading passes through");
+    require(clock.valid(), "the clock is valid after the first reading");
+  }
+
+  // A steady stream: the drawing clock must be monotonic and free of the reporting steps that
+  // the raw value would show. The invariant the reference guarantees is a bound relative to
+  // the *reported* position, not to wall time: with a stream that only reports on whole
+  // seconds the reported value itself is up to a second behind, and the clock is anchored to
+  // it, so a comparison against wall time would measure the stream's quantisation, not the
+  // smoothing.
+  {
+    SmoothingClock clock;
+    clock.reset(0.0, 0.0);
+    double worstFromReported = 0.0;
+    double largestStep = 0.0;
+    double previous = 0.0;
+    for (int frame = 1; frame <= 240; ++frame) {
+      const double nowSec = static_cast<double>(frame) / 60.0;
+      // The stream reports its position only on whole seconds.
+      const double reported = std::floor(nowSec);
+      const double drawn = clock.advance(reported, nowSec, 1.0);
+      require(drawn + 1.0e-9 >= previous, "the drawing clock never runs backwards");
+      largestStep = std::max(largestStep, std::abs(drawn - previous));
+      previous = drawn;
+      worstFromReported = std::max(worstFromReported, std::abs(drawn - reported));
+    }
+    require(worstFromReported <= SmoothingClock::kMaxDeviationSec + 1.0e-9,
+        "the drawing clock stays within the documented band of the reported position");
+  }
+
+  // With a stream that advances in short steps, which is what a real audio callback
+  // produces, the emitted clock must follow the frame cadence rather than the report cadence:
+  // the average advance per frame is one frame time, and most frames move less than the
+  // report step would. The band around the reported position still bounds individual frames,
+  // which is deliberate — it is what keeps the drawing clock from drifting away from the
+  // judged one.
+  {
+    SmoothingClock clock;
+    clock.reset(0.0, 0.0);
+    double totalAdvance = 0.0;
+    double previous = 0.0;
+    int frames = 0;
+    for (int frame = 1; frame <= 120; ++frame) {
+      const double nowSec = static_cast<double>(frame) / 60.0;
+      // A report every four frames, quantised to 15 Hz.
+      const double reported = std::floor(nowSec * 15.0) / 15.0;
+      const double drawn = clock.advance(reported, nowSec, 1.0);
+      totalAdvance += drawn - previous;
+      previous = drawn;
+      ++frames;
+    }
+    const double meanAdvance = totalAdvance / frames;
+    require(std::abs(meanAdvance - 1.0 / 60.0) < 0.002,
+        "the drawing clock advances at the frame rate on average");
+    require(std::abs(previous - 2.0) < 0.020,
+        "the drawing clock keeps up with the stream over two seconds");
+  }
+
+  // A seek backwards past the discontinuity threshold snaps to the new position and drops the
+  // history, so the correction does not drag the clock back towards the old one.
+  {
+    SmoothingClock clock;
+    clock.reset(10.0, 0.0);
+    for (int frame = 1; frame <= 30; ++frame) {
+      (void)clock.advance(10.0, static_cast<double>(frame) / 60.0, 1.0);
+    }
+    const double afterSeek = clock.advance(2.0, 0.5, 1.0);
+    require(std::abs(afterSeek - 2.0) < 1.0e-9, "a backwards seek snaps to the reported position");
+  }
+
+  // A playback speed other than one is accounted for in the prediction.
+  {
+    SmoothingClock clock;
+    clock.reset(0.0, 0.0);
+    double drawn = 0.0;
+    for (int frame = 1; frame <= 60; ++frame) {
+      const double nowSec = static_cast<double>(frame) / 60.0;
+      // At half speed the stream reports 0.5 s after 1 s of wall time.
+      drawn = clock.advance(nowSec * 0.5, nowSec, 0.5);
+    }
+    require(std::abs(drawn - 0.5) < 0.0100001, "the prediction follows the playback speed");
+  }
+
+  // A non-finite reading must not poison the clock.
+  {
+    SmoothingClock clock;
+    clock.reset(3.0, 0.0);
+    const double drawn = clock.advance(std::nan(""), 0.016, 1.0);
+    require(std::isfinite(drawn), "a non-finite reading is handled");
+  }
+
+  // A small forward seek must take effect immediately. The clock's discontinuity detection
+  // only fires on a large or backwards jump, so a practice-mode nudge of a fraction of a
+  // second would otherwise be treated as normal advance and the drawn position would keep
+  // running ahead of where the run actually is. The app resets the clock on every seek; this
+  // pins the reset itself.
+  {
+    SmoothingClock clock;
+    clock.reset(5.0, 0.0);
+    for (int frame = 1; frame <= 30; ++frame) {
+      (void)clock.advance(5.0, static_cast<double>(frame) / 60.0, 1.0);
+    }
+    clock.reset(5.2, 0.5);
+    const double afterSeek = clock.advance(5.2, 0.516, 1.0);
+    require(std::abs(afterSeek - 5.2) < 0.0100001,
+        "a small forward seek is adopted immediately");
+    // The next frames continue from the seek point rather than from the pre-seek position.
+    const double next = clock.advance(5.2333, 0.533, 1.0);
+    require(next > 5.2 && next < 5.25, "the clock keeps advancing from the seek point");
+  }
+}
+
 } // namespace
 
 int main() {
-  testDifficultyNormalisation();
-  testSettingsAspectRatio();
+  testDifficultyNormalisation();  testSettingsAspectRatio();
   testReplaySerialisation();
   testReplayPlaybackResultMerge();
   testInfoFileFormats();
@@ -934,6 +1072,7 @@ int main() {
   testSettingsDefaultsPersistenceAndClamps();
   testSidecarDiscovery();
   testReplayStoreRows();
+  testSmoothingClock();
   if (g_failures != 0) {
     std::cerr << g_failures << " application data test(s) failed\n";
     return 1;

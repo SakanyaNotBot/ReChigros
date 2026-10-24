@@ -14,4 +14,12 @@ inline constexpr float RPE_WIDTH = 1350.0F;
 inline constexpr float RPE_HEIGHT = 900.0F;
 inline constexpr float HEIGHT_RATIO = 0.83175F;
 inline constexpr float SPEED_RATIO = 10.0F / 45.0F / HEIGHT_RATIO;
+
+// Hit-effect particle burst, from the shipped "perfect" prefab: four particles on a ring of
+// radius 0.2 (thickness 0.2, so 0.16..0.20) at random angles, with a start speed drawn
+// uniformly from 15..35 prefab units per second.
+inline constexpr float HIT_FX_PARTICLE_SPEED_MIN = 15.0F;
+inline constexpr float HIT_FX_PARTICLE_SPEED_MAX = 35.0F;
+inline constexpr float HIT_FX_PARTICLE_SPAWN_RADIUS = 0.2F;
+inline constexpr float HIT_FX_PARTICLE_SPAWN_THICKNESS = 0.2F;
 }

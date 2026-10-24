@@ -808,7 +808,7 @@ void runMicroBenchmarks(const Options& options, rechigros::game::Chart& chart) {
   std::cout << "micro lineStates="
             << timeIt(20, [&chart]() {
                  for (const auto& line : chart.judgeLineList) {
-                   if (line != nullptr) line->fillState(30.0, 16.0F / 9.0F);
+                   if (line != nullptr) (void)line->fillState(30.0, 16.0F / 9.0F);
                  }
                })
             << "ms\n";

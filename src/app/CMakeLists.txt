@@ -15,6 +15,10 @@ set(RECHIGROS_APP_SOURCES
   CaptureHarness.cpp
   TriGridBackdrop.cpp
   CoverCache.cpp
+  SmoothingClock.cpp
+  VideoEncoder.cpp
+  RecordSession.cpp
+  RenderScreen.cpp
   InfoFile.cpp
   Settings.cpp
   ChartLibrary.cpp

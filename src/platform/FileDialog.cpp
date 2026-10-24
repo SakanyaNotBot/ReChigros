@@ -121,6 +121,10 @@ std::filesystem::path FileDialog::openSkinPackage() {
   return runOpenDialog(kFilter, L"选择皮肤资源包");
 }
 
+std::filesystem::path FileDialog::pickDirectory() {
+  return runFolderDialog(L"选择输出目录");
+}
+
 std::vector<std::filesystem::path> FileDialog::openChartSourceFiles() {
   static const wchar_t kFilter[] =
       L"谱面文件 (*.json;*.txt;*.pec)\0*.json;*.txt;*.pec\0"
@@ -196,6 +200,10 @@ std::filesystem::path FileDialog::openSkinPackage() {
   return {};
 }
 
+// The packaged picker layer has no directory-only mode, so the caller keeps its current output
+// directory and the interface reports that the choice is unavailable there.
+std::filesystem::path FileDialog::pickDirectory() { return {}; }
+
 std::vector<std::filesystem::path> FileDialog::openChartSourceFiles() {
   requestPicker(PICKER_FILE);
   return {};
@@ -217,6 +225,7 @@ std::filesystem::path FileDialog::openChartFolder() { return {}; }
 std::filesystem::path FileDialog::openChartPackage() { return {}; }
 std::filesystem::path FileDialog::openReplayFile() { return {}; }
 std::filesystem::path FileDialog::openSkinPackage() { return {}; }
+std::filesystem::path FileDialog::pickDirectory() { return {}; }
 std::vector<std::filesystem::path> FileDialog::openChartSourceFiles() { return {}; }
 bool FileDialog::available() noexcept { return false; }
 
@@ -232,6 +241,7 @@ std::filesystem::path FileDialog::openChartFolder() { return {}; }
 std::filesystem::path FileDialog::openChartPackage() { return {}; }
 std::filesystem::path FileDialog::openReplayFile() { return {}; }
 std::filesystem::path FileDialog::openSkinPackage() { return {}; }
+std::filesystem::path FileDialog::pickDirectory() { return {}; }
 std::vector<std::filesystem::path> FileDialog::openChartSourceFiles() { return {}; }
 bool FileDialog::available() noexcept { return false; }
 

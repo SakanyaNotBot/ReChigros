@@ -86,9 +86,10 @@ public:
   void clear() noexcept;
 
   // Draws the spritesheet frames and the particle debris. `whiteTexture` must be a
-  // 1x1 opaque white texture used for the debris quads.
+  // 1x1 opaque white texture used for the debris quads. `mirrorU` swaps the sheet's
+  // horizontal UVs so a mirrored play field does not show mirrored artwork.
   void draw(batch::SpriteBatch& out, const math::Mat4& projection, gl::Texture& sheet,
-      const gl::Texture& whiteTexture, double visualTimeSec) const;
+      const gl::Texture& whiteTexture, double visualTimeSec, bool mirrorU = false) const;
 
   // Spawns one burst for a held note's body, at the point where that note currently meets
   // its judge line. The gameplay session supplies the bursts (one every half beat while a

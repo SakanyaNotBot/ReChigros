@@ -94,6 +94,29 @@ const gl::Texture* PauseHudBlur::texture() const noexcept {
   return impl_->ping.valid() ? &impl_->ping.color() : nullptr;
 }
 
+void PauseHudBlur::warmUp(int viewWidth, int viewHeight) {
+  if (viewWidth <= 0 || viewHeight <= 0) return;
+  if (!ready() && !prepare()) return;
+  const int divisor = std::max(1, PAUSE_HUD_SOFT_DIVISOR);
+  const int width = std::max(4, viewWidth / divisor);
+  const int height = std::max(4, viewHeight / divisor);
+  if (!impl_->hud.resize(width, height) || !impl_->ping.resize(width, height)
+      || !impl_->pong.resize(width, height)) {
+    return;
+  }
+  // Force the deferred storage allocation now, while no frame is waiting on it.
+  unsigned int previous = 0;
+  glGetIntegerv(GL_FRAMEBUFFER_BINDING, reinterpret_cast<GLint*>(&previous));
+  for (auto* target : {&impl_->hud, &impl_->ping, &impl_->pong}) {
+    if (!target->valid()) continue;
+    target->bind();
+    glViewport(0, 0, target->width(), target->height());
+    glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
+    glClear(GL_COLOR_BUFFER_BIT);
+  }
+  glBindFramebuffer(GL_FRAMEBUFFER, previous);
+}
+
 bool PauseHudBlur::begin(int viewWidth, int viewHeight) {
   if (viewWidth <= 0 || viewHeight <= 0) return false;
   if (!ready() && !prepare()) return false;

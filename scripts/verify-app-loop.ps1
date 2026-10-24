@@ -50,8 +50,11 @@ Invoke-Run 'gameplay' @('--frames', '120', '--fixed-delta') 'game: chartTime'
 # A long run must reach the result screen with a real result.
 Invoke-Run 'to-result' @('--frames', '900', '--expect-result') 'perfect=[1-9]|good=[1-9]|miss=[1-9]'
 
-# The pause overlay must open, count down and resume.
-Invoke-Run 'pause-cycle' @('--frames', '900', '--expect-pause') 'pause: menu=1 countdown=1 resumed=1'
+# The pause overlay must open, count down and resume. The fixed step is required here for
+# the same reason as the gameplay case: without it the frames advance by real elapsed time,
+# a short fixture chart finishes before the pause has been driven, and the run lands on the
+# result screen while the pause assertions are still waiting.
+Invoke-Run 'pause-cycle' @('--frames', '900', '--fixed-delta', '--expect-pause') 'pause: menu=1 countdown=1 resumed=1'
 
 # A recorded replay must reproduce the run that produced it.
 $replay = Join-Path $Work 'run.rpl'

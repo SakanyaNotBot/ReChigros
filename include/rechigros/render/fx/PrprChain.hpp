@@ -73,6 +73,10 @@ private:
       int screenHeight, double chartTimeSec);
   void applyPass(const game::PrprEffect& effect, Program& program, gl::Texture* input,
       gl::Framebuffer& output, double chartTimeSec);
+  // One pass whose shader output is restricted to a pixel rectangle of the target; the rest
+  // of the target keeps a copy of the input, so the surround passes through unprocessed.
+  void applyPassScissored(const game::PrprEffect& effect, Program& program, gl::Texture* input,
+      gl::Framebuffer& output, double chartTimeSec, int x, int y, int width, int height);
 
   std::filesystem::path assetRoot_;
   BloomPass bloom_;

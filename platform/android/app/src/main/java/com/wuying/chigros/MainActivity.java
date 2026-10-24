@@ -37,6 +37,17 @@ public final class MainActivity extends SDLActivity {
         return new String[] { "c++_shared", "SDL3", "main" };
     }
 
+    // The interface is authored on a wide canvas, so the window stays in landscape on every
+    // device and no other orientation is ever accepted. While creating its surface the
+    // toolkit derives a requested orientation from the window size and the registered
+    // orientation hint, which would otherwise hand the choice back to the system and let a
+    // portrait device open in portrait; answering the request here keeps the single allowed
+    // orientation regardless of the device or the system-wide rotation lock.
+    @Override
+    public void setOrientationBis(int width, int height, boolean resizable, String hint) {
+        setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+    }
+
     // Automation and device bring-up runs need the same flags the desktop build takes
     // (a frame limit, a frame capture path, a GL diagnostic switch), so the launcher may
     // hand them over as a single space-separated intent extra. A normal launch carries no

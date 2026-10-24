@@ -13,7 +13,10 @@
 namespace rechigros::app {
 namespace {
 
-constexpr int kLoadsPerQuery = 2;
+// Images uploaded to the GPU per frame. Decoding happens off-thread, but the upload makes
+// the driver allocate storage for the texture, and a screen full of artwork would otherwise
+// pay for all of it on its first frame.
+constexpr int kUploadsPerFrame = 2;
 
 std::uint64_t createTexture(int width, int height, const unsigned char* pixels) {
   if (width <= 0 || height <= 0 || pixels == nullptr) return 0;
@@ -145,20 +148,95 @@ std::vector<unsigned char> boxBlurRgba(const std::vector<unsigned char>& source,
 
 } // namespace
 
+TextureCache::TextureCache() { startWorker(); }
+
 TextureCache::~TextureCache() {
+  stopWorker();
   reset();
+}
+
+void TextureCache::startWorker() {
+  if (worker_.joinable()) return;
+  worker_ = std::thread([this] {
+    for (;;) {
+      Pending task;
+      {
+        std::unique_lock<std::mutex> lock(mutex_);
+        wake_.wait(lock, [this] { return stopping_.load() || !queue_.empty(); });
+        if (stopping_.load() && queue_.empty()) return;
+        task = std::move(queue_.front());
+        queue_.pop_front();
+      }
+      // Decoding and downscaling happen here, off the render thread; only the finished
+      // pixels cross back.
+      Decoded decoded;
+      decoded.key = task.key;
+      int width = 0;
+      int height = 0;
+      int channels = 0;
+      const auto bytes = platform::AssetManager::readBinary(platform::assetRoot(),
+          task.path.lexically_relative(platform::assetRoot()).generic_string());
+      unsigned char* pixels = bytes.empty()
+          ? stbi_load(task.path.string().c_str(), &width, &height, &channels, 4)
+          : stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), &width, &height,
+                &channels, 4);
+      if (pixels == nullptr || width <= 0 || height <= 0) {
+        if (pixels != nullptr) stbi_image_free(pixels);
+        decoded.failed = true;
+      } else {
+        int finalWidth = width;
+        int finalHeight = height;
+        const auto scaled = downscale(pixels, width, height, task.maxSize, finalWidth,
+            finalHeight);
+        if (scaled.empty()) {
+          decoded.pixels.assign(pixels, pixels + static_cast<std::size_t>(width) * height * 4U);
+          decoded.width = width;
+          decoded.height = height;
+        } else {
+          decoded.pixels = scaled;
+          decoded.width = finalWidth;
+          decoded.height = finalHeight;
+        }
+        stbi_image_free(pixels);
+      }
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        finished_.push_back(std::move(decoded));
+      }
+    }
+  });
+}
+
+void TextureCache::stopWorker() {
+  if (!worker_.joinable()) return;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    stopping_.store(true);
+  }
+  wake_.notify_all();
+  worker_.join();
+  stopping_.store(false);
 }
 
 std::uint64_t TextureCache::textureFor(const std::filesystem::path& image, int maxSize) {
   if (image.empty()) return 0;
+  // Upload whatever the worker finished first, so an image becomes visible on the frame it
+  // is queried rather than one frame later.
+  drainDecoded();
   const std::string key = image.generic_string() + "#" + std::to_string(maxSize);
   const auto iterator = entries_.find(key);
   if (iterator != entries_.end()) return iterator->second.failed ? 0 : iterator->second.texture;
-  for (const auto& pending : pending_) {
-    if (pending.key == key) return 0;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& queued : queue_) {
+      if (queued.key == key) return 0;
+    }
+    for (const auto& done : finished_) {
+      if (done.key == key) return 0;
+    }
+    queue_.push_back(Pending{key, image, maxSize});
   }
-  pending_.push_back(Pending{key, image, maxSize});
-  pump();
+  wake_.notify_one();
   return 0;
 }
 
@@ -172,49 +250,43 @@ int TextureCache::height(std::uint64_t texture) const {
   return iterator == sizes_.end() ? 0 : iterator->second.height;
 }
 
-void TextureCache::pump() {
-  int loaded = 0;
-  while (!pending_.empty() && loaded < kLoadsPerQuery) {
-    Pending task = std::move(pending_.front());
-    pending_.erase(pending_.begin());
-    Entry entry;
-    Size size;
-    entry.texture = load(task.key, task.path, task.maxSize, size);
-    entry.width = size.width;
-    entry.height = size.height;
-    entry.failed = entry.texture == 0;
-    entries_[task.key] = entry;
-    ++loaded;
+std::uint64_t TextureCache::upload(const Decoded& decoded) {
+  Entry entry;
+  if (!decoded.failed && decoded.width > 0 && decoded.height > 0 && !decoded.pixels.empty()) {
+    entry.texture = createTexture(decoded.width, decoded.height, decoded.pixels.data());
+    entry.width = decoded.width;
+    entry.height = decoded.height;
   }
+  entry.failed = entry.texture == 0;
+  if (!entry.failed) sizes_[entry.texture] = Size{entry.width, entry.height};
+  const std::uint64_t result = entry.failed ? 0 : entry.texture;
+  entries_[decoded.key] = entry;
+  return result;
 }
 
-std::uint64_t TextureCache::load(const std::string& key, const std::filesystem::path& path,
-    int maxSize, Size& size) {
-  (void)key;
-  int width = 0;
-  int height = 0;
-  int channels = 0;
-  // A packaged build keeps its images inside the package, so they are read through the
-  // asset layer rather than opened as files.
-  const auto bytes = platform::AssetManager::readBinary(platform::assetRoot(),
-      path.lexically_relative(platform::assetRoot()).generic_string());
-  unsigned char* pixels = bytes.empty()
-      ? stbi_load(path.string().c_str(), &width, &height, &channels, 4)
-      : stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), &width, &height,
-            &channels, 4);
-  if (pixels == nullptr) return 0;
-  int finalWidth = width;
-  int finalHeight = height;
-  const auto scaled = downscale(pixels, width, height, maxSize, finalWidth, finalHeight);
-  const std::uint64_t texture =
-      scaled.empty() ? createTexture(width, height, pixels)
-                     : createTexture(finalWidth, finalHeight, scaled.data());
-  stbi_image_free(pixels);
-  if (texture == 0) return 0;
-  size.width = scaled.empty() ? width : finalWidth;
-  size.height = scaled.empty() ? height : finalHeight;
-  sizes_[texture] = size;
-  return texture;
+void TextureCache::drainDecoded() {
+  std::deque<Decoded> ready;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ready.swap(finished_);
+  }
+  // Upload a bounded number per frame. The decode cost is already paid off the render
+  // thread, but the upload itself is not free: a texture that large makes the driver
+  // allocate storage and can stall the first frame that touches it. Spreading the uploads
+  // over a few frames keeps every frame short and fills the screen within a handful of
+  // frames, which is what the placeholder path is for.
+  int uploaded = 0;
+  while (!ready.empty() && uploaded < kUploadsPerFrame) {
+    (void)upload(ready.front());
+    ready.pop_front();
+    ++uploaded;
+  }
+  if (!ready.empty()) {
+    // Whatever did not fit goes back to the front of the finished queue, ahead of anything
+    // the worker produced in the meantime, so the order stays oldest-first.
+    std::lock_guard<std::mutex> lock(mutex_);
+    finished_.insert(finished_.begin(), ready.begin(), ready.end());
+  }
 }
 
 std::uint64_t TextureCache::blurredBackdropFor(const std::filesystem::path& image) {
@@ -271,7 +343,13 @@ void TextureCache::reset() noexcept {
     }
   }
   entries_.clear();
-  pending_.clear();
+  // Anything still queued or decoded but not uploaded belongs to the old context and is
+  // dropped; a later query re-requests it.
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    queue_.clear();
+    finished_.clear();
+  }
   sizes_.clear();
 }
 

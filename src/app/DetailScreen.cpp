@@ -476,16 +476,23 @@ void drawDetailScreen(AppContext& context) {
   const ui::Box startBox = ui::Box{contentWidth - 78.0F * kHostUnit,
       contentHeight - 66.0F * kHostUnit - 48.0F * kHostUnit, contentWidth,
       contentHeight - 66.0F * kHostUnit};
+  // The recording button sits directly above the start plate at the same width, so the two read as
+  // a pair of actions on the chart rather than as unrelated controls.
+  const ui::Box renderBox = ui::Box{contentWidth - 78.0F * kHostUnit,
+      startBox.y0 - 8.0F * kHostUnit - 40.0F * kHostUnit, contentWidth,
+      startBox.y0 - 8.0F * kHostUnit};
 
   bool backPressed = false;
   bool infoPressed = false;
   bool settingsPressed = false;
   bool startPressed = false;
+  bool renderPressed = false;
   if (!dialogWasOpen) {
     backPressed = ui::panelInteraction("##detail_back", canvas, backBox, backStyle).pressed;
     infoPressed = ui::panelInteraction("##detail_info", canvas, infoBox, topStyle).pressed;
     settingsPressed =
         ui::panelInteraction("##detail_settings", canvas, settingsBox, topStyle).pressed;
+    renderPressed = ui::panelInteraction("##detail_render", canvas, renderBox, sideStyle).pressed;
     // The start plate begins a normal run on a tap and a practice run on a long press.
     ImGui::SetCursorScreenPos(canvas.point(startBox.x0, startBox.y0));
     ImGui::InvisibleButton("##detail_start", ImVec2(canvas.units(startBox.x1 - startBox.x0),
@@ -604,6 +611,7 @@ void drawDetailScreen(AppContext& context) {
   drawIconOnPlate(context, drawList, canvas, settingsBox, topStyle, "res/settings.png");
   drawTopWiderAccent(drawList, canvas, infoBox, topStyle);
   drawTopWiderAccent(drawList, canvas, settingsBox, topStyle);
+  drawIconOnPlate(context, drawList, canvas, renderBox, sideStyle, "res/render.png", true);
   drawIconOnPlate(context, drawList, canvas, startBox, sideStyle, "res/start.png", true);
 
   // ---- information dialog ----
@@ -630,6 +638,12 @@ void drawDetailScreen(AppContext& context) {
     navigateTo(context, Screen::Settings);
   }
   if (startPressed) startChart(context, false);
+  if (renderPressed) {
+    // The recording page renders the chart this page describes, so it has to be the loaded one.
+    context.renderReturn = Screen::Detail;
+    openChartDetail(context, record->id);
+    navigateTo(context, Screen::Render);
+  }
 }
 
 } // namespace rechigros::app

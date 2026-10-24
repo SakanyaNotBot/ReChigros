@@ -27,6 +27,15 @@ int main(){
   require(HitOffsetIndicator::judgementForOffset(0.080,0.080,0.180,0.220)==HitOffsetIndicator::Judgement::Perfect,"perfect boundary");
   require(!HitOffsetIndicator::shouldShowCommitMark(NOTE_HOLD,false,HitOffsetIndicator::Judgement::Perfect),"hold tail mark suppression");
   require(HitOffsetIndicator::formatOffsetMs(-0.008)=="-008ms","offset formatting");
+  // Rounding agrees with the reference's Math.round, which is floor(x + 0.5): a value sitting
+  // exactly on a half moves towards positive infinity. Rounding a half away from zero instead
+  // would print -001ms where the reference prints -000ms, so these boundaries pin the rule.
+  require(HitOffsetIndicator::formatOffsetMs(-0.0005)=="+000ms","negative half rounds up to zero");
+  require(HitOffsetIndicator::formatOffsetMs(0.0005)=="+001ms","positive half rounds up");
+  require(HitOffsetIndicator::formatOffsetMs(-0.0015)=="-001ms","negative half at two ms rounds up");
+  require(HitOffsetIndicator::formatOffsetMs(-0.0085)=="-008ms","negative half at nine ms rounds up");
+  require(HitOffsetIndicator::formatOffsetMs(0.9999)=="+999ms","the readout clamps at the top");
+  require(HitOffsetIndicator::formatOffsetMs(-0.9999)=="-999ms","the readout clamps at the bottom");
 
   BpmTimeline timeline({0,32},{120,240},{0,0.5});
   require(close(timeline.beatToSec(16),0.25),"beat to second");
@@ -39,7 +48,7 @@ int main(){
   require(line.notes.size()==2&&line.notes.front().time==16&&!line.notes.front().isAbove,"note merge ordering");
   line.judgeLineMoveEvents.push_back(MoveEvent{.startTime=0,.endTime=32,.start=0.5,.end=1,.start2=0.5,.end2=0});
   line.judgeLineDisappearEvents.push_back(LineEvent{.startTime=0,.endTime=32,.start=0,.end=1});line.normalize();
-  const auto state=line.fillState(0.25,16.0F/9.0F);require(close(state.xNorm,0.75),"line X interpolation");require(close(state.yNorm,0.25),"line Y interpolation");require(close(state.alpha,0.5),"line alpha interpolation");
+  const auto state=line.fillState(0.25,16.0F/9.0F);require(close(state.xNorm,0.75),"line X interpolation");require(close(state.yNorm,0.75),"line Y interpolation");require(close(state.alpha,0.5),"line alpha interpolation");
   JudgeLine hidden;hidden.invertRotation=false;LineEvent alpha;alpha.startTime=0;alpha.endTime=100;alpha.start=-1;alpha.end=-1;hidden.judgeLineDisappearEvents.push_back(alpha);hidden.normalize();const auto hiddenState=hidden.fillState(0,16.0F/9.0F);require(hiddenState.hideLine&&hiddenState.hideNotes,"negative alpha extension");
   std::vector<SpeedEvent> speed(1);speed[0].startTime=0;speed[0].endTime=10;speed[0].value=1;speed[0].endValue=1;EventUtils::initSpeedEvents(speed);require(close(EventUtils::getFloorPosition(4,speed),4),"constant speed integral");
   const auto pec=rechigros::chart::PecChartParser::parse("0\nbp 0 120\nn1 0 1 128 1 0\n# 2\n& 1.5\nn2 0 2 3 0 0 0\ncv 0 0 7\ncp 0 0 1024 700\nca 0 0 255\n");
@@ -53,6 +62,23 @@ int main(){
   JudgementEngine::FlickTracker flick(0,0);const auto flickThreshold=JudgementEngine::flickJudgeSpeed(380);flick.move(0.16F,0);flick.advanceFrame(1.0F/60.0F,flickThreshold);require(!flick.newFlick(),"first flick frame");flick.move(0.32F,0);flick.advanceFrame(1.0F/60.0F,flickThreshold);require(flick.newFlick(),"two frame flick");
   GameplaySession::Viewport viewport{1600,900,16.0F/9.0F,1,380};
   auto tapChart=singleNoteChart(NOTE_TAP);GameplaySession tapSession;tapSession.setViewport(viewport);tapSession.setChart(&tapChart);tapSession.touchDown(1,800,450);tapSession.update(0.95,1.0F/60.0F);require(tapChart.allNotesSorted[0]->judgeResult==0&&tapSession.judgement().score()==1000000,"tap session perfect");const auto tapSounds=tapSession.takeSoundEvents();require(tapSounds.size()==1&&tapSounds[0]==NOTE_TAP,"tap sound event");require(tapSession.takeSoundEvents().empty(),"tap sound event drains once");
+  // Music speed scales the conversion from a real frame duration to chart time. The session
+  // divides by the speed, so a half-speed practice run treats a frame as twice its real
+  // length. The value must be settable because both the run start and the practice slider
+  // change it, and an unusable value falls back to 1x rather than dividing by zero.
+  {
+    GameplaySession speedSession;
+    speedSession.setViewport(viewport);
+    speedSession.setMusicSpeed(0.5);
+    require(speedSession.musicSpeed() == 0.5, "half speed reaches the session");
+    speedSession.setMusicSpeed(2.0);
+    require(speedSession.musicSpeed() == 2.0, "double speed reaches the session");
+    speedSession.setMusicSpeed(0.0);
+    require(speedSession.musicSpeed() == 1.0, "a zero speed falls back to 1x");
+    speedSession.setMusicSpeed(std::nan(""));
+    require(speedSession.musicSpeed() == 1.0, "a non-finite speed falls back to 1x");
+  }
+
   // Drag on a fresh touch-down takes the CheckNote claim first: phase 2 sets isJudged for
   // every type except Flick, so the drag phase reads preJudge = isJudged = true and never
   // reaches the priming branch. Expect preJudge true, dragPrimed false, then a Perfect once

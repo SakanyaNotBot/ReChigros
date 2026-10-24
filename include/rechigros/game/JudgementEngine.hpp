@@ -78,6 +78,10 @@ public:
   [[nodiscard]] double judgeWindowSec(int noteType) const noexcept;
 
   bool commit(Note& note, Judgement judgement, double diffSec, double chartTimeSec) noexcept;
+  // Chart time a judgement with this delta happened at. `fallbackChartTimeSec` is used when
+  // the reconstruction is not finite.
+  [[nodiscard]] static double chartTimeForJudgementDiff(const Note& note, double diffSec,
+      double fallbackChartTimeSec) noexcept;
   void recordOffset(Note& note, Judgement judgement, double diffSec, bool forceHoldHead = false) noexcept;
   void recordIndicator(Note& note, Judgement judgement, double diffSec, bool forceHoldHead = false) noexcept;
 

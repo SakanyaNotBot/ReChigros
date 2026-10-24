@@ -136,7 +136,7 @@ void BloomPass::apply(const BloomSettings& settings, const gl::Texture& input,
     shader.set1i("screenTexture", 0);
     shader.set2f("UVScale", 1.0F, 1.0F);
     shader.set1f("bloomThreshold", settings.threshold);
-    FullscreenQuad::instance().ensure();
+    (void)FullscreenQuad::instance().ensure();
     FullscreenQuad::instance().draw();
   }
 

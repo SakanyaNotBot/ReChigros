@@ -94,7 +94,7 @@ void DsGridPass::draw(gl::Texture& gridTexture, float chartTimeSec, float opacit
   shader.set1i("gridTex", 0);
   // The whole object fades through a colour uniform; only the alpha carries the track.
   shader.set4f("vertexColor", 1.0F, 1.0F, 1.0F, opacity);
-  FullscreenQuad::instance().ensure();
+  (void)FullscreenQuad::instance().ensure();
   FullscreenQuad::instance().draw();
 
   // Restore the pass state the rest of the frame expects.

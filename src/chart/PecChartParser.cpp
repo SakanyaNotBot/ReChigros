@@ -213,9 +213,12 @@ std::vector<SpeedEvent> buildSpeed(std::vector<SpeedPoint> points, const BpmConv
     SpeedEvent event;
     event.startTime = bpm.beatToNormBeat(points[i].beat, lineBpm);
     event.endTime = i + 1 < points.size() ? bpm.beatToNormBeat(points[i + 1].beat, lineBpm) : 1e9;
+    // A negative BPM can invert the pair; the span is still written low-to-high.
+    if (event.endTime < event.startTime) std::swap(event.startTime, event.endTime);
     event.value = event.endValue = points[i].speed;
     result.push_back(std::move(event));
   }
+  if (!result.empty() && result.back().endTime < 1e8) result.back().endTime = 1e9;
   return result;
 }
 

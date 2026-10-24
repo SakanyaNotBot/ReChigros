@@ -341,8 +341,15 @@ enum class ColourParse { Failed, WithoutAlpha, WithAlpha };
 ColourParse parseColourText(const std::string& text, SkinColour& colour, float& alphaOut) {
   std::string value = trimmed(text);
   if (value.empty()) return ColourParse::Failed;
+  // An explicit `0x` prefix forces the hexadecimal reading. Without it a token that happens
+  // to consist only of hex digits is ambiguous, and the decimal reading is the one the config
+  // documents: a bare value such as `16777215` is the decimal spelling of white, not the hex
+  // digits `0x16777215` with an accidental alpha byte of 0x01. Treating it as hex made that
+  // documented spelling resolve to a dark, nearly transparent colour.
+  bool explicitHex = false;
   if (value.size() > 2 && value[0] == '0' && (value[1] == 'x' || value[1] == 'X')) {
     value = value.substr(2);
+    explicitHex = true;
   }
   const auto allHex = [](const std::string& token) {
     for (const char character : token) {
@@ -350,7 +357,17 @@ ColourParse parseColourText(const std::string& text, SkinColour& colour, float& 
     }
     return !token.empty();
   };
-  if (value.size() >= 6 && allHex(value)) {
+  const auto allDigits = [](const std::string& token) {
+    for (const char character : token) {
+      if (character < '0' || character > '9') return false;
+    }
+    return !token.empty();
+  };
+  // A numeric-only token is decimal unless it was explicitly prefixed; a token carrying
+  // letters can only be hexadecimal.
+  const bool hexReadable = value.size() >= 6 && allHex(value);
+  const bool preferDecimal = allDigits(value);
+  if (hexReadable && (explicitHex || !preferDecimal)) {
     unsigned long long packed = 0;
     try {
       packed = std::stoull(value, nullptr, 16);
@@ -379,7 +396,12 @@ ColourParse parseColourText(const std::string& text, SkinColour& colour, float& 
   colour.red = static_cast<float>((decimal >> 16) & 0xFFLL) / 255.0F;
   colour.green = static_cast<float>((decimal >> 8) & 0xFFLL) / 255.0F;
   colour.blue = static_cast<float>(decimal & 0xFFLL) / 255.0F;
-  if (!hasAlpha) return ColourParse::WithoutAlpha;
+  // A loose decimal without an alpha digit means fully opaque, whereas a six-digit hex
+  // colour means "keep the caller's alpha" - the two spellings differ in this one respect.
+  if (!hasAlpha) {
+    alphaOut = 1.0F;
+    return ColourParse::WithAlpha;
+  }
   alphaOut = static_cast<float>((decimal >> 24) & 0xFFLL) / 255.0F;
   return ColourParse::WithAlpha;
 }

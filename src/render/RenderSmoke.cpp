@@ -3,6 +3,7 @@
 // interactive window.
 
 #include "rechigros/chart/ChartLoader.hpp"
+#include "rechigros/game/OfficialLevelEffects.hpp"
 #include "rechigros/game/Chart.hpp"
 #include "rechigros/game/GameplaySession.hpp"
 #include "rechigros/game/JudgementEngine.hpp"
@@ -174,6 +175,19 @@ int main(int argc, char** argv) {
   try {
     auto chart = rechigros::chart::ChartLoader::loadFromFile(options.chartPath, options.assetRoot,
         options.songName);
+    // A smoke run names the level effect it wants to exercise. The product selects an effect
+    // from the chart's digest alone, so a fixture chart can never match a whitelisted chart;
+    // the explicit name is what lets the matrix drive each effect chain on a synthetic chart.
+    if (!options.songName.empty() && chart->levelEffects == nullptr) {
+      if (const auto table = rechigros::game::OfficialLevelEffects::load(options.assetRoot)) {
+        if (auto effect = rechigros::game::OfficialLevelEffects::forSongName(*table,
+                options.songName)) {
+          chart->levelEffects = effect;
+          auto passes = effect->buildPrprEffects();
+          chart->prprEffects.insert(chart->prprEffects.end(), passes.begin(), passes.end());
+        }
+      }
+    }
     std::cout << "Loaded chart: " << chart->judgeLineList.size() << " lines, "
               << chart->allNotesSorted.size() << " notes, "
               << chart->prprEffects.size() << " storyboard effects\n";

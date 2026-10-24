@@ -28,6 +28,8 @@ namespace {
 using nlohmann::json;
 
 constexpr int kExtraSearchDepth = 6;
+// How far a package-relative asset reference may climb before it is abandoned.
+constexpr int kResourceSearchDepth = 4;
 // Format detection only reads this much of the file.
 constexpr std::size_t kDetectionPrefixBytes = 64 * 1024;
 
@@ -208,37 +210,57 @@ struct BpmSegment {
 double parseBeatTriple(const json& node) {
   if (node.is_number()) return node.get<double>();
   if (!node.is_array() || node.size() < 3) return 0.0;
-  const auto component = [&node](std::size_t index) {
-    return node.size() > index && node[index].is_number() ? node[index].get<double>() : 0.0;
+  const auto component = [&node](std::size_t index, double fallback) {
+    return node.size() > index && node[index].is_number() ? node[index].get<double>() : fallback;
   };
-  return component(0) + component(1) / std::max(1.0, component(2));
+  double denominator = component(2, 1.0);
+  if (denominator == 0.0) denominator = 1.0;
+  return component(0, 0.0) + component(1, 0.0) / denominator;
 }
 
+// Reads the storyboard BPM list. It may be an array of segments, a single segment object,
+// or a bare number holding the BPM for the whole chart.
 std::vector<BpmSegment> parseBpmSegments(const json& node) {
   std::vector<BpmSegment> segments;
-  if (!node.is_array()) return segments;
-  for (const auto& item : node) {
-    if (!item.is_object()) continue;
+  const auto append = [&segments](const json& item) {
+    if (!item.is_object()) return;
     BpmSegment segment;
-    const auto beatIt = item.find("startTime");
-    segment.startBeat = beatIt != item.end() ? parseBeatTriple(*beatIt) : 0.0;
+    const auto beatIt = item.find("time");
+    const json* beatNode = beatIt != item.end() ? &*beatIt : nullptr;
+    if (beatNode == nullptr) {
+      const auto startIt = item.find("startTime");
+      if (startIt != item.end()) beatNode = &*startIt;
+    }
+    segment.startBeat = beatNode != nullptr ? parseBeatTriple(*beatNode) : 0.0;
     const auto bpmIt = item.find("bpm");
     segment.bpm = bpmIt != item.end() && bpmIt->is_number() ? bpmIt->get<double>() : 120.0;
-    if (!(segment.bpm > 0.0)) segment.bpm = 120.0;
+    segments.push_back(segment);
+  };
+
+  if (node.is_array()) {
+    for (const auto& item : node) append(item);
+  } else if (node.is_object()) {
+    append(node);
+  } else if (node.is_number()) {
+    BpmSegment segment;
+    segment.startBeat = 0.0;
+    segment.bpm = node.get<double>();
     segments.push_back(segment);
   }
-  std::sort(segments.begin(), segments.end(),
+
+  std::stable_sort(segments.begin(), segments.end(),
       [](const BpmSegment& first, const BpmSegment& second) {
         return first.startBeat < second.startBeat;
       });
-  // One forward pass turns each segment's start beat into seconds.
+  // One forward pass turns each segment's start beat into seconds. A zero BPM keeps the
+  // default beat length; a negative one is used as authored, which the reference allows.
   double lastBeat = 0.0;
   double lastTime = 0.0;
   double beatTime = 0.5;
   for (auto& segment : segments) {
     const double deltaBeat = std::max(0.0, segment.startBeat - lastBeat);
     segment.startTime = lastTime + beatTime * deltaBeat;
-    segment.beatTime = 60.0 / segment.bpm;
+    segment.beatTime = 60.0 / (segment.bpm == 0.0 ? 120.0 : segment.bpm);
     lastBeat = segment.startBeat;
     lastTime = segment.startTime;
     beatTime = segment.beatTime;
@@ -246,62 +268,86 @@ std::vector<BpmSegment> parseBpmSegments(const json& node) {
   return segments;
 }
 
-// Converts a beat into seconds by walking the segments from the end; the last segment
-// at or before `beat` owns the rate.
+// Converts a beat into seconds using the segment at or before `beat`. Without any segment
+// the storyboard falls back to a flat half-second beat.
 double beatToSeconds(const std::vector<BpmSegment>& segments, double beat) {
-  if (segments.empty()) return beat * 0.5;
-  for (auto it = segments.rbegin(); it != segments.rend(); ++it) {
-    const bool last = (it + 1) == segments.rend();
-    if (beat >= it->startBeat || last) {
-      return it->startTime + (beat - it->startBeat) * it->beatTime;
-    }
+  for (const auto& segment : segments) {
+    if (segment.startBeat > beat) continue;
+    return segment.startTime + (beat - segment.startBeat) * segment.beatTime;
   }
   return beat * 0.5;
 }
 
 // Storyboard effect variables are a constant vector, a list of keyframes or the prpr
-// object form `{ "values": [...], "events": [...] }`. Keyframes become eased tracks.
-void readEffectVariables(const json& varsNode, game::PrprEffect& effect) {
+// First matching member of `node`, or nullptr when none of the spellings is present.
+const json* findFirst(const json& node, std::initializer_list<const char*> keys) {
+  for (const char* key : keys) {
+    const auto it = node.find(key);
+    if (it != node.end()) return &*it;
+  }
+  return nullptr;
+}
+
+// Effect variables are either a constant (number or numeric array) or a list of eased
+// spans. Each span carries its own `startTime`/`endTime` beat triples, so a key is a full
+// interval rather than a point that has to be paired with its neighbour.
+void readEffectVariables(const json& varsNode, game::PrprEffect& effect,
+    const std::vector<BpmSegment>& segments) {
   if (!varsNode.is_object()) return;
+  const auto readNumber = [](const json& node, double fallback) {
+    return node.is_number() ? node.get<double>() : fallback;
+  };
+
   for (auto it = varsNode.begin(); it != varsNode.end(); ++it) {
     const std::string& name = it.key();
     const json& value = it.value();
+    if (value.is_null()) continue;
     game::PrprVariable variable;
 
-    const auto readKeyframes = [&variable](const json& list) {
+    const auto readSpans = [&variable, &segments, &readNumber](const json& list) {
       for (const auto& key : list) {
         if (!key.is_object()) continue;
+        const json* startTimeNode = findFirst(key, {"startTime", "start"});
+        const json* endTimeNode = findFirst(key, {"endTime", "end"});
+        if (startTimeNode == nullptr || endTimeNode == nullptr) continue;
+
         game::LineEvent event;
-        const auto timeIt = key.find("time");
-        if (timeIt == key.end() || !timeIt->is_number()) continue;
-        event.startTime = timeIt->get<double>();
-        event.endTime = event.startTime;
-        const auto valueIt = key.find("value");
-        if (valueIt != key.end() && valueIt->is_number()) {
-          event.start = valueIt->get<double>();
-          event.end = event.start;
+        event.startTime = beatToSeconds(segments, parseBeatTriple(*startTimeNode));
+        event.endTime = beatToSeconds(segments, parseBeatTriple(*endTimeNode));
+        const auto valueIt = key.find("start");
+        event.start = valueIt != key.end() ? readNumber(*valueIt, 0.0) : 0.0;
+        const auto endIt = key.find("end");
+        event.end = endIt != key.end() ? readNumber(*endIt, event.start) : event.start;
+        event.type = std::max(0, static_cast<int>(readNumber(
+            key.contains("easingType") ? key["easingType"] : json(), 1.0)) - 1);
+        const auto leftIt = key.find("easingLeft");
+        event.left = leftIt != key.end() ? static_cast<float>(readNumber(*leftIt, 0.0)) : 0.0F;
+        const auto rightIt = key.find("easingRight");
+        event.right = rightIt != key.end() ? static_cast<float>(readNumber(*rightIt, 1.0)) : 1.0F;
+        const auto bezierIt = key.find("bezier");
+        event.bezier = bezierIt != key.end() && static_cast<int>(readNumber(*bezierIt, 0.0)) == 1;
+        if (event.bezier) {
+          if (const auto pointsIt = key.find("bezierPoints");
+              pointsIt != key.end() && pointsIt->is_array() && pointsIt->size() >= 4) {
+            event.bezierPoints = {
+                static_cast<float>(readNumber((*pointsIt)[0], 0.0)),
+                static_cast<float>(readNumber((*pointsIt)[1], 0.0)),
+                static_cast<float>(readNumber((*pointsIt)[2], 1.0)),
+                static_cast<float>(readNumber((*pointsIt)[3], 1.0))};
+          }
         }
-        // A following key's time closes this event's span, so a keyframe is a step
-        // until the track is paired up below.
-        variable.events.push_back(event);
+        variable.events.push_back(std::move(event));
       }
-      // Pair consecutive keys into spans and carry the easing of the earlier key.
-      for (std::size_t index = 0; index + 1 < variable.events.size(); ++index) {
-        auto& current = variable.events[index];
-        const auto& next = variable.events[index + 1];
-        current.endTime = next.startTime;
-        current.end = next.start;
-      }
-      if (!variable.events.empty()) {
-        variable.events.back().endTime = variable.events.back().startTime;
-        variable.events.back().end = variable.events.back().start;
-      }
+      std::stable_sort(variable.events.begin(), variable.events.end(),
+          [](const game::LineEvent& first, const game::LineEvent& second) {
+            return first.startTime < second.startTime;
+          });
     };
 
     if (value.is_number()) {
       variable.values = {static_cast<float>(value.get<double>())};
     } else if (value.is_array()) {
-      bool onlyNumbers = true;
+      bool onlyNumbers = !value.empty();
       for (const auto& element : value) {
         if (!element.is_number()) {
           onlyNumbers = false;
@@ -313,22 +359,11 @@ void readEffectVariables(const json& varsNode, game::PrprEffect& effect) {
         for (const auto& element : value) {
           variable.values.push_back(static_cast<float>(element.get<double>()));
         }
-        if (variable.values.empty()) variable.values.push_back(0.0F);
-      } else {
-        readKeyframes(value);
-      }
-    } else if (value.is_object()) {
-      if (const auto valuesIt = value.find("values");
-          valuesIt != value.end() && valuesIt->is_array()) {
-        variable.values.clear();
-        for (const auto& element : *valuesIt) {
-          if (element.is_number()) variable.values.push_back(static_cast<float>(element.get<double>()));
+        if (variable.values.size() == 1) {
+          // A single component is a scalar, not a one-element vector.
         }
-        if (variable.values.empty()) variable.values.push_back(0.0F);
-      }
-      if (const auto eventsIt = value.find("events");
-          eventsIt != value.end() && eventsIt->is_array()) {
-        readKeyframes(*eventsIt);
+      } else {
+        readSpans(value);
       }
     }
     effect.variables[name] = std::move(variable);
@@ -393,10 +428,11 @@ struct LineCsvRow {
   float vert{1.0F};
 };
 
-// Searches `start` and up to `maxDepth` parents for one of `names`.
+// Searches `start` and its first `maxDepth` parents for one of `names`, so a depth of six
+// inspects seven directories in total.
 std::filesystem::path findUpwards(std::filesystem::path start, int maxDepth,
     std::initializer_list<const char*> names) {
-  for (int depth = 0; depth < maxDepth && !start.empty(); ++depth) {
+  for (int depth = 0; depth <= maxDepth && !start.empty(); ++depth) {
     for (const char* name : names) {
       const auto candidate = start / name;
       std::error_code error;
@@ -406,6 +442,34 @@ std::filesystem::path findUpwards(std::filesystem::path start, int maxDepth,
     start = start.parent_path();
   }
   return {};
+}
+
+// Resolves a package-relative asset by walking up from `base`; the first directory that
+// actually holds the file wins.
+std::filesystem::path resolveUpwards(std::filesystem::path base, const std::filesystem::path& relative,
+    int maxDepth) {
+  for (int depth = 0; depth <= maxDepth && !base.empty(); ++depth) {
+    const auto candidate = base / relative;
+    std::error_code error;
+    if (std::filesystem::exists(candidate, error)) return candidate;
+    if (!base.has_parent_path() || base.parent_path() == base) break;
+    base = base.parent_path();
+  }
+  return {};
+}
+
+// Resolves an asset reference against the primary base and then the secondary one. An
+// absolute reference that exists is used as written.
+std::filesystem::path resolveResource(const std::filesystem::path& primaryBase,
+    const std::filesystem::path& secondaryBase, const std::string& relativePath) {
+  if (relativePath.empty()) return {};
+  const std::filesystem::path given(relativePath);
+  std::error_code error;
+  if (given.is_absolute() && std::filesystem::exists(given, error)) return given;
+  if (auto found = resolveUpwards(primaryBase, given, kResourceSearchDepth); !found.empty()) {
+    return found;
+  }
+  return resolveUpwards(secondaryBase, given, kResourceSearchDepth);
 }
 
 // Applies `line.csv`: per-line textures and scale overrides, matched to the chart by name.
@@ -500,12 +564,15 @@ void applyLineCsv(game::Chart& chart, const std::filesystem::path& chartPath) {
     if (lineSlot == nullptr) continue;
     auto& line = *lineSlot;
 
+    // A row only overrides the texture when the referenced file can actually be resolved;
+    // an unresolvable reference leaves the line's own texture untouched while its scale
+    // override still applies.
     if (!row->image.empty()) {
-      std::filesystem::path texture = csvDirectory / row->image;
-      std::error_code error;
-      if (!std::filesystem::exists(texture, error)) texture = chartDirectory / row->image;
-      line.texture = texture.string();
-      line.useOfficialScale = true;
+      const auto texture = resolveResource(csvDirectory, chartDirectory, row->image);
+      if (!texture.empty()) {
+        line.texture = texture.string();
+        line.useOfficialScale = true;
+      }
     }
 
     const float scaleX = (std::isfinite(row->horz) && row->horz != 0.0F) ? row->horz : 1.0F;
@@ -523,10 +590,120 @@ void applyLineCsv(game::Chart& chart, const std::filesystem::path& chartPath) {
 }
 
 // Applies `extra.json`: storyboard effects and videos.
+// Video placement: a number, or one of the named forms. Anything else means crop-centre.
+int parseVideoScaleType(const json& node) {
+  if (node.is_number()) return static_cast<int>(node.get<double>());
+  if (!node.is_string()) return game::PrprVideo::CropCenter;
+  std::string text = node.get<std::string>();
+  std::transform(text.begin(), text.end(), text.begin(),
+      [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  text.erase(std::remove_if(text.begin(), text.end(),
+                 [](char c) { return c == '_' || c == '-'; }),
+      text.end());
+  if (text == "inside" || text == "contain") return game::PrprVideo::Inside;
+  if (text == "fit" || text == "stretch") return game::PrprVideo::Fit;
+  return game::PrprVideo::CropCenter;
+}
+
+// Reads one scalar-or-track video property. A bare number is the constant value; an array
+// of numbers uses the first entry; an array of objects is a keyframed track whose keys carry
+// `startTime`/`endTime` beat triples and `start`/`end` values.
+void readVideoTrack(const json& owner, const char* name, float fallback,
+    const std::vector<BpmSegment>& segments, float& defaultValue,
+    std::vector<game::LineEvent>& events) {
+  defaultValue = fallback;
+  const auto it = owner.find(name);
+  if (it == owner.end() || it->is_null()) return;
+  if (it->is_number()) {
+    defaultValue = static_cast<float>(it->get<double>());
+    return;
+  }
+  if (!it->is_array() || it->empty()) return;
+
+  const bool allNumbers = std::all_of(it->begin(), it->end(),
+      [](const json& value) { return value.is_number(); });
+  if (allNumbers) {
+    defaultValue = static_cast<float>(it->front().get<double>());
+    return;
+  }
+
+  for (const auto& key : *it) {
+    if (!key.is_object()) continue;
+    const json* startTimeNode = findFirst(key, {"startTime", "start"});
+    const json* endTimeNode = findFirst(key, {"endTime", "end"});
+    if (startTimeNode == nullptr || endTimeNode == nullptr) continue;
+    if (!startTimeNode->is_array() || !endTimeNode->is_array()) continue;
+
+    game::LineEvent event;
+    event.startTime = beatToSeconds(segments, parseBeatTriple(*startTimeNode));
+    event.endTime = beatToSeconds(segments, parseBeatTriple(*endTimeNode));
+    const auto valueIt = key.find("start");
+    event.start = valueIt != key.end() && valueIt->is_number()
+        ? valueIt->get<double>() : static_cast<double>(defaultValue);
+    const auto endIt = key.find("end");
+    event.end = endIt != key.end() && endIt->is_number()
+        ? endIt->get<double>() : event.start;
+    const auto easingIt = key.find("easingType");
+    event.type = easingIt != key.end() && easingIt->is_number()
+        ? std::max(0, static_cast<int>(easingIt->get<double>()) - 1) : 0;
+    const auto leftIt = key.find("easingLeft");
+    event.left = leftIt != key.end() && leftIt->is_number()
+        ? static_cast<float>(leftIt->get<double>()) : 0.0F;
+    const auto rightIt = key.find("easingRight");
+    event.right = rightIt != key.end() && rightIt->is_number()
+        ? static_cast<float>(rightIt->get<double>()) : 1.0F;
+    events.push_back(event);
+  }
+  std::stable_sort(events.begin(), events.end(),
+      [](const game::LineEvent& a, const game::LineEvent& b) { return a.startTime < b.startTime; });
+
+  // A track that starts after time zero holds its default from the beginning, so the value
+  // does not jump when the first key is reached.
+  if (!events.empty() && events.front().startTime > 1.0e-9) {
+    game::LineEvent lead;
+    lead.startTime = 0.0;
+    lead.endTime = events.front().startTime;
+    lead.start = defaultValue;
+    lead.end = defaultValue;
+    events.insert(events.begin(), lead);
+  }
+}
+
+// Whether a shader reference names a file rather than a built-in preset.
+bool isShaderFileName(const std::string& shader) {
+  std::string lowered = lowercase(trimSpaces(shader));
+  return lowered.size() >= 5 && (lowered.compare(lowered.size() - 5, 5, ".glsl") == 0
+      || lowered.compare(lowered.size() - 3, 3, ".fs") == 0
+      || lowered.compare(lowered.size() - 5, 5, ".frag") == 0);
+}
+
+// Reads the source of every file-backed shader an effect refers to. A reference is either
+// rooted ("/shader.glsl") or a bare file name; preset names resolve to nothing and keep
+// using the built-in program.
+void loadShaderSources(game::Chart& chart, const std::filesystem::path& chartDirectory) {
+  if (chart.prprEffects.empty()) return;
+  for (const auto& effect : chart.prprEffects) {
+    std::string relative;
+    if (!effect.shader.empty() && effect.shader.front() == '/' && effect.shader.size() > 1) {
+      relative = effect.shader.substr(1);
+    } else if (isShaderFileName(effect.shader)) {
+      relative = effect.shader;
+    } else {
+      continue;
+    }
+    if (chart.prprShaderSources.contains(effect.shader)) continue;
+    const auto shaderFile = resolveResource(chart.packDir, chartDirectory, relative);
+    if (shaderFile.empty() || !std::filesystem::is_regular_file(shaderFile)) continue;
+    auto source = readFile(shaderFile);
+    if (source.empty()) continue;
+    chart.prprShaderSources.emplace(effect.shader, std::move(source));
+  }
+}
+
 void applyPrprExtra(game::Chart& chart, const std::filesystem::path& chartDirectory) {
   std::filesystem::path directory = chartDirectory;
   std::filesystem::path extraPath;
-  for (int depth = 0; depth < kExtraSearchDepth && !directory.empty(); ++depth) {
+  for (int depth = 0; depth <= kExtraSearchDepth && !directory.empty(); ++depth) {
     for (const char* name : {"extra.json", "Extra.json"}) {
       const auto candidate = directory / name;
       std::error_code error;
@@ -560,13 +737,14 @@ void applyPrprExtra(game::Chart& chart, const std::filesystem::path& chartDirect
       effect.shader = shaderIt->get<std::string>();
       if (effect.shader.empty()) continue;
 
-      const auto startIt = item.find("start");
-      const auto endIt = item.find("end");
-      const double startBeat = startIt != item.end() ? parseBeatTriple(*startIt) : 0.0;
-      const double endBeat = endIt != item.end() ? parseBeatTriple(*endIt) : startBeat;
+      // Effect spans accept the `start`/`end` names first, then the `startTime`/`endTime`
+      // pair; a missing end collapses onto the start.
+      const json* startIt = findFirst(item, {"start", "startTime"});
+      const json* endIt = findFirst(item, {"end", "endTime"});
+      const double startBeat = startIt != nullptr ? parseBeatTriple(*startIt) : 0.0;
+      const double endBeat = endIt != nullptr ? parseBeatTriple(*endIt) : startBeat;
       effect.startTime = beatToSeconds(segments, startBeat);
       effect.endTime = beatToSeconds(segments, endBeat);
-      if (effect.endTime < effect.startTime) effect.endTime = effect.startTime;
 
       if (const auto globalIt = item.find("global");
           globalIt != item.end() && globalIt->is_boolean()) {
@@ -577,7 +755,7 @@ void applyPrprExtra(game::Chart& chart, const std::filesystem::path& chartDirect
       }
 
       if (const auto varsIt = item.find("vars"); varsIt != item.end()) {
-        readEffectVariables(*varsIt, effect);
+        readEffectVariables(*varsIt, effect, segments);
       }
       chart.prprEffects.push_back(std::move(effect));
     }
@@ -592,17 +770,32 @@ void applyPrprExtra(game::Chart& chart, const std::filesystem::path& chartDirect
       game::PrprVideo video;
       video.path = pathIt->get<std::string>();
       if (video.path.empty()) continue;
-      const auto startIt = item.find("start");
-      const auto endIt = item.find("end");
-      const double startBeat = startIt != item.end() ? parseBeatTriple(*startIt) : 0.0;
-      const double endBeat = endIt != item.end() ? parseBeatTriple(*endIt) : startBeat;
-      video.startTime = beatToSeconds(segments, startBeat);
-      video.endTime = beatToSeconds(segments, endBeat);
-      if (const auto alphaIt = item.find("alpha"); alphaIt != item.end() && alphaIt->is_number()) {
-        video.alpha = static_cast<float>(alphaIt->get<double>());
-      }
-      if (const auto loopIt = item.find("loop"); loopIt != item.end() && loopIt->is_boolean()) {
-        video.loop = loopIt->get<bool>();
+
+      // The start may be written as `time` or `startTime`; only the array (beat triple)
+      // form is a time, everything else falls back to the first segment.
+      const json* timeNode = findFirst(item, {"time", "startTime"});
+      const double startBeat =
+          timeNode != nullptr && timeNode->is_array() ? parseBeatTriple(*timeNode) : 0.0;
+      video.startTimeSec = beatToSeconds(segments, startBeat);
+
+      const auto scaleIt = item.find("scale");
+      video.scaleType = scaleIt != item.end()
+          ? game::PrprVideo::sanitizeScaleType(parseVideoScaleType(*scaleIt))
+          : game::PrprVideo::CropCenter;
+
+      readVideoTrack(item, "alpha", 1.0F, segments, video.alphaDefault, video.alphaEvents);
+      readVideoTrack(item, "dim", 0.0F, segments, video.dimDefault, video.dimEvents);
+
+      const auto attachIt = item.find("attach");
+      if (attachIt != item.end()) {
+        if (attachIt->is_number()) {
+          video.attachLineIndex = std::max(-1, static_cast<int>(attachIt->get<double>()));
+        } else if (attachIt->is_object()) {
+          const auto lineIt = attachIt->find("line");
+          if (lineIt != attachIt->end() && lineIt->is_number()) {
+            video.attachLineIndex = std::max(-1, static_cast<int>(lineIt->get<double>()));
+          }
+        }
       }
       chart.prprVideos.push_back(std::move(video));
     }
@@ -612,7 +805,7 @@ void applyPrprExtra(game::Chart& chart, const std::filesystem::path& chartDirect
 } // namespace
 
 std::unique_ptr<game::Chart> ChartLoader::loadFromFile(const std::filesystem::path& path,
-    const std::filesystem::path& assetRoot, const std::string& songName) {
+    const std::filesystem::path& assetRoot, const std::string& songName, bool storyMode) {
   std::ifstream input(path, std::ios::binary);
   if (!input) throw std::runtime_error("Cannot open chart: " + path.string());
   std::ostringstream buffer;
@@ -641,6 +834,8 @@ std::unique_ptr<game::Chart> ChartLoader::loadFromFile(const std::filesystem::pa
       else chart = PecChartParser::parse(content);
       break;
   }
+  // The pack root starts at the chart's own directory and moves to the directory holding
+  // `extra.json` when one is found, which is the anchor the storyboard paths resolve from.
   chart.packDir = path.parent_path();
   chart.normalizedDigest = normalizedDigest(content);
   chart.songName = songName;
@@ -650,16 +845,25 @@ std::unique_ptr<game::Chart> ChartLoader::loadFromFile(const std::filesystem::pa
       format == ChartFormat::PhiEdit) {
     applyLineCsv(chart, path);
   }
+  // `extra.json` may relocate the pack root, so it runs after the CSV pass and its result
+  // must not be overwritten afterwards.
   applyPrprExtra(chart, path.parent_path());
-  // A pack's metadata may switch the attach-UI correction off; the reference applies it for
-  // every chart format, after the chart and its storyboard companions have been read.
+  // A pack's metadata may switch the attach-UI correction off; this applies for every chart
+  // format, after the chart and its storyboard companions have been read.
   applyAttachUiFixFlag(chart, path);
 
+  // File-backed storyboard shaders carry their source in the pack; presets use the built-in
+  // programs, so a missing source is not an error.
+  loadShaderSources(chart, path.parent_path());
+
   // A level effect replaces the chart's own storyboard list when one is selected; the
-  // effect table lives beside the executable, not in the chart pack.
+  // effect table lives beside the executable, not in the chart pack. Its passes are appended
+  // here rather than at play time because the effect table is only reachable from the
+  // loader; the renderer still skips the whole storyboard chain when shaders are disabled,
+  // which is the same suppression the selection performs at play time.
   if (const auto table = game::OfficialLevelEffects::load(assetRoot)) {
     if (const auto effect = game::OfficialLevelEffects::forChart(*table, chart.normalizedDigest,
-            chart.songName)) {
+            chart.songName, storyMode)) {
       chart.levelEffects = effect;
       auto built = effect->buildPrprEffects();
       chart.prprEffects.insert(chart.prprEffects.end(), built.begin(), built.end());

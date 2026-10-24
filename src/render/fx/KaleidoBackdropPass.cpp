@@ -57,7 +57,7 @@ void KaleidoBackdropPass::draw(gl::Texture& normalTexture, gl::Texture& colourTe
   glBindTexture(GL_TEXTURE_2D, colourTexture.id());
   shader.set1i("transMap", 1);
   glActiveTexture(GL_TEXTURE0);
-  FullscreenQuad::instance().ensure();
+  (void)FullscreenQuad::instance().ensure();
   FullscreenQuad::instance().draw();
 
   glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);

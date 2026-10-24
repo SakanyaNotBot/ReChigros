@@ -342,7 +342,9 @@ void parseElementChunks(std::string_view text,
 
 
 game::Chart parseRoot(const json& root){
-  if(!root.is_object())throw std::invalid_argument("Official chart root must be an object");game::Chart chart;chart.formatVersion=value<int>(root,{"formatVersion","FormatVersion"},3);if(chart.formatVersion!=1&&chart.formatVersion!=3)chart.formatVersion=3;chart.offset=value<double>(root,{"offset","Offset"},0);chart.blockAreaList=parseBlockAreas(root);const auto* lines=array(root,{"judgeLineList"});if(!lines){chart.prepareRuntime();return chart;}chart.judgeLineList.reserve(lines->size());int sourceIndex=0;for(const auto& item:*lines){if(item.is_object()){auto line=parseLine(item,chart.formatVersion,sourceIndex);const auto ui=line->attachUiElementId;chart.judgeLineList.push_back(std::move(line));if(ui>=1&&ui<=7)chart.attachUiLineIndex[static_cast<std::size_t>(ui)]=static_cast<int>(chart.judgeLineList.size()-1);}++sourceIndex;}chart.prepareRuntime();return chart;
+  if(!root.is_object())throw std::invalid_argument("Official chart root must be an object");game::Chart chart;chart.formatVersion=value<int>(root,{"formatVersion","FormatVersion"},3);if(chart.formatVersion!=1&&chart.formatVersion!=3)chart.formatVersion=3;chart.offset=value<double>(root,{"offset","Offset"},0);chart.blockAreaList=parseBlockAreas(root);const auto* lines=array(root,{"judgeLineList"});if(!lines){chart.prepareRuntime();return chart;}chart.judgeLineList.reserve(lines->size());int sourceIndex=0;for(const auto& item:*lines){if(item.is_object()){auto line=parseLine(item,chart.formatVersion,sourceIndex);const auto ui=line->attachUiElementId;chart.judgeLineList.push_back(std::move(line));// An attached UI element records the authored line index, not the index after any
+      // earlier non-object entries were skipped.
+      if(ui>=1&&ui<=7)chart.attachUiLineIndex[static_cast<std::size_t>(ui)]=sourceIndex;}++sourceIndex;}chart.prepareRuntime();return chart;
 }
 }
 

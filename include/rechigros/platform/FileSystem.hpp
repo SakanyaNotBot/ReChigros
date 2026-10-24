@@ -17,6 +17,11 @@ void setAssetRootOverride(const std::filesystem::path& root);
 [[nodiscard]] std::filesystem::path userDataRoot();
 [[nodiscard]] std::filesystem::path cacheRoot();
 
+// Directory where a recorded video is expected to end up, so the system's gallery can find it
+// without the user moving the file. Falls back to the per-user data directory when the platform
+// exposes no such location.
+[[nodiscard]] std::filesystem::path publicVideoDirectory();
+
 // Absolute path of the running executable; empty when it cannot be determined.
 [[nodiscard]] std::filesystem::path executablePath();
 

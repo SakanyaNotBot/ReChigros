@@ -11,6 +11,8 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -1290,7 +1292,7 @@ void drawLibraryScreen(AppContext& context) {
     drawDialog(map, context, onlinePageCount);
   }
 
-  ui::endFullscreenWindow();
+ui::endFullscreenWindow();
 
   // Actions are applied after the window closes so navigation does not disturb drawing.
   if (backPressed) {
@@ -1350,6 +1352,10 @@ void drawLibraryScreen(AppContext& context) {
         context.selectedIds.erase(iterator);
       }
     } else {
+      // The detail page draws the artwork full screen at a much larger size than the card
+      // thumbnail, and a new size means a fresh decode. Requesting it here starts that work
+      // while the page transitions instead of leaving the detail page's first frames bare.
+      (void)coverTexture(context, record, 2048);
       openChartDetail(context, record.id);
     }
   }

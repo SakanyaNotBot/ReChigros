@@ -68,6 +68,27 @@ bool PauseBackdropPass::prepare(const std::filesystem::path& assetRoot) {
   return ready_;
 }
 
+bool PauseBackdropPass::warmUp(int viewWidth, int viewHeight) {
+  if (!ready_ || viewWidth <= 0 || viewHeight <= 0) return false;
+  ensureTargets(viewWidth, viewHeight);
+  // Creating a texture only reserves the name; the driver may defer the storage allocation
+  // until the target is first rendered into. Clearing each target here forces that work to
+  // happen during initialisation instead of on the frame the player pauses.
+  unsigned int previous = 0;
+  glGetIntegerv(GL_FRAMEBUFFER_BINDING, reinterpret_cast<GLint*>(&previous));
+  const auto clearTarget = [](gl::Framebuffer& target) {
+    if (!target.valid()) return;
+    target.bind();
+    glViewport(0, 0, target.width(), target.height());
+    glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
+    glClear(GL_COLOR_BUFFER_BIT);
+  };
+  for (int depth = 1; depth <= kMaxDepth; ++depth) clearTarget(pyramid_[depth]);
+  clearTarget(output_);
+  glBindFramebuffer(GL_FRAMEBUFFER, previous);
+  return output_.valid();
+}
+
 void PauseBackdropPass::release() noexcept {
   blur_.release();
   grade_.release();
@@ -106,7 +127,7 @@ void PauseBackdropPass::blurPass(const gl::Texture& source, gl::Framebuffer& des
   blur_.program().set2f("uTexelOffset", texelX, texelY);
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, source.id());
-  FullscreenQuad::instance().ensure();
+  (void)FullscreenQuad::instance().ensure();
   FullscreenQuad::instance().draw();
 }
 

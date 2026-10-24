@@ -19,6 +19,11 @@ using Json = nlohmann::json;
 
 constexpr char kNormalSpace = ' ';
 
+// How much of a chart file is read when looking for its metadata block. The block is
+// authored at the head of the document, so a generous window covers every real chart and a
+// document that puts it elsewhere falls back to reading the whole file.
+constexpr std::size_t kChartMetaHeadBytes = 256 * 1024;
+
 std::string toLower(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(),
       [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
@@ -129,18 +134,16 @@ std::string collapseNormalSpaceRuns(const std::string& text) {
   return result;
 }
 
-bool isDifficultyEdgeWhitespace(char character) {
-  return character == ' ' || std::isspace(static_cast<unsigned char>(character)) != 0;
-}
-
-// Codepoints the reference trims from a difficulty label: ASCII whitespace, the en space it
-// normalises labels to, and the Unicode space separators Character.isWhitespace() accepts.
+// Codepoints trimmed from the edges of a difficulty label: the ASCII control separators plus
+// every Unicode separator except the non-breaking ones (U+00A0, U+2007, U+202F), which are
+// part of the text rather than padding.
 bool isDifficultySpaceCodePoint(std::uint32_t code) {
   if (code == ' ' || (code >= 0x09U && code <= 0x0DU) || (code >= 0x1CU && code <= 0x1FU)) {
     return true;
   }
-  return code == 0x1680U || code == 0x2002U || code == 0x2028U || code == 0x2029U ||
-      code == 0x205FU || code == 0x3000U;
+  if (code >= 0x2000U && code <= 0x200AU) return true;
+  return code == 0x1680U || code == 0x2028U || code == 0x2029U || code == 0x205FU ||
+      code == 0x3000U;
 }
 
 std::size_t nextCodePointLength(const std::string& text, std::size_t index) {
@@ -185,14 +188,17 @@ std::string trimDifficultyWhitespace(const std::string& text) {
   return text.substr(begin, end - begin);
 }
 
+// Whether `token` appears in `text` delimited by anything outside [A-Z0-9]. `text` is the
+// upper-cased file stem, so only capitals and digits can continue a token.
 bool containsToken(const std::string& text, const std::string& token) {
+  const auto isTokenCharacter = [](char character) {
+    return (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9');
+  };
   std::size_t position = text.find(token);
   while (position != std::string::npos) {
-    const bool leftOk = position == 0
-        || !(std::isalnum(static_cast<unsigned char>(text[position - 1])) != 0);
+    const bool leftOk = position == 0 || !isTokenCharacter(text[position - 1]);
     const auto after = position + token.size();
-    const bool rightOk = after >= text.size()
-        || !(std::isalnum(static_cast<unsigned char>(text[after])) != 0);
+    const bool rightOk = after >= text.size() || !isTokenCharacter(text[after]);
     if (leftOk && rightOk) return true;
     position = text.find(token, position + 1);
   }
@@ -649,9 +655,16 @@ ChartInfo readInfoFromChartFile(const std::filesystem::path& chartFile) {
   ChartInfo info;
   if (!platform::fileExists(chartFile)) return info;
   if (toLower(chartFile.extension().string()) != ".json") return info;
-  const auto content = platform::readTextFile(chartFile);
-  if (content.empty()) return info;
-  const Json root = parseJsonObject(content);
+  // Only the metadata block near the head of the file is needed. A chart can be tens of
+  // megabytes, and reading and parsing all of it just to reach `META` made building the
+  // library list the single most expensive frame in the session.
+  Json root = parseJsonObject(readHead(chartFile, kChartMetaHeadBytes));
+  if (root.empty()) {
+    // The metadata block sits past the head window; fall back to the whole document.
+    const auto content = platform::readTextFile(chartFile);
+    if (content.empty()) return info;
+    root = parseJsonObject(content);
+  }
   if (root.empty()) return info;
   const Json* meta = nullptr;
   for (const char* key : {"META", "meta", "Meta"}) {

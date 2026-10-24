@@ -142,19 +142,33 @@ JudgementEngine::Judgement JudgementEngine::calculate(int noteType, double diffe
   return Judgement::Miss;
 }
 
+double JudgementEngine::chartTimeForJudgementDiff(const Note& note, double diffSec,
+    double fallbackChartTimeSec) noexcept {
+  const auto value = note.sect - diffSec;
+  return std::isfinite(value) ? value : fallbackChartTimeSec;
+}
+
 bool JudgementEngine::commit(Note& note, Judgement judgement, double diffSec, double chartTime) noexcept {
   if (note.judgeResult >= 0) return false;
 
+  // A replayed judgement is stamped with the moment the original hit happened, which the
+  // note time and the recorded delta reconstruct, so the shown effect lands where and when
+  // it did during the recorded run instead of at the frame that happened to apply it.
+  const double effectTimeSec = replayPlayback_
+      ? chartTimeForJudgementDiff(note, diffSec, chartTime)
+      : chartTime;
+
   note.judgeResult = static_cast<int>(judgement);
   note.judgeDiffSec = diffSec;
-  note.judgeTimeSec = chartTime;
+  note.judgeTimeSec = effectTimeSec;
   note.preJudge = false;
   note.holdActive = false;
   note.holdPreJudge = false;
   note.holdUpTimeSec = std::numeric_limits<double>::infinity();
   const bool hit = isHit(judgement);
   note.clicked = hit;
-  note.holdFxActive = note.type == NOTE_HOLD && hit && note.holdFxActive && chartTime < note.holdEndTime;
+  note.holdFxActive =
+      note.type == NOTE_HOLD && hit && note.holdFxActive && effectTimeSec < note.holdEndTime;
 
   if (judgement == Judgement::Perfect) {
     ++counts_[0];

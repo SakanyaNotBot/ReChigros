@@ -41,7 +41,7 @@ void BadEffectField::spawn(double visualTimeSec, float x, float y, float width, 
 }
 
 void BadEffectField::draw(batch::SpriteBatch& out, const math::Mat4& projection,
-    double visualTimeSec, const gl::Texture& fallback) {
+    double visualTimeSec, const gl::Texture& fallback, bool mirrorU) {
   if (effects_.empty()) return;
 
   // Drop the copies whose fade has finished. They are appended in time order, so the
@@ -62,7 +62,8 @@ void BadEffectField::draw(batch::SpriteBatch& out, const math::Mat4& projection,
       current = effect.texture;
     }
     out.addQuad(effect.x, effect.y, effect.width, effect.height, effect.rotationDeg, TINT_RED,
-        TINT_GREEN, TINT_BLUE, alpha, effect.u0, effect.v0, effect.u1, effect.v1);
+        TINT_GREEN, TINT_BLUE, alpha, mirrorU ? effect.u1 : effect.u0, effect.v0,
+        mirrorU ? effect.u0 : effect.u1, effect.v1);
   }
   if (current != nullptr) out.flush(projection, *current, nullptr);
   (void)fallback;

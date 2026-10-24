@@ -2,8 +2,10 @@
 
 #include "rechigros/app/ChartLibrary.hpp"
 #include "rechigros/app/CoverCache.hpp"
+#include "rechigros/app/RecordSession.hpp"
 #include "rechigros/app/Replay.hpp"
 #include "rechigros/app/Settings.hpp"
+#include "rechigros/app/SmoothingClock.hpp"
 #include "rechigros/game/GameplaySession.hpp"
 #include "rechigros/game/PracticeJudgeWindows.hpp"
 #include "rechigros/game/PlayResult.hpp"
@@ -22,7 +24,7 @@ class GameRenderer;
 
 namespace rechigros::app {
 
-enum class Screen { Home, Library, Detail, Game, Result, Calibration, Settings };
+enum class Screen { Home, Library, Detail, Game, Result, Calibration, Settings, Render };
 
 // Everything needed to start one gameplay run.
 struct PlaySetup {
@@ -53,10 +55,20 @@ struct GameRuntime {
   bool inIntro{true};
   bool inOutro{};
   bool finished{};
+  // Set once the settlement backdrop has been prepared for this run, so the one-off cost is
+  // paid during the exit instead of on the settlement page's first frame.
+  bool outroBlurPrepared{};
   double introElapsedSec{};
   double outroElapsedSec{};
   double chartTimeSec{};
   double playheadSec{};
+  // Playhead used for drawing. The audio cursor reports the stream position only a few times
+  // per second, so drawing straight from it makes notes step instead of glide. `smoothClock`
+  // corrects it; judgement keeps using `playheadSec`, so the correction never moves a hit
+  // window.
+  double smoothedPlayheadSec{};
+  SmoothingClock smoothClock;
+  bool smoothClockValid{};
   double visualTimeSec{};
   double userOffsetSec{};
   double chartOffsetSec{};
@@ -65,13 +77,22 @@ struct GameRuntime {
   double stalledSec{};
   float frameDeltaSec{};
   bool musicLoaded{};
-  // Pause state machine: menu -> countdown -> play.
-  enum class Pause : int { None, Menu, Countdown };
+  // Pause state machine: menu -> countdown -> fadeout -> play. The fadeout state covers the
+  // short window where the countdown has finished but the play field is still frozen, so a
+  // pause taken during it resumes the same run instead of restarting one.
+  enum class Pause : int { None, Menu, Countdown, Fadeout };
   Pause pause{Pause::None};
   double pauseElapsedSec{};
   double pausePlayheadSec{};
+  // Set while the frozen playhead is meaningful. A pause that restarts the run freezes it at
+  // zero, and the resume then rewinds instead of seeking to a stale position.
+  bool pausePlayheadValid{};
+  // True when the paused run resumes from the beginning rather than from its frozen playhead.
+  bool pauseResumesFromZero{};
   int countdown{};
   double countdownElapsedSec{};
+  // Elapsed time inside the resume fade that follows the countdown.
+  double fadeoutElapsedSec{};
   // Practice seeking and per-attempt judgement windows.
   double seekRequestSec{-1.0};
   game::PracticeJudgeWindows practiceWindows;
@@ -138,6 +159,10 @@ struct AppContext {
   Screen screen{Screen::Home};
   Screen settingsReturn{Screen::Home};
   Screen detailReturn{Screen::Library};
+  Screen renderReturn{Screen::Detail};
+  // The recording in progress, if any. It lives on the context because the interface, the render
+  // loop and the shutdown path all reach it.
+  RecordSession recording;
   bool quitRequested{};
   // A run started with an explicit replay output path records even when the stored
   // preference has replay recording disabled. It lives outside the gameplay state so a
@@ -159,6 +184,12 @@ struct AppContext {
   bool manageMode{};
   int settingsTab{};
   int libraryTab{};
+
+  // Level-effect challenge state of the current run: the bad+miss and miss totals the effect
+  // was last told about, and whether a finger was holding a red zone on the previous frame.
+  int levelEffectBadMissCount{};
+  int levelEffectMissCount{};
+  bool levelEffectTouchingBlock{};
 
   PlaySetup play;
   GameRuntime game;

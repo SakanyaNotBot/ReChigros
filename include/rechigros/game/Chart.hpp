@@ -37,8 +37,9 @@ public:
   // display song name. Both are optional; an empty value simply never matches.
   std::string normalizedDigest;
   std::string songName;
-  // Level effect selected for this chart, or null when none applies.
-  std::shared_ptr<const OfficialLevelEffects> levelEffects;
+  // Level effect selected for this chart, or null when none applies. It owns the chart's
+  // challenge state, which advances with the run, so the handle stays mutable.
+  std::shared_ptr<OfficialLevelEffects> levelEffects;
 
   void updateUiTransform(int id,float x,float y,float rotation,float sx,float sy,float alpha);
   void prepareRuntime();

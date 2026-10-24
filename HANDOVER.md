@@ -6,6 +6,32 @@
 
 ---
 
+## 零、接手第一件事
+
+**代码有 80 个文件已修改、20 个文件新增，全部未提交。** 最后一次提交是
+`34f1f38`，不含本次会话（第 5～10 轮）的任何成果。
+
+先做这个再干别的：
+
+```bat
+cd E:\ReChigros
+git add -A && git commit -m "Verify gameplay shell, fix pause machine and clock, add chart recording"
+```
+
+之前出过两次把源文件压成一行的操作事故，其中一次靠 `git checkout` 恢复，
+连带回退了整轮改动。**没有提交就等于没有保险。**
+
+第 5～10 轮的成果摘要（详细证据见 `docs/parity/`）：
+
+| 轮次 | 内容 |
+| --- | --- |
+| 5～6 | 六项用户反馈缺陷（导入/切页/详情卡顿、判定线出舞台、暂停状态机），列表首帧 2869ms → 5ms |
+| 7 | 参考缺陷修复（皮肤颜色解析、偏移量舍入）、音乐倍速接线、绘制时钟 seek 重置 |
+| 8 | 回放存储去重按内容比较、调试开关改为谱面几何 overlay |
+| 9～10 | 渲染导出功能（离屏渲染 + H.264/AAC 编码 + 进度条 + 取消 + 命令行入口） |
+
+---
+
 ## 一、项目概况
 
 | 项 | 值 |
@@ -116,7 +142,7 @@ cmd /c "call `"$vcvars`" >nul 2>&1 && `"$cmake`" -S . -B build\myprobe -G Ninja 
 ### 2. 渲染冒烟工具
 
 ```powershell
-build\myprobe\src\render\rechigros_render_smoke.exe `
+build\desktop-release\src\render\rechigros_render_smoke.exe `
   --chart tests\fixtures\plain.json --assets assets `
   --out build\out.png --frames 1 --time 1.0
 ```
@@ -126,7 +152,7 @@ build\myprobe\src\render\rechigros_render_smoke.exe `
 ### 3. 红区合成独立探针（改渲染前先跑它）
 
 ```powershell
-build\agent-block\src\tools\rechigros_block_probe.exe --assets assets --out-dir build\probe
+build\desktop-release\src\tools\rechigros_block_probe.exe --assets assets --out-dir build\probe
 ```
 
 它把红区合成的每个中间目标 dump 成 PNG，并断言帧状态复原、`presented == off-screen composite`。改 `fx::BlockCompositePass`/`GameRenderer` 的合成接线后必须重跑。
@@ -134,7 +160,7 @@ build\agent-block\src\tools\rechigros_block_probe.exe --assets assets --out-dir 
 ### 4. 应用隐藏窗口批量运行
 
 ```powershell
-build\myprobe\src\app\ReChigros.exe tests\fixtures\plain.json --frames 900
+build\desktop-release\src\app\ReChigros.exe tests\fixtures\plain.json --frames 900
 # --expect-result / --expect-pause / --record-replay / --replay-playback
 # --autoplay / --practice / --challenge / --mirror
 # --mistime <ms> / --practice-perfect <ms> / --practice-good <ms>
@@ -171,17 +197,18 @@ $adb='D:\Studio-SDK\platform-tools\adb.exe'
 
 | 项 | 状态 | 证据 |
 | --- | --- | --- |
-| 桌面构建 | 完成 | 干净构建 0 错误 |
-| 六个测试套件 | 通过 | core / chart / audio / platform / transition / level_effect |
-| 应用自检 | `SELF-TEST PASS (30/30)` | 含每屏无头绘制 |
-| 渲染矩阵 | 18 用例通过 | `build.bat verify-render` |
-| 应用循环 | 11 项通过 | `build.bat verify-app` |
+| 桌面构建 | 完成 | 干净构建 0 错误 0 警告 |
+| 八个测试套件 | 通过 | `ctest` 8/8（core/chart/audio/platform/transition/level_effect/app_data/skin） |
+| 应用自检 | `SELF-TEST PASS` | 含每屏无头绘制 |
+| 渲染矩阵 | **26 用例**通过 | `build.bat verify-render` |
+| 应用循环 | 11 项通过（含 pause-cycle） | `build.bat verify-app` |
 | 字体覆盖 | 233 个非 ASCII 字符全有字形 | 已接入 `verify-app` |
 | 界面截图工具 | 完成 | 每个界面可在 1920x1080 下确定性截图 |
-| GLSL ES 校验 | 35/35 通过 | `scripts/check-gles-shaders.ps1` |
-| 安卓设备渲染门禁 | 通过 | `ANDROID-RENDER PASS`（应用内截图 + 系统截图） |
+| GLSL ES 校验 | **43/43** 通过 | `scripts/check-gles-shaders.ps1` |
+| 安卓设备渲染门禁 | 通过（BlueStacks 2400x1080） | APK 安装运行、横屏、intent-filter 均已验 |
 | 红区合成探针 | 通过 | 帧状态复原、presented == composite |
-| iOS 打包 | 47 项检查通过 | 编译需 macOS |
+| iOS 打包 | **48 项**检查通过 | 编译需 macOS |
+| 录像编码器 | 通过 | `rechigros_record_check.exe`；端到端 10360 帧 + AAC 音轨 |
 
 ### 本次会话修复的关键缺陷
 
@@ -196,7 +223,8 @@ $adb='D:\Studio-SDK\platform-tools\adb.exe'
 
 ### 功能模块
 
-已完成的模块见 `MIGRATION.md` 的「Area status」表，绝大多数标 `done`。关键的有：
+下列模块的**主体功能已在位并通过门禁**，但「能跑」不等于「逐函数对等」——
+逐项判定进度见第五节：
 
 - 谱面解析：PEC / RPE / 官方格式，格式由内容前缀判断而非扩展名
 - 判定引擎：窗口、相位、长条结算、挑战模式计分、练习模式窗口覆盖
@@ -211,32 +239,78 @@ $adb='D:\Studio-SDK\platform-tools\adb.exe'
 
 ## 五、未完成事项
 
-### 1. 界面（基本完成，剩余细节）
+### 1. 逐函数比对（主线任务，工作量最大）
 
-主界面、列表/搜索/管理/导入、四个设置页、校准页、谱面详情、结算页、游玩 HUD、暂停（含 HUD 变暗保留）、恢复倒计时、练习面板与判定面板均已按设备截图/参考帧校准。已知仍可继续打磨的残余（按影响排序）：
+这是整个任务的核心目标，**远未完成**。
 
-- **结尾过渡时序**：参考在 HUD 退出后有约 2 秒的整屏模糊过渡，端口目前是 HUD 退出后直接进入结算页入场（结算页背景本身是模糊插画，但缺少中间阶段）。属于结算页/过渡时序修改。
-- **主界面标题文字**：端口显示 `ReChigros`，参考显示 `Chigros`（产品命名差异，非几何差异）。
-- **暂停 HUD 亮度**：已按参考补上（HUD 以 0.27 倍 alpha 重绘于分级底图之上，score/song/icon 亮度与参考误差 ~10% 内）。
-- **结算页模式标签**：设备对比用的参考截图与端口跑的是不同模式（挑战开关），标签数量不同，不是设计差异；如需最终确认应以同模式参考帧比较。
-- 菜单类截图的整屏差异主要来自背景动画相位；逐元素 ink 对比才是有意义的指标（桌面端已完成，元素位置基本 0–3 px）。
+`docs/parity/coverage-matrix.md`：参考共 **2312** 个声明
 
-### 2. 功能差距（S1/S2 已清零，余 S3 重构项）
+| 状态 | 数量 | 含义 |
+| --- | --- | --- |
+| verified | 298 | 报告明确判定 MATCH |
+| fixed | 165 | 报告记录已修复 |
+| excluded | 3 | 有意排除，理由已记录 |
+| matched-by-name | 188 | 存在同名符号（**不等于行为一致**） |
+| **unmatched** | **1470** | 无同名符号，需人工判定 |
 
-`docs/COVERAGE_AUDIT.md` 的 S1/S2 项均已修复或标注（回放判定条目模型、无头 JSON 谱面、`useAttachUiFix`、长条身体反馈、难度文本、回放 meta、实践判定窗口、默认宽高比等）。剩余为 S3 重构：`NoteGeometry` 的单一速度基准、`prepareRuntime` 进一步并行/缓存（#13/#14 的主要收益已在性能工作中落地）。
+**不要把 1470 当成"已完成"或"自动证明对等"。它是工作清单。**
 
-### 3. 平台验证
+已被证伪的旧说法：`MIGRATION.md` 与旧 `COVERAGE_AUDIT.md` 声称「S1/S2 已清零、
+基本完成」，`docs/parity/REPORT.md` §7 已逐条推翻——实际在谱面解析、核心模型、
+判定、渲染、界面、平台层都发现了玩家可见缺陷。
 
-- **安卓**：雷电模拟器（宿主 GPU 直通）上构建、安装、渲染门禁与帧时间 A/B 均通过；**真机（非高通 GPU / mediump 回退路径）仍未验证**。
-- **iOS**：仅做打包完整性检查（47 项，0 警告），**未在 macOS 上编译**。
-- **macOS / Linux**：CMake 与源码层面支持，未在对应系统实编译。
+**有效做法**（已被证明可行，见 `docs/parity/gameplay.md` 与 `judging.md`）：
 
-### 4. 性能
+1. 不要做名称比对。移植版命名风格差异大，`tools/parity/method_crossref.py`
+   只能匹配 68/544，噪声太大。
+2. 按**行为单元**核对：读参考实现 → 判断它想要什么 → 对照移植版 → 写结论 + 双侧 file:line 进对应报告。
+3. 已核对通过的范例可直接引用（不必重做）：
+   - `HitOffsetIndicator` 全算法（常量、缓动、舍入、commit mark）
+   - 分数追赶 `approachDisplayValue`
+   - 多押高亮宽度/UV
+   - 谱面揭秘相机（0.20/0.30/1.0s）
+   - 舞台 letterbox 规则
+   - 低分辨率/抗锯齿尺寸
+4. 数值常量已系统性扫过：`tools/parity/constant_values.py` 比对 188 个数值常量，
+   只有 1 个不在移植版（`HOLD_DESTROY_DELAY`，参考里声明后从未被读取）。
 
-已完成正式基准（见 `MIGRATION.md` 性能行与 `HANDOVER` 状态摘要）：桌面与设备帧时间均可复测（`--frame-stats`），设备安静 A/B 无 >33 ms 帧。仍待处理：
+### 2. 噪域打击特效的扭曲（用户反馈第 6 项，未完成）
 
-- 与参考应用同机的 SurfaceFlinger 呈现节奏差距约 10%（端口 5.81 ms vs 参考 5.22 ms）；帧内 CPU 已低于帧间隔，剩余更像呈现/合成与 GPU 路径，下一轮应用 GPU timer query + SurfaceFlinger 时间戳定位。
-- 下一轮候选（详见 `build/agent-core/perf-report.md`）：`anyZoneVisible` 全量扫描缓存、复合掩码向量提出帧外、GameScreen 渲染输入字符串拷贝、HUD 字符串格式化、纯游玩帧跳过 ImGui、交换/队列深度对比。
+用户原话：「噪域上好像没有打击特效及其粒子的扭曲图案？参考项目可不是这样的」。
+
+已查明：
+- 合成顺序正确（场景含打击特效 → 合成采样 `sceneFbo.color()`）
+- 红区内部确实有扭曲图案
+
+但红区内击打特效的扭曲表现仍与参考不一致。下一步：对比参考
+`renderOfficialBlockComposite` 完整参数与移植版 `drawBlockComposite` 的差异。
+
+### 3. 渲染页的路径输入
+
+输出目录仍是点击弹原生目录选择器，不能在页面内直接输入路径。文件名已支持输入。
+
+### 4. 平台验证缺口
+
+- **Android**：APK 的横屏与 intent-filter 已从打包产物验证，也在 BlueStacks 上装过。
+  但真机（非高通 GPU / mediump 回退路径）未验证。模拟器当前未启动
+  （`adb devices` 为空），需先开 BlueStacks 再跑
+  `scripts\check-android-render.ps1 -Serial 127.0.0.1:5555`。
+- **iOS**：只做打包结构检查（48 项），**从未编译**（需要 macOS）。
+- **macOS / Linux**：源码层面支持，未实编译。
+
+### 5. 结尾过渡时序
+
+参考在 HUD 退出后有约 2 秒整屏模糊过渡，端口目前是 HUD 退出后直接进结算页入场。
+结算页背景本身是模糊插画，但缺少中间阶段。
+
+### 6. 性能
+
+设备安静 A/B 无 >33ms 帧。与参考同机的呈现节奏仍有约 10% 差距
+（端口 5.81ms vs 参考 5.22ms），帧内 CPU 已低于帧间隔，剩余更像呈现/合成/GPU 路径。
+下一轮候选见 `build/agent-core/perf-report.md`。
+
+**注意**：第 5～10 轮改了渲染与界面路径（异步贴图、scissor、暂停四态、
+遮盖层），性能数字需要重测后再引用。
 
 ---
 
@@ -287,6 +361,35 @@ $adb='D:\Studio-SDK\platform-tools\adb.exe'
 20. **单点采样可能撞上巧合**（两个用例在某时刻位置正好重合），多时间点验证。
 21. **`std::filesystem::temp_directory_path()` 在非 ASCII 用户名下抛异常**（本机用户名是 `无影`），测试里用 `current_path()` 或带 `error_code` 的重载。
 
+### 编辑与工具类（第 5～10 轮新增，代价最大）
+
+22. **绝对不要用 PowerShell 做代码行切片。** 曾用
+    `Get-Content` + 数组切片 + `Set-Content` 删函数，把 `GameScreen.cpp`（1900 行）
+    **压成 1 行**。改代码一律用 edit 工具的精确字面替换，不要用：
+    - `Get-Content`/`Set-Content` 配行号范围
+    - `-replace` 批量替换代码
+    - `clang-format` 去"修复"已损坏的文件（它会把 `#include` 塞进行内，更糟）
+
+    万一换行丢失，`tools/reline.py` 可按 token 边界安全重排。
+23. **从 bash 调 PowerShell 脚本会假失败。** PowerShell 脚本里的 stderr 输出会被
+    包成 `NativeCommandError`，触发 `$ErrorActionPreference='Stop'`。一律用
+    `pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\xxx.ps1` 直接调。
+24. **ffmpeg 的 stderr 不能接管道。** 录像时推帧期间没人在读，编码器写满自己的错误
+    管道后停止接收帧，报「管道正在被关闭」。必须写文件、结束时再读。
+25. **`writeFrame` 这类写循环改完必须核对花括号完整。** 曾漏掉 while 的闭合括号，
+    导致每帧只写第一个 1MB 分片，剩余数据从未发出——表现和上一条一模一样。
+26. **参考项目本身有缺陷，不要照抄。** 用户明确要求发现缺陷要修。已修的记录在
+    `docs/parity/REPORT.md` §4a（皮肤颜色解析、偏移量舍入）。判断标准：先问
+    「参考这个行为是不是它想要的」，再决定照抄还是修正。
+27. **注释不得出现其他项目名。** Chigros / Phigros / Java / Android / ported from
+    一律不许；也不要写「已遵守注释规则」这类元说明。注释解释**为什么**，不解释**是什么**。
+28. **横竖屏是强制横屏，不要改。** 参考所有 activity 都是 `landscape`。已在
+    Android manifest + `Activity.setOrientationBis` 覆盖、iOS plist 双横屏 +
+    `UIRequiresFullScreen`。**绝不要改成竖屏或跟随系统。**
+29. **构建并发上限 2。** 16GB 内存跑 4 个并发构建把宿主搞崩过一次。
+    `C1060` / `mspdbcore.dll` / `LLVM ERROR: out of memory` / `.obj Permission denied`
+    都是资源耗尽或并发冲突，等 60 秒串行重试，不是代码错误。
+
 ---
 
 ## 八、关键文件索引
@@ -295,7 +398,7 @@ $adb='D:\Studio-SDK\platform-tools\adb.exe'
 | --- | --- |
 | `CMakeLists.txt` | 顶层构建，含头文件依赖保障 |
 | `scripts/build.ps1` | 一键构建脚本主体 |
-| `scripts/check-gles-shaders.ps1` | GLSL ES 静态校验（35 个着色器） |
+| `scripts/check-gles-shaders.ps1` | GLSL ES 静态校验（43 个着色器） |
 | `scripts/check-android-render.ps1` | 安卓设备渲染门禁 |
 | `scripts/verify-app-loop.ps1` | 应用端到端验证 |
 | `scripts/verify-render-matrix.ps1` | 渲染矩阵 |
@@ -316,10 +419,20 @@ $adb='D:\Studio-SDK\platform-tools\adb.exe'
 | `src/chart/` | 三种格式解析器 |
 | `src/platform/AssetManager.cpp` | 打包资源读取 |
 | `platform/android/app/src/main/java/com/wuying/chigros/MainActivity.java` | 安卓入口、导入、选择器桥接、启动参数 |
-| `docs/COVERAGE_AUDIT.md` | 逐模块功能差距（权威） |
-| `docs/UI_PORTING_GUIDE.md` | 界面移植规范与截图对比流程 |
+| `src/app/SmoothingClock.cpp` | 绘制时钟（60 帧 bias 滚动平均，±10ms 钳制） |
+| `src/app/RecordSession.cpp` | 录像会话：逐帧离屏渲染 + 编码驱动 + 进度/取消 |
+| `src/app/VideoEncoder.cpp` | ffmpeg 管道封装、音轨第二路输入、诊断日志 |
+| `src/app/RenderScreen.cpp` | 渲染设置页 + 进度条遮盖层 |
+| `src/render/scene/ChartDebugOverlay.cpp` | 谱面调试 overlay（判定线/note 位置标记） |
+| `tools/parity/constant_values.py` | 数值常量系统性核对（188 项） |
+| `tools/parity/coverage_matrix.py` | 重建覆盖矩阵 |
+| `tools/reline.py` | 换行丢失时的安全恢复工具 |
+| `docs/parity/REPORT.md` | **权威总报告**（取代旧审计与 MIGRATION 的结论） |
+| `docs/parity/*.md` | 分领域逐项证据（chart/core/judging/render/ui/gameplay/platform/audio） |
+| `docs/parity/coverage-matrix.md` | 2312 行逐声明索引（1470 项待判定） |
 | `build/ref/` | 参考设备界面截图与索引 |
-| `MIGRATION.md` | 逐模块移植状态与论证（部分过时，以审计为准） |
+| ~~`docs/COVERAGE_AUDIT.md`~~ | **已作废**，其「S1/S2 已清零」结论被 `docs/parity/REPORT.md` §7 推翻 |
+| ~~`MIGRATION.md`~~ | **部分过时**，结论以 `docs/parity/` 为准 |
 
 ---
 
@@ -329,22 +442,52 @@ $adb='D:\Studio-SDK\platform-tools\adb.exe'
 
 ```powershell
 cd E:\ReChigros
-build.bat desktop Release       # 构建 + 六个测试套件
-build.bat verify-app            # 应用循环 + 字体覆盖
-build.bat verify-render         # 渲染矩阵
-build.bat android Release       # APK
-build.bat verify-ios            # iOS 打包检查
-scripts\check-gles-shaders.ps1  # GLES 静态校验
-build\agent-block\src\tools\rechigros_block_probe.exe --assets assets --out-dir build\probe
+git add -A && git commit -m "..."      # 第一步！先保住现有工作
+build.bat desktop Release              # 构建 + 八个测试套件
+build.bat verify-app                   # 应用循环（含 pause-cycle）+ 字体覆盖
+build.bat verify-render                # 渲染矩阵 26 项
+build.bat verify-ios                   # iOS 打包检查 48 项
+pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\check-gles-shaders.ps1   # 43 个着色器
+.\build\desktop-release\src\tools\rechigros_block_probe.exe --assets assets --out-dir build\probe
+.\build\desktop-release\src\tools\rechigros_record_check.exe build\record-out
 ```
 
-期望结果：全部 exit 0，APK 产出，探针打印 PASS。设备在线时再跑 `scripts\check-android-render.ps1 -Serial 127.0.0.1:5555`。
+期望结果：全部 exit 0，探针打印 PASS，录像检查产出可读 mp4。
+设备在线时再跑 `scripts\check-android-render.ps1 -Serial 127.0.0.1:5555`。
+
+单项验证（截图核对）：
+
+```powershell
+.\build\desktop-release\src\app\ReChigros.exe --data-root build\capture-data `
+  --screen "detail:Hate" --window 1920x1080 --frames 200 --fixed-delta `
+  --capture-at-frame 180 --capture-frame build\shots\x.png
+```
+
+录像端到端（需 `E:\ffmpeg\bin\ffmpeg.exe`）：
+
+```powershell
+.\build\desktop-release\src\app\ReChigros.exe --data-root build\capture-data `
+  --screen "game:Hate" --window 1280x720 --frames 90 --fixed-delta --autoplay `
+  --record build\out.mp4
+# 打印 RECORD PASS，产物含 H.264 视频 + AAC 48kHz 立体声音轨
+```
 
 ---
 
 ## 十、给接手者的建议优先级
 
-1. **先跑验证命令**确认环境可用，再动代码。
-2. **界面逐屏移植**：按 `docs/UI_PORTING_GUIDE.md`，先截图（`--screen`）再与 `build/ref/` 对比，元素包围盒对到 0–2px 再继续下一屏。
-3. **功能差距**：从 `docs/COVERAGE_AUDIT.md` 的 S1 项开始（回放模型 → 无头 JSON → `useAttachUiFix` → 长条身体反馈）。
-4. **平台验证**：安卓真机、iOS 实编译；补性能基准。
+1. **先提交现有工作**（见第零节），再跑第九节验证确认环境。
+2. **回读 `docs/parity/REPORT.md`**，特别是 §4a（参考缺陷修复）和 §6（剩余风险），
+   建立对"哪些结论可信"的正确认识。
+3. **主线：逐函数比对**（第五节第 1 项）。这是任务的核心，1470 项待判定。
+   按行为单元推进，每核完一项就把结论和双侧 file:line 写进对应领域报告。
+   优先做用户点过名但尚未核完的：噪域打击特效、皮肤字段、舞台机制、
+   谱面揭秘/调试、挑战模式判定、低分辨率/抗锯齿、分数跳动、多押高亮、
+   AP/FC 指示器、判定偏移指示器、剧情模式、音乐倍速、延迟校准、校准工具。
+4. **平台验证**：安卓真机、iOS 实编译。
+5. **收尾**：全量性能基准重测（第 5～10 轮改了渲染与界面路径）。
+
+可用的人力分工方式（第 5～7 轮用过，有效）：按领域拆 4 个 teammate——
+chart / core / judging / render，各自拥有不重叠的源码目录与报告文件，
+Lead 负责跨领域接线、合并结论、跑门禁。注意**同时最多 4 个活跃子代理**，
+且并发构建上限 2。

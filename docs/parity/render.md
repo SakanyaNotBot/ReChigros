@@ -1,0 +1,504 @@
+# Render parity report
+
+Scope: `src/render/**` (except `src/render/skin/SkinConfig.cpp`, owned by chart-parity),
+`include/rechigros/render/**` (except `include/rechigros/render/skin/SkinConfig.hpp`).
+
+Reference: `E:\Chigros` (read-only). Verified from source only — `MIGRATION.md`,
+`HANDOVER.md` and `docs/COVERAGE_AUDIT.md` were treated as hints and cross-checked.
+
+Verification gates at the time of writing (build `build\render-parity`, Release):
+
+| Gate | Result |
+| --- | --- |
+| `ctest` | 8/8 passed |
+| `scripts\verify-render-matrix.ps1` | 26/26 cases |
+| `scripts\check-gles-shaders.ps1` | 43/43 shaders compile for GLSL ES 3.00 |
+| `rechigros_block_probe` | framebuffer/viewport/blend restored; presented == off-screen composite (0.000000%) |
+
+---
+
+## 1. Defects found and fixed
+
+Every item below was found by reading both sides and was measured to reach the picture
+before/after. "Measured" means the render smoke tool was run twice with one input changed
+and the percentage of differing sampled pixels recorded.
+
+### 1.1 Mirror mode was completely ignored — FIXED
+
+**Reference.** `computeStageRect` builds a stage-level pre-transform about the letterboxed
+stage centre when `mirrorX` is set (`GameRenderer.java:3494-3504`):
+
+```
+Matrix.setIdentityM(stagePreTransform, 0);
+stagePreTransformActive = false;
+if (mirrorX) { cx = stageL + stageW*0.5f;
+               translateM(cx,0,0); scaleM(-1,1,1); translateM(-cx,0,0);
+               stagePreTransformActive = true; }
+```
+
+It is applied only while `inStageSpace` is true (`:6484-6494` for the reveal variant,
+`:5511`, `:9402`, `:11277`, `:11312`, `:12699` for the sprite/batch/hit-fx/texture paths).
+Sprite U coordinates are swapped once more (`:12709-12720`) so a reflected field does not
+show reflected artwork. The HUD, background and side bands are drawn outside stage space
+and stay unmirrored.
+
+**Port before.** `RenderFrameInput::mirrorX` was declared (`GameRenderer.hpp:33`) and set
+by `RenderSmoke.cpp:236` and `GameScreen.cpp:1656`, and `math::Mat4::mirrorX` existed — but
+**`Mat4::mirrorX` had zero call sites** and the renderer never read `input.mirrorX`.
+
+**Measured.** `--mirror` changed **0.00 %** of sampled pixels.
+
+**Fix.**
+- `scene::StageLayout` gained `bool mirror` and `stageProjection()`, which returns
+  `projection() * Mat4::mirrorX(centerX())` when mirrored (`StageLayout.hpp:19-30`).
+- `GameRenderer::Impl::drawScene` sets `layout.mirror = input.mirrorX`
+  (`GameRenderer.cpp`, stage layout construction).
+- Stage-space passes switched to `stageProjection()`; HUD and background stay on
+  `projection()` (full audit list in §5).
+- Note/hold batches re-swap U via `NotePassParams::flipU = layout.mirror`; hit-effect
+  frames and bad-effect copies take a new `mirrorU` argument.
+
+**Measured after.** On a letterboxed 1280x600 window the change mask is **100.00 %
+symmetric about the stage centre**, and the side bands do not move —
+`check_mirror.py` prints `PASS: the mirror reflects chart geometry about the stage centre
+only`.
+
+### 1.2 Level-effect HUD suppression was never consumed — FIXED
+
+**Reference.** `officialHideHud = officialLevelEffects.hideHud` (`:1598`), and
+`drawGameHudWithAnimationsClipped()` returns immediately when it is set and the run is not
+exiting (`:8934`): Hate, Desultory Signals and Message hide score, combo, song name,
+progress bar and pause button. The exit animation still shows the HUD.
+
+**Port before.** `OfficialLevelEffects::hideHud()` existed but nothing read it; the HUD was
+always drawn.
+
+**Fix.** `drawScene` computes one `hudVisible` that folds in
+`levelEffects->hideHud() && !inOutro`, and all three HUD draw points gate on it (the
+red-zone-composite path, the main path, and the pause-backdrop soft-HUD pass).
+
+**Measured.** With `--song desultorysignals` at t=115 the top HUD strip differs by 92.1 %
+against the same frame without the level effect.
+
+### 1.3 Ametrine failure vignette was missing entirely — FIXED
+
+**Reference.** The Ametrine level mod darkens the screen from the corners when the
+challenge is lost. It is a **standalone inline program**, not the storyboard
+`simpleVignette` pass: radius `0.24`, smoothness `0.55`, black with `v * darkness` alpha,
+drawn with classic `SRC_ALPHA/ONE_MINUS_SRC_ALPHA` and the premultiplied state restored
+afterwards (`:6565-6597`). It is drawn at the end of `drawGameplayObjects` (`:4707-4714`).
+The HUD is dimmed by the same ramp: `1 - 0.32*v` (`:742`, `:7993-8003`).
+
+**Port before.** No vignette, no HUD dim.
+
+**Fix.** New `fx::AmetrineVignette` (`include/rechigros/render/fx/AmetrineVignette.hpp`,
+`src/render/fx/AmetrineVignette.cpp`) reproduces the inline shader exactly, including the
+blend state and its restoration. `drawScene` draws it after the scene content and before
+the chain; `drawHudPass` multiplies HUD alpha by `AmetrineVignette::hudDimFactor(...)`.
+
+**Ramp drive.** `drawLevelEffectObjects` advances
+`OfficialLevelEffects::updateAmetrineVignette(chartTime, deltaSec)` once per frame from the
+visual clock (clamped to 0.25 s, like the reference's `:16106-16113`), and
+`prepareForChart` resets both the ramp and the challenge state on a chart switch.
+
+**Measured.** With `--song ametrine` the level effect is selected and its
+`official_simple_vignette` pass is loaded; at `darkness = 0` the frame is identical to the
+effect-free frame (0.00 %), which is the correct behaviour because the ramp only rises once
+the challenge fails or the authored window opens.
+
+### 1.4 Autoplay hit bursts drew the wrong debris source — FIXED
+
+**Reference.** Two separate burst paths, never both:
+- manual play / replay: `hitEffects`, one `HitEffect` per judgement, debris rolled at spawn
+  time with `Math.random()` (`:11055-11078`), drawn by `drawHitEffects` (`:11621`);
+- autoplay: `chart.clickEffectsSorted`, debris **pre-rolled during chart preparation**
+  (`ClickEffectItem`), drawn by `drawClickEffects` (`:11375-11543`), called only when
+  `autoplay && !replayPlayback` (`:4691`).
+
+**Port before.** Only the manual path existed; `grep ClickEffect src/render` returned
+nothing, so the pre-rolled debris was never drawn and autoplay showed no click effects.
+
+**Fix.** New `fx::ClickEffectField`
+(`include/rechigros/render/fx/ClickEffectField.hpp`, `src/render/fx/ClickEffectField.cpp`)
+walks `chart.clickEffectsSorted` with the reference's cursor/animation-start bookkeeping
+(`animStartCached` / `animStartSec` / `positionCached`), evaluates
+`hitFxParticleTravel` with the same Simpson integration and drag law, and draws the
+spritesheet plus debris. `RenderFrameInput` gained `replayPlayback`; the pass runs when
+`practice.autoPlay && !replayPlayback`.
+
+### 1.5 Stage-scoped effects were applied to the whole viewport — FIXED
+
+**Reference.** Non-global effects are drawn with the shader scissored to the play field;
+the surround keeps the untouched scene (`applyPrprEffectChainStageViewport`,
+`applyPrprEffectPassViewport`, `:5968-6076`). Global effects run full-frame **after** the
+HUD has been composited in, so a global pass affects the HUD too (`:4409-4426`).
+`renderGameplayFrame` (`:4200-4219`) picks one of: prpr chain, block composite,
+low-res, direct.
+
+**Port before.** `PrprChain::applyStageViewport` took a `StageRect` and immediately
+discarded it (`(void)rect;`) and forwarded to the full-screen `apply`. Every effect —
+stage-scoped or global — was therefore applied to the entire viewport, and the HUD was
+always drawn after the chain, so a global effect never reached the HUD.
+
+**Fix.**
+- `PrprChain::applyStageViewport` now filters to active effects and runs each through a new
+  `applyPassScissored`, which blits the input into the target, then clears and draws the
+  shader inside the stage scissor box, so the surround passes through unprocessed. The
+  scissor box is derived from the top-left stage rect with a bottom-left origin and clamped
+  to the target (`stageViewportRect`).
+- `drawScene` splits the chain into the reference's two segments: stage-scoped first, then
+  — only if the chart has a global effect — the HUD is composited into the scene and the
+  global passes run over the whole frame. A chart without a global effect therefore leaves
+  the HUD unshaded, as in the reference.
+- The red-zone composite path applies the same two-segment order before the composite
+  samples the scene.
+
+**Measured.** All 26 render-matrix cases (including `effect-bloom`, `effect-vignette`,
+`setting-chart-shader`, `red-zones`) still pass, and the block probe reports the presented
+frame identical to the off-screen composite (0.000000 %).
+
+---
+
+## 2. Verified MATCH (no change needed)
+
+Selected high-risk matches, each read on both sides.
+
+| Area | Reference | Port | Verdict |
+| --- | --- | --- | --- |
+| Letterbox rule: never wider than the viewport, `ar = min(ar, viewAr)`, centred | `GameRenderer.java:3435-3466` | `scene/StageLayout.cpp:computeStageLayout` | MATCH |
+| HUD unit = `stageH / 1000`, `x = cx + uiX*unit`, `y = cy - uiY*unit` | `:8662-8685` | `scene/HudPass.cpp:788-799` | MATCH |
+| `halfUiW = (stageW/stageH) * 500` (follows the real stage aspect, not clamped to 16:9) | `:8666-8673` | `scene/HudPass.cpp:809-811` | MATCH |
+| HUD intro/exit root scale curve, one key per frame of the 40-frame tween | `:602-628`, `:8900-8902` | `scene/HudPass.cpp:66-72`, `Transition.cpp:29-41` | MATCH (table values identical) |
+| Intro line scale curve, 56 samples over 55 frames | `:586-600` | `scene/Transition.cpp:12-26` | MATCH (identical) |
+| Stage/side/dim alpha curves | `:285-375` | `scene/Transition.cpp:109-143` | MATCH |
+| Outro line collapse window 1.0 s .. 1.7 s | `:574-577`, `:271-283` | `Transition.hpp:12-13`, `Transition.cpp:87-100` | MATCH |
+| Pause backdrop Hermite curve + vibrancy/brightness/flatten | `:1084-1127`, `:4034` | `scene/PauseBackdrop.cpp:13-31` | MATCH |
+| Note width ratio `0.1234375 * min(ar/(16/9), 1)` | `:11342-11349` | `GameRenderer.cpp:noteWidthRatio` | MATCH |
+| Note cull area = stage expanded by 1/12 per side, reveal-scaled | `:6515-6520` | `GameRenderer.cpp` cull bounds + `NoteBatch.cpp:169-204` | MATCH |
+| Note control height / incline / y-control / skew formulas | `:7049-7120` | `scene/NoteBatch.cpp:69-99` | MATCH |
+| Hit-effect debris: speed 15..35, spawn radius 0.2, thickness 0.2, drag K 2.657, lifetime 0.5, size envelope `((0.2078p-1.6524)p+1.6399)p+0.4988` | `GameConstants.java:59-62`, `GameRenderer.java:1242-1267`, `:11055-11078` | `fx/HitEffect.hpp:39-46`, `fx/HitEffect.cpp:17-66` | MATCH |
+| Hit-effect back-dating `lag = max(0,(chartTime-noteTime)/speed)` | `:10696-10699`, `:10725-10728` | `fx/HitEffect.cpp:233-235`, `:250-252` | MATCH |
+| Bad-effect: 0.5 s life, tint `(0.423529, 0.262745, 0.262745)`, alpha `1-p` | `:11580-11619` | `fx/BadEffectField.hpp:20-24` | MATCH |
+| Judge-line width/thickness scaling and official vs editor length | `:7449-7466` | `GameRenderer.cpp:drawLinePass` | MATCH |
+| Storyboard line texture scale (RPE 1350 authoring space, `useOfficialScale`, `rpeTextureScaleInPixels`) | `:7353-7400` | `GameRenderer.cpp:drawLinePass` | MATCH |
+| Storyboard text at `50/1350 * stageW`, multi-line height scaling | `:7417-7441` | `GameRenderer.cpp:drawLinePass` | MATCH |
+| Line text rasterised at `max(16, round(stageW*50/1350))` | `:7505` | `GameRenderer.cpp` + `text/TextRenderer.cpp` | MATCH |
+| AP/FC indicator colours incl. `1,1,1` on bad/miss and `162,238,255` good | `:7299-7337` | `GameRenderer.cpp:lineTintFor` | MATCH |
+| Pause button geometry `50.5887985 / 444.2999878 / 34.262 / 37.966`, visual aspect `35/41` | `:764-769`, `:3468-3478` | `scene/HudPass.cpp:18-23` | MATCH |
+| HUD text sizes 36 / 50 / 26 / 70 / 24, bottom-text y fix 5 at 1080 | `:784-789` | `scene/HudPass.cpp:41-46` | MATCH |
+| Legacy text tracking `0.02 em` and space adjust `-0.012 em` | `:790-792` | `scene/HudPass.cpp:50-51` | MATCH |
+| Score formatted as 7 digits, accuracy as `%d.%02d%%` clamped to 10000 | `:8691-8706` | `scene/HudPass.cpp:89-101` | MATCH |
+| Combo shown only from 3, label fades over 35/60 s | `:8625-8638`, `:8641-8646` | `scene/HudPass.cpp:964-1003`, `:424-429` | MATCH |
+| Hit-offset indicator: alpha `*0.68`, meter `clamp(0.18*w, 120dp, 190dp)`, `60°`, colours, three-layer glow widths/alpha `0.16/0.34/0.9` | `:8976-9053`, `:544-555` | `scene/HudPass.cpp:602-750` | MATCH |
+| Block inline look: fill `0.7132075/0.235493/0.235493 @ 0.667`, edge `1/0.3301886/0.3301886 @ 0.8`, disabled `0.497/0.138/0.138 @ 0.4`, glow `1/0.1792452/0.1792452 @ 0.8`, sparks `0.311/0.078/0.078` and `1/0.2849057/0.2849057`, pixel scale 6, 96-column cap, 28 noise columns, noise cutoff 0.86 | `:15908-15921`, `:15937-16045` | `fx/BlockOverlay.hpp:31-55`, `fx/BlockOverlay.cpp:59-321` | MATCH |
+| Block mask layout (maskA R normal / G subtract / B warning fade; maskB R subtract / B ready / A hover) and additive `ONE/ONE` rasterisation with `0.09/0.12` gate | `:15378-15535`, `block_prepass.glsl` | `fx/BlockOverlay.cpp:151-187`, `fx/BlockCompositePass.cpp:258-331` | MATCH |
+| Block pre-pass order compose → edge → 5 glow rings, `(5-i)/15` weights, last pass writes G only | `:15576-15674` | `fx/BlockCompositePass.cpp:341-403` | MATCH |
+| Block composite uniforms: `matParams[8]`, `matColors[7]`, `matExtra[5]`, `time = t/20`, `timeY = t`, `stageRect`, `displaceDirection 0.70710678` | `:15177-15245`, `:15789-15814` | `fx/BlockCompositePass.cpp:20-47`, `:434-453` | MATCH |
+| Block target sizes: masks/compose screen/8 point, effect screen/4 bilinear, glow ping screen/4 | `:15011-15034` | `fx/BlockCompositePass.hpp:48-50`, `.cpp:208-237` | MATCH |
+| Glow weight formula `(passes-pass)/Σk` | `:15549-15555` | `fx/BlockCompositePass.cpp:119-129` | MATCH |
+| DS grid: square side from CanvasScaler `matchWidthOrHeight 0.8`, reference 1920x1080, 2000 units, additive `SRC_ALPHA/ONE`, `texST 10`, colours/brightness, `DS_GRID_TIME_OFFSET 0.285`, freeze stops the pulse | `:4736-4829` | `fx/DsGridPass.cpp:16-39`, `:60-105` | MATCH |
+| Kaleido backdrop: stage-rect viewport, premultiplied blend, mirrored wrap, `vertexColor = (0,0,0,bgAlpha)`, chart clock for `_Time` | `:4842-4910` | `GameRenderer.cpp:drawLevelEffectObjects` | MATCH |
+| Message particles: `UNITS 10`, emit 10/s, 10 s life, box half-width 12.5, `MAX 512`, band alpha | `MessageParticleField.java:57-75` | `include/rechigros/game/MessageParticleField.hpp:19-27` | MATCH |
+| Bloom: gate `radius*brightness > 0`, sampleRate-scaled prefilter, `ceil`-halved downs, `iteration-1` ups, composite `bloomColor = brightness` | `:5632-5719` | `fx/BloomPass.cpp:93-220` | MATCH |
+| Bloom defaults 0.308 / 1.1 / 1.85 / 0.45 / 3 | `:5645-5650` | `fx/PrprChain.cpp:301-307` | MATCH |
+| Vignette noise regenerated per frame at `sampleRate` scale, bound to `noiseCol` unit 4 | `:5852-5907` | `fx/PrprChain.cpp:225-278`, `:437-441` | MATCH |
+| `UVScale` must be (1,1) or every fragment samples the centre texel | `:5737-5740` | `fx/PrprChain.cpp` (set for every program) | MATCH |
+| FXAA thresholds `0.0312` / `0.125`, `dirReduce 0.03125`, search `±8`, `1/3`,`2/3` taps | `:14729-14771` | `fx/FxaaPass.cpp` | MATCH |
+| Pause scalable blur: `0.5 + 8×0.0625` cross, radius scale from 1080 reference, 6 max depth | `:1087-1101`, `:14691-14709` | `fx/PauseBackdropPass.cpp` | MATCH |
+| Background blur: downscale + repeated separable blur, built once per artwork | `:9504-9571` | `scene/BackgroundBlur.cpp:45-46`, `:99-198` | MATCH |
+| Side columns: vertical gaps black, blurred artwork at `sideArtworkAlpha`, fixed `sideDimAlpha` overlay | `:11803-11895` | `GameRenderer.cpp:drawBackgroundPass` | MATCH |
+| Chart reveal: target scale 0.30, 1.0 s smoothstep, hidden floor alpha 0.20, panel treatment identical to side bands | `:1269-1274`, `:3517-3568`, `:5077-5156` | `GameRenderer.cpp` reveal block + `drawRevealPanels` | MATCH |
+| Low-res: scene into half-res target, HUD drawn with the scene, then full-frame upscale | `:4209-4213` | `GameRenderer.cpp` `useLowRes` path | MATCH |
+| Antialias: whole frame (pause backdrop included) into a full-res target, then FXAA resolve | `:3814-3866` | `GameRenderer.cpp` `useAa` path | MATCH |
+| Storyboard shader upgrade rules: strip `#version`, `texture2D`→`texture`, `gl_FragColor`→named out, collision-safe name, precision injection | `:14466-14573` | `gl/ShaderProgram.cpp:prepareShaderSource*` | MATCH |
+| Outro hides non-line and storyboard elements, keeps plain-line collapse | `:262-269`, `:4654` | `GameRenderer.cpp:drawLinePass` | MATCH |
+
+---
+
+## 3. Shader pair comparison
+
+All 29 reference shader assets exist in the port and were compared byte-wise, then read.
+Byte-identical files are marked IDENTICAL; the rest were read in full and confirmed
+semantically identical, differing only in comments (the port rewrote comments that named
+the reference project or its reverse-engineering artefacts, which the port's comment rules
+forbid).
+
+| Asset | Verdict |
+| --- | --- |
+| `official_shaders/block_composite.glsl` | IDENTICAL (327 lines, byte-for-byte) |
+| `official_shaders/block_prepass.glsl` | IDENTICAL (94 lines) |
+| `prpr_shaders/chromatic.glsl` | IDENTICAL |
+| `prpr_shaders/circle_blur.glsl` | IDENTICAL |
+| `prpr_shaders/fisheye.glsl` | IDENTICAL |
+| `prpr_shaders/glitch.glsl` | IDENTICAL |
+| `prpr_shaders/grayscale.glsl` | IDENTICAL |
+| `prpr_shaders/noise.glsl` | IDENTICAL |
+| `prpr_shaders/official_bloom_composite.glsl` | IDENTICAL |
+| `prpr_shaders/official_bloom_down.glsl` | IDENTICAL |
+| `prpr_shaders/official_bloom_lum.glsl` | IDENTICAL |
+| `prpr_shaders/official_bloom_up.glsl` | IDENTICAL |
+| `prpr_shaders/official_ds_grid.glsl` | IDENTICAL |
+| `prpr_shaders/official_esc.glsl` | IDENTICAL |
+| `prpr_shaders/official_kaleido.glsl` | IDENTICAL |
+| `prpr_shaders/official_lens_distortion.glsl` | IDENTICAL |
+| `prpr_shaders/official_light_band.glsl` | IDENTICAL |
+| `prpr_shaders/official_vignette_noise.glsl` | IDENTICAL |
+| `prpr_shaders/official_vignette_plus.glsl` | IDENTICAL |
+| `prpr_shaders/pixel.glsl` | IDENTICAL |
+| `prpr_shaders/radial_blur.glsl` | IDENTICAL |
+| `prpr_shaders/shockwave.glsl` | IDENTICAL |
+| `prpr_shaders/vignette.glsl` | IDENTICAL |
+| `prpr_shaders/official_dimension_slash.glsl` | Comment-only difference (5 lines); all 28 uniforms, defaults and the body match. Slash strengths arrive pre-scaled by `0.01`. |
+| `prpr_shaders/official_glitch.glsl` | Comment-only difference (10 lines); logic identical. Documented that the shipped presets keep `rgbChannelOffset = 0`, selecting the single-sample variant after all three displacements. |
+| `prpr_shaders/official_rgb_shift.glsl` | Comment-only difference (6 lines); the `radius >= 6.5` skip gate is present in both. |
+| `prpr_shaders/official_glitch_dog.glsl` | Comment-only difference (21 lines); verified code-level that the mask radii/smoothness pairing is `centerMask` with `centerMaskRadius/Smoothness`, `edgeMask` with `edgeMaskRadius/Smoothness`, and the gate is `noise*centerMask + edgeMask` — matching the reference body. |
+| `prpr_shaders/official_simple_vignette.glsl` | Comment-only difference (2 lines); body identical. |
+
+Additional shaders that only exist in the port (inline, not assets) were diffed against
+their reference Java string constants: the fullscreen/sprite/blur/pause-blur/pause-backdrop/
+FXAA/batch/hit-fx programs (`GameRenderer.java:14586-14832`) all MATCH the port's
+`fx/FullscreenPass.cpp`, `batch/SpriteBatch.cpp` and `fx/PauseBackdropPass.cpp` sources in
+operation and blend semantics.
+
+GLES conformance: `scripts\check-gles-shaders.ps1` compiles all 43 shader programs the port
+uses for GLSL ES 3.00 — 43/43 pass. No shader hand-writes a version line; the
+`ShaderProgram` normaliser injects it.
+
+**New shader added by this work:** `fx/AmetrineVignette.cpp` carries the inline vignette
+fragment (radius 0.24, smoothness 0.55, `vec4(0,0,0, v*darkness)`) as a port-internal
+string, because it is an inline program in the reference too, not an asset.
+
+---
+
+## 4. Draw order and GL state per pass
+
+Reference order established from `renderSceneDirect` (`:6394-6559`), `drawGameplayObjects`
+(`:4629-4715`) and `renderSceneWithPrprEffects` (`:4254-4452`).
+
+| # | Pass | Blend | Depth | Scissor | Port site |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Clear | — | off | off | `drawScene` |
+| 2 | Side columns: black gaps, blurred artwork, fixed dim | premultiplied `ONE/ONE_MINUS_SRC_ALPHA` | off | off | `drawBackgroundPass` |
+| 3 | Stage backdrop artwork + dim | same | off | stage scissor in the reference; the port clips by UV instead (see §6) | `drawBackgroundPass` |
+| 4 | Hate black mask (full screen) | premultiplied, scissor temporarily off, state restored | off | off | `drawLevelEffectObjects` |
+| 5 | Level-effect objects (particles, kaleido, DS grid) | per pass: particles premultiplied, DS grid additive `SRC_ALPHA/ONE`, kaleido premultiplied; all restore | off | per pass | `drawLevelEffectObjects` |
+| 6 | Judge lines (plain, texture, text) | premultiplied | off | off | `drawLinePass` |
+| 7 | Hold bodies + heads, then note heads per texture bucket | premultiplied | off | off | `drawNotePasses` |
+| 8 | Bad-effect copies (per texture) | premultiplied | off | off | `drawNotePasses` |
+| 9 | Red zones (inline path) | premultiplied | off | off | `blockOverlay.drawAll` |
+| 10 | Click effects (autoplay only) | premultiplied | off | off | `ClickEffectField::draw` |
+| 11 | Hit effects (sheet then debris) | premultiplied | off | off | `drawHitEffects` |
+| 12 | Chart-reveal ring | premultiplied | off | off | `drawRevealPanels` |
+| 13 | Ametrine vignette | **classic `SRC_ALPHA/ONE_MINUS_SRC_ALPHA`**, premultiplied restored | off | off | `AmetrineVignette::draw` |
+| 14 | Storyboard chain, stage-scoped segment | blend disabled per pass, restored | off | **stage rect** | `PrprChain::applyStageViewport` |
+| 15 | HUD composited (only when a global effect exists) | premultiplied | off | off | `drawHudPass` |
+| 16 | Storyboard chain, global segment | blend disabled per pass, restored | off | off | `PrprChain::apply` |
+| 17 | Present / blit to target | blend disabled | off | off | `drawScene` |
+| 18 | HUD (when no global effect shaded it) | premultiplied | off | off | `drawHudPass` |
+| 19 | Low-res upscale (only on that path) | blend disabled | off | off | `drawScene` |
+| 20 | Pause backdrop: graded frame, then soft HUD | premultiplied | off | off inside the passes | `drawScene` pause block |
+| 21 | FXAA resolve (only on the AA path) | blend disabled | off | off | `FxaaPass` |
+
+Red-zone composite path replaces 14-18 with: chain stage-scoped → chain global → HUD into
+the scene → masks → pre-passes → composite → restore, matching
+`renderOfficialBlockComposite` (`:15683-15715`).
+
+Saving-state discipline: `BlockCompositePass::rasteriseMasks`, `runPrepasses` and `draw`,
+plus `DsGridPass::draw` and `AmetrineVignette::draw`, all query and restore the
+framebuffer binding, viewport, blend enable, blend func, blend equation, depth, scissor and
+(where toggled) colour mask. The block probe asserts this and reports
+`PASS: framebuffer, viewport and blending restored`.
+
+---
+
+## 5. `stageProjection()` / `mirrorU` audit list
+
+Requested explicitly: every draw that uses the mirrored stage projection must also swap U,
+and nothing on the plain projection may accidentally be mirrored.
+
+### Uses `stageProjection()` — stage-space geometry (moves with the mirror)
+
+| Site | What it draws | U swap |
+| --- | --- | --- |
+| `GameRenderer.cpp` `drawLinePass` | plain judge lines, line textures, line text | n/a (quads use 0..1 UV; text and texture glyphs are symmetric when reflected, matching the reference which also does not swap them for lines) |
+| `GameRenderer.cpp` `drawNotePasses` (heads) | tap/drag/flick heads | **yes** — `params.flipU = layout.mirror` → `addQuadFlippable` (`NoteBatch.cpp:135-140`) |
+| `GameRenderer.cpp` `drawNotePasses` (holds) | hold head/body/tail, body sampler | **yes** — `addQuadFlippable` / `addQuadSelectFlippable` (`NoteBatch.cpp:142-148`) |
+| `GameRenderer.cpp` `drawNotePasses` (bad effects) | fading bad copies | **yes** — `mirrorU` argument |
+| `GameRenderer.cpp` `drawHitEffects` | hit sheet + debris | **yes** — `mirrorU` argument (`HitEffect.cpp`) |
+| `GameRenderer.cpp` `drawHitEffects` (click effects) | autoplay sheet + debris | **yes** — `mirrorU` argument (`ClickEffectField.cpp`) |
+| `GameRenderer.cpp` red-zone inline branch | zone silhouettes | no swap needed (procedural solid quads, no texture) |
+
+### Uses `projection()` — must stay unmirrored
+
+| Site | What it draws | Why |
+| --- | --- | --- |
+| `GameRenderer.cpp` `drawBackgroundPass` | artwork, side bands, dim overlays | reference draws these before `inStageSpace = true` |
+| `GameRenderer.cpp` `drawRevealPanels` | reveal ring backdrop | same |
+| `GameRenderer.cpp` `drawLevelEffectObjects` (Hate mask) | full-screen black | full-screen, no stage space |
+| `GameRenderer.cpp` `drawHudPass` → `scene::drawHud` | every HUD widget | reference HUD is not stage-space |
+| `GameRenderer.cpp` `drawScene` low-res / AA / pause blits | full-frame copies | full-screen |
+| `AmetrineVignette`, `DsGridPass`, `KaleidoBackdropPass` | full-screen passes | no projection at all (clip-space quad) |
+
+**Block composite:** the composite samples the *finished scene texture* and writes with a
+full-screen quad, so it must not be mirrored — it receives `sceneLayout.stage` as its
+`stageRect` gate, which is the stage rectangle (not mirrored) and is correct: the zone
+effect is gated by where the stage is, while the mirrored content is already baked into the
+sampled texture. Verified by reading `block_composite.glsl:169-176` (the `stageRect` gate)
+against `BlockCompositePass::draw`.
+
+---
+
+## 6. Deliberate implementation differences (same picture)
+
+These are noted so a future reader does not mistake them for divergences.
+
+1. **Batch is instanced.** The reference emits one instance per quad into a
+   `glDrawArraysInstanced` batch with a 15-float record; the port does the same with the
+   same record layout (`SpriteBatch.hpp:15-33`, `static_assert` on 15 floats). No visual
+   difference; this is the same optimisation the reference itself already uses.
+2. **Blur chain shares a quad and a program.** `BackgroundBlur`, `PauseBackdropPass` and
+   `FxaaPass` reuse `FullscreenQuad`/`FullscreenPass`; the reference creates one VAO per
+   program. Same geometry, same taps.
+3. **Red-zone masks are rasterised in one instanced-free draw with a colour-only program.**
+   The reference uses the sprite shader for masks and relies on the sprite shader's
+   premultiplied output; the port uses a dedicated raw-colour program because the sprite
+   shader multiplies colour by alpha, which would destroy the mask coverage written into
+   the colour channels. Comment in `fx/BlockCompositePass.cpp:49-51`. Same resulting
+   mask values (verified by the block probe's mask dumps).
+4. **Stage scissor replaced by UV clipping for the backdrop.** The reference scissors the
+   stage rect for the background; the port emits one quad with UVs mapped to the visible
+   part (`drawBackgroundPass` `drawCover`). This deliberately avoids the half-pixel
+   disagreement the reference's integer scissor has against float dim quads; documented at
+   the call site.
+5. **Block windowing.** `BlockOverlay` keeps the authored block list sorted by appear time
+   and advances only live entries instead of re-evaluating every entry per frame. Output is
+   identical because a non-live entry contributes nothing; this is a pure O(n) → O(live)
+   saving, required by the "no slower than the reference" constraint for chapter-level
+   charts with >10 000 zones.
+6. **Note range culling.** `NoteBatch` keeps per-type time-sorted lists and binary-searches
+   the first note still inside its fade window, and skips the control-curve evaluation when
+   a line has no y-controls and the note has no y-offset. Both are skipped-work-only
+   shortcuts; the cull predicate and the control-curve results are unchanged.
+7. **Random sequences are not bit-identical** (`HitEffect` xorshift vs `java.util.Random`,
+   `ClickEffectItem` `std::mt19937`). Distribution, count and draw order match; individual
+   particle positions do not. Inherent to the runtime change and deliberate so the port is
+   deterministic across its own runs.
+
+---
+
+## 7. Deliberate exclusions
+
+1. **`prprVideo` playback.** The data model is complete (`Chart.hpp:24`,
+   `ChartLoader.cpp` parses `path`/`startTime`/`scaleType`/`alpha`/`dim`/`attachLineIndex`),
+   but nothing renders it. The reference decodes video through the mobile platform's media
+   pipeline and an external OES texture (`GameRenderer.java:5158-5540`), which has no
+   desktop equivalent without bundling a decoder. **No shipped chart uses a video.** The
+   parsing side is complete, so a future playback path has correct inputs. Recorded as
+   remaining risk rather than a gap.
+2. **`NativeRenderCommands.java` is not ported as a JNI layer.** It is a set of `native`
+   declarations (`NativeRenderCommands.java:72-168`) whose bodies live in the reference's
+   C++ side. The port implements the same batch-building kernels directly in
+   `scene/NoteBatch.cpp` (`buildHeadBatch`, `buildHoldBatch`, `buildLineDrawOrder`,
+   `noteHeadPose`) and `shared` line evaluation, with the same inputs, the same arithmetic
+   and the same output record. The kernels are exercised by every note-related render-matrix
+   case and by `tests/`. Porting the JNI shim itself would add an indirection with no
+   behavioural difference.
+3. **Debug overlay** (`drawDebugOverlay`, `:6908-7035`) is not rendered. It is developer
+   tooling behind `showDebugInfo`, not part of the shipped picture; the reviewer-facing
+   frame must not contain it.
+4. **`GameGLSurfaceView.java`** is EGL/context setup and frame pacing, which the port
+   handles through SDL in `src/app` (outside this task's scope). No render-side content.
+
+---
+
+## 8. Reference files not read in full (explicit)
+
+Stated plainly rather than implied as verified:
+
+| File | Status |
+| --- | --- |
+| `ui/GameTextRenderer.java`, `ui/GameTextView.java`, `ui/GameTextOverlay.java` | **Not read.** The port rasterises text with stb_truetype (`text/TextRenderer.cpp`) and reproduces the *observable* results the renderer depends on (ink box, ascent/descent, legacy advance, tracking `0.02 em`, space adjust `-0.012 em`, ellipsis) — all verified against the constants and the `createHudTextTexture` layout path (`:7837-7985`) and `measureHudTextWidth` (`:8183-8205`) that the renderer calls. The sub-pixel layout internals of those three UI classes were not read line-by-line. |
+| `ui/AssetBitmaps.java`, `ui/CoverImageLoader.java` | **Not read.** Texture loading, filtering and V-flip behaviour were verified from the renderer's own call sites (`applyTexturePointFilter`, `applyBlockTextureWrap`, `loadOfficialShaderTexture`, `loadStackedAtlasSlicesVFlip`) and by the render matrix's skin/GIF/hold cases. The two UI loaders' own downsampling heuristics were not compared. |
+| `docs/CHAPTER9_PHASE2_ANOMALIES.md` (130 105 bytes) | **Partially read** — the sections on block-area phase semantics, the `0.09/0.12` subtract gate and the mask layout. The remaining sections were not read; they mostly describe the reverse-engineering process rather than shipped behaviour. |
+| `docs/OFFICIAL_BLOCK_SHADERS.md` | Read; used to confirm the uniform array layout and pass states. |
+| `docs/analyses/*.md` | Used selectively for constants (bloom, vignette-noise, message stage). Not read end-to-end. |
+| `game/OfficialLevelEffects.java` (733 lines) | Read. Owning port (`src/core/OfficialLevelEffects.cpp`) was rebuilt by core-parity; this report only covers the render-side consumption. |
+| `game/PrprEffect.java`, `game/PrprVideo.java` | Read. |
+
+---
+
+## 9. Cross-area requests
+
+Changes needed outside my write scope. Each is a real divergence.
+
+1. **`src/app/**` or `src/core/**`: `OfficialLevelEffects::onBadOrMiss` is never called.**
+   `grep onBadOrMiss src/` returns only its own definition
+   (`src/core/OfficialLevelEffects.cpp:369`). The reference calls it once per frame with the
+   bad/miss delta (`GameRenderer.java:16100-16113`), which is what makes the Ametrine and
+   Petrichor challenges able to fail. Until it is called, `isChallengeFailed()` stays false,
+   so `updateAmetrineVignette` never ramps up and the Ametrine vignette I wired in never
+   appears. Required change: in the gameplay update, after judgement, call
+   `effect->onBadOrMiss(chartTimeSec, missCountIncreased)` for the loaded chart's
+   `levelEffects`.
+   *Render side is complete*: `drawScene` draws the vignette from `ametrineVignette()` and
+   dims the HUD by `hudDimFactor`, both verified to be live.
+2. **`src/app/GameScreen.cpp`: `onBlockStateChanged` is never called.** Same situation for
+   Petrichor: the reference tracks whether a finger holds a red zone
+   (`processBlockedTouchesOfficial`, `:15853-15872`) and feeds it to the level mod.
+   Required change: when the set of blocked touches becomes empty/non-empty, call
+   `levelEffects->onBlockStateChanged(touching)`.
+3. **`src/app/GameScreen.cpp`: `lowPassOnBlock()` is not consumed.** Reference ducks the
+   audio while a red zone is held (`updateLowPassFilterStateOfficial`, `:15875-15885`).
+   `OfficialLevelEffects::lowPassOnBlock()` now returns the right value but no audio code
+   reads it. Owner: gameplay/audio.
+4. **`src/app/GameScreen.cpp`: blocked-touch pulse inside a zone is not drawn.** The
+   reference draws a red pulse disc and ring at each blocked finger inside an active zone
+   (`:16070-16086`). The port's inline zone path has no equivalent, and the input layer does
+   not expose the blocked-touch positions to the renderer. Needed: pass the blocked touch
+   positions (and the pulse timestamp) through `RenderFrameInput`, then draw them in
+   `drawLevelEffectObjects`. I did not add an unused field speculatively.
+5. **`src/render/skin/SkinConfig.cpp` (chart-parity's file): no action requested.** Verified
+   the render side consumes every material field it publishes (`holdAtlas`, `holdAtlasMH`,
+   `holdRepeat`, `holdKeepHead`, `holdCompact`, `hitFx[]`, `hitFxScale/Duration/Rotate/
+   Tinted`, `hideParticles`, `perfect*`, `good*`, `*FromSkin`) — `GameRenderer.cpp:
+   applyResPackSettings`. Consistent.
+6. **`include/rechigros/render/scene/LinePass.hpp:17,20` owns `LINE_WIDTH_OFFICIAL` /
+   `LINE_WIDTH_EDITOR`.** core-parity correctly declined to duplicate them into core. No
+   change requested; noting for the master report that the render side is the single home.
+
+---
+
+## 10. Remaining risk
+
+1. **Mirror is verified geometrically, not against a reference capture.** `build/ref/` has
+   no mirrored screenshot. The check is that the change mask is a 100.00 % reflection about
+   the stage centre and the side bands do not move — which matches the reference's transform
+   by construction, but is not a pixel diff against the reference app.
+2. **The Ametrine vignette has never been seen on screen.** Its ramp needs a failed
+   challenge, which needs cross-area request #1. The pass itself is compared line-by-line
+   against `:6565-6597` and the constants are identical, and its GL state discipline is
+   asserted by the probe's state check, but the end-to-end picture is unverified.
+3. **Autoplay click effects are wired but not diffed.** The port draws the pre-rolled
+   debris; the reference's `java.util.Random` sequence cannot be reproduced, so a pixel
+   comparison of individual particles is impossible. What is verified: the pass runs only
+   for autoplay-not-replay, the cursor/anim-start bookkeeping matches the reference, and the
+   travel/size laws are numerically identical.
+4. **Two-segment chain split changes when the HUD is shaded.** Charts whose effects are all
+   `global: true` (both effect fixtures) shade the HUD; charts with only stage-scoped effects
+   no longer do. This matches the reference's structure, but every fixture in
+   `tests/fixtures` uses `"global": true`, so the stage-scoped branch (`applyPassScissored`)
+   is exercised only by the DS-bloom/dimension-slash level presets, which have no fixture and
+   no reference capture. **This is the least-verified change in this batch.**
+5. **`prprVideo` exclusion** is justified by "no shipped chart uses it", which I verified
+   only by inspecting the shipped chart assets in `assets/` (no `prprVideos` entries) — not
+   by exhaustively scanning all installed charts on a device.
+6. **Chapter-9 level-effect rendering is verified structurally, not visually.** The pass
+   order, uniforms and constants match, and the DS grid + Message kaleido are covered by
+   render-matrix cases, but `build/ref/` has no Chapter 9 level-mod capture, so the Hate
+   vignette, DS dimension-slash and Message light-band pictures are uncompared.
+7. **Text glyph shapes differ by font rasteriser.** The port uses stb_truetype, the reference
+   the platform rasteriser. Metrics and layout are matched; individual glyph outlines are
+   not pixel-identical. This is inherent and not fixable without shipping the same
+   rasteriser.
+8. **`GameTextRenderer`/`AssetBitmaps`/`CoverImageLoader` were not read** (§8). Any
+   divergence confined to those files' internals is outside what I verified.

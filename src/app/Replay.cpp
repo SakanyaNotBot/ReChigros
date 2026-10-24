@@ -18,6 +18,10 @@ using Json = nlohmann::json;
 constexpr int kTouchSampleVersion = 1;
 constexpr int kJudgementVersion = 2;
 
+// Two recordings describe the same play when they share the song, the score and a timestamp
+// this close together. The window absorbs the gap between finishing a run and pressing save.
+constexpr long long kDuplicateWindowMs = 5000;
+
 std::string entryKindName(int kind) {
   switch (kind) {
     case 0: return "down";
@@ -295,6 +299,18 @@ std::string ReplayStore::save(const ReplayData& data) {
   std::error_code error;
   std::filesystem::create_directories(root_, error);
   if (error && !std::filesystem::is_directory(root_)) return {};
+  // A recording is kept at most once. The same song, the same score and a timestamp within a
+  // few seconds of an existing entry describe the same play, so saving again from a later
+  // settlement must not add a second copy. The reference applies exactly this test, and the
+  // caller turns the empty id into its "already saved" message.
+  for (const auto& existing : list()) {
+    if (existing.meta.songName != data.meta.songName) continue;
+    if (existing.meta.score != data.meta.score) continue;
+    const long long gap = existing.meta.timestampMs > data.meta.timestampMs
+        ? existing.meta.timestampMs - data.meta.timestampMs
+        : data.meta.timestampMs - existing.meta.timestampMs;
+    if (gap < kDuplicateWindowMs) return {};
+  }
   const long long timestamp = data.meta.timestampMs > 0 ? data.meta.timestampMs : 0;
   std::string id = std::to_string(timestamp);
   int suffix = 1;

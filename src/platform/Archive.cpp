@@ -82,7 +82,16 @@ struct RawEntry {
   std::uint64_t localHeaderOffset{};
 };
 
-// Locates and parses the central directory. Throws for malformed or ZIP64 archives.
+// Reads the 64-bit values out of the 0x0001 extended field. Only the values the entry
+// actually replaced with the sentinel are present, in a fixed order. Returns false when a
+// needed field is absent.
+bool readZip64Extra(const std::vector<std::uint8_t>& extra, bool needsUncompressed,
+    bool needsCompressed, bool needsOffset, std::uint64_t& uncompressed,
+    std::uint64_t& compressed, std::uint64_t& offset);
+
+// Locates and parses the central directory. Throws for malformed archives and for a
+// genuinely ZIP64 container, but an individual entry may still carry its 64-bit sizes in
+// the 0x0001 extended field, which is read back before the entry is used.
 std::vector<RawEntry> readCentralDirectory(std::ifstream& stream, std::uint64_t fileLength) {
   const std::uint64_t searchLength = std::min<std::uint64_t>(fileLength, 22ULL + 65535ULL);
   std::vector<std::uint8_t> tail(static_cast<std::size_t>(searchLength));
@@ -130,13 +139,64 @@ std::vector<RawEntry> readCentralDirectory(std::ifstream& stream, std::uint64_t 
 
     std::vector<char> name(static_cast<std::size_t>(nameLength));
     if (nameLength > 0 && !readExact(stream, name.data(), name.size())) throw std::runtime_error("ZIP name truncated");
-    // Extended metadata is not needed for extraction but must be skipped.
-    if (extraLength > 0) stream.seekg(extraLength, std::ios::cur);
+    std::vector<std::uint8_t> extra(static_cast<std::size_t>(extraLength));
+    if (extraLength > 0 && !readExact(stream, extra.data(), extra.size())) {
+      throw std::runtime_error("ZIP extra field truncated");
+    }
     if (commentLength > 0) stream.seekg(commentLength, std::ios::cur);
+
+    // A size or offset of all ones points at the 64-bit values in the extended field; the
+    // rest of the archive is ordinary, so only those fields need re-reading.
+    const bool needsUncompressed = entry.uncompressedSize == ZIP64_MAGICVAL;
+    const bool needsCompressed = entry.compressedSize == ZIP64_MAGICVAL;
+    const bool needsOffset = entry.localHeaderOffset == ZIP64_MAGICVAL;
+    if (needsUncompressed || needsCompressed || needsOffset) {
+      std::uint64_t uncompressed = 0;
+      std::uint64_t compressed = 0;
+      std::uint64_t offset = 0;
+      if (!readZip64Extra(extra, needsUncompressed, needsCompressed, needsOffset, uncompressed,
+              compressed, offset)) {
+        throw std::runtime_error("Missing ZIP64 extended information");
+      }
+      if (needsUncompressed) entry.uncompressedSize = uncompressed;
+      if (needsCompressed) entry.compressedSize = compressed;
+      if (needsOffset) entry.localHeaderOffset = offset;
+    }
+
     if (!normaliseEntryName(std::string(name.begin(), name.end()), entry.name)) continue;
     entries.push_back(std::move(entry));
   }
   return entries;
+}
+
+// Reads the 64-bit values out of the 0x0001 extended field. Only the values the entry
+// actually replaced with the sentinel are present, in a fixed order. Returns false when a
+// needed field is absent.
+bool readZip64Extra(const std::vector<std::uint8_t>& extra, bool needsUncompressed,
+    bool needsCompressed, bool needsOffset, std::uint64_t& uncompressed,
+    std::uint64_t& compressed, std::uint64_t& offset) {
+  std::size_t position = 0;
+  while (position + 4 <= extra.size()) {
+    const int headerId = readU16(&extra[position]);
+    const int dataSize = readU16(&extra[position + 2]);
+    position += 4;
+    if (position + static_cast<std::size_t>(dataSize) > extra.size()) break;
+    if (headerId == 0x0001) {
+      std::size_t cursor = position;
+      const auto take = [&extra, &cursor](std::uint64_t& target) {
+        if (cursor + 8 > extra.size()) return false;
+        target = readU64(&extra[cursor]);
+        cursor += 8;
+        return true;
+      };
+      if (needsUncompressed && !take(uncompressed)) return false;
+      if (needsCompressed && !take(compressed)) return false;
+      if (needsOffset && !take(offset)) return false;
+      return true;
+    }
+    position += static_cast<std::size_t>(dataSize);
+  }
+  return false;
 }
 
 std::uint64_t localDataOffset(std::ifstream& stream, std::uint64_t localHeaderOffset) {

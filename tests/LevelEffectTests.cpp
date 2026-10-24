@@ -178,10 +178,11 @@ int main() {
       const auto table = OfficialLevelEffects::load(root);
       require(table != nullptr, "the shipped level-effect table loads");
 
-      // A song name from the table selects its effect and yields a pass list.
-      const auto desultory = OfficialLevelEffects::forChart(*table, std::string{},
-          "Desultory Signals");
-      require(desultory != nullptr, "a known song name selects an effect");
+      // Selection is by normalised digest: only whitelisted charts carry an effect, and a
+      // song name never substitutes for the digest.
+      const auto desultory = OfficialLevelEffects::forChart(*table,
+          "68d8b27ffc34007d6a01a4aa98faff1e", "Desultory Signals");
+      require(desultory != nullptr, "a whitelisted digest selects an effect");
       require(desultory->effectName() == "DesultorySignalsLevelEffects",
           "the selected effect is the Desultory Signals one");
       const auto passes = desultory->buildPrprEffects();
@@ -206,9 +207,17 @@ int main() {
       }
       require(sawBloom, "the Desultory Signals chain contains bloom");
 
-      // An unknown name selects nothing.
-      require(OfficialLevelEffects::forChart(*table, std::string{}, "not a real song") ==
-              nullptr, "an unknown song name selects nothing");
+      // An unlisted digest selects nothing, even with a name that matches a table song.
+      require(OfficialLevelEffects::forChart(*table, "00000000000000000000000000000000",
+                  "Desultory Signals") == nullptr,
+          "an unlisted digest selects nothing even with a known song name");
+      require(OfficialLevelEffects::forChart(*table, std::string{}, "Desultory Signals") ==
+              nullptr, "an empty digest selects nothing");
+
+      // With story mode off every chart except Message plays as a plain chart.
+      require(OfficialLevelEffects::forChart(*table, "68d8b27ffc34007d6a01a4aa98faff1e",
+                  "Desultory Signals", false) == nullptr,
+          "story mode off suppresses a non-Message level effect");
     }
   }
 

@@ -2,6 +2,8 @@
 
 #include "rechigros/game/HoldBodyBurst.hpp"
 
+#include <array>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -54,6 +56,12 @@ struct RenderFrameInput {
   bool multiPressHighlight{true};
   // Enables the story level effects; the Message level always plays its effects.
   bool storyMode{true};
+  // Draws the chart-debug overlay: a marker at every judge line and every note, so an authored
+  // chart's geometry can be compared against what is actually rendered.
+  bool showChartDebug{false};
+  // Draws the hit particles and the hold debris. Turning them off keeps the hit sound and the
+  // judgement itself; only the visual burst is skipped.
+  bool showHitParticles{true};
   // Reveals the play field: shrunk camera at the start and end plus hidden objects.
   bool chartReveal{false};
   // Resolved by the renderer from chartReveal for the frame it is drawing; the caller
@@ -124,12 +132,23 @@ struct RenderFrameInput {
     bool autoPlay{false};
   } practice;
 
+  // True when a recording drives the run. Autoplay draws the chart's pre-rolled bursts
+  // while a replay draws the ones its recorded judgements produce, so the two never run
+  // together.
+  bool replayPlayback{false};
+
   // Hold-body hit bursts produced since the previous frame. The gameplay session owns the
   // timing (one burst every half beat while a hold is active); the hit-effect pass draws one
   // burst per entry at the position the hold occupies.
   std::vector<game::HoldBodyBurst> holdBodyBursts;
   // Hold-head bursts: one per hold head hit, drawn where the head was when it was hit.
   std::vector<game::HoldHeadBurst> holdHeadBursts;
+
+  // Fingers currently held inside an active red zone, in stage pixels. A zone draws a pulse
+  // disc and ring at each of these points while the finger stays down.
+  std::vector<std::array<float, 2>> blockedTouchPositions;
+  // Chart time when the last finger entered a zone, which drives the pulse's decay.
+  double blockedTouchPulseSec{-1.0};
 
   std::string songName;
   std::string levelName;
@@ -169,7 +188,24 @@ public:
       const game::JudgementEngine* judgement, const std::filesystem::path& outputPng,
       int frames, int width, int height);
 
+  // Offscreen frame capture for recording. Opens a target at the requested size and keeps it
+  // for as long as the capture runs, so a long recording allocates once instead of per frame.
+  // `beginCapture` prepares the renderer for the chart; `captureFrame` draws one frame with the
+  // supplied input and returns its pixels in top-down RGBA order; `endCapture` restores the
+  // interactive size. The caller decides when a frame exists and what time it shows, which is
+  // what makes the output independent of the wall clock.
+  bool beginCapture(const RenderFrameInput& input, game::Chart* chart, int width, int height);
+  bool captureFrame(const RenderFrameInput& input, game::Chart* chart,
+      const game::JudgementEngine* judgement, std::vector<std::uint8_t>& outPixels);
+  void endCapture() noexcept;
+  [[nodiscard]] int captureWidth() const noexcept;
+  [[nodiscard]] int captureHeight() const noexcept;
+
 private:
+  // Points the renderer's offscreen targets at the capture size and prepares them for the
+  // chart. Split out because a capture re-runs it whenever the chart changes.
+  void applyCaptureSize(const RenderFrameInput& input, game::Chart* chart);
+
   struct Impl;
   std::unique_ptr<Impl> impl_;
 };

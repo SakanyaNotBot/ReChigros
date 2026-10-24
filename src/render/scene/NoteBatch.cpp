@@ -4,6 +4,7 @@
 #include "rechigros/game/GameConstants.hpp"
 #include "rechigros/game/JudgeLine.hpp"
 #include "rechigros/game/Note.hpp"
+#include "rechigros/game/NoteGeometry.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -66,27 +67,6 @@ bool isBeforeAppearTime(double noteGlobalBeat, double chartGlobalBeat, float lin
 
 // The note control curves are evaluated on an RPE-pixel height, which couples the
 // normalised y offset with the scroll-derived distance.
-float controlHeightFromBasePx(float baseFpPx, float yOffset, double visualSpeed,
-    float stageAspect, float stageHeight) {
-  if (!isFinite(baseFpPx) || !isFinite(yOffset) || !isFinite(visualSpeed) ||
-      !isFinite(stageAspect) || !isFinite(stageHeight) || stageHeight == 0.0F ||
-      std::abs(visualSpeed) < 1.0e-9) {
-    return isFinite(yOffset) ? yOffset * kRpeHeight : 0.0F;
-  }
-  const float yOffsetRpe = yOffset * kRpeHeight;
-  const float height = yOffsetRpe + baseFpPx * stageAspect * kRpeHeight /
-      (stageHeight * static_cast<float>(visualSpeed));
-  return isFinite(height) ? height : (isFinite(yOffset) ? yOffsetRpe : 0.0F);
-}
-
-float calcInclineValue(float inclineSin, float baseFpPx, float transYPx, float stageAspect,
-    float stageHeight) {
-  const float param = (baseFpPx * stageAspect + transYPx) * kRpeHeight / (stageHeight * 360.0F);
-  float value = 1.0F - inclineSin * param;
-  if (!isFinite(value) || value == 0.0F) value = 1.0F;
-  return value;
-}
-
 // The line incline event and the per-note skew control are both angles; combine
 // them into one sine before evaluating the incline.
 float combineInclineSinr(float baseSinr, float skewDeg) {
@@ -286,7 +266,7 @@ NoteHeadPose noteHeadPose(const game::Note& note, const LineFrame& frame,
   const double baseFpD = (note.floorPosition - frame.floorPosition) * beatScale * speed;
   const auto baseFpPx = static_cast<float>(baseFpD);
   const float transYPx = note.yOffset * params.stageHeight;
-  const float controlHeight = controlHeightFromBasePx(baseFpPx, note.yOffset, speed, stageAspect,
+  const float controlHeight = game::rpeControlHeightFromBasePx(baseFpPx, note.yOffset, speed, stageAspect,
       params.stageHeight);
   const float yControl = evalControl(line, kControlY, controlHeight);
   const float baseFpWithControl = applyYControlScale(baseFpPx, yControl);
@@ -296,7 +276,7 @@ NoteHeadPose noteHeadPose(const game::Note& note, const LineFrame& frame,
   const float inclineSinr = combineInclineSinr(frame.inclineSinr, skewControl);
   float inclineValue = 1.0F;
   if (isFinite(inclineSinr)) {
-    inclineValue = calcInclineValue(inclineSinr, baseFpWithControl, transYPx, stageAspect,
+    inclineValue = game::calcInclineValue(inclineSinr, baseFpWithControl, transYPx, stageAspect,
         params.stageHeight);
   }
   float offsetX = static_cast<float>(note.positionX * game::PGR_WIDTH * params.stageWidth);
@@ -383,7 +363,7 @@ void buildHeadBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
         }
       }
       const float controlHeight =
-          controlHeightFromBasePx(baseFpPx, note.yOffset, speed, stageAspect, params.stageHeight);
+          game::rpeControlHeightFromBasePx(baseFpPx, note.yOffset, speed, stageAspect, params.stageHeight);
       const float yControl = evalControl(line, kControlY, controlHeight);
       const float baseFpWithControl = applyYControlScale(baseFpPx, yControl);
       const float visualFp = baseFpWithControl + transYPx;
@@ -458,7 +438,7 @@ void buildHeadBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
       float inclineValue = 1.0F;
       if (isFinite(inclineSinr)) {
         inclineValue =
-            calcInclineValue(inclineSinr, baseFpWithControl, transYPx, stageAspect, params.stageHeight);
+            game::calcInclineValue(inclineSinr, baseFpWithControl, transYPx, stageAspect, params.stageHeight);
       }
 
       // A highlight texture carries a different canvas size, so its width ratio restores
@@ -581,7 +561,7 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
         }
       }
       const float controlHeight =
-          controlHeightFromBasePx(baseFpPx, note.yOffset, speed, stageAspect, params.stageHeight);
+          game::rpeControlHeightFromBasePx(baseFpPx, note.yOffset, speed, stageAspect, params.stageHeight);
       const float yControl = evalControl(line, kControlY, controlHeight);
       const float baseFpWithControl = applyYControlScale(baseFpPx, yControl);
       const float visualFp = baseFpWithControl + transYPx;
@@ -710,7 +690,7 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
       float inclineValue = 1.0F;
       if (isFinite(inclineSinr)) {
         inclineValue =
-            calcInclineValue(inclineSinr, baseFpWithControl, transYPx, stageAspect, params.stageHeight);
+            game::calcInclineValue(inclineSinr, baseFpWithControl, transYPx, stageAspect, params.stageHeight);
       }
 
       const float widthScale = params.widthScaleFor(note.type, highlightVariant && params.multiPressHighlight);

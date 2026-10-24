@@ -1,0 +1,103 @@
+# Audio subsystem parity (`src/audio/**` ↔ reference native audio engine)
+
+Scope verified by the Lead. Reference: the Java audio facade plus the native engine and
+decoder sources shipped alongside it. Port: `src/audio/AudioEngine.cpp`,
+`src/audio/Decoder.cpp`, `include/rechigros/audio/AudioEngine.hpp`,
+`include/rechigros/audio/Mixer.hpp`, `include/rechigros/audio/Decoder.hpp`.
+
+Verdict vocabulary: **MATCH** (behaviour reproduced), **PORT-ONLY** (deliberate addition with
+no reference counterpart, justified), **N/A** (platform-owned, replaced by an equivalent).
+
+## 1. Constants and clamps
+
+| Quantity | Reference | Port | Verdict |
+| --- | --- | --- | --- |
+| Playback speed clamp | `0.05 .. 4.0`, applied on the control thread and again on the audio thread | `kMinPlaybackSpeed 0.05`, `kMaxPlaybackSpeed 4.0` (`Mixer.hpp:18-19`), `clampSpeed` applied in the callback (`AudioEngine.cpp:364`) | MATCH |
+| Music gain clamp | `0 .. 5` | `kMaxGain 5.0` (`Mixer.hpp:20`), `clampGain` | MATCH |
+| Effect gain clamp | `0 .. 5` | same `clampGain` | MATCH |
+| Low-pass open cutoff | 22000 Hz | `LowPassFilter::kOpenCutoffHz` | MATCH |
+| Low-pass blocked cutoff | 1500 Hz | `LowPassFilter::kClosedCutoffHz` | MATCH |
+| Low-pass ramp duration | 0.05 s | `kRampSeconds 0.05` | MATCH |
+| Low-pass topology | RBJ biquad, Q = 1/√2 | same cookbook coefficients, `kQ = 0.7071067811865476` (`Mixer.hpp:216`) | MATCH |
+| Effect queue capacity | 1024, drops when full, lock-free | `kSfxQueueCapacity 1024`, `queue_.pop` loop with drop-on-full | MATCH |
+| Output channels | interleaved stereo | `StereoSample` / interleaved stereo | MATCH |
+
+## 2. Mix loop (`AudioEngine::Impl::mix` ↔ reference `audio_engine.cpp` render path)
+
+| Aspect | Reference | Port | Verdict |
+| --- | --- | --- | --- |
+| Per-frame order | sample music → **filter the music source only** → accumulate effect voices → advance position → clamp | identical order (`AudioEngine.cpp:388-421`): music sample, `lowPass_.process` on the mixed music value, then `accumulate` voices, then `advancePosition`, then `clampSample` | MATCH |
+| Low-pass delta per frame | `(1.0 / sampleRate) * speed` | `filterDelta = (1.0 / rate) * speed` (`AudioEngine.cpp:375`) | MATCH |
+| Low-pass runs on music only | yes — voices are summed **after** the filter | yes — voices accumulate after `lowPass_.process` | MATCH |
+| Position advance | `pos += speed` | `mixer::advancePosition(position, speed)` | MATCH |
+| Clamp | `clampf(l, -1, 1)` per channel | `mixer::clampSample` per channel | MATCH |
+| Paused / not playing | output silence, queues flushed | `audible == false` → `flushVoices()`, `queue_.clear()`, `mixSilence()` (`AudioEngine.cpp:343-352`) | MATCH |
+| Seek mid-playback | position jumps, voices and queue dropped, filter state reset | `seekTargetFrames_` consumed, `flushVoices()`, `queue_.clear()`, `lowPass_.reset()` (`AudioEngine.cpp:356-362`) | MATCH |
+
+Integer / integral-position read path (`AudioEngine.cpp:369-373,393-396`) is a **PORT-ONLY**
+fast path that skips interpolation when the speed is a whole number and the position is
+integral. It produces the same sample as linear interpolation at fraction 0, so the output is
+identical; it exists because the reference builds its interpolation weights every frame even
+when they are 0/1.
+
+## 3. Playhead estimation (smooth cursor between callbacks)
+
+| Aspect | Reference | Port | Verdict |
+| --- | --- | --- | --- |
+| Not playing / paused | return committed end frame | `!audible` → `endFrames / rate` (`AudioEngine.cpp:466-470`) | MATCH |
+| Anchor | callback start nanoseconds, start frames, start/end generated output frames, callback frame count, callback speed | same five anchors stored at callback start (`AudioEngine.cpp:379-383`) | MATCH |
+| Generated-output estimate | `startOutput + dt * sampleRate`, clamped to `[startOutput, min(startOutput + cbFrames, endOutput)]` | `estimatePlayheadFrames` → same clamp order (bounded by generated and by committed end) | MATCH |
+| Music estimate | `startFrames + outputDelta * speed`, clamped to `startFrames + cbFrames * speed`, then by the committed end frame, floored at 0 | identical expression (`Mixer.hpp:94-108`) | MATCH |
+| Speed used | clamped to `0.05 .. 4.0` before use | `clampSpeed` inside the estimator | MATCH |
+
+## 4. Decoding (`src/audio/Decoder.cpp` ↔ reference native decoder + Java PCM/WAV helpers)
+
+| Aspect | Reference | Port | Verdict |
+| --- | --- | --- | --- |
+| WAV | own decoder | miniaudio decoder | MATCH (equivalent output) |
+| MP3 | minimp3 | miniaudio decoder (minimp3 family) | MATCH |
+| Ogg Vorbis | stb_vorbis | decoder built with Vorbis enabled | MATCH |
+| FLAC | not supported | supported | **PORT-ONLY** superset; harmless, no shipped asset uses it |
+| Output layout | interleaved float stereo, resampled to the device rate | same (`mixer::resampleStereo`) | MATCH |
+| Resampling | linear | linear (`Mixer.hpp:111-137`) | MATCH |
+| Missing asset fallback | synthesised effect tones | `loadSoundEffects` synthesises tones when an asset is absent (`AudioEngine.hpp:31-33`) | MATCH |
+
+The reference exposes a PCM injection API (`setMusicData`, `setSfxData`) because calibration
+feeds decoded asset PCM across the JNI boundary. The port has no such boundary, so it loads
+the same WAV file directly (`CalibrationScreen.cpp`). This is **N/A (platform)**: same audio,
+one less copy.
+
+## 5. Effect voices
+
+| Aspect | Reference | Port | Verdict |
+| --- | --- | --- | --- |
+| Voice storage | unbounded list, appended per trigger | fixed 32-voice array, oldest slot reused | **PORT-ONLY** bound; see risk note |
+| Trigger path | lock-free ring push with target output frame | same (`SfxQueue::Event` with target frame, `spawnVoice`) | MATCH |
+| Scheduled start | `startOffsetFrames = target - callbackStartOutputFrames` when in the future, else 0 | same rule in `spawnVoice` | MATCH |
+| Hold note effect | reuses the tap buffer | documented "hold notes reuse tap" (`AudioEngine.hpp:73`), routed the same way | MATCH |
+| Gain applied at mix | `sfxVol` | `sfxGain` | MATCH |
+
+**Risk note (bounded voices).** The reference list grows without limit; the port reuses one of
+32 slots. At the densities this game reaches (hundreds of notes per second is far beyond any
+shipped chart) 32 simultaneous *sounding* voices is not reachable, and a dropped 33rd voice is
+inaudible under the existing voices. Recorded here rather than changed: removing the bound
+would make the mixer allocate on the audio thread, which the reference avoids by only ever
+appending to a pre-sized list.
+
+## 6. Threading contract
+
+| Aspect | Reference | Port | Verdict |
+| --- | --- | --- | --- |
+| Buffer ownership | audio thread owns voices and queue; control thread posts events | same split documented at `AudioEngine.hpp:12-15` | MATCH |
+| Loading not real-time safe | documented | documented; decoding happens on the caller thread | MATCH |
+| Trigger is lock-free | yes | yes (`AudioEngine.hpp:73-75`) | MATCH |
+
+## Remaining risk
+
+1. The 32-voice bound is the only place the port can differ audibly, and only at densities no
+   shipped chart produces.
+2. The integral-step fast path is an optimisation; it is arithmetically identical at fraction
+   zero but has no dedicated regression test. It is exercised by every autoplay verification
+   run at speed 1.0.
+3. Device-format conversion (int16 output) exists on both sides; the port's saturation path is
+   unit-tested indirectly through the audio suite.

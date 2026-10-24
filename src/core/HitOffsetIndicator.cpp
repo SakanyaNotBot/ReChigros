@@ -42,7 +42,15 @@ HitOffsetIndicator::Judgement HitOffsetIndicator::judgementForOffset(double d,do
 bool HitOffsetIndicator::shouldShowCommitMark(int type,bool,Judgement judgement) noexcept { return judgement!=Judgement::Miss && type!=NOTE_HOLD; }
 float HitOffsetIndicator::fadeOutAlpha(float t) noexcept { const auto inv=1.0F-std::clamp(t,0.0F,1.0F); return inv*inv; }
 std::string HitOffsetIndicator::formatOffsetMs(double diff) {
-  const auto ms=std::clamp(static_cast<int>(std::lround(diff*1000.0)),-999,999); char buffer[16]{};
+  // The reference narrows to float before rounding, so a value sitting on a .5 boundary
+  // rounds as float rather than as double. Keep that order.
+  const auto milliseconds=static_cast<float>(diff*1000.0);
+  // The reference rounds with the platform's Math.round, which is floor(x + 0.5): a half value
+  // moves towards positive infinity. The C rounding helper rounds a half away from zero
+  // instead, so a negative half came out one step lower than the reference displays. This
+  // readout is shown to the player, so the two spellings have to agree.
+  const auto rounded=std::floor(static_cast<double>(milliseconds)+0.5);
+  const auto ms=std::clamp(static_cast<int>(rounded),-999,999); char buffer[16]{};
   std::snprintf(buffer,sizeof(buffer),"%+04dms",ms); return buffer;
 }
 void HitOffsetIndicator::applyPointerMove(double now) noexcept {

@@ -29,6 +29,11 @@ public:
 
   void setChart(Chart* chart, bool challengeMode = false);
   void setViewport(Viewport viewport) noexcept;
+  // Music playback speed. The frame delta the session receives is a chart-time delta, so
+  // the real time that elapsed is that delta divided by this speed. Hold body feedback is
+  // driven by real time and therefore needs it.
+  void setMusicSpeed(double value) noexcept;
+  [[nodiscard]] double musicSpeed() const noexcept { return musicSpeed_; }
   void setAutoplay(bool value) noexcept;
 
   void touchDown(std::int64_t id, float x, float y);
@@ -42,7 +47,6 @@ public:
   [[nodiscard]] const JudgementEngine& judgement() const noexcept { return judgement_; }
   [[nodiscard]] JudgementEngine& judgement() noexcept { return judgement_; }
   [[nodiscard]] bool autoplay() const noexcept { return autoplay_; }
-  [[nodiscard]] bool finished(double chartTimeSec) const noexcept;
   std::vector<int> takeSoundEvents();
 
   [[nodiscard]] float touchPosition(const Note& note, float x, float y, double chartTimeSec) const noexcept;
@@ -82,6 +86,9 @@ public:
   // Chart::blockAreaList; judgement consults blockedTouchIds().
   [[nodiscard]] const std::vector<OfficialBlock>& blocks() const noexcept { return blocks_; }
   [[nodiscard]] bool touchBlocked(std::int64_t id) const noexcept;
+  // Positions of the fingers currently held inside a red zone, in stage pixels. The
+  // blocked-touch feedback is drawn at these points.
+  [[nodiscard]] std::vector<std::array<float, 2>> blockedTouchPositions() const;
 
 private:
   // Touch position arrives in screen pixels; the flick tracker consumes camera world
@@ -115,6 +122,8 @@ private:
   // Hold-body burst timer, as the reference drives it from the hold movement update.
   void updateHoldBodyBursts(double time, float frameDeltaSec);
   [[nodiscard]] static double holdBodyIntervalSec(const Note& note) noexcept;
+  // Real seconds elapsed over a frame whose chart clock advanced by `frameDeltaSec`.
+  [[nodiscard]] double realFrameDeltaSec(float frameDeltaSec) const noexcept;
   void updateChallengeTiming(float frameDeltaSec) noexcept;
   void judgeNewTouches(double time, const Stage& view);
   void judgeDrags(double time, const Stage& view);
@@ -131,8 +140,12 @@ private:
   std::size_t judgeCursor_{};
   bool challengeMode_{};
   bool autoplay_{};
+  double musicSpeed_{1.0};
   double challengeTimeSum_{};
   std::array<double, 10> frameTimes_{};
+  // The challenge window is the mean of the last few frame durations, so the first frame
+  // has nothing to average yet and only arms the measurement.
+  bool challengeTimingStarted_{};
   std::vector<int> soundEvents_;
   std::size_t frameTimeIndex_{}, frameTimeCount_{};
   std::size_t autoNoteIndex_{};

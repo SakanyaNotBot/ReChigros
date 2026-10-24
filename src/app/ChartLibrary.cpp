@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cstdio>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -530,9 +529,11 @@ std::optional<ChartRecord> ChartLibrary::loadRecordInternal(const std::string& i
     info.illustration = relativize(root, bgFile);
     needsWrite = true;
   }
-  if (!chartFile.empty() && info.name.empty()) {
+  // The chart's own metadata block back-fills every field the metadata file left out, one
+  // field at a time; it is not gated on the song name being absent.
+  if (!chartFile.empty()) {
     const auto meta = readInfoFromChartFile(chartFile);
-    const auto fill = [&info, &needsWrite](std::string& target, const std::string& candidate) {
+    const auto fill = [&needsWrite](std::string& target, const std::string& candidate) {
       if (!target.empty() || candidate.empty()) return;
       target = candidate;
       needsWrite = true;

@@ -37,6 +37,8 @@ public:
 
 private:
   bool initialize();
+  // Renders the loaded chart to the path from --record and reports the outcome.
+  void runRecording(AppContext& context);
   void shutdown() noexcept;
   void processEvents(bool& running);
   void handleEvent(const SDL_Event& event, bool& running);
@@ -75,6 +77,8 @@ private:
   std::filesystem::path dataRootOverride_;
   // Opens a named screen with representative state before the loop starts.
   std::string screenSetup_;
+  // --record: renders the chart to this path and exits when the recording completes.
+  std::filesystem::path recordOutputPath_;
   // Locks the frame delta to 1/60 s, which makes frame-count-bounded runs deterministic.
   bool fixedDelta_{};
   // Captures at an explicit frame instead of the per-screen default wait.
@@ -95,6 +99,13 @@ private:
     double swapMs{};
     double gpuMs{};
     double wallSec{};
+    // Time spent dispatching platform events this frame. Without it a stall inside event
+    // handling is attributed to neither the scene nor the present.
+    double eventMs{};
+    // Split of the frame's own work into the update phase and the draw phase, so a stall can
+    // be attributed to one of them rather than to "the frame".
+    double updateMs{};
+    double drawMs{};
   };
   std::vector<FrameSample> frameSamples_;
   // Drop and picker payloads wait for the window to settle before their import starts.
@@ -136,6 +147,16 @@ private:
   int frameLimit_{};
   int renderedFrames_{};
   int forwardedPointerEvents_{};
+  // Diagnostics for the frame-stats CSV: how long event dispatch took this frame, and the
+  // performance counter captured just after it.
+  double lastEventMs_{};
+  std::uint64_t eventCounter_{};
+  // Per-frame split of the update and draw phases, for the frame-stats CSV.
+  double updateMs_{};
+  double drawMs_{};
+  // Frame at which the pause-cycle check began, recorded once gameplay became stable. The
+  // cycle is anchored to that instead of absolute frame numbers so it works for any chart.
+  int pauseCycleStartFrame_{-1};
   bool batchMode_{};
   bool batchOk_{};
   int screenFrameCounts_[7]{};

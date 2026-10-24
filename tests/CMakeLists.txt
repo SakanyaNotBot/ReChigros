@@ -60,6 +60,7 @@ if(TARGET rechigros_platform)
     ../src/app/InfoFile.cpp
     ../src/app/ChartLibrary.cpp
     ../src/app/Settings.cpp
+    ../src/app/SmoothingClock.cpp
     ../src/app/Replay.cpp)
   target_include_directories(rechigros_app_data_tests PRIVATE
     "${PROJECT_SOURCE_DIR}/include"

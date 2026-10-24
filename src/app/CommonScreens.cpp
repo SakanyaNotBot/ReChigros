@@ -136,18 +136,18 @@ AppContext::AppContext(std::filesystem::path root)
   std::filesystem::create_directories(dataRoot, error);
   (void)settings.load(settingsFile);
   calibration.offsetMs = static_cast<float>(settings.audioOffsetMs);
-  seedBundledSample();
 }
 
 void AppContext::seedBundledSample() {
-  // A build that keeps its assets inside the package has no way to reach the library
-  // folder, so the bundled example is copied out once. The marker file records that the
-  // copy happened, so a user who deletes the example does not get it back.
+  // The library is built by importing packs, exactly as the interface's own import actions
+  // do, so nothing is pre-installed and a fresh profile starts with the empty-state text.
+  // The hook is kept for build and capture setups that need a deterministic starting pack
+  // without driving the import flow; it copies the bundled example out of the package once
+  // and records that it happened, so a later deletion is not undone.
   const auto marker = dataRoot / "sample-seeded";
   std::error_code error;
   if (std::filesystem::is_regular_file(marker, error)) return;
   const auto& assets = platform::assetRoot();
-  // The example needs a chart, its description, an audio track and cover artwork.
   const char* const kFiles[] = {"chart.json", "info.json", "chart.wav", "cover.jpg"};
   std::vector<std::filesystem::path> materialised;
   for (const char* name : kFiles) {
@@ -156,7 +156,6 @@ void AppContext::seedBundledSample() {
     if (!path.empty()) materialised.push_back(path);
   }
   if (materialised.size() == std::size(kFiles)) {
-    // The library imports a folder, so the copies are gathered into one.
     const auto staging = dataRoot / "sample-staging";
     std::filesystem::create_directories(staging, error);
     for (const auto& source : materialised) {
@@ -191,7 +190,10 @@ void navigateTo(AppContext& context, Screen screen) {
   if (screen == Screen::Library) {
     context.manageMode = false;
     context.selectedIds.clear();
-    context.library.invalidate();
+    // The library is not rescanned here: the record list only changes when a pack is
+    // imported, deleted or its score is recorded, and every one of those paths invalidates
+    // explicitly. Rescanning on every navigation made entering the list stall on a large
+    // library, which is the one thing this port must not do that the reference does not.
   }
   context.screen = screen;
 }
@@ -348,8 +350,11 @@ void drawHomeScreen(AppContext& context) {
   constexpr float kStartHeight = 204.0F;
   constexpr float kSideGap = 13.0F;
   constexpr float kSideWidth = 152.0F;
-  constexpr float kButtonHeight = 52.0F;
   constexpr float kButtonGap = 20.0F;
+  // The three side entries span exactly the start panel: the first shares its top edge and
+  // the last its bottom edge, so the stack divides the leftover height evenly instead of
+  // using a fixed button height that leaves a short gap at the bottom.
+  const float kButtonHeight = (kStartHeight - 2.0F * kButtonGap) / 3.0F;
   constexpr float kSkewSlope = 0.2679492F; // tan(15 degrees)
 
   const ui::Box startBox{kMenuLeft, kMenuTop, kMenuLeft + kStartWidth, kMenuTop + kStartHeight};
@@ -454,7 +459,9 @@ void drawHomeScreen(AppContext& context) {
 
   if (start.pressed) {
     context.libraryTab = 0;
-    context.library.invalidate();
+    // The list is opened from the cached records. Only an import, a delete or a recorded
+    // score changes them, and each of those invalidates explicitly; rescanning here made
+    // entering the list from the home screen stall on a large library.
     context.screen = Screen::Library;
   } else if (sidePressed == 0) {
     context.settingsTab = 0;

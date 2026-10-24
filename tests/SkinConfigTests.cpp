@@ -309,12 +309,27 @@ void testColourParsing() {
     requireNear(hexAlpha->blue, 0x33 / 255.0F, "hex blue");
     requireNear(hexAlpha->alpha, 0x80 / 255.0F, "hex alpha");
   }
-  // Six or more hex digits are always read as hexadecimal, even when every character is
-  // a decimal digit - the reference grammar checks the hex spelling first.
-  const auto hexLookingDecimal = parseSkinColour("16777215");
-  require(hexLookingDecimal.has_value()
-          && std::abs(hexLookingDecimal->red - 0x77 / 255.0F) < 1e-4F,
-      "an all-digit string of six or more characters is read as hexadecimal");
+  // A bare decimal spelling of white must resolve to white. Reading it as hexadecimal instead
+  // (which the reference grammar does, because it tests the hex form first) turns the
+  // documented spelling into a dark, nearly transparent colour: 0x16777215 has an alpha byte of
+  // 0x01 and channels 0x77/0x72/0x15. The parser therefore only forces the hex reading when the
+  // text carries an explicit 0x prefix, which keeps both spellings unambiguous.
+  const auto decimalWhite = parseSkinColour("16777215");
+  require(decimalWhite.has_value(), "a bare decimal colour parses");
+  if (decimalWhite) {
+    requireNear(decimalWhite->red, 1.0F, "decimal white is red");
+    requireNear(decimalWhite->green, 1.0F, "decimal white is green");
+    requireNear(decimalWhite->blue, 1.0F, "decimal white is blue");
+    requireNear(decimalWhite->alpha, 1.0F, "decimal white is opaque");
+  }
+  // The prefixed spelling keeps the hex reading, and six hex digits keep the caller's alpha.
+  const auto prefixedHex = parseSkinColour("0xFFFFFF");
+  require(prefixedHex.has_value() && std::abs(prefixedHex->red - 1.0F) < 1e-4F,
+      "a prefixed six digit hex colour is white");
+  // A token carrying letters can only be hexadecimal, so the prefix stays optional there.
+  const auto letterHex = parseSkinColour("FF1E5A");
+  require(letterHex.has_value() && std::abs(letterHex->green - 0x1E / 255.0F) < 1e-4F,
+      "a hex colour with letters parses without a prefix");
   // Shorter numeric strings reach the decimal branch.
   const auto decimal = parseSkinColour("255");
   require(decimal.has_value() && std::abs(decimal->blue - 1.0F) < 1e-4F,
