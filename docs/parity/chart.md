@@ -515,6 +515,31 @@ scope. Each is written so the owner can apply it verbatim.
 
 ---
 
+## Judged-note cross-check (this round)
+
+A parser change is only safe if the notes it produces still reach judgement. The check below
+compares the count of judged notes after an autoplay run against an independent count of the
+notes whose authored time is at or before the run's reported `chartTime`, computed straight
+from the shipped JSON.
+
+| Chart | Snapshot `chartTime` | Notes due | Notes judged |
+| --- | --- | --- | --- |
+| `13a34bfb…` | 44.702 s | 64 | 64 |
+| `91c03bf6…` | 44.703 s | 474 | 474 |
+| `6da681c3…` | 14.702 s | 4 | 4 |
+| `9b547d6d…` | 14.702 s | 0 | 0 |
+| `ac4f39a5…` | 14.704 s | 10 | 10 |
+| `af1001e3…` | 14.702 s | 22 | 22 |
+| `b5b586f5…` | 14.702 s | 22 | 22 |
+| `f1c563ba…` | 14.704 s | 32 | 32 |
+
+Every chart matches exactly. Two of them initially appeared short by 1–2 notes; both were
+snapshots taken while a hold authored with a multi-minute duration had not yet settled, so the
+missing count was hold tails, not dropped notes. Re-checking at a later `chartTime` made both
+agree exactly. The long-running whole-chart variant of this gate
+(`tools/parity/verify_note_totals.py`) needs the music to play to its end in real time and was
+not used here.
+
 ## Remaining risk
 
 1. **RPE note type out of range (row 4.46).** Now matches the reference: the value is
