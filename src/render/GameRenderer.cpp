@@ -1759,11 +1759,11 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       pauseBackdrop.draw(pauseBlurA.color(), sceneTarget, alpha,
           scene::PAUSE_BACKDROP_VIBRANCY, brightness, flatten);
       bindDefaultBlend();
-      // The reference keeps the HUD readable but soft inside the graded pause frame. The
-      // dimmed HUD is therefore rendered at reduced resolution, blurred and composited
-      // over the graded frame, which gives it the same soft edges. The countdown
-      // deliberately shows the field without the HUD, so it is excluded here.
-      if (input.pause.mode == PauseMode::Menu && hudVisible && pauseHudBlur.begin(width, height)) {
+      // The HUD stays visible through the countdown too: the reference draws it from the
+      // same HUD pass for every pause mode, so dropping it here made the whole interface
+      // disappear between pressing Resume and the countdown finishing. It is still soft,
+      // matching the graded backdrop rather than a sharp overlay.
+      if (input.pause.mode != PauseMode::None && hudVisible && pauseHudBlur.begin(width, height)) {
         const float hudAspect = input.chartReveal
             ? 16.0F / 9.0F
             : (input.aspectRatio > 0.0F ? input.aspectRatio : 16.0F / 9.0F);

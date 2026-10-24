@@ -129,6 +129,9 @@ public:
 private:
   void uploadMaterials() const;
   void ensureMaskRasteriser() noexcept;
+  // Loads the hover sprite and builds its program once per asset root. Returns false when
+  // the sprite is missing, which leaves the zone quads as the only mask content.
+  bool ensureHoverProgram(const std::filesystem::path& assetRoot) noexcept;
 
   FullscreenPass prepass_;
   FullscreenPass composite_;
@@ -148,6 +151,14 @@ private:
   gl::Texture* displaceMap_{};
   gl::Texture* sparkMap_{};
   gl::Texture* noiseMap_{};
+  gl::Texture* touchMap_{};
+  std::filesystem::path assetRoot_;
+  std::vector<float> hoverVertices_;
+  bool hoverReady_{};
+  // A soft sprite with its own alpha, used for the hover channel instead of a constant.
+  gl::Texture hoverTexture_;
+  gl::ShaderProgram hoverProgram_;
+  unsigned int hoverVao_{};
   int width_{};
   int height_{};
   float stageLeft_{};

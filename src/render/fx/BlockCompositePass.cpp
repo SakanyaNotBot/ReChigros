@@ -2,6 +2,7 @@
 
 #include "rechigros/platform/AssetManager.hpp"
 #include "rechigros/render/gl/Texture.hpp"
+#include <stb_image.h>
 
 #include <algorithm>
 #include <cmath>
@@ -63,6 +64,33 @@ in vec4 vColor;
 out vec4 fragmentColor;
 void main() {
   fragmentColor = vColor;
+}
+)";
+
+// The hover channel is a sprite with its own alpha: the shipped shader writes only the
+// sprite's alpha into the second mask, multiplied by the quad's colour alpha. The reference
+// uses a separate program for this rather than the mask program, so the coverage is a
+// picture of the touched spot rather than a flat rectangle.
+const char* const kHoverFragmentSource = R"(
+in vec4 vColor;
+in vec2 vUv;
+uniform sampler2D uTex;
+out vec4 fragmentColor;
+void main() {
+  fragmentColor = vec4(0.0, 0.0, 0.0, texture(uTex, vUv).a * vColor.a);
+}
+)";
+
+const char* const kHoverVertexSource = R"(
+in vec2 aPosition;
+in vec4 aColor;
+in vec2 aUv;
+out vec4 vColor;
+out vec2 vUv;
+void main() {
+  vColor = aColor;
+  vUv = aUv;
+  gl_Position = vec4(aPosition, 0.0, 1.0);
 }
 )";
 
@@ -150,6 +178,7 @@ bool BlockCompositePass::prepare(
   displaceMap_ = displace;
   sparkMap_ = spark;
   noiseMap_ = noise;
+  assetRoot_ = assetRoot;
   const std::string prepass = readShader(assetRoot, kPrepassShader);
   const std::string composite = readShader(assetRoot, kCompositeShader);
   if (prepass.empty() || composite.empty()) return false;
@@ -303,6 +332,36 @@ void BlockCompositePass::rasteriseMasks(const std::vector<BlockMaskQuad>& maskAQ
   const std::size_t vertexCountA = firstB - firstA;
   const std::size_t vertexCountB = vertices.size() / kFloatsPerVertex - firstB;
 
+  // Hover quads carry a non-zero alpha in the second mask. They are emitted separately with
+  // UVs so the shipped sprite supplies the coverage picture; the zone quads keep alpha zero
+  // and never enter this path.
+  hoverVertices_.clear();
+  for (const auto& quad : maskBQuads) {
+    if (quad.alpha <= 0.0F) continue;
+    const float halfW = quad.width * 0.5F;
+    const float halfH = quad.height * 0.5F;
+    const float left = quad.centerX - halfW;
+    const float right = quad.centerX + halfW;
+    const float top = quad.centerY - halfH;
+    const float bottom = quad.centerY + halfH;
+    const auto pushVertex = [&](float x, float y, float u, float v) {
+      hoverVertices_.push_back(x * 2.0F / std::max(1.0F, static_cast<float>(width_)) - 1.0F);
+      hoverVertices_.push_back(1.0F - y * 2.0F / std::max(1.0F, static_cast<float>(height_)));
+      hoverVertices_.push_back(0.0F);
+      hoverVertices_.push_back(0.0F);
+      hoverVertices_.push_back(0.0F);
+      hoverVertices_.push_back(quad.alpha);
+      hoverVertices_.push_back(u);
+      hoverVertices_.push_back(v);
+    };
+    const float corners[4][2] = {{left, top}, {right, top}, {left, bottom}, {right, bottom}};
+    const float uvs[4][2] = {{0.0F, 0.0F}, {1.0F, 0.0F}, {0.0F, 1.0F}, {1.0F, 1.0F}};
+    const int order[6] = {0, 1, 2, 2, 1, 3};
+    for (const int index : order) {
+      pushVertex(corners[index][0], corners[index][1], uvs[index][0], uvs[index][1]);
+    }
+  }
+
   maskProgram_.use();
   glBindVertexArray(maskVao_);
   glBindBuffer(GL_ARRAY_BUFFER, maskVbo_);
@@ -326,6 +385,25 @@ void BlockCompositePass::rasteriseMasks(const std::vector<BlockMaskQuad>& maskAQ
   drawMask(0, firstA, vertexCountA);
   drawMask(1, firstB, vertexCountB);
 
+  // The hover channel is drawn into the second mask after the zone quads, using the shipped
+  // sprite's alpha rather than a constant. Quads that carry a hover coverage are emitted by
+  // BlockOverlay::appendHoverQuads; they are drawn with the sprite here so the composite's
+  // hover term reads a picture of the touched spot instead of a flat rectangle.
+  if (!hoverVertices_.empty() && ensureHoverProgram(assetRoot_)) {
+    maskFbo_[1].bind();
+    glViewport(0, 0, maskFbo_[1].width(), maskFbo_[1].height());
+    hoverProgram_.use();
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, hoverTexture_.id());
+    glUniform1i(hoverProgram_.uniform("uTex"), 0);
+    glBindVertexArray(hoverVao_);
+    glBindBuffer(GL_ARRAY_BUFFER, maskVbo_);
+    glBufferData(GL_ARRAY_BUFFER,
+        static_cast<GLsizeiptr>(hoverVertices_.size() * sizeof(float)),
+        hoverVertices_.data(), GL_STREAM_DRAW);
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(hoverVertices_.size() / 8));
+  }
+
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glBindVertexArray(0);
   glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFbo));
@@ -336,6 +414,48 @@ void BlockCompositePass::rasteriseMasks(const std::vector<BlockMaskQuad>& maskAQ
   if (blendWasOn) glEnable(GL_BLEND); else glDisable(GL_BLEND);
   if (depthWasOn) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
   if (scissorWasOn) glEnable(GL_SCISSOR_TEST); else glDisable(GL_SCISSOR_TEST);
+}
+
+bool BlockCompositePass::ensureHoverProgram(const std::filesystem::path& assetRoot) noexcept {
+  if (hoverReady_) return hoverProgram_.valid() && hoverTexture_.valid();
+  hoverReady_ = true;
+  if (!hoverProgram_.build(kHoverVertexSource, kHoverFragmentSource)) return false;
+  if (hoverVao_ == 0) glGenVertexArrays(1, &hoverVao_);
+  glBindVertexArray(hoverVao_);
+  const int position = hoverProgram_.attribute("aPosition");
+  const int color = hoverProgram_.attribute("aColor");
+  const int uv = hoverProgram_.attribute("aUv");
+  if (position >= 0) {
+    glEnableVertexAttribArray(static_cast<GLuint>(position));
+    glVertexAttribPointer(static_cast<GLuint>(position), 2, GL_FLOAT, GL_FALSE,
+        static_cast<GLsizei>(8 * sizeof(float)), nullptr);
+  }
+  if (color >= 0) {
+    glEnableVertexAttribArray(static_cast<GLuint>(color));
+    glVertexAttribPointer(static_cast<GLuint>(color), 4, GL_FLOAT, GL_FALSE,
+        static_cast<GLsizei>(8 * sizeof(float)),
+        reinterpret_cast<const void*>(2 * sizeof(float)));
+  }
+  if (uv >= 0) {
+    glEnableVertexAttribArray(static_cast<GLuint>(uv));
+    glVertexAttribPointer(static_cast<GLuint>(uv), 2, GL_FLOAT, GL_FALSE,
+        static_cast<GLsizei>(8 * sizeof(float)),
+        reinterpret_cast<const void*>(6 * sizeof(float)));
+  }
+  glBindVertexArray(0);
+  int width = 0;
+  int height = 0;
+  int channels = 0;
+  const auto bytes = platform::AssetManager::readBinary(assetRoot,
+      "official_textures/TouchHover.png");
+  unsigned char* pixels = bytes.empty() ? nullptr
+      : stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), &width, &height,
+          &channels, 4);
+  if (pixels == nullptr) return false;
+  hoverTexture_.uploadRgba(width, height, pixels);
+  stbi_image_free(pixels);
+  hoverTexture_.setFilter(true);
+  return hoverTexture_.valid();
 }
 
 void BlockCompositePass::uploadMaterials() const {
