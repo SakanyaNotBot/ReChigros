@@ -403,6 +403,10 @@ void BlockCompositePass::runPrepasses(float chartTimeSec) {
 }
 
 void BlockCompositePass::draw(gl::Texture& scene, float chartTimeSec) {
+  draw(scene, chartTimeSec, TouchState{});
+}
+
+void BlockCompositePass::draw(gl::Texture& scene, float chartTimeSec, const TouchState& touch) {
   if (!ready_ || !composite_.valid() || !scene.valid()) return;
   if (!compose_.valid() || !effect_.valid()) return;
   if (!FullscreenQuad::instance().ensure()) return;
@@ -439,8 +443,22 @@ void BlockCompositePass::draw(gl::Texture& scene, float chartTimeSec) {
   program.set2f("screenSize", static_cast<float>(width_), static_cast<float>(height_));
   program.set4f("stageRect", stageLeft_, stageTop_, stageRight_, stageBottom_);
   program.set2f("displaceDirection", DISPLACE_DIRECTION, DISPLACE_DIRECTION);
-  program.set1i("touchCount", 0);
-  program.set1f("touchShineValue", 0.0F);
+  // Touch hover state. The reference uploads the live held points, and a shine that runs on
+  // real time rather than the chart clock so a paused chart does not freeze the glow.
+  const int touchCount = std::clamp(touch.count, 0, 10);
+  program.set1i("touchCount", touchCount);
+  if (touchCount > 0) {
+    float positions[20]{};
+    for (int index = 0; index < touchCount; ++index) {
+      positions[index * 2] = touch.points[index].x;
+      positions[index * 2 + 1] = touch.points[index].y;
+    }
+    program.set2fv("touchPos", touchCount, positions);
+  }
+  // Shine wave: (low + (1 - low) * (sin(speed * realTime) * 0.5 + 0.5)) * brightness,
+  // with the reference's speed 43, low 0.63 and brightness 2.0.
+  const float wave = static_cast<float>(std::sin(43.0F * touch.realTimeSec)) * 0.5F + 0.5F;
+  program.set1f("touchShineValue", (0.63F + (1.0F - 0.63F) * wave) * 2.0F);
 
   bindTexture(0, "screenTexture", &scene, program);
   bindTexture(1, "displaceMap", displaceMap_, program);

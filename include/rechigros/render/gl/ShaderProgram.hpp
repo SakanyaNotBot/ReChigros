@@ -34,6 +34,8 @@ public:
   void set3f(const char* name, float a, float b, float c) const;
   void set4f(const char* name, float a, float b, float c, float d) const;
   void set1i(const char* name, int value) const;
+  // Uploads `count` vec2 values to a uniform array such as `touchPos[]`.
+  void set2fv(const char* name, int count, const float* values) const;
   void setMat4(const char* name, const float* value) const;
 
   // Last compile or link diagnostic, for startup logging.

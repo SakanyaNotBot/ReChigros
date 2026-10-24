@@ -513,6 +513,51 @@ int main(int argc, char** argv) {
             std::cout << "  PASS: framebuffer, viewport and blending restored\n";
           }
           dumpDefaultFramebuffer(width, height, options.outputDirectory / "09_presented.png");
+
+          // 5b) Touch hover. The same composite with one held finger must produce a different
+          // picture: the hover shader lights the touched spot. Comparing the two frames is the
+          // only way to prove the uniform actually reaches the shader — a silently missing
+          // uniform draws a valid frame that simply ignores the touch.
+          std::cout << "Stage 5b: touch hover\n";
+          {
+            fx::BlockCompositePass::TouchState touch;
+            touch.count = 1;
+            // Inside the active strip the probe builds (x 0.86..1.0): the hover term only
+            // modulates the block body, so a point outside every zone would change nothing
+            // and the comparison below would prove nothing. The space is a height of one
+            // with x running to the aspect ratio, matching the shader's own comparison.
+            const float aspect = static_cast<float>(width) / static_cast<float>(height);
+            touch.points[0].x = 0.93F * aspect;
+            touch.points[0].y = 0.5F;
+            touch.realTimeSec = 1.25;
+            // Report the uniform locations first: an upload to a location of -1 is silently
+            // ignored, which would draw a perfectly valid frame that simply has no hover.
+            {
+              auto& program = pass.compositeProgram();
+              std::cout << "  uniform touchCount=" << program.uniform("touchCount")
+                        << " touchPos=" << program.uniform("touchPos")
+                        << " touchPos[0]=" << program.uniform("touchPos[0]")
+                        << " touchShineValue=" << program.uniform("touchShineValue") << "\n";
+            }
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glViewport(0, 0, width, height);
+            glEnable(GL_BLEND);
+            glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            glClearColor(0.0F, 1.0F, 0.0F, 1.0F);
+            glClear(GL_COLOR_BUFFER_BIT);
+            pass.draw(sceneFbo.color(), options.chartTimeSec, touch);
+            dumpDefaultFramebuffer(width, height, options.outputDirectory / "09b_touch.png");
+            const double touchDifference = frameDifference(
+                options.outputDirectory / "09_presented.png",
+                options.outputDirectory / "09b_touch.png");
+            std::cout << "  no-touch vs touch: " << touchDifference << "% of channels differ\n";
+            if (!(touchDifference > 0.0)) {
+              std::cerr << "  FAIL: the touch uniforms did not reach the shader\n";
+              exitCode = 9;
+            } else {
+              std::cout << "  PASS: the touch uniforms affect the composite\n";
+            }
+          }
           const double presentedDifference = frameDifference(
               options.outputDirectory / "08_composite.png",
               options.outputDirectory / "09_presented.png");

@@ -1637,7 +1637,24 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
     glViewport(0, 0, width, height);
     blockComposite.setStageRect(sceneLayout.stage.x, sceneLayout.stage.y,
         sceneLayout.stage.right(), sceneLayout.stage.bottom());
-    blockComposite.draw(sceneFbo.color(), static_cast<float>(input.chartTimeSec));
+    {
+      // Held points reach the composite in the shader's own space: a fraction of the width,
+      // and a fraction of the height measured from the bottom.
+      fx::BlockCompositePass::TouchState touch;
+      const float safeWidth = std::max(1.0F, static_cast<float>(width));
+      const float safeHeight = std::max(1.0F, static_cast<float>(height));
+      touch.count = std::clamp(input.touches.count, 0, 10);
+      // The shader compares against `uv * screenSize / screenSize.y`, so its space is a height
+      // of one with x running to the aspect ratio. Sending plain 0..1 fractions would put the
+      // point at the wrong place on any stage that is not square.
+      for (int index = 0; index < touch.count; ++index) {
+        touch.points[index].x = input.touches.points[index].x / safeHeight;
+        touch.points[index].y = (safeHeight - input.touches.points[index].y) / safeHeight;
+      }
+      // The shine runs on wall time, so a paused chart does not freeze it.
+      touch.realTimeSec = input.visualTimeSec;
+      blockComposite.draw(sceneFbo.color(), static_cast<float>(input.chartTimeSec), touch);
+    }
     bindDefaultBlend();
     gl::logErrors("scene.blockComposite");
   } else if (useEffects) {

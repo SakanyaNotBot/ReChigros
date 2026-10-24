@@ -824,6 +824,42 @@ code that carries the behaviour.
 | `PreloadedGif` / `preloadGifTextures` / `decodeGifFrames` / `uploadPreloadedGifTextures` | `GifTexture` cache in the renderer | MATCH | Same "decode every frame of a `.gif` line texture once, then upload once" behaviour; the port keeps the frames in a renderer-side cache keyed by path. |
 | `applyBlockTextureWrap` / `applyTextureBilinearFilter` / `applyTexturePointFilter` / `maxFragTextureUnits` | `TextureCache`, `BlockCompositePass` sampling setup | MATCH | Same wrap and filter policy per texture class; the composite's point-versus-bilinear choice is recorded in `game_renderer_residual.md`. |
 
+## Follow-up: block touch hover (open, with a reproducible probe)
+
+The reference lights a spot under a held finger inside a block zone. The port now uploads the
+three uniforms the shader declares, and a probe asserts whether they reach it.
+
+**What is wired.** `BlockCompositePass` gained a `TouchState` (held points plus a wall
+clock), `RenderFrameInput` carries the held touches, and `GameRenderer` converts them into the
+shader's own space. `ShaderProgram::set2fv` was added for the `touchPos[MAX_TOUCH]` array.
+
+**What the probe proves.** `block_probe` stage 5b composites the same frame with and without a
+held point and reports both the uniform locations and the pixel difference:
+
+```
+uniform touchCount=32 touchPos=33 touchPos[0]=33 touchShineValue=43
+no-touch vs touch: 0% of channels differ
+FAIL: the touch uniforms did not reach the shader
+```
+
+The locations resolve, so the upload path works. The picture does not change, which points at
+the shader's own gate rather than at the upload:
+
+```glsl
+mediump float hover = texture2D(maskB, hUv).a;   // block_composite.glsl:220
+if (9.99999975e-05 < hover) { ... touchShine = pow(...); }   // :284, :262
+body *= touchShine * touchShineValue + 1.0;                  // :274
+```
+
+The hover term comes from **mask B's alpha channel**, and the port's mask quads fill only the
+R and G channels that the disabled/ready semantics need. Until the mask rasteriser writes that
+alpha, the hover branch is never taken and the uploaded uniforms cannot show up in the output.
+The mask shaders already pass a full `vec4` through, so the remaining work is in
+`collectMaskQuads`/`rasteriseMasks`, not in the composite.
+
+**Not claimed as done.** The upload half is complete and the probe records the state either
+way; the visible hover is not yet reproduced.
+
 ## 7. Deliberate exclusions
 
 1. **`prprVideo` playback.** The data model is complete (`Chart.hpp:24`,

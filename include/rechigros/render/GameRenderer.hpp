@@ -71,6 +71,18 @@ struct RenderFrameInput {
   bool revealHiddenObjects{false};
   float revealHiddenFloorAlpha{0.0F};
 
+  // Fingers currently held over the play field, in view pixels. The block composite uploads
+  // them so the hover shader can light the touched spot; the reference clears a point only
+  // when the finger lifts, so a moving finger keeps its glow.
+  struct TouchState {
+    struct Point {
+      float x{};
+      float y{};
+    };
+    Point points[10]{};
+    int count{};
+  } touches;
+
   struct PauseState {
     PauseMode mode{PauseMode::None};
     // Seconds since the pause overlay started animating.

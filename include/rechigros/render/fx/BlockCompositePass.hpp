@@ -96,9 +96,30 @@ public:
   // composite draw so a diagnostic caller can inspect the intermediate targets.
   void runPrepasses(float chartTimeSec);
 
+  // A finger held over the block area, in the shader's own space: `x` is a fraction of the
+  // width and `y` a fraction of the height measured from the bottom, which is what the
+  // shipped hover shader expects.
+  struct TouchPoint {
+    float x{};
+    float y{};
+  };
+
+  // The reference keeps a point alive while the finger stays down and clears it on release,
+  // so the glow does not fade as the finger moves. Callers pass the live held points and the
+  // wall clock the shine wave runs on; both default to the no-touch state.
+  struct TouchState {
+    TouchPoint points[10]{};
+    int count{};
+    double realTimeSec{};
+  };
+
   // Composites `scene` over the currently bound target. The caller's framebuffer binding
   // and viewport are restored before returning, so this may run mid-frame.
   void draw(gl::Texture& scene, float chartTimeSec);
+  void draw(gl::Texture& scene, float chartTimeSec, const TouchState& touch);
+
+  // The composite program, exposed so a probe can assert its uniforms resolve.
+  [[nodiscard]] gl::ShaderProgram& compositeProgram() noexcept { return composite_.program(); }
 
   // Intermediate targets, exposed so a standalone probe can dump each stage.
   [[nodiscard]] gl::Framebuffer& composeTarget() noexcept { return compose_; }

@@ -260,6 +260,19 @@ void ShaderProgram::set1i(const char* name, int value) const {
   if (location >= 0) glUniform1i(location, value);
 }
 
+void ShaderProgram::set2fv(const char* name, int count, const float* values) const {
+  if (count <= 0 || values == nullptr) return;
+  // An array uniform may be registered under its base name or as "name[0]" depending on the
+  // driver and the reflection path, so both are probed.
+  int location = uniform(name);
+  if (location < 0) {
+    std::string indexed(name);
+    indexed += "[0]";
+    location = uniform(indexed.c_str());
+  }
+  if (location >= 0) glUniform2fv(location, count, values);
+}
+
 void ShaderProgram::setMat4(const char* name, const float* value) const {
   const int location = uniform(name);
   if (location >= 0) glUniformMatrix4fv(location, 1, GL_FALSE, value);
