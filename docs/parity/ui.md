@@ -123,6 +123,76 @@ constant against `ResultActivity.java:727-760`.
 | `blurBackground` / `gaussianBlur` | `TextureCache::blurredBackdropFor` | MATCH | Identical recipe: a third-size copy, three separable box passes, radius `max(4, round(w * 0.05 / 3))`, bilinear upsample. Checked constant for constant. |
 | `AlphaTarget` / `childAlphaTargets` / `startEnterAnimation` | `ResultScreen` enter animation | MATCH | Same staggered per-element alpha ramp driven by the same easing set. |
 
+## PlayActivity: every declaration adjudicated
+
+The reference's `PlayActivity` owns the gameplay surface and lays out the official HUD by hand
+in view space. The port draws the HUD from `HudPass.cpp`, so the HUD helpers below name the
+formulas they correspond to - and this is where the HUD half-width clamp was found missing.
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `extraBool` | argument parsing in `main.cpp` | DELIBERATE-EXCLUSION | Reads a boolean Intent extra; the port takes command-line flags instead. |
+| `handleOnBackPressed` | `processEvents` back handling | MATCH | Same back action routing: leave gameplay, then leave the screen. |
+| `setLoadingUi` / `loadAndStart` | `GameScreen` chart start | MATCH | Same loading state followed by the run start. |
+| `forceGc` | — | DELIBERATE-EXCLUSION | An explicit `System.gc()` before a chart load; there is no equivalent call to make on this platform. |
+| `hintSurfaceFrameRateIfPossible` / `applyHighRefreshRate` | `SDL_GL_SetSwapInterval` | DELIBERATE-EXCLUSION | Android display-mode hints for a high refresh rate; the port requests vsync and lets the compositor pick the rate. |
+| `surfaceCreated` / `surfaceChanged` / `surfaceDestroyed` | SDL GL context lifetime | DELIBERATE-EXCLUSION | `SurfaceHolder` callbacks; SDL owns that lifecycle. |
+| `buildOverlayUiOn` / `startUiTicker` / `stopUiTicker` | `drawGameOverlay` per frame | DELIBERATE-EXCLUSION | The reference runs a UI ticker thread over a view overlay; the port draws the overlay inside the frame. |
+| `applyOverlayStageLayout` | `StageLayout` recomputation | MATCH | Same stage rect applied to the overlay. |
+| `officialHudUnitPx` | `scene::hudUnit` (`HudPass.cpp:803`) | MATCH | `stageH / 1000`, or 1 when the stage is degenerate. |
+| `officialHudHalfUiW` | `canvas.halfUiW` (`HudPass.cpp:829`) | **FIXED** | The reference clamps the aspect to its 16:9 maximum (`min(aspect, 16/9) * 500`). The port used the raw stage aspect, so on a stage wider than 16:9 the score, combo and song text spread outward to positions the reference never produces. The clamp is now applied. |
+| `officialHudX` | `scene::hudX` (`HudPass.cpp:808`) | MATCH | `centerX + uiX * unit`. |
+| `officialHudY` | `scene::hudY` (`HudPass.cpp:813`) | MATCH | `centerY - uiY * unit`, same axis flip. |
+| `officialHudSize` | size multiply at the draw sites | MATCH | `uiSize * unit`. |
+| `officialHudBottomTextYOffsetPx` | bottom-text offset in `HudPass` | MATCH | `1080-reference offset * stageH / 1080`. |
+| `tryLoadSfxRawWav` / `tryLoadSfxFromSkinDir` / `tryLoadSfxFromSkinFile` | `AudioEngine` sfx resolution | MATCH | Same three-step lookup: raw asset, then the skin directory, then the skin's own file. |
+| `onExit` / `onFinished` | run completion in `GameScreen` | MATCH | Same transition to the result screen with the same callback payload. |
+| `onStageRectChanged` | `StageLayout` observers | MATCH | Same reaction to a stage resize. |
+| `onResourcesReady` | renderer readiness gate | MATCH | Same start-once-resources-ready gate. |
+
+## Online chart library: deliberately out of scope
+
+The reference ships an online chart browser that scrapes a Lanzou cloud share
+(`LanzouClient`) and pages its index (`SelectOnlineChartsFragment`). The port ships local
+packs only: the list, search, management and import surfaces work on files the user already
+has. This is a scope decision, not an unfinished port — the online path depends on a specific
+third-party host, its page-obfuscation scheme and its download quotas, none of which can be
+reproduced or reliably maintained from this repository.
+
+`ChartSelectActivity.onlinePage` in the port is **not** related: it is the page index of the
+local list, which the reference also has.
+
+### `LanzouClient.java`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `LanzouClient` (class) | — | DELIBERATE-EXCLUSION | The reference downloads charts from a Lanzou cloud share. The port ships local packs only; see the online-feature section below. |
+| `pageUrl` | — | DELIBERATE-EXCLUSION | Lanzou share-page extraction; no port counterpart. |
+| `titleOrFileName` | — | DELIBERATE-EXCLUSION | Lanzou entry naming; no port counterpart. |
+| `levelOrFallback` | — | DELIBERATE-EXCLUSION | Lanzou difficulty labelling; no port counterpart. |
+| `FolderSession` | — | DELIBERATE-EXCLUSION | Lanzou folder-browsing session; no port counterpart. |
+| `ResolvedDownload` | — | DELIBERATE-EXCLUSION | Lanzou resolved direct-download record; no port counterpart. |
+| `rememberCookies` / `addCookies` / `cookieHeader` | — | DELIBERATE-EXCLUSION | Cookie jar for the Lanzou session; no network client exists in the port. |
+| `parseJsVars` / `resolveJsValue` / `solveAcwScV2` | — | DELIBERATE-EXCLUSION | Lanzou's page-obfuscation solver; specific to that host. |
+| `extractDescription` / `extractDownloadPageUrl` / `resolveDirectFromTp` | — | DELIBERATE-EXCLUSION | Lanzou page scraping; no port counterpart. |
+| `htmlBlockToText` / `stripTags` / `htmlDecode` / `firstGroup` | — | DELIBERATE-EXCLUSION | HTML helpers used only by the scraper above. |
+| `valueOrEmpty` / `valueOrDefault` | — | DELIBERATE-EXCLUSION | Scraper-local null-coalescing helpers. |
+
+### `SelectOnlineChartsFragment.java`
+
+| Reference declaration | Port implementation | Verdict | Basis |
+|---|---|---|---|
+| `onCreateView` / `onViewCreated` | — | DELIBERATE-EXCLUSION | Fragment lifecycle for the online-library page, which the port does not ship. The port's `onlinePage` field is the *local* list's page index, a different concept that happens to share the word. |
+| `onDownload` / `confirmDownload` / `downloadChart` | — | DELIBERATE-EXCLUSION | Triggers a Lanzou download; the port's import path only takes local files and archives the user already has. |
+| `onItemVisible` / `OnScrollListener` / `onScrolled` | — | DELIBERATE-EXCLUSION | Lazy loading for the online list; the port's local list computes its visible range per frame. |
+| `beforeTextChanged` | — | DELIBERATE-EXCLUSION | Text watcher on the online search box. |
+| `reloadOnline` / `resetOnlineState` / `fetchOnlineIndex` / `applyOnlineIndex` / `loadNextPage` | — | DELIBERATE-EXCLUSION | Fetching and paging the remote index; the port has no remote index. |
+| `fetchVisibleItemCover` / `ensureCoverCached` | — | DELIBERATE-EXCLUSION | Downloads remote cover art; the port's `CoverCache` reads artwork from installed packs. |
+| `maybeLoadMoreForSearch` | — | DELIBERATE-EXCLUSION | Search-driven paging of the remote index. |
+| `setStateMessage` / `updateStateCount` / `setHeaderCollapsed` | — | DELIBERATE-EXCLUSION | Status widgets of the online page. |
+| `runOnUiThread` | — | DELIBERATE-EXCLUSION | Android thread hop for network results; the port has no background network work. |
+| `extensionOrJpg` / `safeFileName` / `errorMessage` / `host` | — | DELIBERATE-EXCLUSION | Filename and error helpers used by the online page. |
+
 ## JudgementHistogramView and SettingsSliderView: every declaration adjudicated
 
 ### `JudgementHistogramView.java` → `ResultScreen.cpp drawJudgementHistogram`

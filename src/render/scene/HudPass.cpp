@@ -826,7 +826,10 @@ void drawHud(batch::SpriteBatch& batch, text::TextRenderer& text, const StageLay
   const float hudAspect = layout.stage.height > 1.0e-6F
       ? layout.stage.width / layout.stage.height
       : 16.0F / 9.0F;
-  canvas.halfUiW = hudAspect * 500.0F;
+  // The reference clamps the HUD half-width to a 16:9 stage: on a wider stage its score,
+  // combo and song text stay on the 16:9 box instead of spreading toward the wider edges. An
+  // unclamped aspect pushed those elements outward on an ultrawide viewport.
+  canvas.halfUiW = std::min(hudAspect, 16.0F / 9.0F) * 500.0F;
   canvas.rootY = layout.centerY();
   canvas.rootScale = computeRootScale(values.introProgress, values.outroProgress);
   const float comboAlpha = comboLabelOutroAlpha(values.outroProgress);
