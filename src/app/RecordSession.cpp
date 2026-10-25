@@ -1,5 +1,7 @@
 #include "rechigros/app/RecordSession.hpp"
 
+#include <chrono>
+
 #include "rechigros/app/AppContext.hpp"
 #include "rechigros/audio/Decoder.hpp"
 #include "rechigros/game/Chart.hpp"
@@ -148,6 +150,9 @@ bool RecordSession::start(AppContext& context, const Settings& settings, std::st
     audioTrackPath_.clear();
     return false;
   }
+  // Frames are handed to the encoder thread from the first one, so rendering and encoding run at
+  // the same time rather than one after the other.
+  startEncoderThread();
 
   render::RenderFrameInput probe;
   // The recording always runs the chart in autoplay, which is what makes it reproducible: no
@@ -278,16 +283,27 @@ bool RecordSession::step(AppContext& context) {
     input.holdHeadBursts = context.game.session.takeHoldHeadBursts();
     (void)resolution;
 
+    const auto captureStart = std::chrono::steady_clock::now();
     if (!context.renderer->captureFrame(input, context.game.chart.get(), &judgement,
             framePixels_)) {
       state_ = State::Failed;
       error_ = "a frame could not be rendered";
       return false;
     }
-    std::string writeError;
-    if (!encoder_.writeFrame(framePixels_, writeError)) {
+    const auto captureEnd = std::chrono::steady_clock::now();
+    captureMs_ += std::chrono::duration<double, std::milli>(captureEnd - captureStart).count();
+    // The frame goes to the encoder thread and the next one is drawn straight away, so the two
+    // stages overlap instead of alternating.
+    const bool queued = submitFrame(framePixels_);
+    const auto submitEnd = std::chrono::steady_clock::now();
+    encodeWaitMs_ += std::chrono::duration<double, std::milli>(submitEnd - captureEnd).count();
+    ++timedFrames_;
+    if (!queued) {
+      {
+        std::lock_guard<std::mutex> guard(queueMutex_);
+        error_ = encoderError_.empty() ? "the encoder stopped accepting frames" : encoderError_;
+      }
       state_ = State::Failed;
-      error_ = writeError;
       return false;
     }
     ++renderedFrames_;
@@ -300,7 +316,18 @@ bool RecordSession::step(AppContext& context) {
   return true;
 }
 
+void RecordSession::reportTimings() const {
+  if (timedFrames_ == 0) return;
+  const double frames = static_cast<double>(timedFrames_);
+  std::printf("[perf] frames=%d capture=%.2fms/frame encodeWait=%.2fms/frame "
+              "encoderWrite=%.2fms/frame\n",
+      timedFrames_, captureMs_ / frames, encodeWaitMs_ / frames, encoderWriteMs_ / frames);
+}
+
 void RecordSession::cancel(AppContext& context) {
+  // The reader is stopped first: it owns the queue the encoder thread is draining, and stopping
+  // the encoder underneath it would leave the thread writing to a closed stream.
+  stopEncoderThread();
   if (state_ == State::Running && encoder_.active()) encoder_.abort();
   releaseResources(context);
   state_ = State::Cancelled;
@@ -308,7 +335,15 @@ void RecordSession::cancel(AppContext& context) {
 
 void RecordSession::finish(AppContext& context) {
   if (state_ != State::Running) return;
+  // Every queued frame has to be written before the container is closed, or the tail of the
+  // recording would be missing.
   std::string error;
+  if (!drainEncoder(error)) {
+    state_ = State::Failed;
+    error_ = error;
+    releaseResources(context);
+    return;
+  }
   if (!encoder_.finish(error)) {
     state_ = State::Failed;
     error_ = error;
@@ -317,6 +352,103 @@ void RecordSession::finish(AppContext& context) {
   }
   releaseResources(context);
   state_ = State::Finished;
+  reportTimings();
+}
+
+
+void RecordSession::startEncoderThread() {
+  stopEncoderThread();
+  {
+    std::lock_guard<std::mutex> guard(queueMutex_);
+    encoderStop_ = false;
+    encoderRunning_ = true;
+    encoderError_.clear();
+    frameQueue_.clear();
+  }
+  encoderThread_ = std::thread([this] { encoderLoop(); });
+}
+
+void RecordSession::encoderLoop() {
+  std::string error;
+  for (;;) {
+    std::vector<std::uint8_t> frame;
+    {
+      std::unique_lock<std::mutex> lock(queueMutex_);
+      queueFilled_.wait(lock, [this] { return encoderStop_ || !frameQueue_.empty(); });
+      if (frameQueue_.empty()) {
+        // Nothing left to write and the producer has stopped.
+        if (encoderStop_) break;
+        continue;
+      }
+      frame = std::move(frameQueue_.front());
+      frameQueue_.pop_front();
+    }
+    queueSpace_.notify_one();
+    const auto writeStart = std::chrono::steady_clock::now();
+    const bool written = encoder_.writeFrame(frame, error);
+    const auto writeEnd = std::chrono::steady_clock::now();
+    {
+      std::lock_guard<std::mutex> guard(queueMutex_);
+      encoderWriteMs_ +=
+          std::chrono::duration<double, std::milli>(writeEnd - writeStart).count();
+    }
+    if (!written) {
+      std::lock_guard<std::mutex> guard(queueMutex_);
+      if (encoderError_.empty()) encoderError_ = error;
+      encoderStop_ = true;
+      break;
+    }
+  }
+  {
+    std::lock_guard<std::mutex> guard(queueMutex_);
+    encoderRunning_ = false;
+  }
+  queueFilled_.notify_all();
+}
+
+bool RecordSession::submitFrame(const std::vector<std::uint8_t>& pixels) {
+  {
+    std::unique_lock<std::mutex> lock(queueMutex_);
+    queueSpace_.wait(lock, [this] {
+      return encoderStop_ || frameQueue_.size() < kMaxQueuedFrames;
+    });
+    if (encoderStop_) return false;
+    // The queue owns its pixels: the renderer reuses its own buffer for the next frame, and the
+    // encoder thread must not read it while that is happening.
+    frameQueue_.push_back(pixels);
+  }
+  queueFilled_.notify_one();
+  return true;
+}
+
+bool RecordSession::drainEncoder(std::string& error) {
+  {
+    std::unique_lock<std::mutex> lock(queueMutex_);
+    encoderStop_ = true;
+  }
+  queueFilled_.notify_all();
+  queueSpace_.notify_all();
+  if (encoderThread_.joinable()) encoderThread_.join();
+  std::lock_guard<std::mutex> guard(queueMutex_);
+  frameQueue_.clear();
+  if (!encoderError_.empty()) {
+    error = encoderError_;
+    return false;
+  }
+  return true;
+}
+
+void RecordSession::stopEncoderThread() {
+  {
+    std::lock_guard<std::mutex> guard(queueMutex_);
+    encoderStop_ = true;
+  }
+  queueFilled_.notify_all();
+  queueSpace_.notify_all();
+  if (encoderThread_.joinable()) encoderThread_.join();
+  std::lock_guard<std::mutex> guard(queueMutex_);
+  frameQueue_.clear();
+  encoderRunning_ = false;
 }
 
 void RecordSession::releaseResources(AppContext& context) noexcept {

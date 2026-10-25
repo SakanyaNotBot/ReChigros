@@ -6,6 +6,7 @@ add_library(rechigros_render STATIC
   gl/Framebuffer.cpp
   gl/ShaderProgram.cpp
   gl/GlDebug.cpp
+  gl/AsyncReadback.cpp
   asset/TextureCache.cpp
   skin/SkinConfig.cpp
   batch/SpriteBatch.cpp

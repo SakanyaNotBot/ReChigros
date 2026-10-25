@@ -3,9 +3,13 @@
 #include "rechigros/app/VideoEncoder.hpp"
 #include "rechigros/render/GameRenderer.hpp"
 
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace rechigros::app {
@@ -72,6 +76,19 @@ public:
 
 private:
   void releaseResources(AppContext& context) noexcept;
+  // Prints the accumulated stage timings once, so a slow recording can be attributed.
+  void reportTimings() const;
+  // Frame handoff to the encoder thread. Encoding a frame costs more than drawing it, so the work
+  // is done on its own thread: the renderer hands over a finished frame and immediately starts the
+  // next one. Without this the recording advances at the encoder's pace, which is what makes
+  // rendering a chart take far longer than playing it.
+  void startEncoderThread();
+  void stopEncoderThread();
+  // Hands one frame to the encoder thread, blocking only while the queue is full.
+  bool submitFrame(const std::vector<std::uint8_t>& pixels);
+  // Blocks until every queued frame has been written.
+  bool drainEncoder(std::string& error);
+  void encoderLoop();
   // Sums one short percussive sample per hit into `mix` at the note's own time, so a recorded run
   // sounds like the run it shows.
   void mixHitSounds(AppContext& context, std::vector<float>& mix, std::int64_t frames) const;
@@ -90,6 +107,28 @@ private:
   int renderedFrames_{};
   int totalFrames_{};
   std::vector<std::uint8_t> framePixels_;
+
+  // Encoder thread. A bound on the queue keeps a fast renderer from growing it without limit; when
+  // it is reached the renderer waits, which is the only backpressure the handoff needs.
+  std::thread encoderThread_;
+  std::mutex queueMutex_;
+  std::condition_variable queueSpace_;
+  std::condition_variable queueFilled_;
+  std::deque<std::vector<std::uint8_t>> frameQueue_;
+  bool encoderStop_{};
+  bool encoderRunning_{};
+  std::string encoderError_;
+  // Deep enough that the renderer never waits for the encoder in steady state. Each slot costs one
+  // frame of pixels, so this trades a few megabytes of memory for a recording that runs at the
+  // speed of its slower stage instead of the sum of both.
+  static constexpr std::size_t kMaxQueuedFrames = 16;
+
+  // Stage timings, reported once per recording so a slow run can be attributed instead of guessed.
+  int timedFrames_{};
+  double captureMs_{};
+  double encodeWaitMs_{};
+  // Time the encoder thread spends inside a single frame write, which is the encoding cost itself.
+  double encoderWriteMs_{};
 
 };
 

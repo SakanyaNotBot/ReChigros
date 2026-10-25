@@ -8,6 +8,7 @@
 #include "rechigros/game/Note.hpp"
 #include "rechigros/render/asset/TextureCache.hpp"
 #include "rechigros/render/batch/SpriteBatch.hpp"
+#include "rechigros/render/gl/AsyncReadback.hpp"
 #include "rechigros/render/gl/Framebuffer.hpp"
 #include "rechigros/render/gl/GlDebug.hpp"
 #include "rechigros/render/gl/Texture.hpp"
@@ -138,6 +139,9 @@ struct GameRenderer::Impl {
   // Offscreen capture state for recording. The target and the size it replaced are held here so
   // a capture survives many frames without reallocating or disturbing the interactive size.
   gl::Framebuffer captureTarget;
+  // Staging buffers for the offscreen readback: reading through them keeps the CPU off the GPU's
+  // critical path, so a recording costs the same per frame as drawing it.
+  gl::AsyncReadback captureReadback;
   int captureWidth{};
   int captureHeight{};
   int capturePreviousWidth{};
@@ -1943,6 +1947,9 @@ bool GameRenderer::beginCapture(const RenderFrameInput& input, game::Chart* char
   if (!impl_->initialized || width <= 0 || height <= 0) return false;
   endCapture();
   if (!impl_->captureTarget.resize(width, height)) return false;
+  // The staging buffers are a latency optimisation only: a driver without pixel buffer support
+  // still produces the same frames through the direct read.
+  (void)impl_->captureReadback.resize(width, height);
   impl_->captureWidth = width;
   impl_->captureHeight = height;
   impl_->capturePreviousWidth = impl_->width;
@@ -1983,20 +1990,37 @@ bool GameRenderer::captureFrame(const RenderFrameInput& input, game::Chart* char
   impl_->drawScene(input, chart, judgement, impl_->captureTarget.fbo());
   glBindFramebuffer(GL_FRAMEBUFFER, impl_->captureTarget.fbo());
   glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  // Readback rows arrive bottom-up and every consumer wants the first row to be the top one.
+  const auto flipRows = [&]() {
+    const auto rowBytes = static_cast<std::size_t>(width) * 4U;
+    std::vector<std::uint8_t> row(rowBytes);
+    for (int top = 0, bottom = height - 1; top < bottom; ++top, --bottom) {
+      auto* upper = outPixels.data() + static_cast<std::size_t>(top) * rowBytes;
+      auto* lower = outPixels.data() + static_cast<std::size_t>(bottom) * rowBytes;
+      std::copy_n(upper, rowBytes, row.data());
+      std::copy_n(lower, rowBytes, upper);
+      std::copy_n(row.data(), rowBytes, lower);
+    }
+  };
+  if (impl_->captureReadback.valid()) {
+    // The current frame is queued for transfer first, then the previous one is collected. On the
+    // first call nothing is pending yet, so that frame is read directly -- a single synchronous
+    // read for the whole recording, instead of one per frame.
+    impl_->captureReadback.request(width, height);
+    if (impl_->captureReadback.take(outPixels)) {
+      glBindFramebuffer(GL_FRAMEBUFFER, 0);
+      return true;
+    }
+    outPixels.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4U);
+    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, outPixels.data());
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    flipRows();
+    return true;
+  }
   outPixels.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4U);
   glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, outPixels.data());
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
-  // Render targets are stored bottom-up, and every consumer of these pixels expects the first
-  // row to be the top one, so the rows are reversed in place.
-  const auto rowBytes = static_cast<std::size_t>(width) * 4U;
-  std::vector<std::uint8_t> row(rowBytes);
-  for (int top = 0, bottom = height - 1; top < bottom; ++top, --bottom) {
-    auto* upper = outPixels.data() + static_cast<std::size_t>(top) * rowBytes;
-    auto* lower = outPixels.data() + static_cast<std::size_t>(bottom) * rowBytes;
-    std::copy_n(upper, rowBytes, row.data());
-    std::copy_n(lower, rowBytes, upper);
-    std::copy_n(row.data(), rowBytes, lower);
-  }
+  flipRows();
   return true;
 }
 

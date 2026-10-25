@@ -202,9 +202,10 @@ bool VideoEncoder::writeFrame(const std::vector<std::uint8_t>& pixels, std::stri
   const auto* data = pixels.data();
   std::size_t remaining = pixels.size();
   auto* stream = static_cast<SDL_IOStream*>(input_);
+  // The whole frame is handed over in one call. Splitting it into fixed-size pieces turned every
+  // frame into a run of partial writes, and each of those costs the same regardless of its size.
   while (remaining > 0) {
-    const std::size_t written =
-        SDL_WriteIO(stream, data, std::min<std::size_t>(remaining, 1U << 20));
+    const std::size_t written = SDL_WriteIO(stream, data, remaining);
     data += written;
     remaining -= written;
     if (written != 0) continue;
