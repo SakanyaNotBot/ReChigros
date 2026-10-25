@@ -72,7 +72,11 @@ public:
 
 private:
   void releaseResources(AppContext& context) noexcept;
-  // Writes the decoded music beside `videoPath` as raw samples for the encoder. Empty on failure.
+  // Sums one short percussive sample per hit into `mix` at the note's own time, so a recorded run
+  // sounds like the run it shows.
+  void mixHitSounds(AppContext& context, std::vector<float>& mix, std::int64_t frames) const;
+  // Writes the decoded music plus every judged hit sound beside `videoPath` as raw samples for the
+  // encoder. Empty on failure.
   std::filesystem::path writeAudioTrack(AppContext& context,
       const std::filesystem::path& videoPath);
 
@@ -86,6 +90,7 @@ private:
   int renderedFrames_{};
   int totalFrames_{};
   std::vector<std::uint8_t> framePixels_;
+
 };
 
 } // namespace rechigros::app

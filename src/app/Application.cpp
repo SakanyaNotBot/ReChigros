@@ -605,7 +605,10 @@ int Application::run() {
     beginGpuTimer();
 
     const auto beforeUpdate = SDL_GetPerformanceCounter();
-    if (app_->screen == Screen::Game) {
+    // A command-line encode owns the chart clock itself: it renders offscreen and steps the same
+    // session. Letting the interactive gameplay update run on top would advance the run a second
+    // time and finish it, tearing the chart down while the recorder is still using it.
+    if (app_->screen == Screen::Game && !commandLineRecording_) {
       gameUpdate(*app_, delta);
     }
     const auto afterUpdate = SDL_GetPerformanceCounter();
@@ -630,7 +633,7 @@ int Application::run() {
       ImGui::NewFrame();
     }
 
-    if (app_->screen == Screen::Game) {
+    if (app_->screen == Screen::Game && !commandLineRecording_) {
       gameRender(*app_);
       if (imguiFrame) drawGameOverlay(*app_);
     } else {      glBindFramebuffer(GL_FRAMEBUFFER, 0);

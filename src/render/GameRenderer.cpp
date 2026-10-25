@@ -1215,6 +1215,15 @@ void GameRenderer::shutdown() noexcept {
 }
 
 void GameRenderer::resize(int width, int height) noexcept {
+  // A capture owns the render size for its whole run. Taking the window size here would resize
+  // every offscreen target out from under the capture, and the scene would be laid out for the
+  // window while the frame is read back at the capture size -- the letterbox bands then appear
+  // inside the video.
+  if (impl_->capturing) {
+    impl_->capturePreviousWidth = std::max(1, width);
+    impl_->capturePreviousHeight = std::max(1, height);
+    return;
+  }
   impl_->width = std::max(1, width);
   impl_->height = std::max(1, height);
   glViewport(0, 0, impl_->width, impl_->height);
@@ -1965,6 +1974,10 @@ bool GameRenderer::captureFrame(const RenderFrameInput& input, game::Chart* char
   if (!impl_->capturing || !impl_->captureTarget.valid()) return false;
   const int width = impl_->captureWidth;
   const int height = impl_->captureHeight;
+  // Every frame restates the capture size: anything that touched the renderer's size between
+  // frames would otherwise lay the scene out for a different viewport than the one read back.
+  impl_->width = width;
+  impl_->height = height;
   impl_->captureTarget.bind();
   glViewport(0, 0, width, height);
   impl_->drawScene(input, chart, judgement, impl_->captureTarget.fbo());

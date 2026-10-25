@@ -30,10 +30,14 @@ std::uint32_t quantiseSize(float pixelSize) {
   return std::max<std::uint32_t>(1, scaled);
 }
 
-// Extra thickness applied on each side of a glyph for the bold weight. The interface uses a
-// synthesised bold face, whose stroke width scales with the text size.
-int boldRadius(float pixelSize) {
-  return std::max(1, static_cast<int>(std::lround(pixelSize / 48.0F)));
+// Extra coverage applied to a glyph for the bold weight, as a fraction of its own ink. The font
+// carries no bold face, so the weight is synthesised; a fraction keeps the stroke proportional at
+// every size, where a whole-pixel dilation is a third of a stroke at interface text sizes.
+float boldWeight(float pixelSize) {
+  // A stroke is roughly a twelfth of the em, so the same absolute thickening is a larger share of
+  // a small glyph: the weight grows as the glyph shrinks, keeping the perceived contrast even.
+  const float reference = 16.0F;
+  return std::clamp(0.55F * reference / std::max(1.0F, pixelSize), 0.18F, 0.55F);
 }
 
 struct Key {
@@ -302,31 +306,40 @@ const UiFontCache::Glyph* UiFontCache::Impl::rasterise(const Key& key, float pix
   stbtt_MakeCodepointBitmap(&info, bitmap.data(), glyphWidth, glyphHeight, glyphWidth, scale,
       scale, codepoint);
 
-  // Synthesised bold: thicken the glyph by stamping it at a small set of offsets around the
-  // centre and keeping the largest coverage. Taking the maximum leaves the antialiased edge
-  // where it is, so the stroke grows outward rather than gaining a translucent halo, which
-  // is what made the bold weight read as blurry.
-  int radius = 0;
-  if (key.bold != 0) radius = boldRadius(pixelSize);
-  const int width = glyphWidth + radius * 2;
-  const int height = glyphHeight + radius * 2;
-  std::vector<std::uint8_t> expanded(static_cast<std::size_t>(width) * height, 0);
-  // The centre plus eight compass offsets: each edge direction gains the same thickness, so
-  // a horizontal, vertical and diagonal stroke all widen alike.
-  static constexpr int kDirections[9][2] = {
-      {0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1},
-      {1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
-  for (int row = 0; row < glyphHeight; ++row) {
-    for (int column = 0; column < glyphWidth; ++column) {
-      const auto value = bitmap[static_cast<std::size_t>(row) * glyphWidth + column];
-      if (value == 0) continue;
-      for (const auto& direction : kDirections) {
-        const int targetX = column + direction[0] * radius + radius;
-        const int targetY = row + direction[1] * radius + radius;
-        auto& target = expanded[static_cast<std::size_t>(targetY) * width + targetX];
-        if (value > target) target = static_cast<std::uint8_t>(value);
+  // Synthesised bold. Stamping the glyph at whole-pixel offsets and keeping the largest coverage
+  // widens every stroke by a full pixel on each side, which at interface text sizes (16-24 px) is
+  // a third of a stroke: counters fill in and the label reads as a blurred block. The weight is
+  // added as a fraction of the glyph's own coverage instead, so the stroke thickens without
+  // moving the antialiased edge by a whole pixel.
+  const float weight = key.bold != 0 ? boldWeight(pixelSize) : 0.0F;
+  const int width = glyphWidth;
+  const int height = glyphHeight;
+  std::vector<std::uint8_t> expanded(bitmap);
+  if (weight > 0.001F) {
+    std::vector<std::uint8_t> thickened(bitmap.size(), 0);
+    // One ring of neighbours: a pixel's own coverage plus a share of the four edge neighbours
+    // and half that of the diagonals. Summing coverage this way is what a slightly heavier
+    // stroke looks like after rasterisation, and it never saturates a thin gap.
+    static constexpr int kNeighbours[8][3] = {
+        {1, 0, 4}, {-1, 0, 4}, {0, 1, 4}, {0, -1, 4},
+        {1, 1, 2}, {1, -1, 2}, {-1, 1, 2}, {-1, -1, 2}};
+    for (int row = 0; row < height; ++row) {
+      for (int column = 0; column < width; ++column) {
+        const auto value = bitmap[static_cast<std::size_t>(row) * width + column];
+        float sum = static_cast<float>(value) * 8.0F;
+        for (const auto& neighbour : kNeighbours) {
+          const int sourceX = column - neighbour[0];
+          const int sourceY = row - neighbour[1];
+          if (sourceX < 0 || sourceY < 0 || sourceX >= width || sourceY >= height) continue;
+          sum += static_cast<float>(bitmap[static_cast<std::size_t>(sourceY) * width + sourceX])
+              * static_cast<float>(neighbour[2]) * 0.25F;
+        }
+        const float boosted = sum / 8.0F * (1.0F + weight);
+        thickened[static_cast<std::size_t>(row) * width + column] =
+            static_cast<std::uint8_t>(std::clamp(boosted, 0.0F, 255.0F));
       }
     }
+    expanded.swap(thickened);
   }
 
   // Shelf packing. When a row does not fit, continue on the next shelf; when the atlas runs
@@ -366,8 +379,10 @@ const UiFontCache::Glyph* UiFontCache::Impl::rasterise(const Key& key, float pix
 
   result.width = static_cast<float>(width);
   result.height = static_cast<float>(height);
-  result.offsetX = static_cast<float>(x0 - radius);
-  result.offsetY = static_cast<float>(y0 - radius);
+  // The bitmap is expanded in place rather than padded by a dilation radius, so the glyph's origin
+  // is the one the rasteriser reported.
+  result.offsetX = static_cast<float>(x0);
+  result.offsetY = static_cast<float>(y0);
   result.u0 = static_cast<float>(targetX) / static_cast<float>(atlasWidth);
   result.v0 = static_cast<float>(targetY) / static_cast<float>(atlasHeight);
   result.u1 = static_cast<float>(targetX + width) / static_cast<float>(atlasWidth);

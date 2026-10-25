@@ -6,6 +6,7 @@
 #include "rechigros/app/UiStyle.hpp"
 #include "rechigros/app/UiText.hpp"
 #include "rechigros/platform/FileDialog.hpp"
+#include "rechigros/platform/FileSystem.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -175,7 +176,7 @@ void drawRenderScreen(AppContext& context) {
   // The file name and the directory are typed values, so they are edited elsewhere; here the row
   // shows the current choice and accepts a press to raise the picker.
   if (valueCell("##render_output_dir", canvas, layout, row,
-          settings.outputDirectory.string(), false)
+          platform::pathToUtf8(settings.outputDirectory), false)
           .pressed
       && !busy) {
     const auto chosen = platform::FileDialog::pickDirectory();
@@ -225,14 +226,42 @@ void drawRenderScreen(AppContext& context) {
   drawRowLabel(drawList, canvas, layout, row, "文件名");
   ++row;
 
-  if (valueCell("##render_combo", canvas, layout, row, settings.comboLabel, false).pressed
-      && !busy) {
-    static const char* const kLabels[] = {"RECORD", "COMBO", "REPLAY", "AUTOPLAY"};
-    int index = 0;
-    for (int candidate = 0; candidate < 4; ++candidate) {
-      if (settings.comboLabel == kLabels[candidate]) index = candidate;
+  // The combo label is typed like the file name: the HUD position prints whatever word the
+  // recording should carry, and a fixed list of four choices cannot express that.
+  {
+    const float y = layout.top + static_cast<float>(row) * kRowHeight;
+    const ui::Box box{layout.left + kLabelWidth, y, layout.left + kLabelWidth + kValueWidth,
+        y + kRowHeight - 4.0F};
+    drawValuePlate(canvas, box, false);
+    if (busy) {
+      ui::TextStyle style;
+      style.sizeDp = 12.5F;
+      style.color = ui::rgba(0xFFE6EDF3U);
+      style.paddingLeftDp = 6.0F;
+      style.paddingRightDp = 6.0F;
+      ui::drawLabel(ImGui::GetWindowDrawList(), canvas, box, settings.comboLabel, style,
+          ImGui::GetTime());
+    } else {
+      ImGui::SetCursorScreenPos(canvas.point(box.x0 + 4.0F, box.y0 + 1.0F));
+      ImGui::SetNextItemWidth(canvas.units(box.width() - 8.0F));
+      ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.902F, 0.929F, 0.953F, 1.0F));
+      ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.0F, 0.0F, 0.0F, 0.0F));
+      ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.0F, 0.0F, 0.0F, 0.0F));
+      ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+          ImVec2(0.0F, std::max(0.0F, (canvas.units(box.height() - 4.0F) - ImGui::GetFontSize())
+                      * 0.5F)));
+      ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0F);
+      char buffer[64];
+      std::snprintf(buffer, sizeof(buffer), "%s", settings.comboLabel.c_str());
+      if (ImGui::InputText("##render_combo", buffer, sizeof(buffer))) {
+        settings.comboLabel = buffer;
+      }
+      ImGui::PopStyleVar(2);
+      ImGui::PopStyleColor(3);
+      // A run label is drawn in the HUD position, so an empty one leaves a blank readout and has
+      // nothing to fall back on; the recorded run then carries the default word.
+      if (settings.comboLabel.empty()) settings.comboLabel = "RECORD";
     }
-    settings.comboLabel = kLabels[(index + 1) % 4];
   }
   drawRowLabel(drawList, canvas, layout, row, "COMBO 标签");
   ++row;

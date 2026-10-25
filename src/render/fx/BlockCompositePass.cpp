@@ -326,7 +326,13 @@ void BlockCompositePass::rasteriseMasks(const std::vector<BlockMaskQuad>& maskAQ
   const std::size_t firstAFloat = vertices.size();
   for (const auto& quad : maskAQuads) appendQuad(vertices, quad, width_, height_);
   const std::size_t firstBFloat = vertices.size();
-  for (const auto& quad : maskBQuads) appendQuad(vertices, quad, width_, height_);
+  // Hover quads are not zone geometry: they are drawn below with the sprite's own coverage, and
+  // letting them through this additive pass as well would leave a hard rectangle of alpha
+  // underneath every soft blob.
+  for (const auto& quad : maskBQuads) {
+    if (quad.alpha > 0.0F) continue;
+    appendQuad(vertices, quad, width_, height_);
+  }
   const std::size_t firstA = firstAFloat / kFloatsPerVertex;
   const std::size_t firstB = firstBFloat / kFloatsPerVertex;
   const std::size_t vertexCountA = firstB - firstA;

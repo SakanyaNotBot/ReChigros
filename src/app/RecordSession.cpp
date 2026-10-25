@@ -3,6 +3,7 @@
 #include "rechigros/app/AppContext.hpp"
 #include "rechigros/audio/Decoder.hpp"
 #include "rechigros/game/Chart.hpp"
+#include "rechigros/game/GameConstants.hpp"
 #include "rechigros/game/GameplaySession.hpp"
 #include "rechigros/platform/FileSystem.hpp"
 #include "rechigros/render/scene/Transition.hpp"
@@ -23,6 +24,10 @@ namespace {
 // run looks like; the settlement page is deliberately excluded.
 constexpr double kIntroLeadSec = 1.083;
 constexpr double kOutroTailSec = 1.7;
+// The exit keeps drawing after the chart clock has passed the last note: the play field blurs,
+// the HUD holds its layout and then fades out over its own window. A video that stopped at the
+// chart's end cut that away, so the tail covers the HUD's whole exit.
+constexpr double kHudExitSec = 0.4;
 
 // Frames rendered per call to step(). Each frame costs a full offscreen render plus an encode
 // write, so the batch is sized to keep a 60 Hz interface responsive while still making progress.
@@ -106,7 +111,15 @@ bool RecordSession::start(AppContext& context, const Settings& settings, std::st
   outputPath_ = file;
 
   const double chartEnd = context.game.chart->chartEndTimeSec;
-  const double duration = std::max(0.1, chartEnd + kOutroTailSec);
+  // The picture has to run past the last note: the HUD keeps its layout while the play field
+  // blurs and then fades out over its own window, and the exit transition follows. Stopping at
+  // the chart's end cut the video off exactly when the song ended, so the recording covers the
+  // HUD's exit as well.
+  // The chart clock only starts after the opening lead, so the picture is that lead longer than the
+  // chart. Leaving it out of the total ended the video early by exactly the intro, which is why the
+  // HUD exit was still on screen in the last frame.
+  const double duration =
+      std::max(0.1, kIntroLeadSec + chartEnd + kOutroTailSec + kHudExitSec);
   totalFrames_ = std::max(1, static_cast<int>(std::ceil(duration * settings_.fps)));
   renderedFrames_ = 0;
 
@@ -210,7 +223,10 @@ bool RecordSession::step(AppContext& context) {
         : 0.0F;
 
     // The session advances with the chart clock so the judgement state matches the picture.
-    if (!inIntro) {
+    // The session advances only while the chart clock is inside the chart. Past its end the picture
+    // keeps drawing the exit, but nothing is left to judge: advancing there would only spend work on
+    // a chart that cannot change any more.
+    if (!inIntro && chartTime <= chartEnd) {
       context.game.session.update(chartTime, static_cast<float>(frameDuration));
       (void)context.game.session.takeSoundEvents();
     }
@@ -239,11 +255,27 @@ bool RecordSession::step(AppContext& context) {
         ? render::scene::introUiEase(
               static_cast<float>(std::clamp(elapsed / (40.0 / 60.0), 0.0, 1.0)))
         : 1.0F;
+    // The HUD fades out over the last part of the exit, the same window the interactive path
+    // uses, so the recorded picture ends on the interface disappearing rather than on a frozen
+    // HUD over a blurred field.
+    input.hud.alpha = 1.0F;
+    if (inOutro) {
+      const double outroElapsed = chartTime - chartEnd;
+      if (outroElapsed > kOutroTailSec) {
+        const double fade = (outroElapsed - kOutroTailSec) / kHudExitSec;
+        input.hud.alpha = static_cast<float>(std::clamp(1.0 - fade, 0.0, 1.0));
+      }
+    }
     input.songName = context.play.songName;
     input.levelName = context.play.difficulty;
     // Hit feedback is part of what a run looks like; the interface can turn the particles off
     // while keeping the sound.
     input.showHitParticles = settings_.noteHitParticles;
+    // Hold bursts are produced by the session while it advances and drawn by the hit-effect pass.
+    // They are consumed once per frame, so a recording that skipped them would show every hold
+    // without its effect -- the one thing a viewer notices first in a hold-heavy chart.
+    input.holdBodyBursts = context.game.session.takeHoldBodyBursts();
+    input.holdHeadBursts = context.game.session.takeHoldHeadBursts();
     (void)resolution;
 
     if (!context.renderer->captureFrame(input, context.game.chart.get(), &judgement,
@@ -299,30 +331,90 @@ void RecordSession::releaseResources(AppContext& context) noexcept {
   }
 }
 
-// Decodes the chart's music and writes it as raw interleaved stereo float samples beside the video,
-// which is what the encoder consumes as its second input. Returns an empty path when the chart has no
-// music or it cannot be decoded, in which case the recording is simply video-only.
+void RecordSession::mixHitSounds(AppContext& context, std::vector<float>& mix,
+    std::int64_t frames) const {
+  if (context.game.chart == nullptr) return;
+  // An autoplay run hits every note at the note's own time, so the hit times come straight from the
+  // chart rather than from the judged frame: the picture may notice a note on a later frame, but the
+  // sound of a hit belongs where the note is. This is what makes a recorded run sound like the run
+  // it shows.
+  constexpr float kHitSeconds = 0.045F;
+  constexpr float kHitAmplitude = 0.35F;
+  const auto hitFrames = static_cast<std::int64_t>(std::ceil(kHitSeconds * kAudioSampleRate));
+  if (hitFrames <= 0) return;
+  const auto totalFrames = static_cast<std::int64_t>(mix.size() / 2U);
+  using game::NOTE_DRAG;
+  using game::NOTE_FLICK;
+  using game::NOTE_HOLD;
+  using game::NOTE_TAP;
+  for (const auto* note : context.game.chart->allNotesSorted) {
+    if (note == nullptr || note->type == NOTE_HOLD) continue;
+    const auto startFrame =
+        static_cast<std::int64_t>(std::llround(note->sect * kAudioSampleRate));
+    if (startFrame < 0 || startFrame >= totalFrames) continue;
+    // A short decaying tone: without the shipped samples the recording keeps the rhythm of the
+    // hits, which is the part that carries the feel of the run.
+    const float frequency = note->type == NOTE_FLICK ? 1100.0F
+        : note->type == NOTE_DRAG                 ? 660.0F
+                                                  : 880.0F;
+    for (std::int64_t offset = 0; offset < hitFrames; ++offset) {
+      const auto frame = startFrame + offset;
+      if (frame >= totalFrames) break;
+      const float progress = static_cast<float>(offset) / static_cast<float>(hitFrames);
+      const float envelope = (1.0F - progress) * (1.0F - progress);
+      const float phase = 6.2831853F * frequency * static_cast<float>(offset)
+          / static_cast<float>(kAudioSampleRate);
+      const float sample = std::sin(phase) * envelope * kHitAmplitude;
+      mix[static_cast<std::size_t>(frame) * 2U] += sample;
+      mix[static_cast<std::size_t>(frame) * 2U + 1U] += sample;
+    }
+  }
+  (void)frames;
+}
+
+// Builds the audio track: the chart's music with every hit the run produced mixed on top, written as
+// raw interleaved stereo float samples beside the video. The encoder takes it as its second input.
+// Returns an empty path when there is nothing audible, in which case the video is silent.
 std::filesystem::path RecordSession::writeAudioTrack(AppContext& context,
     const std::filesystem::path& videoPath) {
-  if (context.play.musicFile.empty()) return {};
-  audio::AudioBuffer buffer =
-      audio::Decoder::decodeFile(context.play.musicFile, kAudioSampleRate);
-  if (buffer.empty()) return {};
-  // The track is trimmed to the chart's own length so the file does not end on a silent tail; the
-  // encoder repeats nothing, so a shorter track simply finishes before the video does.
+  audio::AudioBuffer buffer;
+  if (!context.play.musicFile.empty()) {
+    buffer = audio::Decoder::decodeFile(context.play.musicFile, kAudioSampleRate);
+  }
+  // A chart with no decodable music still gets a track carrying its hit sounds; only a run with no
+  // music and no hits stays silent.
+  if (buffer.empty() && !settings_.noteHitsound) return {};
+  // The track covers the chart plus the exit: the music ends with the song, while the hit sounds
+  // of the final notes and the fade still have to be audible, so the track is sized from the
+  // picture, not from the music file.
   const double chartEnd = context.game.chart != nullptr
       ? context.game.chart->chartEndTimeSec
       : buffer.durationSeconds();
-  const std::int64_t frames = std::min<std::int64_t>(buffer.frameCount(),
-      static_cast<std::int64_t>(std::ceil(std::max(0.0, chartEnd) * kAudioSampleRate)));
+  // The encoder delays this track by the opening lead, so it starts where the chart clock does and
+  // the lead must not be added here; the track only has to cover the chart and its exit.
+  const double trackSeconds = std::max(0.1, chartEnd + kOutroTailSec + kHudExitSec);
+  const std::int64_t frames = static_cast<std::int64_t>(std::ceil(trackSeconds * kAudioSampleRate));
   if (frames <= 0) return {};
+  // The music is decoded at the sample rate the encoder is told to expect, so no conversion is
+  // needed; it is copied in and the hit sounds are summed on top of it.
+  std::vector<float> mix(static_cast<std::size_t>(frames) * 2U, 0.0F);
+  const std::int64_t musicFrames = std::min<std::int64_t>(buffer.frameCount(), frames);
+  if (musicFrames > 0) {
+    std::copy_n(buffer.data(), static_cast<std::size_t>(musicFrames) * 2U, mix.begin());
+  }
+  if (settings_.noteHitsound) mixHitSounds(context, mix, frames);
   std::filesystem::path track = videoPath;
   track += ".pcm";
-  // The track is opened through the platform's own wide-capable path: a name holding characters
-  // outside the ANSI code page cannot be opened through the narrow conversion at all.
-  std::FILE* file = std::fopen(platform::pathToUtf8(track).c_str(), "wb");
+  // A name holding characters outside the ANSI code page cannot be opened through a narrow path, so
+  // the wide form is used where the C library offers one. UTF-8 bytes would not work here: fopen
+  // decodes narrow names with the host code page, not with UTF-8.
+#ifdef _WIN32
+  std::FILE* file = _wfopen(track.wstring().c_str(), L"wb");
+#else
+  std::FILE* file = std::fopen(track.string().c_str(), "wb");
+#endif
   if (file == nullptr) return {};
-  const auto written = std::fwrite(buffer.data(), sizeof(float) * 2U,
+  const auto written = std::fwrite(mix.data(), sizeof(float) * 2U,
       static_cast<std::size_t>(frames), file);
   std::fclose(file);
   if (written != static_cast<std::size_t>(frames)) {
