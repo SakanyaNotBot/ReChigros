@@ -336,40 +336,65 @@ bool updateRecording(AppContext& context) {
 void drawRecordingProgress(AppContext& context) {
   auto& recording = context.recording;
   if (recording.state() != RecordSession::State::Running) return;
+  // The overlay is authored in the same design units as every other screen and converted through
+  // the canvas when drawn, so the panel stays centred whatever the window size or density is.
   const ui::Canvas canvas = ui::canvas();
   // The overlay owns a clickable control, and an immediate-mode widget has to belong to a window.
   // Submitting it with none open makes the toolkit create its own fallback window, which then
-  // appears on screen as a stray "Debug" panel over the recording.
+  // shows up as a stray panel over the recording.
   ui::beginFullscreenWindow("##recording_progress");
   ImDrawList* drawList = ImGui::GetWindowDrawList();
-  // A dimmed plate over whatever is on screen, so the progress reads as a modal operation.
-  drawList->AddRectFilled(canvas.point(0.0F, 0.0F),
-      canvas.point(canvas.viewport.x, canvas.viewport.y), ui::rgba(0xC0080B10U));
+  // The window rectangle in draw-list coordinates: the draw list spans the whole window, so this
+  // does not go through the canvas at all.
+  const ImVec2 windowSize = ImGui::GetIO().DisplaySize;
+  // The full-screen window starts at the viewport's work position, which is not necessarily the
+  // draw list origin, so the rectangle is measured against the window's own top-left.
+  const ImVec2 windowOrigin = ImGui::GetWindowPos();
+  const ui::PxRect full{windowOrigin,
+      ImVec2(windowOrigin.x + windowSize.x, windowOrigin.y + windowSize.y)};
+  drawList->AddRectFilled(full.min, full.max, ui::rgba(0xC0080B10U));
 
-  const float panelWidth = 420.0F;
-  const float panelHeight = 118.0F;
-  const float x0 = (canvas.viewport.x - panelWidth) * 0.5F;
-  const float y0 = (canvas.viewport.y - panelHeight) * 0.5F;
-  drawList->AddRectFilled(canvas.point(x0, y0), canvas.point(x0 + panelWidth, y0 + panelHeight),
-      ui::rgba(0xFF161B22U), 6.0F);
-
+  constexpr float kPanelWidth = 420.0F;
+  constexpr float kPanelHeight = 118.0F;
+  constexpr float kPad = 20.0F;
+  // The full-screen rectangle is already in draw-list pixels, so the panel is centred on it
+  // directly; deriving the size from the canvas would mix the two spaces again.
+  const float viewWidth = full.max.x - full.min.x;
+  const float viewHeight = full.max.y - full.min.y;
+  const float panelWidthPixels = canvas.units(kPanelWidth);
+  const float panelHeightPixels = canvas.units(kPanelHeight);
+  const float x0 = std::round(full.min.x + (viewWidth - panelWidthPixels) * 0.5F);
+  const float y0 = std::round(full.min.y + (viewHeight - panelHeightPixels) * 0.5F);
+  const auto fillPixels = [&](float bx, float by, float bw, float bh, std::uint32_t colour) {
+    drawList->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw, by + bh), ui::rgba(colour), 4.0F);
+  };
+  const auto designBox = [&](float bx, float by, float bw, float bh) {
+    return ui::Box{(bx - canvas.origin.x) / canvas.scale, (by - canvas.origin.y) / canvas.scale,
+        (bx + bw - canvas.origin.x) / canvas.scale, (by + bh - canvas.origin.y) / canvas.scale};
+  };
+  const float panelWidth = canvas.units(kPanelWidth);
+  const float panelHeight = canvas.units(kPanelHeight);
+  const float pad = canvas.units(kPad);
+  fillPixels(x0, y0, panelWidth, panelHeight, 0xFF161B22U);
   ui::TextStyle title;
   title.sizeDp = 15.0F;
   title.bold = true;
-  ui::drawLabel(drawList, canvas, ui::Box{x0 + 20.0F, y0 + 14.0F, x0 + panelWidth - 20.0F,
-                    y0 + 40.0F},
+  ui::drawLabel(drawList, canvas,
+      designBox(x0 + pad, y0 + canvas.units(14.0F), panelWidth - pad * 2.0F,
+          canvas.units(26.0F)),
       "正在渲染", title, ImGui::GetTime());
 
   // The bar shows encoded frames against the total, which is the only number that matters for
   // "how much longer".
-  const ui::Box barBox{x0 + 20.0F, y0 + 50.0F, x0 + panelWidth - 20.0F, y0 + 66.0F};
-  drawList->AddRectFilled(canvas.point(barBox.x0, barBox.y0), canvas.point(barBox.x1, barBox.y1),
-      ui::rgba(0xFF0D1117U), 3.0F);
+  const float barY = y0 + canvas.units(50.0F);
+  const float barHeight = canvas.units(16.0F);
+  const float barLeft = x0 + pad;
+  const float barRight = x0 + panelWidth - pad;
+  fillPixels(barLeft, barY, barRight - barLeft, barHeight, 0xFF0D1117U);
   const float progress = recording.progress();
-  const float filled = barBox.x0 + (barBox.x1 - barBox.x0) * progress;
-  if (filled > barBox.x0 + 1.0F) {
-    drawList->AddRectFilled(canvas.point(barBox.x0, barBox.y0), canvas.point(filled, barBox.y1),
-        ui::rgba(0xFF1F6FEBU), 3.0F);
+  const float filled = barLeft + (barRight - barLeft) * progress;
+  if (filled > barLeft + 1.0F) {
+    fillPixels(barLeft, barY, filled - barLeft, barHeight, 0xFF1F6FEBU);
   }
 
   char status[128];
@@ -378,21 +403,27 @@ void drawRecordingProgress(AppContext& context) {
   ui::TextStyle detail;
   detail.sizeDp = 12.0F;
   detail.color = ui::rgba(0xFF8B949EU);
-  ui::drawLabel(drawList, canvas, ui::Box{x0 + 20.0F, y0 + 70.0F, x0 + panelWidth - 20.0F,
-                    y0 + 90.0F},
+  ui::drawLabel(drawList, canvas,
+      designBox(x0 + pad, y0 + canvas.units(70.0F), panelWidth - pad * 2.0F,
+          canvas.units(20.0F)),
       status, detail, ImGui::GetTime());
 
-  const ui::Box cancelBox{x0 + 20.0F, y0 + panelHeight - 34.0F, x0 + 110.0F,
-      y0 + panelHeight - 10.0F};
-  drawList->AddRectFilled(canvas.point(cancelBox.x0, cancelBox.y0),
-      canvas.point(cancelBox.x1, cancelBox.y1), ui::rgba(0xFF30363DU), 3.0F);
+  const float cancelX = x0 + pad;
+  const float cancelY = y0 + panelHeight - canvas.units(34.0F);
+  const float cancelWidth = canvas.units(90.0F);
+  const float cancelHeight = canvas.units(24.0F);
+  fillPixels(cancelX, cancelY, cancelWidth, cancelHeight, 0xFF30363DU);
   ui::TextStyle cancelText;
   cancelText.sizeDp = 12.5F;
   cancelText.align = ui::HAlign::Center;
-  ui::drawLabel(drawList, canvas, cancelBox, "取消", cancelText, ImGui::GetTime());
-  const bool cancelPressed = ui::panelInteraction("##render_cancel", canvas, cancelBox,
-                                   ui::rectPanel(0x00000000U, 0x00000000U))
-                                 .pressed;
+  ui::drawLabel(drawList, canvas,
+      designBox(cancelX, cancelY, cancelWidth, cancelHeight), "取消", cancelText,
+      ImGui::GetTime());
+  const bool cancelPressed =
+      ui::panelInteraction("##render_cancel", canvas,
+          designBox(cancelX, cancelY, cancelWidth, cancelHeight),
+          ui::rectPanel(0x00000000U, 0x00000000U))
+          .pressed;
   ui::endFullscreenWindow();
   if (cancelPressed) {
     recording.cancel(context);

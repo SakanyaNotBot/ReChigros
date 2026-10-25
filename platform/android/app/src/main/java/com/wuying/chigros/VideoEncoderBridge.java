@@ -49,6 +49,12 @@ final class VideoEncoderBridge {
     private static int pcmSampleRate;
     private static int pcmDelayMs;
 
+    /** Compressed AAC packets, held until the muxer has started. */
+    private static final java.util.List<byte[]> audioPackets = new java.util.ArrayList<>();
+    private static final java.util.List<MediaCodec.BufferInfo> audioPacketInfo =
+            new java.util.ArrayList<>();
+    private static MediaFormat audioFormat;
+
     private VideoEncoderBridge() {
     }
 
@@ -88,8 +94,15 @@ final class VideoEncoderBridge {
             muxerStarted = false;
             videoTrack = -1;
             audioTrack = -1;
+            audioPackets.clear();
+            audioPacketInfo.clear();
+            audioFormat = null;
             rgbaScratch = new byte[w * h * 4];
             lumaScratch = new int[w * h];
+            // The music is encoded up front. A muxer refuses new tracks once it has started, and
+            // the video track's format only becomes known while frames are flowing, so the audio
+            // track has to exist before that.
+            if (pcmBytes != null) prepareAudioTrack();
             Log.i(TAG, "video encoder started " + w + "x" + h + " @" + frameRate + " bitRate=" + bitRate);
             return true;
         } catch (IOException | RuntimeException error) {
@@ -227,17 +240,31 @@ final class VideoEncoderBridge {
         }
     }
 
-    /** Starts the muxer once both track formats are known. */
+    /**
+     * Starts the muxer once every track format is known. A muxer only accepts tracks until it is
+     * started: adding one afterwards throws, which is why the audio encoder has to be running
+     * before the first video frame is written.
+     */
     private static void ensureMuxerStarted() {
         if (muxerStarted || muxer == null) return;
         if (videoTrack < 0) {
             videoTrack = muxer.addTrack(videoEncoder.getOutputFormat());
         }
-        if (audioTrack < 0 && audioEncoder != null) {
-            return; // wait for the audio track's format before starting
-        }
         muxer.start();
         muxerStarted = true;
+        flushAudioPackets();
+    }
+
+    /** Writes the audio packets buffered before the container was opened. */
+    private static void flushAudioPackets() {
+        if (!muxerStarted || audioTrack < 0) return;
+        for (int i = 0; i < audioPackets.size(); ++i) {
+            final byte[] packet = audioPackets.get(i);
+            final ByteBuffer buffer = ByteBuffer.wrap(packet);
+            muxer.writeSampleData(audioTrack, buffer, audioPacketInfo.get(i));
+        }
+        audioPackets.clear();
+        audioPacketInfo.clear();
     }
 
     /** Encodes the whole supply of music into the muxer, then finishes the container. */
@@ -270,8 +297,6 @@ final class VideoEncoderBridge {
                 videoEncoder.releaseOutputBuffer(index, false);
                 ended = (videoInfo.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
             }
-            // The video track alone is still a complete recording, so the audio is best effort.
-            if (pcmBytes != null) encodeAudio();
             release();
             Log.i(TAG, "encoder finished frames=" + frameIndex);
             return outputFile != null && outputFile.isFile() && outputFile.length() > 0;
@@ -283,10 +308,11 @@ final class VideoEncoderBridge {
     }
 
     /**
-     * Encodes the recorder's float samples to AAC and muxes them with the video. The track starts
-     * after the recording's opening lead so the music lines up with the chart.
+     * Encodes the recorder's float samples to AAC up front and keeps the compressed packets and
+     * the track format. The muxer needs the format before it starts, and it has to start before
+     * any sample is written, so the audio cannot be encoded lazily beside the video.
      */
-    private static void encodeAudio() {
+    private static void prepareAudioTrack() {
         MediaCodec encoder = null;
         try {
             final int channels = 2;
@@ -353,25 +379,30 @@ final class VideoEncoderBridge {
                     continue;
                 }
                 if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                    if (audioTrack < 0) audioTrack = muxer.addTrack(encoder.getOutputFormat());
-                    if (!muxerStarted) {
-                        muxer.start();
-                        muxerStarted = true;
-                    }
+                    // The track is added now, while the muxer is still unstarted; its samples are
+                    // held until the video track exists and the container has been opened.
+                    audioFormat = encoder.getOutputFormat();
+                    audioTrack = muxer.addTrack(audioFormat);
                     continue;
                 }
                 if (index < 0) continue;
                 final ByteBuffer output = encoder.getOutputBuffer(index);
-                if (output != null && info.size > 0 && muxerStarted && audioTrack >= 0) {
+                if (output != null && info.size > 0) {
+                    final byte[] packet = new byte[info.size];
                     output.position(info.offset);
                     output.limit(info.offset + info.size);
-                    muxer.writeSampleData(audioTrack, output, info);
+                    output.get(packet);
+                    final MediaCodec.BufferInfo copy = new MediaCodec.BufferInfo();
+                    copy.set(0, packet.length, info.presentationTimeUs, info.flags);
+                    audioPackets.add(packet);
+                    audioPacketInfo.add(copy);
                 }
                 encoder.releaseOutputBuffer(index, false);
                 if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) break;
             }
         } catch (IOException | RuntimeException error) {
-            Log.e(TAG, "cannot encode audio", error);
+            // A recording without music is still a complete recording, so this is not fatal.
+            Log.e(TAG, "cannot prepare audio", error);
         } finally {
             audioEncoder = null;
             if (encoder != null) {
@@ -391,6 +422,9 @@ final class VideoEncoderBridge {
             Log.e(TAG, "cannot release encoder", error);
         }
         pcmBytes = null;
+        audioPackets.clear();
+        audioPacketInfo.clear();
+        audioFormat = null;
         videoEncoder = null;
         muxer = null;
         muxerStarted = false;
