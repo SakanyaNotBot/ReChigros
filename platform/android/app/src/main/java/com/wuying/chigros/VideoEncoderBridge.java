@@ -136,13 +136,19 @@ final class VideoEncoderBridge {
         return pcmBytes != null;
     }
 
-    /** Queues one top-down RGBA frame. */
-    static synchronized boolean queueFrame(byte[] rgba, int w, int h) {
-        if (videoEncoder == null || rgba == null) return false;
-        if (w != width || h != height || rgba.length < w * h * 4) return false;
+    /**
+     * Queues one frame in the encoder's planar layout: every luma row, then both chroma planes at
+     * half size. The graphics device produced those bytes, so nothing here has to convert them;
+     * only the row-by-row copy into the codec's own buffers is left.
+     */
+    static synchronized boolean queueFrame(byte[] planes, int w, int h) {
+        if (videoEncoder == null || planes == null) return false;
+        final int lumaSize = w * h;
+        final int chromaSize = (w / 2) * (h / 2);
+        if (w != width || h != height || planes.length < lumaSize + chromaSize * 2) return false;
         try {
             final long presentationUs = frameIndex * 1_000_000L / frameRate;
-            if (!submitFrame(rgba, presentationUs)) return false;
+            if (!submitFrame(planes, presentationUs)) return false;
             frameIndex++;
             return true;
         } catch (RuntimeException error) {
@@ -151,7 +157,7 @@ final class VideoEncoderBridge {
         }
     }
 
-    private static boolean submitFrame(byte[] rgba, long presentationUs) {
+    private static boolean submitFrame(byte[] source, long presentationUs) {
         int index = videoEncoder.dequeueInputBuffer(10_000L);
         for (int attempt = 0; index < 0 && attempt < 20; ++attempt) {
             drainVideo(false);
@@ -170,54 +176,76 @@ final class VideoEncoderBridge {
             videoEncoder.queueInputBuffer(index, 0, 0, presentationUs, 0);
             return false;
         }
-        fillPlane(planes[0], rgba, 0);
-        fillPlane(planes[1], rgba, 1);
-        fillPlane(planes[2], rgba, 2);
-        // The buffer's size is the whole image, not zero: a zero-length frame tells the encoder an
-        // empty buffer arrived, and it answers with a codec error instead of an encoded frame.
-        final int imageSize = planes[0].getBuffer().capacity()
-                + planes[1].getBuffer().capacity() + planes[2].getBuffer().capacity();
-        videoEncoder.queueInputBuffer(index, 0, imageSize, presentationUs, 0);
+        final int lumaSize = width * height;
+        final int chromaSize = (width / 2) * (height / 2);
+        copyLuma(planes[0], source, width, height);
+        // Both colour channels live in one interleaved pair of buffers: each row holds every
+        // sample for that row of the picture, with the two channels alternating. The pair is
+        // written together so neither channel overwrites the other.
+        copyChroma(planes[1], planes[2], source, lumaSize, width / 2, height / 2);
+        // The size is the whole frame in its planar form. Reporting zero makes the codec discard
+        // the buffer as carrying nothing, and the plane capacities are not a substitute: they are
+        // separate views that describe more bytes than the one buffer they share.
+        final int frameSize = width * height * 3 / 2;
+        videoEncoder.queueInputBuffer(index, 0, frameSize, presentationUs, 0);
         return drainVideo(false);
     }
 
-    /**
-     * Writes one colour plane from the RGBA frame. Luma is computed per pixel; the chroma planes are
-     * sampled at their own resolution, so one sample serves a 2x2 block of pixels.
-     */
-    private static void fillPlane(android.media.Image.Plane plane, byte[] rgba, int planeIndex) {
+    /** Writes the picture's brightness into the codec's luma buffer. */
+    private static void copyLuma(android.media.Image.Plane plane, byte[] source, int width,
+            int height) {
         final ByteBuffer buffer = plane.getBuffer();
         final int rowStride = plane.getRowStride();
         final int pixelStride = plane.getPixelStride();
         buffer.position(0);
-        final boolean luma = planeIndex == 0;
-        final int stepX = luma ? 1 : 2;
-        final int stepY = luma ? 1 : 2;
-        int offset = 0;
-        for (int y = 0; y < height; y += stepY) {
-            final int rowStart = y * width * 4;
-            int columnOffset = offset;
-            for (int x = 0; x < width; x += stepX) {
-                final int p = rowStart + x * 4;
-                final int r = rgba[p] & 0xFF;
-                final int g = rgba[p + 1] & 0xFF;
-                final int b = rgba[p + 2] & 0xFF;
-                final int value;
-                if (luma) {
-                    final int yv = ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16;
-                    value = yv < 16 ? 16 : (yv > 235 ? 235 : yv);
-                } else if (planeIndex == 1) {
-                    final int u = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128;
-                    value = u < 0 ? 0 : (u > 255 ? 255 : u);
-                } else {
-                    final int v = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
-                    value = v < 0 ? 0 : (v > 255 ? 255 : v);
+        for (int y = 0; y < height; ++y) {
+            final int rowStart = y * width;
+            if (pixelStride == 1) {
+                buffer.put(source, rowStart, Math.min(width, buffer.remaining()));
+            } else {
+                for (int x = 0; x < width; ++x) {
+                    if (!buffer.hasRemaining()) return;
+                    buffer.put(source[rowStart + x]);
+                    buffer.position(buffer.position() + Math.min(pixelStride - 1,
+                            buffer.remaining()));
                 }
-                final int position = columnOffset;
-                if (position >= 0 && position < buffer.limit()) buffer.put(position, (byte) value);
-                columnOffset += pixelStride;
             }
-            offset += rowStride;
+            final int padding = rowStride - width * pixelStride;
+            if (padding > 0) buffer.position(buffer.position() + Math.min(padding,
+                    buffer.remaining()));
+        }
+    }
+
+    /**
+     * Writes the picture's colour into the codec's chroma buffer. Both channels share one buffer
+     * with their samples alternating, so a pair of samples is written per step: the first channel
+     * at the current position, the second one slot further on. The two plane views describe the
+     * same bytes from different starting points, so writing through both would overlap.
+     */
+    private static void copyChroma(android.media.Image.Plane planeU, android.media.Image.Plane planeV,
+            byte[] source, int sourceOffset, int chromaWidth, int chromaHeight) {
+        final ByteBuffer buffer = planeU.getBuffer();
+        final int rowStride = planeU.getRowStride();
+        final int pixelStride = planeU.getPixelStride();
+        buffer.position(0);
+        final int step = Math.max(1, pixelStride);
+        // The source keeps the two channels in separate planes, one after the other, while the
+        // destination interleaves them, so each step reads one sample from each source plane.
+        final int sourceU = sourceOffset;
+        final int sourceV = sourceOffset + chromaWidth * chromaHeight;
+        for (int y = 0; y < chromaHeight; ++y) {
+            final int rowStart = y * chromaWidth;
+            for (int x = 0; x < chromaWidth; ++x) {
+                if (buffer.remaining() < 2) return;
+                buffer.put(source[sourceU + rowStart + x]);
+                buffer.put(source[sourceV + rowStart + x]);
+                if (step > 2) {
+                    final int skip = Math.min(step - 2, buffer.remaining());
+                    buffer.position(buffer.position() + skip);
+                }
+            }
+            final int padding = rowStride - chromaWidth * step;
+            if (padding > 0) buffer.position(buffer.position() + Math.min(padding, buffer.remaining()));
         }
     }
 

@@ -323,6 +323,9 @@ bool VideoEncoder::openPlatform(const Settings& settings, const std::filesystem:
   }
   widthForPlatform_ = settings.width;
   heightForPlatform_ = settings.height;
+  // The platform encoder takes the planar layout as-is, so it is told which one to expect for the
+  // same reason the external tool is: it lets the caller do the conversion where it is cheapest.
+  inputIsPlanar_ = settings.planarInput;
   platform_ = true;
   active_ = true;
   return true;

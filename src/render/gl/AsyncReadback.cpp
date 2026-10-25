@@ -1,6 +1,6 @@
 #include "rechigros/render/gl/AsyncReadback.hpp"
 
-#include <glad/glad.h>
+#include "rechigros/render/gl/Gl.hpp"
 
 #include <algorithm>
 
@@ -66,8 +66,13 @@ bool AsyncReadback::take(std::vector<std::uint8_t>& out) noexcept {
   glBindBuffer(GL_PIXEL_PACK_BUFFER, buffers_[readIndex]);
   // Mapping waits for the transfer the driver started earlier. By the time the caller asks, the
   // frame it wants was requested one step ago, so the wait is for a transfer already under way.
+  // The range form takes an access bitmask, which is what the mobile flavour of the API offers;
+  // the single-value form of the call is desktop only.
   const auto* pixels = static_cast<const std::uint8_t*>(
-      glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY));
+      glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0,
+          static_cast<GLsizeiptr>(
+              static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_) * 4U),
+          GL_MAP_READ_BIT));
   if (pixels == nullptr) {
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
     --pendingCount_;

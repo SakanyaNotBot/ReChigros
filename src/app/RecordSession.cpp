@@ -144,8 +144,7 @@ bool RecordSession::start(AppContext& context, const Settings& settings, std::st
   encoderSettings.audioDelaySec = kIntroLeadSec;
   // The renderer converts frames to the encoder's layout on the graphics device, which is cheaper
   // than letting the encoder convert every frame on the way in.
-  // Overridable so the two paths can be compared frame for frame.
-  encoderSettings.planarInput = std::getenv("RECHIGROS_RGBA_PATH") == nullptr;
+  encoderSettings.planarInput = true;
   if (!encoder_.open(encoderSettings, file, error)) {
     state_ = State::Failed;
     error_ = error;
