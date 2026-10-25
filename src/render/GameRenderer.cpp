@@ -8,6 +8,7 @@
 #include "rechigros/game/Note.hpp"
 #include "rechigros/render/asset/TextureCache.hpp"
 #include "rechigros/render/batch/SpriteBatch.hpp"
+#include "rechigros/render/fx/Yuv420Pass.hpp"
 #include "rechigros/render/gl/AsyncReadback.hpp"
 #include "rechigros/render/gl/Framebuffer.hpp"
 #include "rechigros/render/gl/GlDebug.hpp"
@@ -142,6 +143,8 @@ struct GameRenderer::Impl {
   // Staging buffers for the offscreen readback: reading through them keeps the CPU off the GPU's
   // critical path, so a recording costs the same per frame as drawing it.
   gl::AsyncReadback captureReadback;
+  // Converts a finished frame to the encoder's colour layout on the graphics device.
+  fx::Yuv420Pass captureYuv;
   int captureWidth{};
   int captureHeight{};
   int capturePreviousWidth{};
@@ -1950,6 +1953,9 @@ bool GameRenderer::beginCapture(const RenderFrameInput& input, game::Chart* char
   // The staging buffers are a latency optimisation only: a driver without pixel buffer support
   // still produces the same frames through the direct read.
   (void)impl_->captureReadback.resize(width, height);
+  // The planar conversion is a faster path, not a requirement: without it the recording still runs
+  // through the coloured readback.
+  (void)impl_->captureYuv.ensure(width, height);
   impl_->captureWidth = width;
   impl_->captureHeight = height;
   impl_->capturePreviousWidth = impl_->width;
@@ -2024,10 +2030,30 @@ bool GameRenderer::captureFrame(const RenderFrameInput& input, game::Chart* char
   return true;
 }
 
+
+bool GameRenderer::captureFrameYuv(const RenderFrameInput& input, game::Chart* chart,
+    const game::JudgementEngine* judgement, std::vector<std::uint8_t>& outPlanes) {
+  if (!impl_->capturing || !impl_->captureTarget.valid()) return false;
+  if (!impl_->captureYuv.valid()) return false;
+  const int width = impl_->captureWidth;
+  const int height = impl_->captureHeight;
+  impl_->width = width;
+  impl_->height = height;
+  impl_->captureTarget.bind();
+  glViewport(0, 0, width, height);
+  impl_->drawScene(input, chart, judgement, impl_->captureTarget.fbo());
+  // The scene stays in its render target and is converted straight out of it, so the frame is
+  // never read back at full colour depth.
+  const bool converted = impl_->captureYuv.convert(impl_->captureTarget.color(), outPlanes);
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  return converted;
+}
+
 void GameRenderer::endCapture() noexcept {
   if (!impl_->capturing) return;
   impl_->capturing = false;
   impl_->captureTarget.reset();
+  impl_->captureYuv.release();
   impl_->width = impl_->capturePreviousWidth;
   impl_->height = impl_->capturePreviousHeight;
   impl_->sceneFbo.resize(impl_->width, impl_->height);

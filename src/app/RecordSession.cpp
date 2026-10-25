@@ -142,6 +142,10 @@ bool RecordSession::start(AppContext& context, const Settings& settings, std::st
   // The encoder places the track at the frame the chart clock starts on, so the samples keep their
   // original timing instead of being shifted by padding.
   encoderSettings.audioDelaySec = kIntroLeadSec;
+  // The renderer converts frames to the encoder's layout on the graphics device, which is cheaper
+  // than letting the encoder convert every frame on the way in.
+  // Overridable so the two paths can be compared frame for frame.
+  encoderSettings.planarInput = std::getenv("RECHIGROS_RGBA_PATH") == nullptr;
   if (!encoder_.open(encoderSettings, file, error)) {
     state_ = State::Failed;
     error_ = error;
@@ -152,6 +156,7 @@ bool RecordSession::start(AppContext& context, const Settings& settings, std::st
   }
   // Frames are handed to the encoder thread from the first one, so rendering and encoding run at
   // the same time rather than one after the other.
+  encoderUsesPlanar_ = encoder_.inputIsPlanar();
   startEncoderThread();
 
   render::RenderFrameInput probe;
@@ -284,7 +289,14 @@ bool RecordSession::step(AppContext& context) {
     (void)resolution;
 
     const auto captureStart = std::chrono::steady_clock::now();
-    if (!context.renderer->captureFrame(input, context.game.chart.get(), &judgement,
+    // The planar layout is produced on the graphics device, which spares both the readback and the
+    // encoder a conversion per frame. The coloured path stays as the fallback for a context that
+    // cannot run the conversion.
+    const bool converted = encoderUsesPlanar_
+        && context.renderer->captureFrameYuv(input, context.game.chart.get(), &judgement,
+            framePixels_);
+    if (!converted
+        && !context.renderer->captureFrame(input, context.game.chart.get(), &judgement,
             framePixels_)) {
       state_ = State::Failed;
       error_ = "a frame could not be rendered";

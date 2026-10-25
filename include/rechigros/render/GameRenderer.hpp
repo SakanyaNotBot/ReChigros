@@ -212,6 +212,11 @@ public:
   bool beginCapture(const RenderFrameInput& input, game::Chart* chart, int width, int height);
   bool captureFrame(const RenderFrameInput& input, game::Chart* chart,
       const game::JudgementEngine* judgement, std::vector<std::uint8_t>& outPixels);
+  // Draws one frame and returns it already converted to the encoder's planar colour layout, which
+  // is a third of the bytes and needs no conversion inside the encoder. Falls back to the RGBA
+  // form when the conversion is unavailable on this context.
+  bool captureFrameYuv(const RenderFrameInput& input, game::Chart* chart,
+      const game::JudgementEngine* judgement, std::vector<std::uint8_t>& outPlanes);
   void endCapture() noexcept;
   [[nodiscard]] int captureWidth() const noexcept;
   [[nodiscard]] int captureHeight() const noexcept;

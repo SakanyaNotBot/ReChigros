@@ -35,6 +35,9 @@ public:
     std::uint32_t audioSampleRate{};
     // Seconds of silence to place before the audio, so it starts where the chart starts.
     double audioDelaySec{};
+    // True when the caller produces frames in the encoder's planar layout instead of RGBA. The
+    // caller has to make that layout anyway to avoid a conversion here, so it says so up front.
+    bool planarInput{};
   };
 
   VideoEncoder();
@@ -69,6 +72,8 @@ public:
   void abort() noexcept;
 
   [[nodiscard]] bool active() const noexcept { return active_; }
+  // True when this encoder was opened for planar frames, so the caller knows which layout to send.
+  [[nodiscard]] bool inputIsPlanar() const noexcept { return inputIsPlanar_; }
 
 private:
   void closePipes() noexcept;
@@ -84,6 +89,8 @@ private:
 
   // Set when the frame stream goes through the platform bridge rather than a child process.
   bool platform_{};
+  // Set when this encoder takes planar frames instead of RGBA.
+  bool inputIsPlanar_{};
   // Frame size the platform bridge was opened with, restated on every frame.
   int widthForPlatform_{};
   int heightForPlatform_{};

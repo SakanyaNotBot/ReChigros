@@ -89,9 +89,11 @@ bool VideoEncoder::open(const Settings& settings, const std::filesystem::path& o
   const std::string encoder = settings.codec == Codec::H265 ? "libx265"
       : settings.codec == Codec::Vp9                            ? "libvpx-vp9"
                                                                 : "libx264";
-  // The frame stream is raw RGBA at a fixed size and rate, so every parameter the tool needs is
+  // The frame stream is raw video at a fixed size and rate, so every parameter the tool needs is
   // known before the first frame. Frames are already in top-down order, which is what the raw
-  // video reader expects, so no flip filter is applied.
+  // video reader accepts, so no flip filter is applied. When the caller supplies the planar colour
+  // layout the tool is told so, which saves it converting every frame on its own.
+  inputIsPlanar_ = settings.planarInput;
   //
   // When a track is supplied it arrives as a second input of interleaved stereo float samples. It
   // is delayed rather than padded so its first sample coincides with the frame the chart starts on,
@@ -107,7 +109,7 @@ bool VideoEncoder::open(const Settings& settings, const std::filesystem::path& o
       "-loglevel", "error",
       "-y",
       "-f", "rawvideo",
-      "-pix_fmt", "rgba",
+      "-pix_fmt", settings.planarInput ? "yuv420p" : "rgba",
       "-s", std::to_string(settings.width) + "x" + std::to_string(settings.height),
       "-r", std::to_string(settings.fps),
       "-i", "pipe:0",

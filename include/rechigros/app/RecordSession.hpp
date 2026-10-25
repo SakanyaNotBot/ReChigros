@@ -129,6 +129,8 @@ private:
   double encodeWaitMs_{};
   // Time the encoder thread spends inside a single frame write, which is the encoding cost itself.
   double encoderWriteMs_{};
+  // True once the encoder has been opened for planar input, which is the fast path.
+  bool encoderUsesPlanar_{};
 
 };
 

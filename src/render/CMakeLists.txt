@@ -14,6 +14,7 @@ add_library(rechigros_render STATIC
   fx/AmetrineVignette.cpp
   fx/BloomPass.cpp
   fx/FullscreenPass.cpp  fx/FxaaPass.cpp
+  fx/Yuv420Pass.cpp
   fx/BadEffectField.cpp
   fx/BlockCompositePass.cpp
   fx/BlockOverlay.cpp
