@@ -49,6 +49,50 @@ python tools/parity/unadjudicated.py     # 输出应为 0
 | fit-width 只迭代 3 次 | 收不敛，文字比参考小（字体「模糊」的真正原因之一） |
 | 指示器模式越界用 clamp | 参考是越界归零，移植版把非法值变成「线形指示器」 |
 
+## 零之三、本轮（2026-10-25）修复记录
+
+本轮全部结论都以**实际运行/截图/ffprobe 数字**为准，不看「代码里写了什么」。
+
+### 用户实测缺陷 → 根因 → 验证
+
+| # | 现象 | 根因（实测定位） | 验证证据 |
+|---|---|---|---|
+| 1 | 长按谱面卡片无反应 | 卡片手势只有按下/拖动/抬起三段，没有按住计时；管理模式的唯一入口是右下角编辑牌 | 自检 52/52，含 `holding a library card enters manage mode and selects it`；三条反向对照证明断言会失败 |
+| 1b | 卡片上半部分点击无效 | **既有缺陷**：命中检测把内容空间 Y 与屏幕空间行顶比较，两者只在 gridT==0 时相等 | 反向对照：恢复旧命中检测则 `library card tap opens the detail page` FAIL |
+| 2 | 详情页进渲染页点开始渲染提示 no chart is loaded | 渲染页从不加载它描述的谱面 | 自检 4 条断言 + 交互路径渲染出 522 帧 |
+| 3 | 点开始渲染报「管道正在被关闭」 | **默认输出目录是非 ASCII 路径，而所有交给编码器的路径都来自 path::string()**，Windows 上按 ANSI 代码页窄化，编码器打不开输出后立即退出 | 最小程序实证：.string() 时 SDL 打不开、u8string() 能打开；修复后 RECORD PASS frames=192 |
+| 4 | 录制视频没有音乐和打击音 | 音轨只写了解码后的音乐；step() 里 takeSoundEvents() 的返回值被丢弃 | volumedetect：修复前无音频流，修复后 mean=-34.5dB / max=-9.1dB |
+| 5 | 录制视频 Hold 无打击特效 | RecordSession::step() 从不取 takeHoldHeadBursts/takeHoldBodyBursts，交互路径取了 | 抽帧可见 hold 头部爆发特效 |
+| 6 | 录制到歌曲结束就停，HUD 未退场完 | 时长少算了开场 lead（chartTime 减了 lead，但总帧数没加它） | 帧数 10384 增至 10449（+65 帧约 1.08 s = lead）；末帧 HUD 已消失 |
+| 7 | 录制视频右侧有黑边 | 录制期间窗口 resize 会调用 renderer 的 resize()，把离屏目标按窗口尺寸重建，场景按窗口布局却按录制尺寸回读 | 非黑像素 bbox 从 1196x682（0.392）变为 1920x1080（1.000） |
+| 8 | 输出目录显示乱码 | 同一 path::string() 问题，显示侧 | 截图显示目录正确 |
+| 9 | COMBO 标签只能选固定四项 | 该行是循环切换的四选项 | 改为可输入文本框 |
+| 10 | 「开始渲染」「返回」文字糊成马赛克 | 字体无粗体字面，合成粗体按整像素 2D 膨胀（取最大覆盖）；16 px 下约等于把笔画加粗三分之一，字腔被填平 | 实心像素占比 53.9% 升至 61.8%，软边 46.1% 降至 38.2% |
+
+### 关键教训（本轮新增，务必记住）
+
+1. **path::string() 在 Windows 上不是 UTF-8。** 任何要交给 SDL、子进程、JSON 或 archive 名字的
+   窄字符串都必须走 platform::pathToUtf8()。反过来，fopen 要的是 ANSI 窄路径，那里必须用
+   _wfopen(path.wstring())。**这两个方向相反**，混用会得到「能打开但写不进去」或「打不开」两种
+   不同故障。
+2. **离屏录制必须独占渲染尺寸。** 捕获期间任何 resize() 都会让场景布局与回读尺寸不一致，表现为
+   视频里出现黑边而不是崩溃，很难从「画面看起来正常」发现。
+3. **编码器音轨在开录前就要生成**（编码器先于第一帧启动），所以打击音的时刻表必须来自谱面本身，
+   不能来自「帧回调里攒的事件」。
+4. **合成粗体不要用整像素膨胀。** 界面字号 16-24 px 时 1 px 膨胀约为笔画的三分之一，笔画会粘连；
+   应按覆盖率分数加粗。
+5. **--record 这类批处理不能在 initialize() 里跑完整个编码**，否则窗口全程不响应，系统记为
+   Application Hang。
+
+### 录制功能验收命令
+
+```powershell
+.\build\desktop-release\src\app\ReChigros.exe --data-root build\capture-data `
+  --screen render:Hate --record 'D:\无影\Videos\check.mp4'
+& E:\ffmpeg\bin\ffprobe.exe -v error -show_entries stream=codec_type,duration `
+  -of default=noprint_wrappers=1 'D:\无影\Videos\check.mp4'
+```
+
 ## 零、接手第一件事
 
 **工作树当前是干净的。** 第 5～10 轮成果已提交为 `77c4009`；本轮又追加了两个提交：
