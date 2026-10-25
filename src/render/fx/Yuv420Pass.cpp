@@ -4,6 +4,7 @@
 
 #include <SDL3/SDL_log.h>
 
+#include <cstring>
 #include <utility>
 
 namespace rechigros::render::fx {
@@ -141,6 +142,8 @@ bool Yuv420Pass::convert(gl::Texture& source, std::vector<std::uint8_t>& out) no
   // The planes are read back one at a time and land straight in their place in the frame, so the
   // assembled buffer is the encoder's layout with no further work.
   out.resize(frameBytes());
+  // A reusable row for the vertical flip, sized once for the largest plane.
+  if (scratchRow_.size() < static_cast<std::size_t>(width_)) scratchRow_.resize(width_);
   const GLsizei planeHeights[3] = {height_, height_ / 2, height_ / 2};
   const GLsizei planeWidths[3] = {width_, width_ / 2, width_ / 2};
   std::size_t offset = 0;
@@ -149,16 +152,18 @@ bool Yuv420Pass::convert(gl::Texture& source, std::vector<std::uint8_t>& out) no
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     const auto planeWidth = static_cast<std::size_t>(planeWidths[index]);
     const auto planeHeight = static_cast<std::size_t>(planeHeights[index]);
-    // Read into the plane's place in the frame, then reverse its rows in place: render targets are
-    // stored bottom-up while every consumer of these bytes expects the first row to be the top one.
+    // Read into the plane's place in the frame, then reverse its rows: render targets are stored
+    // bottom-up while every consumer of these bytes expects the first row to be the top one. Rows
+    // are whole units here, so each pair is swapped as a block rather than a byte at a time.
     std::uint8_t* plane = out.data() + offset;
     glReadPixels(0, 0, planeWidths[index], planeHeights[index], GL_RED, GL_UNSIGNED_BYTE, plane);
+    std::uint8_t* scratch = scratchRow_.data();
     for (std::size_t row = 0; row < planeHeight / 2; ++row) {
       std::uint8_t* upper = plane + row * planeWidth;
       std::uint8_t* lower = plane + (planeHeight - 1 - row) * planeWidth;
-      for (std::size_t column = 0; column < planeWidth; ++column) {
-        std::swap(upper[column], lower[column]);
-      }
+      std::memcpy(scratch, upper, planeWidth);
+      std::memcpy(upper, lower, planeWidth);
+      std::memcpy(lower, scratch, planeWidth);
     }
     offset += planeWidth * planeHeight;
   }

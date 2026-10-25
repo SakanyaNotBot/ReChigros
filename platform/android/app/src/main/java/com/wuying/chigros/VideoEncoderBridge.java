@@ -141,14 +141,14 @@ final class VideoEncoderBridge {
      * half size. The graphics device produced those bytes, so nothing here has to convert them;
      * only the row-by-row copy into the codec's own buffers is left.
      */
-    static synchronized boolean queueFrame(byte[] planes, int w, int h) {
-        if (videoEncoder == null || planes == null) return false;
+    static synchronized boolean queueFrame(java.nio.ByteBuffer frame, int w, int h) {
+        if (videoEncoder == null || frame == null || !frame.isDirect()) return false;
         final int lumaSize = w * h;
         final int chromaSize = (w / 2) * (h / 2);
-        if (w != width || h != height || planes.length < lumaSize + chromaSize * 2) return false;
+        if (w != width || h != height || frame.capacity() < lumaSize + chromaSize * 2) return false;
         try {
             final long presentationUs = frameIndex * 1_000_000L / frameRate;
-            if (!submitFrame(planes, presentationUs)) return false;
+            if (!submitFrame(frame, presentationUs)) return false;
             frameIndex++;
             return true;
         } catch (RuntimeException error) {
@@ -157,11 +157,14 @@ final class VideoEncoderBridge {
         }
     }
 
-    private static boolean submitFrame(byte[] source, long presentationUs) {
-        int index = videoEncoder.dequeueInputBuffer(10_000L);
-        for (int attempt = 0; index < 0 && attempt < 20; ++attempt) {
+    private static boolean submitFrame(java.nio.ByteBuffer frame, long presentationUs) {
+        // The caller already paces itself against its own queue, so the input buffer is normally
+        // free the moment it asks. A blocking wait here would add latency for no benefit, so the
+        // call only polls and any output that has piled up is drained while retrying.
+        int index = videoEncoder.dequeueInputBuffer(0L);
+        for (int attempt = 0; index < 0 && attempt < 64; ++attempt) {
             drainVideo(false);
-            index = videoEncoder.dequeueInputBuffer(10_000L);
+            index = videoEncoder.dequeueInputBuffer(0L);
         }
         if (index < 0) return false;
 
@@ -178,11 +181,11 @@ final class VideoEncoderBridge {
         }
         final int lumaSize = width * height;
         final int chromaSize = (width / 2) * (height / 2);
-        copyLuma(planes[0], source, width, height);
+        copyLuma(planes[0], frame, width, height);
         // Both colour channels live in one interleaved pair of buffers: each row holds every
         // sample for that row of the picture, with the two channels alternating. The pair is
         // written together so neither channel overwrites the other.
-        copyChroma(planes[1], planes[2], source, lumaSize, width / 2, height / 2);
+        copyChroma(planes[1], frame, lumaSize, width / 2, height / 2);
         // The size is the whole frame in its planar form. Reporting zero makes the codec discard
         // the buffer as carrying nothing, and the plane capacities are not a substitute: they are
         // separate views that describe more bytes than the one buffer they share.
@@ -192,8 +195,8 @@ final class VideoEncoderBridge {
     }
 
     /** Writes the picture's brightness into the codec's luma buffer. */
-    private static void copyLuma(android.media.Image.Plane plane, byte[] source, int width,
-            int height) {
+    private static void copyLuma(android.media.Image.Plane plane, java.nio.ByteBuffer source,
+            int width, int height) {
         final ByteBuffer buffer = plane.getBuffer();
         final int rowStride = plane.getRowStride();
         final int pixelStride = plane.getPixelStride();
@@ -201,11 +204,15 @@ final class VideoEncoderBridge {
         for (int y = 0; y < height; ++y) {
             final int rowStart = y * width;
             if (pixelStride == 1) {
-                buffer.put(source, rowStart, Math.min(width, buffer.remaining()));
+                final int run = Math.min(width, buffer.remaining());
+                final java.nio.ByteBuffer row = source.duplicate();
+                row.position(rowStart);
+                row.limit(rowStart + run);
+                buffer.put(row);
             } else {
                 for (int x = 0; x < width; ++x) {
                     if (!buffer.hasRemaining()) return;
-                    buffer.put(source[rowStart + x]);
+                    buffer.put(source.get(rowStart + x));
                     buffer.position(buffer.position() + Math.min(pixelStride - 1,
                             buffer.remaining()));
                 }
@@ -222,29 +229,35 @@ final class VideoEncoderBridge {
      * at the current position, the second one slot further on. The two plane views describe the
      * same bytes from different starting points, so writing through both would overlap.
      */
-    private static void copyChroma(android.media.Image.Plane planeU, android.media.Image.Plane planeV,
-            byte[] source, int sourceOffset, int chromaWidth, int chromaHeight) {
+    private static void copyChroma(android.media.Image.Plane planeU, java.nio.ByteBuffer source,
+            int sourceOffset, int chromaWidth, int chromaHeight) {
         final ByteBuffer buffer = planeU.getBuffer();
         final int rowStride = planeU.getRowStride();
         final int pixelStride = planeU.getPixelStride();
+        // The two channels sit in separate source planes but interleave in the destination, so one
+        // row of each is read into scratch and then written as alternating pairs. Reading through
+        // the buffer a sample at a time costs a bounds check and a call per byte, which on a full
+        // frame is more work than the copy itself.
+        final byte[] rowU = new byte[chromaWidth];
+        final byte[] rowV = new byte[chromaWidth];
+        final java.nio.ByteBuffer sourceU = source.duplicate();
+        final java.nio.ByteBuffer sourceV = source.duplicate();
         buffer.position(0);
-        final int step = Math.max(1, pixelStride);
-        // The source keeps the two channels in separate planes, one after the other, while the
-        // destination interleaves them, so each step reads one sample from each source plane.
-        final int sourceU = sourceOffset;
-        final int sourceV = sourceOffset + chromaWidth * chromaHeight;
         for (int y = 0; y < chromaHeight; ++y) {
-            final int rowStart = y * chromaWidth;
+            sourceU.position(sourceOffset + y * chromaWidth);
+            sourceU.get(rowU, 0, chromaWidth);
+            sourceV.position(sourceOffset + chromaWidth * chromaHeight + y * chromaWidth);
+            sourceV.get(rowV, 0, chromaWidth);
             for (int x = 0; x < chromaWidth; ++x) {
                 if (buffer.remaining() < 2) return;
-                buffer.put(source[sourceU + rowStart + x]);
-                buffer.put(source[sourceV + rowStart + x]);
-                if (step > 2) {
-                    final int skip = Math.min(step - 2, buffer.remaining());
-                    buffer.position(buffer.position() + skip);
+                buffer.put(rowU[x]);
+                buffer.put(rowV[x]);
+                if (pixelStride > 2) {
+                    buffer.position(buffer.position() + Math.min(pixelStride - 2,
+                            buffer.remaining()));
                 }
             }
-            final int padding = rowStride - chromaWidth * step;
+            final int padding = rowStride - chromaWidth * pixelStride;
             if (padding > 0) buffer.position(buffer.position() + Math.min(padding, buffer.remaining()));
         }
     }

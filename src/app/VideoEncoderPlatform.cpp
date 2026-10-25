@@ -88,23 +88,45 @@ bool writeFrame(int width, int height, const std::uint8_t* pixels, std::size_t b
     error = "the platform encoder bridge is unavailable";
     return false;
   }
-  const jmethodID method = bridge.env->GetStaticMethodID(bridge.cls, "queueVideoFrame", "([BII)Z");
+  // A direct buffer is created once and reused: the caller keeps handing over its own memory, and
+  // the encoder reads it in place. Copying every frame into a fresh array would move three
+  // megabytes per frame and allocate it, which costs more than encoding the frame does.
+  const jmethodID method = bridge.env->GetStaticMethodID(bridge.cls, "queueVideoFrame",
+      "(Ljava/nio/ByteBuffer;II)Z");
   if (method == nullptr) {
     bridge.env->ExceptionClear();
     error = "the platform frame entry point is missing";
     return false;
   }
-  jbyteArray array = bridge.env->NewByteArray(static_cast<jsize>(bytes));
-  if (array == nullptr) {
-    bridge.env->ExceptionClear();
-    error = "the frame could not be handed to the platform encoder";
-    return false;
+  static jobject frameBuffer{};
+  static std::size_t frameCapacity{};
+  static const void* framePointer{};
+  // The caller may hand over a different buffer between frames, and a direct buffer is bound to
+  // the memory it was created on, so the handle is rebuilt whenever either the address or the size
+  // changes.
+  if (frameBuffer == nullptr || frameCapacity < bytes || framePointer != pixels) {
+    if (frameBuffer != nullptr) bridge.env->DeleteGlobalRef(frameBuffer);
+    frameBuffer = nullptr;
+    frameCapacity = 0;
+    jobject local = bridge.env->NewDirectByteBuffer(const_cast<std::uint8_t*>(pixels),
+        static_cast<jlong>(bytes));
+    if (local == nullptr) {
+      bridge.env->ExceptionClear();
+      error = "the frame could not be handed to the platform encoder";
+      return false;
+    }
+    frameBuffer = bridge.env->NewGlobalRef(local);
+    bridge.env->DeleteLocalRef(local);
+    if (frameBuffer == nullptr) {
+      bridge.env->ExceptionClear();
+      error = "the frame could not be handed to the platform encoder";
+      return false;
+    }
+    frameCapacity = bytes;
+    framePointer = pixels;
   }
-  bridge.env->SetByteArrayRegion(array, 0, static_cast<jsize>(bytes),
-      reinterpret_cast<const jbyte*>(pixels));
-  const jboolean queued = bridge.env->CallStaticBooleanMethod(bridge.cls, method, array,
+  const jboolean queued = bridge.env->CallStaticBooleanMethod(bridge.cls, method, frameBuffer,
       static_cast<jint>(width), static_cast<jint>(height));
-  bridge.env->DeleteLocalRef(array);
   if (bridge.env->ExceptionCheck()) {
     bridge.env->ExceptionClear();
     error = "the platform encoder rejected a frame";

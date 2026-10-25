@@ -320,8 +320,8 @@ public final class MainActivity extends SDLActivity {
         return VideoEncoderBridge.setAudioTrack(path, sampleRate, delayMs);
     }
 
-    public static boolean queueVideoFrame(byte[] rgba, int width, int height) {
-        return VideoEncoderBridge.queueFrame(rgba, width, height);
+    public static boolean queueVideoFrame(java.nio.ByteBuffer planes, int width, int height) {
+        return VideoEncoderBridge.queueFrame(planes, width, height);
     }
 
     public static boolean finishVideoEncoder() {

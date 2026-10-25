@@ -1,5 +1,7 @@
 #include "rechigros/app/RecordSession.hpp"
 
+#include <SDL3/SDL_log.h>
+
 #include <chrono>
 
 #include "rechigros/app/AppContext.hpp"
@@ -330,9 +332,14 @@ bool RecordSession::step(AppContext& context) {
 void RecordSession::reportTimings() const {
   if (timedFrames_ == 0) return;
   const double frames = static_cast<double>(timedFrames_);
-  std::printf("[perf] frames=%d capture=%.2fms/frame encodeWait=%.2fms/frame "
-              "encoderWrite=%.2fms/frame\n",
-      timedFrames_, captureMs_ / frames, encodeWaitMs_ / frames, encoderWriteMs_ / frames);
+  // Logged through the platform channel as well as to the console: a packaged build has no console,
+  // and these numbers are the only way to attribute a slow recording on a device.
+  const char* message = "[perf] frames=%d capture=%.2fms/frame encodeWait=%.2fms/frame "
+                        "encoderWrite=%.2fms/frame";
+  std::printf(message, timedFrames_, captureMs_ / frames, encodeWaitMs_ / frames,
+      encoderWriteMs_ / frames);
+  SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, message, timedFrames_, captureMs_ / frames,
+      encodeWaitMs_ / frames, encoderWriteMs_ / frames);
 }
 
 void RecordSession::cancel(AppContext& context) {
