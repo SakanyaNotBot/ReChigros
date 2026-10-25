@@ -187,6 +187,9 @@ void notify(AppContext& context, std::string message) {
 void navigateTo(AppContext& context, Screen screen) {
   if (context.screen == Screen::Settings) commitSettings(context);
   if (context.screen == Screen::Game && screen != Screen::Game) gameLeave(context);
+  // The recording page is the only screen that holds a chart without a play session behind it,
+  // so it is the only one that has to give it back on the way out.
+  if (context.screen == Screen::Render && screen != Screen::Render) releaseRenderChart(context);
   if (screen == Screen::Library) {
     context.manageMode = false;
     context.selectedIds.clear();
@@ -196,6 +199,54 @@ void navigateTo(AppContext& context, Screen screen) {
     // library, which is the one thing this port must not do that the reference does not.
   }
   context.screen = screen;
+}
+
+bool prepareRenderChart(AppContext& context, std::string& error) {
+  // Recording an offscreen run needs the same things a play session does: the parsed chart and
+  // the run's own song/level labels for the HUD. Entering the page from the chart detail view
+  // therefore loads the chart here; the alternative is a page that can never start. Whether an
+  // offscreen target can be allocated at all is the recording session's own check.
+  const auto record = context.library.find(context.activeChartId);
+  if (!record) {
+    error = "谱面不存在或已删除";
+    return false;
+  }
+  if (!record->complete()) {
+    error = "谱面文件不完整";
+    return false;
+  }
+  context.play = PlaySetup{};
+  context.play.chartId = record->id;
+  context.play.songName = record->songName;
+  context.play.difficulty = record->difficulty;
+  context.play.chartFile = record->chartFile;
+  context.play.musicFile = record->musicFile;
+  context.play.bgFile = record->bgFile;
+  context.play.chartOffsetMs = record->chartOffsetMs;
+  context.play.audioOffsetMs = context.settings.audioOffsetMs;
+  context.play.autoplay = true;
+  context.play.practice = false;
+  context.play.challenge = false;
+  context.play.replayMode = false;
+  if (!gameEnter(context)) {
+    error = context.loadError.empty() ? "谱面加载失败" : context.loadError;
+    return false;
+  }
+  // A render is an autoplay run that never reports a score, so the judgement state must start
+  // neutral on the page and stop existing again when the page does.
+  context.renderChartPrepared = true;
+  return true;
+}
+
+void releaseRenderChart(AppContext& context) {
+  if (!context.renderChartPrepared) return;
+  context.renderChartPrepared = false;
+  // The recording session owns the capture targets; releasing them first keeps the loaded
+  // chart's textures from outliving the renderer state they were created for.
+  if (context.recording.state() == RecordSession::State::Running) {
+    context.recording.cancel(context);
+  }
+  gameLeave(context);
 }
 
 void openChartDetail(AppContext& context, const std::string& chartId) {

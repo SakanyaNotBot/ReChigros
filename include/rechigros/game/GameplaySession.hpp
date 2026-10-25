@@ -86,8 +86,24 @@ public:
   // Chart::blockAreaList; judgement consults blockedTouchIds().
   [[nodiscard]] const std::vector<OfficialBlock>& blocks() const noexcept { return blocks_; }
   [[nodiscard]] bool touchBlocked(std::int64_t id) const noexcept;
-  // Positions of the fingers currently held inside a red zone, in stage pixels. The
-  // blocked-touch feedback is drawn at these points.
+
+  // One finger a red zone has swallowed, in screen pixels. The zone pulse is drawn at these
+  // points and the audio duck keys off the list being non-empty.
+  struct BlockedTouch {
+    std::int64_t id{};
+    float x{};
+    float y{};
+  };
+
+  // Fingers swallowed by a zone on the last frame, in screen pixels. A finger stays here for
+  // the rest of its press even after leaving the zone, so the feedback does not flicker while
+  // it moves.
+  [[nodiscard]] const std::vector<BlockedTouch>& blockedTouches() const noexcept {
+    return blockedTouches_;
+  }
+  // Chart time the swallowed fingers were last confirmed, or -1 while none is held. The pulse
+  // expands from this instant, and the reference re-stamps it every frame of the press.
+  [[nodiscard]] double blockedTouchPulseSec() const noexcept { return blockedTouchPulseSec_; }
   [[nodiscard]] std::vector<std::array<float, 2>> blockedTouchPositions() const;
 
 private:
@@ -152,6 +168,9 @@ private:
   std::vector<OfficialBlock> blocks_;
   // Fingers latched inside a red zone emit no judge candidates for the rest of the press.
   std::unordered_set<std::int64_t> blockedTouchIds_;
+  // The same set as positions, refreshed every frame for the renderer and the audio duck.
+  std::vector<BlockedTouch> blockedTouches_;
+  double blockedTouchPulseSec_{-1.0};
   // Replay state. `recordedHoldPressNotes_` holds note indices that already produced a
   // press entry, so a re-armed hold cannot record twice.
   bool replayRecording_{};

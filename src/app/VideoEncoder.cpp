@@ -92,7 +92,10 @@ bool VideoEncoder::open(const Settings& settings, const std::filesystem::path& o
   const bool withAudio = !settings.audioTrack.empty() && settings.audioSampleRate > 0
       && std::filesystem::is_regular_file(settings.audioTrack, fsError);
   std::vector<std::string> arguments = {
-      executable_.string(),
+      // The encoder re-parses the whole command line in its own process, so every argument has to
+      // be UTF-8. A path narrowed through the host's ANSI code page reaches it as mojibake, the
+      // output directory stops resolving, and the encoder closes its input instead of writing.
+      platform::pathToUtf8(executable_),
       "-hide_banner",
       "-loglevel", "error",
       "-y",
@@ -105,7 +108,7 @@ bool VideoEncoder::open(const Settings& settings, const std::filesystem::path& o
   if (withAudio) {
     arguments.insert(arguments.end(),
         {"-f", "f32le", "-ar", std::to_string(settings.audioSampleRate), "-ac", "2", "-i",
-            settings.audioTrack.string()});
+            platform::pathToUtf8(settings.audioTrack)});
   }
   arguments.insert(arguments.end(),
       {"-c:v", encoder, qualityFlag(settings.codec),
@@ -123,7 +126,7 @@ bool VideoEncoder::open(const Settings& settings, const std::filesystem::path& o
   } else {
     arguments.insert(arguments.end(), {"-an"});
   }
-  arguments.push_back(output.string());
+  arguments.push_back(platform::pathToUtf8(output));
   std::vector<const char*> raw;
   raw.reserve(arguments.size() + 1);
   for (const auto& argument : arguments) raw.push_back(argument.c_str());
@@ -145,7 +148,7 @@ bool VideoEncoder::open(const Settings& settings, const std::filesystem::path& o
   diagnosticsPath_ = output;
   diagnosticsPath_ += ".log";
   SDL_IOStream* diagnosticsStream =
-      SDL_IOFromFile(diagnosticsPath_.string().c_str(), "wb");
+      SDL_IOFromFile(platform::pathToUtf8(diagnosticsPath_).c_str(), "wb");
   SDL_SetNumberProperty(properties, SDL_PROP_PROCESS_CREATE_STDERR_NUMBER,
       diagnosticsStream != nullptr ? SDL_PROCESS_STDIO_APP : SDL_PROCESS_STDIO_NULL);
   if (diagnosticsStream != nullptr) {

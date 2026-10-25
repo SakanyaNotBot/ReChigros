@@ -475,17 +475,24 @@ bool Application::initialize() {
       handleIncomingPath(*app_, initialPath_);
     }
   }
-  if (!recordOutputPath_.empty()) runRecording(*app_);
+  if (!recordOutputPath_.empty()) {
+    // The path and the name come from the command line, so the encode can be set up here; the
+    // frames are produced in the run loop. Encoding the whole video inside initialization leaves
+    // the process unable to answer the window manager for minutes, which the system reports as a
+    // hung window, and prints nothing until it is over.
+    if (!beginCommandLineRecording(*app_)) recordOutputPath_.clear();
+  }
   reportLaunchStage("total to first frame", launchStart, launchFrequency);
   return true;
 }
 
-void Application::runRecording(AppContext& context) {
-  // A command-line recording runs the whole encode before the interface exists, so it can be used
-  // from a script. It uses the same session the button drives, with the defaults the page offers.
+bool Application::beginCommandLineRecording(AppContext& context) {
+  // A command-line recording is a scripted run: the chart comes from the argument list and the
+  // encode must finish before the process exits. Only the setup happens here; the frames are
+  // produced from the run loop so the window keeps answering while the video is written.
   if (!context.game.loaded || context.game.chart == nullptr || context.renderer == nullptr) {
     std::cerr << "record: no chart is loaded\n";
-    return;
+    return false;
   }
   RecordSession::Settings settings;
   settings.outputDirectory = recordOutputPath_.parent_path();
@@ -497,17 +504,28 @@ void Application::runRecording(AppContext& context) {
   std::string error;
   if (!context.recording.start(context, settings, error)) {
     std::cerr << "record: " << error << '\n';
-    return;
+    return false;
   }
-  // Drive the session to completion here: there is no interface to share the frame budget with.
-  while (context.recording.step(context)) {
-  }
+  commandLineRecording_ = true;
+  return true;
+}
+
+bool Application::stepRecording(AppContext& context) {
+  if (!commandLineRecording_) return false;
+  // A bounded slice per frame keeps the process interactive for the whole encode.
+  if (context.recording.step(context)) return true;
   if (context.recording.state() == RecordSession::State::Finished) {
+    // The console decodes this stream with the host code page, not UTF-8, so the path is printed in
+    // the narrow form the console expects; the encoder itself is given UTF-8.
     std::cout << "RECORD PASS path=" << context.recording.outputPath().string()
               << " frames=" << context.recording.renderedFrames() << '\n';
+    batchOk_ = true;
   } else {
     std::cout << "RECORD FAIL reason=" << context.recording.error() << '\n';
+    batchOk_ = false;
   }
+  commandLineRecording_ = false;
+  return false;
 }
 
 int Application::run() {
@@ -646,6 +664,13 @@ int Application::run() {
       drawCurrentScreen();
     }
     if (imguiFrame) drawToast(*app_);
+    // A command-line encode advances a bounded slice per frame instead of running to completion
+    // before the loop starts, so the process keeps answering the window manager throughout. It
+    // keeps the window hidden and repaints nothing while it runs, so an idle interface frame in
+    // the same process is one the user never sees.
+    if (commandLineRecording_) {
+      if (!stepRecording(*app_)) running = false;
+    }
     // A recording advances outside the gameplay loop: it owns its own chart clock and renders
     // offscreen, so it must not also run through the interactive path. The overlay is drawn on top
     // of whatever screen is up, and it carries the cancel action.
@@ -736,6 +761,9 @@ int Application::run() {
     printBatchSummary();
     return batchOk_ ? 0 : 1;
   }
+  // A --record run is a batch job in its own right even without a frame limit: its exit code
+  // reports whether the video was produced.
+  if (!recordOutputPath_.empty()) return batchOk_ ? 0 : 1;
   return 0;
 }
 

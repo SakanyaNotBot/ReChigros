@@ -65,6 +65,11 @@ constexpr int kNoteTypeFlick = 4;
 // Head textures paint in this order so drag sits behind taps and flicks on top.
 constexpr int kHeadDrawOrder[3] = {kNoteTypeDrag, kNoteTypeTap, kNoteTypeFlick};
 
+// Height of the hover disc a held finger paints inside a zone, as a fraction of the view
+// height: a 44 px sprite at 100 units per world unit, scaled 11.5 and viewed at 5 world units
+// per half height.
+constexpr float kHoverSpriteHeightFraction = 44.0F / 100.0F * 11.5F / 10.0F;
+
 // Note width as a fraction of stage width. Displays narrower than 16:9 draw
 // proportionally smaller notes; wider displays are untouched.
 float noteWidthRatio(float stageWidth, float stageHeight) {
@@ -166,6 +171,8 @@ struct GameRenderer::Impl {
   // would allocate on every composite frame.
   std::vector<fx::BlockMaskQuad> maskQuadsA;
   std::vector<fx::BlockMaskQuad> maskQuadsB;
+  // Held-point staging for the composite's hover channel, reused between frames.
+  std::vector<fx::BlockOverlay::HoverPoint> hoverPoints;
   // Replaces the finished frame inside a red zone; the inline silhouettes are skipped
   // while it is active so the two paths never draw the same zone twice.
   fx::BlockCompositePass blockComposite;
@@ -971,8 +978,10 @@ void GameRenderer::Impl::drawBlockedTouchPulses(const RenderFrameInput& input,
   const auto& white = textures.white();
   if (!white.valid()) return;
 
-  // The pulse decays over half a second from the moment the finger entered the zone, and it
-  // sits at the finger itself so the player can see which touch the zone is holding.
+  // The pulse decays over half a second from the moment the zone last confirmed the finger, and
+  // it sits at the finger itself so the player can see which touch the zone is holding. While the
+  // finger is held the list is re-stamped every frame, so the disc stays at full strength and only
+  // decays in the frame the press ends.
   const float age = input.blockedTouchPulseSec >= 0.0
       ? static_cast<float>(input.chartTimeSec - input.blockedTouchPulseSec)
       : 1.0F;
@@ -980,20 +989,20 @@ void GameRenderer::Impl::drawBlockedTouchPulses(const RenderFrameInput& input,
   const float alpha = 0.30F + 0.35F * pulse;
 
   batch.begin();
-  for (const auto& point : input.blockedTouchPositions) {
-    // The pulse scales with the zone the finger is inside, so a wide zone pulses wider.
-    float radius = layout.stage.width * 0.06F;
-    for (const auto& zone : chart->blockAreaList) {
-      if (!zone.visible || !zone.active) continue;
+  for (const auto& zone : chart->blockAreaList) {
+    if (!zone.visible || !zone.active) continue;
+    // Each zone pulses only for the fingers it actually swallows, so a point inside a hole or
+    // outside the zone draws nothing for it.
+    for (const auto& point : input.blockedTouchPositions) {
       if (!zone.containsInset(point[0], point[1], layout.stage.height)) continue;
-      radius = std::max(zone.halfW, zone.halfH) * (1.0F + 0.08F * pulse);
-      break;
+      // The pulse scales with the zone the finger is inside, so a wide zone pulses wider.
+      const float radius = std::max(zone.halfW, zone.halfH) * (1.0F + 0.08F * pulse);
+      batch.addQuad(point[0], point[1], radius * 2.0F, radius * 2.0F, 0.0F, 1.0F, 0.0F, 0.0F,
+          alpha * 0.5F, 0.0F, 0.0F, 1.0F, 1.0F);
+      const float ringRadius = radius * 0.62F;
+      batch.addQuad(point[0], point[1], ringRadius * 2.0F, ringRadius * 2.0F, 0.0F, 1.0F, 0.35F,
+          0.35F, alpha, 0.0F, 0.0F, 1.0F, 1.0F);
     }
-    batch.addQuad(point[0], point[1], radius * 2.0F, radius * 2.0F, 0.0F, 1.0F, 0.0F, 0.0F,
-        alpha * 0.5F, 0.0F, 0.0F, 1.0F, 1.0F);
-    const float ringRadius = radius * 0.62F;
-    batch.addQuad(point[0], point[1], ringRadius * 2.0F, ringRadius * 2.0F, 0.0F, 1.0F, 0.35F,
-        0.35F, alpha, 0.0F, 0.0F, 1.0F, 1.0F);
   }
   if (!batch.empty()) batch.flush(layout.projection(), white, nullptr);
 }
@@ -1632,6 +1641,25 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
     maskB.clear();
     blockOverlay.collectMaskQuads(chart->blockAreaList, static_cast<float>(input.chartTimeSec),
         maskA, maskB);
+    // Held points write the composite's hover channel: the touched spot is rasterised into the
+    // second mask's alpha with the shipped sprite, and the composite reads it back as a soft
+    // union. Without this quads list the hover term can never be non-zero, however many fingers
+    // the shader is told about.
+    {
+      hoverPoints.clear();
+      const float hoverSize = kHoverSpriteHeightFraction *
+          std::max(1.0F, static_cast<float>(height));
+      for (int index = 0; index < std::clamp(input.touches.count, 0, 10); ++index) {
+        const auto& point = input.touches.points[index];
+        if (!(point.scale > 0.0F)) continue;
+        fx::BlockOverlay::HoverPoint hover;
+        hover.centerX = point.x;
+        hover.centerY = point.y;
+        hover.radius = hoverSize * point.scale * 0.5F;
+        hoverPoints.push_back(hover);
+      }
+      if (!hoverPoints.empty()) fx::BlockOverlay::appendHoverQuads(hoverPoints, maskB);
+    }
     blockComposite.rasteriseMasks(maskA, maskB);
     glBindFramebuffer(GL_FRAMEBUFFER, sceneTarget);
     glViewport(0, 0, width, height);

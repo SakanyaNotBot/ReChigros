@@ -160,6 +160,9 @@ struct AppContext {
   Screen settingsReturn{Screen::Home};
   Screen detailReturn{Screen::Library};
   Screen renderReturn{Screen::Detail};
+  // Set while the chart shown by the recording page is loaded only for that page. Leaving the
+  // page has to release it again, because the recording page is not a play session.
+  bool renderChartPrepared{};
   // The recording in progress, if any. It lives on the context because the interface, the render
   // loop and the shutdown path all reach it.
   RecordSession recording;

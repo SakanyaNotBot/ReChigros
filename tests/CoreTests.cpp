@@ -472,5 +472,144 @@ int main(){
     require(!Chart{}.hasLiveBlock(1.0), "a chart without zones never reports a live block");
   }
 
+  // --- red zone touch gating --------------------------------------------------
+  // A zone swallows the finger that lands in it: that finger produces no judge candidate for
+  // the rest of the press, so the note under it stays open even though the press is inside its
+  // window and spatial reach. The probe note sits at 1.0 s and the judge line runs through the
+  // stage centre, so a press at (800, 450) is a clean hit on it.
+  {
+    const auto makeZone = [](float left, float bottom, float right, float top, bool subtract,
+                              float appear = 0.0F, float disappear = 100000.0F) {
+      OfficialBlock zone;
+      zone.bottomLeftX = left;
+      zone.bottomLeftY = bottom;
+      zone.topRightX = right;
+      zone.topRightY = top;
+      zone.appearTime = appear;
+      zone.enableTime = appear;
+      zone.disableTime = disappear;
+      zone.disappearTime = disappear;
+      zone.isSubtract = subtract;
+      return zone;
+    };
+    // A zone covering the stage centre with a 45 px inset: (800, 450) is swallowed, (800, 330)
+    // is outside the inset band but still within the note's spatial reach.
+    const auto centralZone = [&makeZone](float appear = 0.0F) {
+      return makeZone(0.30F, 0.40F, 0.70F, 0.60F, false, appear);
+    };
+    const auto zonedChart = [&singleNoteChart](std::vector<OfficialBlock> zones) {
+      Chart chart = singleNoteChart(NOTE_TAP);
+      chart.blockAreaList = std::move(zones);
+      return chart;
+    };
+
+    // A press inside the zone judges nothing and is reported as a swallowed point.
+    {
+      auto chart = zonedChart({centralZone()});
+      GameplaySession session;
+      session.setViewport(viewport);
+      session.setChart(&chart);
+      require(session.blockedTouches().empty(), "a fresh run reports no swallowed finger");
+      session.touchDown(1, 800.0F, 450.0F);
+      session.update(0.95, 1.0F / 60.0F);
+      require(chart.allNotesSorted[0]->judgeResult < 0, "a finger inside a zone judges nothing");
+      require(session.touchBlocked(1), "a finger inside a zone is latched as swallowed");
+      require(session.blockedTouches().size() == 1, "the swallowed finger is reported");
+      if (session.blockedTouches().size() == 1) {
+        require(session.blockedTouches()[0].id == 1, "the swallowed finger keeps its id");
+        require(close(session.blockedTouches()[0].x, 800.0) &&
+                close(session.blockedTouches()[0].y, 450.0),
+            "the swallowed finger reports its view position");
+      }
+      const auto positions = session.blockedTouchPositions();
+      require(positions.size() == 1 && close(positions[0][0], 800.0) &&
+              close(positions[0][1], 450.0),
+          "the swallowed positions match the reported fingers");
+      require(close(session.blockedTouchPulseSec(), 0.95),
+          "the pulse is stamped on the frame the finger is held");
+
+      // Dragging out of the zone does not restore judging: the latch lasts the whole press,
+      // and the reported position keeps following the finger so the pulse does not freeze.
+      session.touchMove(1, 800.0F, 330.0F);
+      session.update(0.95, 1.0F / 60.0F);
+      require(chart.allNotesSorted[0]->judgeResult < 0,
+          "dragging out of a zone still judges nothing");
+      require(session.touchBlocked(1), "the latch survives dragging out of the zone");
+      require(session.blockedTouches().size() == 1 &&
+              close(session.blockedTouches()[0].y, 330.0),
+          "the swallowed position follows the latched finger");
+      require(close(session.blockedTouchPulseSec(), 0.95),
+          "the pulse is re-stamped while the finger is held");
+
+      // Lifting the finger releases the latch; the next press outside the zone is judged.
+      session.touchUp(1);
+      require(session.blockedTouches().empty(), "lifting the finger releases the latch");
+      require(session.blockedTouchPulseSec() < 0.0, "the pulse clears with the last finger");
+      session.touchDown(2, 800.0F, 330.0F);
+      session.update(0.96, 1.0F / 60.0F);
+      require(!session.touchBlocked(2), "a press outside the zone is not swallowed");
+      require(chart.allNotesSorted[0]->judgeResult == 0,
+          "a press outside the zone judges the note");
+    }
+
+    // A finger already down when the zone becomes active must still be swallowed: the latch
+    // applies to every held finger, not only to the frame a press starts on.
+    {
+      auto chart = zonedChart({centralZone(0.9F)});
+      GameplaySession session;
+      session.setViewport(viewport);
+      session.setChart(&chart);
+      session.touchDown(1, 800.0F, 450.0F);
+      session.update(0.5, 1.0F / 60.0F);
+      require(chart.allNotesSorted[0]->judgeResult < 0, "the note is out of the window at 0.5 s");
+      session.update(0.95, 1.0F / 60.0F);
+      require(session.touchBlocked(1),
+          "a finger held before the zone activates is still swallowed");
+      require(chart.allNotesSorted[0]->judgeResult < 0,
+          "a finger held before the zone activates judges nothing");
+    }
+
+    // A zone that is not active yet does not swallow anything.
+    {
+      auto chart = zonedChart({makeZone(0.30F, 0.40F, 0.70F, 0.60F, false, 2.0F, 3.0F)});
+      GameplaySession session;
+      session.setViewport(viewport);
+      session.setChart(&chart);
+      session.touchDown(1, 800.0F, 450.0F);
+      session.update(0.95, 1.0F / 60.0F);
+      require(!session.touchBlocked(1), "a zone outside its window swallows nothing");
+      require(chart.allNotesSorted[0]->judgeResult == 0,
+          "a press over a zone that is not active judges the note");
+    }
+
+    // Subtract zones punch a hole: one subtract cancels the enclosing zone, a second subtract
+    // restores the parity and the point is swallowed again.
+    {
+      auto holed = zonedChart({centralZone(),
+          makeZone(0.30F, 0.40F, 0.70F, 0.60F, true)});
+      GameplaySession holeSession;
+      holeSession.setViewport(viewport);
+      holeSession.setChart(&holed);
+      holeSession.touchDown(1, 800.0F, 450.0F);
+      holeSession.update(0.95, 1.0F / 60.0F);
+      require(!holeSession.touchBlocked(1), "one subtract zone cancels the normal zone");
+      require(holeSession.blockedTouches().empty(), "a hole reports no swallowed finger");
+      require(holed.allNotesSorted[0]->judgeResult == 0, "a touch inside a hole judges the note");
+    }
+    {
+      auto doubled = zonedChart({centralZone(),
+          makeZone(0.30F, 0.40F, 0.70F, 0.60F, true),
+          makeZone(0.30F, 0.40F, 0.70F, 0.60F, true)});
+      GameplaySession doubledSession;
+      doubledSession.setViewport(viewport);
+      doubledSession.setChart(&doubled);
+      doubledSession.touchDown(1, 800.0F, 450.0F);
+      doubledSession.update(0.95, 1.0F / 60.0F);
+      require(doubledSession.touchBlocked(1), "two subtract zones restore the swallow");
+      require(doubled.allNotesSorted[0]->judgeResult < 0,
+          "a touch under an even subtract count judges nothing");
+    }
+  }
+
   std::cout<<"All ReChigros core tests passed\n";return 0;
 }

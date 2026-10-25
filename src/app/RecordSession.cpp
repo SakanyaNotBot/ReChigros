@@ -80,7 +80,11 @@ bool RecordSession::start(AppContext& context, const Settings& settings, std::st
     error = "a recording is already running";
     return false;
   }
-  if (!context.game.loaded || !context.game.chart || context.renderer == nullptr) {
+  if (context.renderer == nullptr) {
+    error = "the renderer is not available";
+    return false;
+  }
+  if (!context.game.loaded || !context.game.chart) {
     error = "no chart is loaded";
     return false;
   }
@@ -314,7 +318,9 @@ std::filesystem::path RecordSession::writeAudioTrack(AppContext& context,
   if (frames <= 0) return {};
   std::filesystem::path track = videoPath;
   track += ".pcm";
-  std::FILE* file = std::fopen(track.string().c_str(), "wb");
+  // The track is opened through the platform's own wide-capable path: a name holding characters
+  // outside the ANSI code page cannot be opened through the narrow conversion at all.
+  std::FILE* file = std::fopen(platform::pathToUtf8(track).c_str(), "wb");
   if (file == nullptr) return {};
   const auto written = std::fwrite(buffer.data(), sizeof(float) * 2U,
       static_cast<std::size_t>(frames), file);

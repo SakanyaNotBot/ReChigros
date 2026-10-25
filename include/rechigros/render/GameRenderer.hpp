@@ -78,6 +78,9 @@ struct RenderFrameInput {
     struct Point {
       float x{};
       float y{};
+      // 0..1 size of the hover disc. The reference grows one in and out over a short real-time
+      // window instead of toggling it, so a finger leaving a zone does not pop.
+      float scale{1.0F};
     };
     Point points[10]{};
     int count{};

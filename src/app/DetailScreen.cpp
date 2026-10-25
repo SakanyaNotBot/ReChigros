@@ -642,6 +642,11 @@ void drawDetailScreen(AppContext& context) {
     // The recording page renders the chart this page describes, so it has to be the loaded one.
     context.renderReturn = Screen::Detail;
     openChartDetail(context, record->id);
+    std::string error;
+    if (!prepareRenderChart(context, error)) {
+      notify(context, error.empty() ? "无法准备渲染" : error);
+      return;
+    }
     navigateTo(context, Screen::Render);
   }
 }

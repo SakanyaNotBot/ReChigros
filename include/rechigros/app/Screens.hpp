@@ -28,6 +28,11 @@ void drawHomeScreen(AppContext& context);
 void drawLibraryScreen(AppContext& context);
 void drawDetailScreen(AppContext& context);
 void drawSettingsScreen(AppContext& context);
+// Loads the chart the recording page describes, so the page can start a render without a play
+// session having been started first. Returns false when the chart cannot be loaded.
+bool prepareRenderChart(AppContext& context, std::string& error);
+// Releases the chart the recording page loaded, if it is the only thing holding one.
+void releaseRenderChart(AppContext& context);
 // Recording configuration: the parameters a render uses, the start action and its progress.
 void drawRenderScreen(AppContext& context);
 // Draws the recording progress overlay above the current screen, and advances the recording.

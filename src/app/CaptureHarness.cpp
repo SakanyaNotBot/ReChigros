@@ -288,7 +288,8 @@ void setupCaptureScreen(AppContext& context, const std::string& spec, float aspe
     if (!chartId.empty()) {
       openChartDetail(context, chartId);
       context.renderReturn = Screen::Detail;
-      context.screen = Screen::Render;
+      std::string error;
+      if (prepareRenderChart(context, error)) context.screen = Screen::Render;
     }
     return;
   }

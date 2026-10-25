@@ -19,6 +19,7 @@
 #include <SDL3/SDL_log.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -48,6 +49,34 @@ double gPauseRingStartSec{-1.0};
 double gLastPauseTapMs{0.0};
 float gLastPauseTapX{};
 float gLastPauseTapY{};
+
+// Wall-clock length of the hover disc's grow and shrink. The disc is not toggled: it eases in
+// while the finger is swallowed and eases out once the press ends, so a fast tap does not flash.
+constexpr double kHoverEnterSec = 0.1;
+
+// One hover disc. A finger a zone has swallowed owns one until the press ends, which is what
+// keeps the glow alive while the finger drags out of the zone.
+struct HoverSlot {
+  std::int64_t id{-1};
+  // Last position the finger was seen at, in view pixels. Kept after the press ends so the
+  // disc can shrink where it was instead of jumping to the origin.
+  float x{};
+  float y{};
+  double startSec{};
+  double startScale{};
+  double endScale{};
+  double scale{};
+  bool held{};
+};
+std::array<HoverSlot, 10> gHoverSlots{};
+
+// Whether the music is currently ducked by a zone. The audio filter and the level mod are only
+// told about changes, because both act on the transition rather than on every frame.
+bool gBlockAudioFilterOn{false};
+// Bad+miss and miss totals the level mod was last told about. A challenge fails on the frame a
+// counted note lands, so the counters are the trigger.
+int gLevelEffectBadMiss{};
+int gLevelEffectMiss{};
 
 std::int64_t nowMilliseconds() {
   using namespace std::chrono;
@@ -1396,6 +1425,107 @@ void drawPauseOverlay(AppContext& context) {
   ui::endFullscreenWindow();
 }
 
+// Advances the hover slots and fills the renderer's touch list. A slot is claimed when a zone
+// swallows a finger and released only when that finger lifts: the disc keeps following the
+// touch even after it leaves the zone, so the glow does not blink out mid-drag.
+void updateHoverSlots(const AppContext& context, double nowSec,
+    render::RenderFrameInput::TouchState& out) {
+  const auto& blocked = context.game.session.blockedTouches();
+  for (auto& slot : gHoverSlots) slot.held = false;
+  for (const auto& touch : blocked) {
+    HoverSlot* slot = nullptr;
+    for (auto& candidate : gHoverSlots) {
+      if (candidate.id == touch.id) {
+        slot = &candidate;
+        break;
+      }
+    }
+    if (slot == nullptr) {
+      for (auto& candidate : gHoverSlots) {
+        if (candidate.id != -1) continue;
+        slot = &candidate;
+        break;
+      }
+    }
+    if (slot == nullptr) continue;
+    if (slot->id != touch.id) {
+      // A fresh slot always grows in from nothing, whatever the previous owner left behind.
+      slot->id = touch.id;
+      slot->startSec = nowSec;
+      slot->startScale = 0.0;
+      slot->endScale = 1.0;
+      slot->scale = 0.0;
+    }
+    slot->held = true;
+    slot->x = touch.x;
+    slot->y = touch.y;
+  }
+
+  out.count = 0;
+  for (auto& slot : gHoverSlots) {
+    if (slot.id == -1) continue;
+    if (!slot.held && slot.endScale != 0.0) {
+      // Released: shrink from wherever the fade had got to instead of restarting at full size.
+      slot.startSec = nowSec;
+      slot.startScale = slot.scale;
+      slot.endScale = 0.0;
+    }
+    const double elapsed = nowSec - slot.startSec;
+    const double progress = std::clamp(elapsed / kHoverEnterSec, 0.0, 1.0);
+    slot.scale = slot.startScale + (slot.endScale - slot.startScale) * progress;
+    if (slot.endScale == 0.0 && progress >= 1.0) {
+      slot.id = -1;
+      continue;
+    }
+    if (!(slot.scale > 0.0) || out.count >= 10) continue;
+    auto& point = out.points[out.count++];
+    point.x = slot.x;
+    point.y = slot.y;
+    point.scale = static_cast<float>(std::clamp(slot.scale, 0.0, 1.0));
+  }
+}
+
+// Drops the per-run feedback state: the hover discs of a previous run must not reappear on the
+// next one's first frame, and the audio duck and the challenge counters belong to one attempt.
+void resetRunFeedbackState(AppContext& context) {
+  gHoverSlots = {};
+  gBlockAudioFilterOn = false;
+  gLevelEffectBadMiss = 0;
+  gLevelEffectMiss = 0;
+  if (context.audio != nullptr) context.audio->setLowPassEnabled(false);
+  if (context.game.chart != nullptr && context.game.chart->levelEffects != nullptr) {
+    context.game.chart->levelEffects->onBlockStateChanged(false);
+  }
+}
+
+// Ducks the music while a zone holds a finger and forwards the state to the level mod, acting
+// only on the transition: the audio filter ramps on its own, and the challenge state is a latch
+// that must not be re-sent every frame.
+void syncBlockTouchState(AppContext& context) {
+  auto& game = context.game;
+  const bool touching = !game.session.blockedTouches().empty();
+  if (touching == gBlockAudioFilterOn) return;
+  gBlockAudioFilterOn = touching;
+  if (context.audio != nullptr) context.audio->setLowPassEnabled(touching);
+  if (game.chart != nullptr && game.chart->levelEffects != nullptr) {
+    game.chart->levelEffects->onBlockStateChanged(touching);
+  }
+}
+
+// Reports newly counted bad and miss notes to the level mod. The challenge fails on the frame
+// its counted note lands, so the counters are compared rather than polled per frame.
+void syncLevelEffectChallenge(AppContext& context) {
+  auto& game = context.game;
+  if (game.chart == nullptr || game.chart->levelEffects == nullptr) return;
+  const auto& counts = game.session.judgement().counts();
+  const int badMiss = counts[2] + counts[3];
+  if (badMiss > gLevelEffectBadMiss) {
+    game.chart->levelEffects->onBadOrMiss(static_cast<float>(game.chartTimeSec),
+        counts[3] > gLevelEffectMiss);
+  }
+  gLevelEffectBadMiss = badMiss;
+  gLevelEffectMiss = counts[3];
+}
 
 } // namespace
 
@@ -1515,6 +1645,7 @@ bool gameEnter(AppContext& context) {
   game.finished = false;
   game.introElapsedSec = 0.0;
   game.pause = GameRuntime::Pause::None;
+  resetRunFeedbackState(context);
   game.chartTimeSec = 0.0;
   game.visualTimeSec = 0.0;
   // A new run starts from an unprimed drawing clock: its first frame takes the reported playhead
@@ -1527,6 +1658,7 @@ bool gameEnter(AppContext& context) {
 void gameLeave(AppContext& context) {
   auto& game = context.game;
   game.session.cancelTouches();
+  resetRunFeedbackState(context);
   if (context.audio != nullptr) {
     context.audio->stop();
     context.audio->setLowPassEnabled(false);
@@ -1716,6 +1848,10 @@ void gameUpdate(AppContext& context, float frameDeltaSec) {
   for (const int type : game.session.takeSoundEvents()) {
     if (context.audio != nullptr) context.audio->triggerSoundEffect(type);
   }
+  // Both depend on state the session produced this frame: the audio duck follows the swallowed
+  // fingers, and the challenge latches on a note counted by this frame's judgement.
+  syncBlockTouchState(context);
+  syncLevelEffectChallenge(context);
 
   // The run ends when the music reaches the end of the track, and nothing else decides it: the
   // playhead is compared with the duration. A run whose music failed to load has no counterpart
@@ -1853,6 +1989,13 @@ void gameRender(AppContext& context) {
   // Hold-body bursts are produced by the gameplay update; the hit-effect pass draws them.
   input.holdBodyBursts = game.session.takeHoldBodyBursts();
   input.holdHeadBursts = game.session.takeHoldHeadBursts();
+  // Swallowed fingers: zone pulses are drawn where they are, and the composite lights the same
+  // points. The session reports both, so the two never disagree about which touch is held.
+  input.blockedTouchPositions = game.session.blockedTouchPositions();
+  input.blockedTouchPulseSec = game.session.blockedTouchPulseSec();
+  // The hover discs run on the wall clock so a paused chart does not freeze their fade, and a
+  // finger that has been swallowed keeps its slot until it lifts.
+  updateHoverSlots(context, context.nowSec, input.touches);
   context.renderer->render(input, game.chart.get(), &judgement);
 }
 

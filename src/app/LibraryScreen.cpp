@@ -52,6 +52,11 @@ constexpr float kSlope = 0.2679492F; // tan(15 degrees)
 constexpr double kTabSwitchIntervalSeconds = 0.26;
 constexpr double kDialogEnterSeconds = 0.2;
 constexpr double kReentryGuardSeconds = 0.25;
+// A press that stays inside the tap slop for this long claims the card it landed on and
+// opens manage mode. The value is the platform's own long-press timeout.
+constexpr double kLongPressSeconds = 0.5;
+// Movement of up to this many density units is still a press rather than a scroll.
+constexpr float kTapSlopDp = 6.0F;
 
 const char* const kChartTabs[] = {"本地", "上架", "未上架"};
 
@@ -193,6 +198,12 @@ struct GridState {
   ImVec2 dragStart{};
   int dragStartScroll{};
   float dragDistance{};
+  // Press-and-hold bookkeeping. The target is fixed when the press lands, because by the
+  // time the hold is long enough to count the row may already have scrolled away from the
+  // finger.
+  double pressStartSec{};
+  int pressedCard{-1};
+  bool longPressFired{};
 };
 
 struct DialogState {
@@ -672,15 +683,60 @@ void clampScroll(const GridGeometry& grid, int rows) {
   current.grid.scroll = std::clamp(current.grid.scroll, 0, maxScroll);
 }
 
-// Handles wheel and drag scrolling plus the tap that selects or opens a card. Returns the
-// index of the card whose tap was released, or -1.
-int updateGridInput(const ScreenMap& map, const GridGeometry& grid, int rows,
-    const std::vector<const ChartRecord*>& visible) {
+// Index of the card under a screen point, or -1 when the point is outside the grid or on
+// the gutters between cards. The scroll offset is passed in because a press and its release
+// are resolved against the offset that was current at that moment.
+int cardAtPoint(const GridGeometry& grid, ImVec2 point, int scroll, int recordCount) {
+  if (!insideRect(static_cast<float>(grid.gridL), static_cast<float>(grid.gridT),
+          static_cast<float>(grid.gridR), static_cast<float>(grid.gridB), point)) {
+    return -1;
+  }
+  const int localX = static_cast<int>(std::lround(point.x)) - grid.gridL;
+  const int localY = static_cast<int>(std::lround(point.y)) - grid.gridT + scroll;
+  int column = -1;
+  for (int candidate = 0; candidate < kGridColumns; ++candidate) {
+    if (localX >= grid.borders[static_cast<std::size_t>(candidate)]
+        && localX < grid.borders[static_cast<std::size_t>(candidate) + 1]) {
+      column = candidate;
+      break;
+    }
+  }
+  if (column < 0) return -1;
+  const int row = localY / grid.rowHeight;
+  if (row < 0) return -1;
+  // localY is measured from the top of the scroll content, so a card starts at its row
+  // offset plus the outer margin, not at the row offset plus the grid's screen origin.
+  const int top = row * grid.rowHeight + grid.margins;
+  const int height = grid.cardHeight(column);
+  if (localY < top || localY >= top + height) return -1;
+  const int index = row * kGridColumns + column;
+  if (index < 0 || index >= recordCount) return -1;
+  const int cardLeft = grid.cardLeft(column) - grid.gridL;
+  const int cardWidth = grid.cardWidth(column);
+  if (localX < cardLeft || localX >= cardLeft + cardWidth) return -1;
+  return index;
+}
+
+struct GridInputResult {
+  // Card index whose tap was released this frame, or -1.
+  int tappedCard{-1};
+  // Card index that completed a press-and-hold this frame, or -1. A hold is reported once
+  // per gesture and is never also reported as a tap.
+  int heldCard{-1};
+};
+
+// Handles wheel and drag scrolling, the press-and-hold that claims a card, and the tap that
+// selects or opens one.
+GridInputResult updateGridInput(const ScreenMap& map, const GridGeometry& grid, int rows,
+    const std::vector<const ChartRecord*>& visible, double nowSec) {
+  GridInputResult result;
   ListState& current = state();
   ImGuiIO& io = ImGui::GetIO();
+  const int recordCount = static_cast<int>(visible.size());
   const int maxScroll = std::max(0, grid.contentHeight(rows) - grid.gridHeight());
   const bool hovered = insideRect(static_cast<float>(grid.gridL), static_cast<float>(grid.gridT),
       static_cast<float>(grid.gridR), static_cast<float>(grid.gridB), io.MousePos);
+  const float tapSlop = map.px(kTapSlopDp);
 
   if (hovered && io.MouseWheel != 0.0F) {
     current.grid.scroll -= static_cast<int>(std::lround(io.MouseWheel * map.px(80.0F)));
@@ -691,6 +747,11 @@ int updateGridInput(const ScreenMap& map, const GridGeometry& grid, int rows,
     current.grid.dragStart = io.MousePos;
     current.grid.dragStartScroll = current.grid.scroll;
     current.grid.dragDistance = 0.0F;
+    // The card is resolved on the press, not when the hold expires: by then the grid may
+    // have scrolled and the finger would no longer sit over the card it started on.
+    current.grid.pressStartSec = nowSec;
+    current.grid.pressedCard = cardAtPoint(grid, io.MousePos, current.grid.scroll, recordCount);
+    current.grid.longPressFired = false;
   }
   if (current.grid.dragging) {
     const ImVec2 delta(io.MousePos.x - current.grid.dragStart.x,
@@ -704,45 +765,40 @@ int updateGridInput(const ScreenMap& map, const GridGeometry& grid, int rows,
     }
   }
   current.grid.scroll = std::clamp(current.grid.scroll, 0, maxScroll);
+
+  // A hold only counts while the finger stays put: moving past the tap slop hands the
+  // gesture to the scroll view. It also has to still be down now; a release that happened
+  // between two frames never reached the hold threshold while the finger was down.
+  if (current.grid.armed && !current.grid.longPressFired && current.grid.pressedCard >= 0
+      && current.grid.dragDistance <= tapSlop
+      && ImGui::IsMouseDown(ImGuiMouseButton_Left)
+      && nowSec - current.grid.pressStartSec >= kLongPressSeconds) {
+    current.grid.longPressFired = true;
+    result.heldCard = current.grid.pressedCard;
+  }
+
   if (current.grid.armed) {
-    if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) return -1;
+    if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) return result;
     current.grid.armed = false;
-    const bool wasDrag = current.grid.dragDistance > map.px(6.0F);
+    const bool wasDrag = current.grid.dragDistance > tapSlop;
+    const bool consumedByHold = current.grid.longPressFired;
+    current.grid.pressedCard = -1;
+    current.grid.longPressFired = false;
     current.grid.dragDistance = 0.0F;
-    if (wasDrag) return -1;
+    // A drag scrolled the list and a hold already acted on the card; neither is a tap.
+    if (wasDrag || consumedByHold) return result;
   } else {
-    return -1;
+    return result;
   }
-  if (!ImGui::IsMouseReleased(ImGuiMouseButton_Left)) return -1;
-  if (!insideRect(static_cast<float>(grid.gridL), static_cast<float>(grid.gridT),
-          static_cast<float>(grid.gridR), static_cast<float>(grid.gridB), io.MousePos)) {
-    return -1;
-  }
-  const int localX = static_cast<int>(std::lround(io.MousePos.x)) - grid.gridL;
-  const int localY = static_cast<int>(std::lround(io.MousePos.y)) - grid.gridT
-      + current.grid.scroll;
-  int column = -1;
-  for (int candidate = 0; candidate < kGridColumns; ++candidate) {
-    if (localX >= grid.borders[static_cast<std::size_t>(candidate)]
-        && localX < grid.borders[static_cast<std::size_t>(candidate) + 1]) {
-      column = candidate;
-      break;
-    }
-  }
-  if (column < 0) return -1;
-  const int row = localY / grid.rowHeight;
-  if (row < 0) return -1;
-  const int top = grid.cardTop(row, 0);
-  const int height = grid.cardHeight(column);
-  if (localY < top || localY >= top + height) return -1;
-  const int index = row * kGridColumns + column;
-  if (index < 0 || index >= static_cast<int>(visible.size())) return -1;
-  const int cardLeft = grid.cardLeft(column) - grid.gridL;
-  const int cardWidth = grid.cardWidth(column);
-  if (localX < cardLeft || localX >= cardLeft + cardWidth) return -1;
+  if (!ImGui::IsMouseReleased(ImGuiMouseButton_Left)) return result;
+  // The tap is resolved against the offset on screen at release, which is the one the user
+  // was looking at when the finger came up.
+  const int tapped = cardAtPoint(grid, io.MousePos, current.grid.scroll, recordCount);
+  if (tapped < 0) return result;
   // The click was released this frame; consume the drag bookkeeping.
   current.grid.dragDistance = 0.0F;
-  return index;
+  result.tappedCard = tapped;
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -1198,8 +1254,11 @@ void drawLibraryScreen(AppContext& context) {
   }
   clampScroll(grid, rows);
   int clickedCard = -1;
+  int heldCard = -1;
   if (interactive) {
-    clickedCard = updateGridInput(map, grid, rows, visible);
+    const GridInputResult input = updateGridInput(map, grid, rows, visible, nowSec);
+    clickedCard = input.tappedCard;
+    heldCard = input.heldCard;
   }
 
   // Card grid, clipped to the scroll viewport.
@@ -1341,6 +1400,19 @@ ui::endFullscreenWindow();
     context.selectedIds.clear();
   } else if (refreshPressed) {
     notify(context, "在线谱面暂不可用");
+  } else if (heldCard >= 0 && heldCard < static_cast<int>(visible.size())) {
+    // Holding a card is a second way into manage mode. Unlike the plate it keeps whatever
+    // was already selected once the mode is on, so a hold while managing only adds to the
+    // selection instead of starting it over.
+    if (!context.manageMode) {
+      context.manageMode = true;
+      context.selectedIds.clear();
+    }
+    const std::string& heldId = visible[static_cast<std::size_t>(heldCard)]->id;
+    if (std::find(context.selectedIds.begin(), context.selectedIds.end(), heldId)
+        == context.selectedIds.end()) {
+      context.selectedIds.push_back(heldId);
+    }
   } else if (clickedCard >= 0 && clickedCard < static_cast<int>(visible.size())) {
     const ChartRecord& record = *visible[static_cast<std::size_t>(clickedCard)];
     if (context.manageMode) {

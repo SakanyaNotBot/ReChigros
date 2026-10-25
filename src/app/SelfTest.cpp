@@ -120,6 +120,17 @@ const char* kInfoYaml =
     "illustration: cover.png\n"
     "chartOffsetMs: 25\n";
 
+// A second pack with its own name, so a grid probe can tell two cards apart.
+const char* kNamedInfoYaml =
+    "name: Second Sample\n"
+    "composer: Test Composer\n"
+    "charter: Test Charter\n"
+    "level: HD 11\n"
+    "chart: chart.json\n"
+    "music: music.ogg\n"
+    "illustration: cover.png\n"
+    "chartOffsetMs: 25\n";
+
 int runHeadlessGameplay(const std::filesystem::path& chartPath, bool autoplay) {
   auto chart = chart::ChartLoader::loadFromFile(chartPath);
   game::GameplaySession session;
@@ -651,6 +662,229 @@ int runSelfTest() {
       const int detailVertices = drawScreenHeadless(context, drawDetailScreen);
       report(context.screen == Screen::Detail && detailVertices > 0,
           "detail screen opens the selected chart", "vertices=" + std::to_string(detailVertices));
+      // A finger held on a card has to open manage mode and claim that card, and the release
+      // that ends the hold must not also open the chart. A second pack is installed first so
+      // the grid holds more than one card: with a single card, selecting "the card" and
+      // selecting "whatever is in the list" would be the same observation.
+      const auto secondArchive = root / "synthetic-pack-two.zip";
+      if (staged) {
+        (void)writeZip(secondArchive,
+            {{"info.yml", kNamedInfoYaml},
+                {"chart.json", kChartJson},
+                {"music.ogg", std::string(2048, 'N')},
+                {"cover.png", std::string(512, 'D')}});
+      }
+      std::string secondChartId;
+      if (std::filesystem::exists(secondArchive)) {
+        try {
+          const auto imported = context.library.importZip(secondArchive, true);
+          secondChartId = imported.record.id;
+        } catch (const std::exception&) {
+        }
+      }
+      navigateTo(context, Screen::Library);
+      context.libraryTab = 0;
+      context.manageMode = false;
+      context.selectedIds.clear();
+      drawScreenHeadless(context, drawLibraryScreen);
+      report(!secondChartId.empty() && context.library.records().size() >= 2,
+          "second pack installed for the grid probe",
+          "records=" + std::to_string(context.library.records().size()));
+      // Cards are located by tapping along the first row; a tap that opens the detail page
+      // proves it landed on a card. Two different ids are needed, so a grid that renders no
+      // cards fails the check instead of passing quietly.
+      constexpr float kCardProbeY = 150.0F;
+      float cardProbeX = -1.0F;
+      std::string tappedCardId;
+      float neighbourProbeX = -1.0F;
+      std::string neighbourCardId;
+      for (float x = 150.0F; x < 1100.0F && neighbourCardId.empty(); x += 30.0F) {
+        context.screen = Screen::Library;
+        context.manageMode = false;
+        context.selectedIds.clear();
+        io.AddMousePosEvent(x, kCardProbeY);
+        drawScreenHeadless(context, drawLibraryScreen);
+        io.AddMouseButtonEvent(0, true);
+        drawScreenHeadless(context, drawLibraryScreen);
+        io.AddMouseButtonEvent(0, false);
+        drawScreenHeadless(context, drawLibraryScreen);
+        drawScreenHeadless(context, drawLibraryScreen);
+        if (context.screen != Screen::Detail || context.activeChartId.empty()) continue;
+        if (tappedCardId.empty()) {
+          tappedCardId = context.activeChartId;
+          cardProbeX = x;
+        } else if (context.activeChartId != tappedCardId) {
+          neighbourCardId = context.activeChartId;
+          neighbourProbeX = x;
+        }
+      }
+      report(!tappedCardId.empty(), "library card tap opens the detail page",
+          "x=" + std::to_string(cardProbeX) + ", id=" + tappedCardId);
+      report(!neighbourCardId.empty(), "library first row holds several cards",
+          "x=" + std::to_string(neighbourProbeX) + ", id=" + neighbourCardId);
+
+      // Re-drawn while the clock advances, one frame at a time: the screen drops its
+      // transient gesture state when two draws are further apart than its re-entry guard.
+      // The state is read after the release as well: that is where a hold that was not
+      // consumed shows up, because the gesture then also counts as a tap.
+      bool holdClaimedCard = false;
+      bool holdStayedInLibrary = false;
+      bool holdSurvivedRelease = false;
+      if (!tappedCardId.empty()) {
+        navigateTo(context, Screen::Library);
+        context.nowSec += 1.0;
+        io.AddMousePosEvent(cardProbeX, kCardProbeY);
+        drawScreenHeadless(context, drawLibraryScreen);
+        drawScreenHeadless(context, drawLibraryScreen);
+        io.AddMouseButtonEvent(0, true);
+        drawScreenHeadless(context, drawLibraryScreen);
+        for (int frame = 0; frame < 12; ++frame) {
+          context.nowSec += 0.05;
+          drawScreenHeadless(context, drawLibraryScreen);
+        }
+        holdClaimedCard = context.manageMode && context.selectedIds.size() == 1
+            && context.selectedIds.front() == tappedCardId;
+        io.AddMouseButtonEvent(0, false);
+        drawScreenHeadless(context, drawLibraryScreen);
+        drawScreenHeadless(context, drawLibraryScreen);
+        holdStayedInLibrary = context.screen == Screen::Library;
+        holdSurvivedRelease = holdClaimedCard && context.manageMode
+            && context.selectedIds.size() == 1
+            && context.selectedIds.front() == tappedCardId;
+      }
+      report(holdClaimedCard, "holding a library card enters manage mode and selects it",
+          "manage=" + std::to_string(context.manageMode ? 1 : 0) + ", selected="
+              + std::to_string(context.selectedIds.size()));
+      report(holdSurvivedRelease,
+          "the hold is consumed so the release does not also act on the card",
+          "manage=" + std::to_string(context.manageMode ? 1 : 0) + ", selected="
+              + std::to_string(context.selectedIds.size()) + ", screen="
+              + std::to_string(static_cast<int>(context.screen)));
+      // The card next to the one held has to stay unselected, which is what tells a real
+      // per-card claim apart from manage mode coming up with an empty selection.
+      report(!neighbourCardId.empty() && std::find(context.selectedIds.begin(),
+                 context.selectedIds.end(), neighbourCardId) == context.selectedIds.end(),
+          "holding one card leaves the neighbouring card unselected");
+      report(!tappedCardId.empty() && holdStayedInLibrary,
+          "releasing a held card stays on the library screen",
+          "screen=" + std::to_string(static_cast<int>(context.screen)));
+
+      // Once managing, a hold keeps the mode and whatever was already selected.
+      bool holdWhileManagingKeptSelection = false;
+      if (!tappedCardId.empty()) {
+        context.manageMode = true;
+        context.selectedIds.clear();
+        context.selectedIds.push_back(tappedCardId);
+        context.screen = Screen::Library;
+        context.nowSec += 1.0;
+        io.AddMousePosEvent(cardProbeX, kCardProbeY);
+        drawScreenHeadless(context, drawLibraryScreen);
+        drawScreenHeadless(context, drawLibraryScreen);
+        io.AddMouseButtonEvent(0, true);
+        drawScreenHeadless(context, drawLibraryScreen);
+        for (int frame = 0; frame < 12; ++frame) {
+          context.nowSec += 0.05;
+          drawScreenHeadless(context, drawLibraryScreen);
+        }
+        holdWhileManagingKeptSelection = context.manageMode
+            && context.selectedIds.size() == 1 && context.selectedIds.front() == tappedCardId;
+        io.AddMouseButtonEvent(0, false);
+        drawScreenHeadless(context, drawLibraryScreen);
+        drawScreenHeadless(context, drawLibraryScreen);
+      }
+      report(holdWhileManagingKeptSelection,
+          "holding a card while managing keeps the selection");
+
+      // A drag out of a card belongs to the scroll view, so no hold may fire even after the
+      // finger has been down for longer than the hold threshold.
+      bool dragStayedOutOfManage = false;
+      if (!tappedCardId.empty()) {
+        navigateTo(context, Screen::Library);
+        context.nowSec += 1.0;
+        io.AddMousePosEvent(cardProbeX, kCardProbeY);
+        drawScreenHeadless(context, drawLibraryScreen);
+        drawScreenHeadless(context, drawLibraryScreen);
+        io.AddMouseButtonEvent(0, true);
+        drawScreenHeadless(context, drawLibraryScreen);
+        io.AddMousePosEvent(cardProbeX, kCardProbeY + 80.0F);
+        for (int frame = 0; frame < 12; ++frame) {
+          context.nowSec += 0.05;
+          drawScreenHeadless(context, drawLibraryScreen);
+        }
+        io.AddMouseButtonEvent(0, false);
+        drawScreenHeadless(context, drawLibraryScreen);
+        drawScreenHeadless(context, drawLibraryScreen);
+        dragStayedOutOfManage = !context.manageMode && context.screen == Screen::Library;
+      }
+      report(!tappedCardId.empty() && dragStayedOutOfManage,
+          "dragging from a card scrolls instead of entering manage mode");
+
+      // The corner plate is the other way into manage mode and has to keep working.
+      navigateTo(context, Screen::Library);
+      context.nowSec += 1.0;
+      io.AddMousePosEvent(static_cast<float>(io.DisplaySize.x) - 70.0F,
+          static_cast<float>(io.DisplaySize.y) - 105.0F);
+      drawScreenHeadless(context, drawLibraryScreen);
+      drawScreenHeadless(context, drawLibraryScreen);
+      io.AddMouseButtonEvent(0, true);
+      drawScreenHeadless(context, drawLibraryScreen);
+      io.AddMouseButtonEvent(0, false);
+      drawScreenHeadless(context, drawLibraryScreen);
+      drawScreenHeadless(context, drawLibraryScreen);
+      report(context.manageMode && context.selectedIds.empty(),
+          "the corner plate still enters manage mode with nothing selected",
+          "manage=" + std::to_string(context.manageMode ? 1 : 0) + ", selected="
+              + std::to_string(context.selectedIds.size()));
+      io.AddMousePosEvent(-100.0F, -100.0F);
+      context.manageMode = false;
+      context.selectedIds.clear();
+      context.screen = Screen::Library;
+      drawScreenHeadless(context, drawLibraryScreen);
+
+      // The recording page renders the chart the detail page describes. Entering it has to load
+      // that chart, because the page can only start a render for a loaded one; the failure this
+      // covers is the page opening and then refusing to start with "no chart is loaded".
+      context.renderReturn = Screen::Detail;
+      std::string renderError;
+      const bool renderPrepared = prepareRenderChart(context, renderError);
+      report(renderPrepared && context.game.loaded && context.game.chart != nullptr,
+          "recording page loads the chart it describes",
+          renderPrepared ? "chartTime=" + std::to_string(context.game.chart->chartEndTimeSec)
+                         : renderError);
+      if (renderPrepared) {
+        // The run the page prepares is an autoplay run, and the labels it draws come from the
+        // chart, not from whatever the previous screen left behind.
+        const auto record = context.library.find(uiChartId);
+        report(context.play.songName == (record ? record->songName : std::string()),
+            "recording page takes the song name from the chart",
+            "song=" + context.play.songName);
+        const long long chartEnd = static_cast<long long>(context.game.chart->chartEndTimeSec);
+        report(chartEnd > 0, "recording page chart has a length", "endSec=" + std::to_string(chartEnd));
+      }
+      // Pressing the start plate on a page opened from the detail view must not report the
+      // session's "no chart is loaded" reason. Without a graphics device the render itself
+      // cannot run here, so the assertion is on the reason, which is the defect the user hit.
+      if (renderPrepared) {
+        RecordSession::Settings recordSettings;
+        std::error_code recordError;
+        recordSettings.outputDirectory = work / "record";
+        std::filesystem::create_directories(recordSettings.outputDirectory, recordError);
+        recordSettings.fileName = "selftest";
+        recordSettings.fps = 30;
+        std::string startError;
+        const bool started = context.recording.start(context, recordSettings, startError);
+        if (context.recording.state() == RecordSession::State::Running) {
+          context.recording.cancel(context);
+        }
+        report(startError != "no chart is loaded",
+            "recording page can start a render for its chart",
+            started ? std::string("started") : startError);
+      }
+      // Leaving the page must not leave a chart loaded for a screen that never started a run.
+      navigateTo(context, Screen::Render);
+      navigateTo(context, Screen::Detail);
+      report(!context.game.loaded && !context.renderChartPrepared,
+          "leaving the recording page releases its chart");
       navigateTo(context, Screen::Home);
     }
 

@@ -41,6 +41,8 @@ void GameplaySession::setChart(Chart* chart, bool challengeMode) {
   blocks_ = chart_ ? chart_->blockAreaList : std::vector<OfficialBlock>{};
   for (auto& block : blocks_) block.resetRuntime();
   blockedTouchIds_.clear();
+  blockedTouches_.clear();
+  blockedTouchPulseSec_ = -1.0;
   // A restarted or seeked run starts a new recording, and a replay restarts from its first
   // entry. The recording mode itself survives, because it belongs to the session settings.
   replayCursor_ = 0;
@@ -115,11 +117,15 @@ void GameplaySession::touchMove(std::int64_t id, float x, float y) noexcept {
 void GameplaySession::touchUp(std::int64_t id) noexcept {
   touches_.erase(id);
   blockedTouchIds_.erase(id);
+  std::erase_if(blockedTouches_, [id](const BlockedTouch& touch) { return touch.id == id; });
+  if (blockedTouches_.empty()) blockedTouchPulseSec_ = -1.0;
 }
 
 void GameplaySession::cancelTouches() noexcept {
   touches_.clear();
   blockedTouchIds_.clear();
+  blockedTouches_.clear();
+  blockedTouchPulseSec_ = -1.0;
 }
 
 void GameplaySession::settleTouches() noexcept {
@@ -286,26 +292,25 @@ bool GameplaySession::touchBlocked(std::int64_t id) const noexcept {
 
 std::vector<std::array<float, 2>> GameplaySession::blockedTouchPositions() const {
   std::vector<std::array<float, 2>> positions;
-  if (blockedTouchIds_.empty()) return positions;
-  positions.reserve(blockedTouchIds_.size());
-  for (const auto id : blockedTouchIds_) {
-    const auto it = touches_.find(id);
-    if (it == touches_.end() || it->second == nullptr) continue;
-    positions.push_back({it->second->x, it->second->y});
-  }
+  positions.reserve(blockedTouches_.size());
+  for (const auto& touch : blockedTouches_) positions.push_back({touch.x, touch.y});
   return positions;
 }
 
 void GameplaySession::updateBlocks(double time, float frameDeltaSec) {
-  // Zone state only feeds the per-finger touch block latch, so with no finger down a full
-  // pass cannot change a judgement; the renderer keeps its own zone runtime for drawing.
-  // Otherwise skip zones whose window is closed: a chapter chart can author more than ten
-  // thousand of them while only a handful are live at any moment.
+  blockedTouches_.clear();
+  // Zone state only feeds the per-finger touch block latch, so with no zone, or with no finger
+  // down, nothing can be swallowed and no latch can survive; the renderer keeps its own zone
+  // runtime for drawing, so skipping the pass here changes no drawn pixel either.
   if (blocks_.empty() || touches_.empty()) {
     blockedTouchIds_.clear();
+    blockedTouchPulseSec_ = -1.0;
     return;
   }
   const auto view = stage();
+  // Zones whose window is closed are reset, exactly as the reference does on the same cull:
+  // a chapter chart can author more than ten thousand of them while only a handful are live
+  // at any moment, and an entry that is out of its window has no runtime state worth keeping.
   for (auto& block : blocks_) {
     if (time < static_cast<double>(block.appearTime)
         || time >= static_cast<double>(block.disappearTime)) {
@@ -315,18 +320,33 @@ void GameplaySession::updateBlocks(double time, float frameDeltaSec) {
     block.update(static_cast<float>(time), view.left, view.top, view.width, view.height,
         frameDeltaSec);
   }
-  // Latch the block state per finger for the rest of its press: the reference removes a
-  // blocked finger from the judge list entirely rather than re-testing each frame.
+  // Re-test only the fingers that are not latched yet: once a zone has swallowed a finger the
+  // reference keeps it swallowed for the rest of the press, so dragging out does not restore
+  // judging. The position list, in contrast, is rebuilt every frame from the latched ids, which
+  // is why the pulse follows a finger that has already left the zone.
   for (auto& [id, touch] : touches_) {
-    if (blockedTouchIds_.find(id) != blockedTouchIds_.end()) continue;
-    if (!touch->started) continue;
-    if (OfficialBlock::tryGetBlockingBlock(blocks_, touch->x, touch->y, view.height)) {
+    if (touch == nullptr) continue;
+    if (blockedTouchIds_.find(id) == blockedTouchIds_.end()) {
+      if (!OfficialBlock::tryGetBlockingBlock(blocks_, touch->x, touch->y, view.height)) continue;
       blockedTouchIds_.insert(id);
     }
+    blockedTouches_.push_back({id, touch->x, touch->y});
   }
   std::erase_if(blockedTouchIds_, [this](std::int64_t id) {
     return touches_.find(id) == touches_.end();
   });
+  // The list order follows the touch map, which is not stable across frames; sorting keeps the
+  // renderer's output reproducible for a given set of fingers.
+  std::sort(blockedTouches_.begin(), blockedTouches_.end(),
+      [](const BlockedTouch& first, const BlockedTouch& second) { return first.id < second.id; });
+  // The pulse expands from the last frame a finger was confirmed inside a zone. It is stamped
+  // every such frame rather than only on entry, because the dwell itself is what the feedback
+  // shows; releasing every finger clears it instead of leaving a stale timestamp behind.
+  if (blockedTouches_.empty()) {
+    blockedTouchPulseSec_ = -1.0;
+  } else {
+    blockedTouchPulseSec_ = time;
+  }
 }
 
 void GameplaySession::updateChallengeTiming(float delta) noexcept {

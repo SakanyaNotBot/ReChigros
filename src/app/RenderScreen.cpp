@@ -60,6 +60,22 @@ RecordSession::Settings& settingsState(AppContext& context) {
   return state;
 }
 
+// The action the start plate performs: load the chart the page describes if it is not loaded, then
+// begin the offscreen run. Both failures are reported to the player, because a render that never
+// starts looks like a dead button.
+void startRender(AppContext& context, const RecordSession::Settings& settings) {
+  std::string error;
+  if (!context.game.loaded || context.game.chart == nullptr) {
+    if (!prepareRenderChart(context, error)) {
+      notify(context, error.empty() ? "无法开始渲染" : error);
+      return;
+    }
+  }
+  if (!context.recording.start(context, settings, error)) {
+    notify(context, error.empty() ? "无法开始渲染" : error);
+  }
+}
+
 void drawRowLabel(ImDrawList* drawList, const ui::Canvas& canvas, const Layout& layout, int row,
     std::string_view text) {
   ui::TextStyle style;
@@ -255,10 +271,7 @@ void drawRenderScreen(AppContext& context) {
   if (!busy && ui::panelInteraction("##render_start", canvas, startBox,
                         ui::rectPanel(0x00000000U, 0x00000000U))
                         .pressed) {
-    std::string error;
-    if (!context.recording.start(context, settings, error)) {
-      notify(context, error.empty() ? "无法开始渲染" : error);
-    }
+    startRender(context, settings);
   }
 
   const ui::Box backBox{startBox.x1 + 12.0F, actionY, startBox.x1 + 112.0F, actionY + 34.0F};

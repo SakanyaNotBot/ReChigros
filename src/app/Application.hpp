@@ -37,8 +37,12 @@ public:
 
 private:
   bool initialize();
-  // Renders the loaded chart to the path from --record and reports the outcome.
-  void runRecording(AppContext& context);
+  // Sets up the chart-to-video run requested with --record. The frames are produced later, from
+  // the run loop, so the process stays interactive while the video is written.
+  bool beginCommandLineRecording(AppContext& context);
+  // Advances the command-line encode by a bounded slice and reports the outcome when it ends.
+  // Returns true while more work remains.
+  bool stepRecording(AppContext& context);
   void shutdown() noexcept;
   void processEvents(bool& running);
   void handleEvent(const SDL_Event& event, bool& running);
@@ -158,6 +162,8 @@ private:
   // cycle is anchored to that instead of absolute frame numbers so it works for any chart.
   int pauseCycleStartFrame_{-1};
   bool batchMode_{};
+  // True while a --record encode is being advanced from the run loop.
+  bool commandLineRecording_{};
   bool batchOk_{};
   int screenFrameCounts_[7]{};
   // Synthetic input timing for the verification runs: a positive value presses the notes

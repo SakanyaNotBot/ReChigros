@@ -219,6 +219,15 @@ std::string decodeLegacyText(std::string_view bytes) {
 #endif
 }
 
+std::string pathToUtf8(const std::filesystem::path& path) {
+  // On Windows the narrow conversion uses the ANSI code page, so a path holding characters
+  // outside that code page comes back as different bytes than the ones SDL and child processes
+  // parse. Going through the native form and re-encoding as UTF-8 gives every consumer the same
+  // text.
+  const auto utf8 = path.u8string();
+  return std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size());
+}
+
 std::string readTextFile(const std::filesystem::path& path) {
   std::ifstream input(path, std::ios::binary);
   if (!input) return {};

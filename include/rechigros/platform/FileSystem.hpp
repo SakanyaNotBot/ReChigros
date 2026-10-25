@@ -60,4 +60,11 @@ std::string sanitiseFileName(const std::string& name);
 // Joins two path fragments using `/` semantics regardless of the host separator.
 std::filesystem::path joinPortable(const std::filesystem::path& base, std::string_view relative);
 
+// Narrow text of a path as UTF-8. `path::string()` converts to the host's narrow encoding, which
+// on Windows is the ANSI code page: a path like `D:\无影\Videos` becomes bytes no UTF-8
+// reader can decode, and every consumer that expects UTF-8 -- SDL, child processes, JSON,
+// archive entry names -- silently fails on it. Any narrow string handed out of the process has
+// to come from here.
+[[nodiscard]] std::string pathToUtf8(const std::filesystem::path& path);
+
 } // namespace rechigros::platform
