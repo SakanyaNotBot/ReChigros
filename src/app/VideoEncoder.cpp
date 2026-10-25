@@ -1,5 +1,6 @@
 #include "rechigros/app/VideoEncoder.hpp"
 
+#include "rechigros/app/VideoEncoderPlatform.hpp"
 #include "rechigros/platform/FileSystem.hpp"
 
 #include <SDL3/SDL_process.h>
@@ -38,7 +39,12 @@ VideoEncoder::VideoEncoder() = default;
 
 VideoEncoder::~VideoEncoder() { abort(); }
 
+bool VideoEncoder::usesPlatformEncoder() noexcept { return platformenc::available(); }
+
 std::filesystem::path VideoEncoder::findEncoder() {
+  // A build that encodes in-process has nothing to locate; reporting an empty path is what tells
+  // the interface the external tool is not needed here.
+  if (usesPlatformEncoder()) return {};
   // An explicit copy next to the program wins, so a portable install can carry its own encoder;
   // otherwise the one on the search path is used.
   std::error_code error;
@@ -73,6 +79,7 @@ bool VideoEncoder::open(const Settings& settings, const std::filesystem::path& o
     error = "the video size or frame rate is not usable";
     return false;
   }
+  if (usesPlatformEncoder()) return openPlatform(settings, output, error);
   executable_ = findEncoder();
   std::error_code fsError;
   if (const auto parent = output.parent_path(); !parent.empty()) {
@@ -177,6 +184,13 @@ bool VideoEncoder::open(const Settings& settings, const std::filesystem::path& o
 }
 
 bool VideoEncoder::writeFrame(const std::vector<std::uint8_t>& pixels, std::string& error) {
+  if (platform_) {
+    if (!active_) {
+      error = "no encoder is running";
+      return false;
+    }
+    return writePlatformFrame(pixels.data(), pixels.size(), error);
+  }
   if (!active_ || input_ == nullptr) {
     error = "no encoder is running";
     return false;
@@ -209,6 +223,12 @@ bool VideoEncoder::writeFrame(const std::vector<std::uint8_t>& pixels, std::stri
 
 bool VideoEncoder::finish(std::string& error) {
   if (!active_) return true;
+  if (platform_) {
+    const bool ok = finishPlatform(error);
+    active_ = false;
+    platform_ = false;
+    return ok;
+  }
   auto* process = static_cast<SDL_Process*>(process_);
   auto* stream = static_cast<SDL_IOStream*>(input_);
   // Closing the input is what tells the encoder there are no more frames; the wait then covers
@@ -244,6 +264,12 @@ std::string VideoEncoder::readDiagnostics() const {
 }
 
 void VideoEncoder::abort() noexcept {
+  if (platform_) {
+    platformenc::abort();
+    platform_ = false;
+    active_ = false;
+    return;
+  }
   if (!active_) {
     if (process_ != nullptr) {
       SDL_DestroyProcess(static_cast<SDL_Process*>(process_));
@@ -266,5 +292,46 @@ void VideoEncoder::abort() noexcept {
   process_ = nullptr;
   active_ = false;
 }
+
+bool VideoEncoder::openPlatform(const Settings& settings, const std::filesystem::path& output,
+    std::string& error) {
+  // The audio track is handed over before the first frame, because the platform muxer needs to
+  // know about it when it writes the container header.
+  std::error_code fsError;
+  if (const auto parent = output.parent_path(); !parent.empty()) {
+    std::filesystem::create_directories(parent, fsError);
+  }
+  const std::string outputPath = platform::pathToUtf8(output);
+  if (!platformenc::open(settings.width, settings.height, settings.fps, settings.quality,
+          outputPath, error)) {
+    return false;
+  }
+  const bool withAudio = !settings.audioTrack.empty() && settings.audioSampleRate > 0
+      && std::filesystem::is_regular_file(settings.audioTrack, fsError);
+  if (withAudio) {
+    const int delayMs = static_cast<int>(std::max(0.0, settings.audioDelaySec) * 1000.0);
+    std::string audioError;
+    if (!platformenc::addAudioTrack(platform::pathToUtf8(settings.audioTrack),
+            static_cast<int>(settings.audioSampleRate), delayMs, audioError)) {
+      // The run still produces a picture without its music, which is what the external path does
+      // when the track cannot be written, so this is not treated as a failed recording.
+      (void)audioError;
+    }
+  }
+  widthForPlatform_ = settings.width;
+  heightForPlatform_ = settings.height;
+  platform_ = true;
+  active_ = true;
+  return true;
+}
+
+bool VideoEncoder::writePlatformFrame(const std::uint8_t* pixels, std::size_t bytes,
+    std::string& error) {
+  return platformenc::writeFrame(widthForPlatform_, heightForPlatform_, pixels, bytes, error);
+}
+
+bool VideoEncoder::finishPlatform(std::string& error) { return platformenc::finish(error); }
+
+void VideoEncoder::abortPlatform() noexcept { platformenc::abort(); }
 
 } // namespace rechigros::app

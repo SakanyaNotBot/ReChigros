@@ -7,11 +7,14 @@
 
 namespace rechigros::app {
 
-// Encodes raw frames into a video file by piping them to an external encoder process.
+// Encodes raw frames into a video file.
 //
-// Frames arrive already rendered and in top-down RGBA order; this class owns the process, feeds
-// it, and reports failures instead of throwing, because a recording is a long operation whose
-// errors have to reach the interface rather than terminate the program.
+// Frames arrive already rendered and in top-down RGBA order. Two back ends exist: desktop builds
+// pipe the frames to an external encoder process, while the packaged mobile build asks the
+// platform's own encoder through a bridge, because a shipped build cannot rely on an external
+// tool being installed (and recent mobile systems refuse to execute a bundled binary anyway).
+// Failures are reported instead of thrown: a recording is a long operation whose errors have to
+// reach the interface rather than terminate the program.
 class VideoEncoder final {
 public:
   // Video codecs the recorder offers. The value names the encoder the external tool is asked
@@ -39,8 +42,13 @@ public:
   VideoEncoder(const VideoEncoder&) = delete;
   VideoEncoder& operator=(const VideoEncoder&) = delete;
 
+  // True when this build encodes through the platform instead of an external process. A build
+  // that encodes in-process never has a missing-tool precondition, so the interface can offer the
+  // action unconditionally.
+  [[nodiscard]] static bool usesPlatformEncoder() noexcept;
   // Locates the external encoder. Recording needs it; an empty result means it is not installed
-  // and the interface reports that rather than starting a capture that cannot finish.
+  // and the interface reports that rather than starting a capture that cannot finish. Always
+  // empty for a platform build, which has nothing to locate.
   [[nodiscard]] static std::filesystem::path findEncoder();
 
   [[nodiscard]] static std::string codecName(Codec codec);
@@ -66,6 +74,19 @@ private:
   void closePipes() noexcept;
   // Reads the tail of the encoder's error output, or an empty string when it said nothing.
   [[nodiscard]] std::string readDiagnostics() const;
+  // Platform back end: creates the encoder for the requested format, or returns false when the
+  // platform cannot provide one. Kept out of line so a build without a bridge still links.
+  bool openPlatform(const Settings& settings, const std::filesystem::path& output,
+      std::string& error);
+  bool writePlatformFrame(const std::uint8_t* pixels, std::size_t bytes, std::string& error);
+  bool finishPlatform(std::string& error);
+  void abortPlatform() noexcept;
+
+  // Set when the frame stream goes through the platform bridge rather than a child process.
+  bool platform_{};
+  // Frame size the platform bridge was opened with, restated on every frame.
+  int widthForPlatform_{};
+  int heightForPlatform_{};
 
   std::filesystem::path executable_;
   void* process_{};

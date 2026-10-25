@@ -58,7 +58,9 @@ endif()
 
 # Recording encoder check: pushes synthetic frames through the video encoder and verifies a
 # playable file comes out, so the encode path is gated independently of the renderer.
-add_executable(rechigros_record_check record_check.cpp ../app/VideoEncoder.cpp)
+# The encoder has two back ends behind one interface, so the bridge is part of this target too.
+add_executable(rechigros_record_check record_check.cpp ../app/VideoEncoder.cpp
+  ../app/VideoEncoderPlatform.cpp)
 target_include_directories(rechigros_record_check PRIVATE "${PROJECT_SOURCE_DIR}/include"
   "${PROJECT_SOURCE_DIR}/src/app")
 target_link_libraries(rechigros_record_check PRIVATE

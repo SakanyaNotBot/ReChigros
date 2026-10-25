@@ -17,6 +17,7 @@ set(RECHIGROS_APP_SOURCES
   CoverCache.cpp
   SmoothingClock.cpp
   VideoEncoder.cpp
+  VideoEncoderPlatform.cpp
   RecordSession.cpp
   RenderScreen.cpp
   InfoFile.cpp

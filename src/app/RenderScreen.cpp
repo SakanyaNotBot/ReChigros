@@ -337,7 +337,11 @@ void drawRecordingProgress(AppContext& context) {
   auto& recording = context.recording;
   if (recording.state() != RecordSession::State::Running) return;
   const ui::Canvas canvas = ui::canvas();
-  ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+  // The overlay owns a clickable control, and an immediate-mode widget has to belong to a window.
+  // Submitting it with none open makes the toolkit create its own fallback window, which then
+  // appears on screen as a stray "Debug" panel over the recording.
+  ui::beginFullscreenWindow("##recording_progress");
+  ImDrawList* drawList = ImGui::GetWindowDrawList();
   // A dimmed plate over whatever is on screen, so the progress reads as a modal operation.
   drawList->AddRectFilled(canvas.point(0.0F, 0.0F),
       canvas.point(canvas.viewport.x, canvas.viewport.y), ui::rgba(0xC0080B10U));
@@ -386,9 +390,11 @@ void drawRecordingProgress(AppContext& context) {
   cancelText.sizeDp = 12.5F;
   cancelText.align = ui::HAlign::Center;
   ui::drawLabel(drawList, canvas, cancelBox, "取消", cancelText, ImGui::GetTime());
-  if (ui::panelInteraction("##render_cancel", canvas, cancelBox,
-          ui::rectPanel(0x00000000U, 0x00000000U))
-          .pressed) {
+  const bool cancelPressed = ui::panelInteraction("##render_cancel", canvas, cancelBox,
+                                   ui::rectPanel(0x00000000U, 0x00000000U))
+                                 .pressed;
+  ui::endFullscreenWindow();
+  if (cancelPressed) {
     recording.cancel(context);
     notify(context, "已取消渲染");
   }

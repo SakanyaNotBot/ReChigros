@@ -306,6 +306,32 @@ public final class MainActivity extends SDLActivity {
     // Which picker the pending request asked for, so its answer can be read correctly.
     private static int pendingPickerMode = PICKER_FILE;
 
+    // --- recorder bridge -------------------------------------------------------------
+    // The native recorder addresses these by name on the activity class, so one lookup finds them
+    // regardless of which object owns the encoder state. They forward straight to the helper.
+
+    public static boolean startVideoEncoder(String path, int width, int height, int fps,
+            int quality) {
+        return VideoEncoderBridge.start(path, width, height, fps, quality);
+    }
+
+    public static boolean setVideoAudioTrack(String path, int sampleRate, int channels,
+            int delayMs) {
+        return VideoEncoderBridge.setAudioTrack(path, sampleRate, delayMs);
+    }
+
+    public static boolean queueVideoFrame(byte[] rgba, int width, int height) {
+        return VideoEncoderBridge.queueFrame(rgba, width, height);
+    }
+
+    public static boolean finishVideoEncoder() {
+        return VideoEncoderBridge.finish();
+    }
+
+    public static void abortVideoEncoder() {
+        VideoEncoderBridge.abort();
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
