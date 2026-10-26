@@ -28,6 +28,10 @@ public:
     Codec codec{Codec::H264};
     // Quantiser for the constant-quality mode. Lower is better quality and a larger file.
     int quality{20};
+    // Encoder effort preset, named the way the external encoder spells it. The default keeps
+    // encoding well below the frame budget while staying visually close to the slower presets,
+    // which matters because encoding runs on the recording's critical path.
+    std::string preset{"veryfast"};
     // Audio track written next to the video. An empty path produces a video-only file. The track
     // is supplied as raw interleaved stereo float samples, so the caller decides what it contains
     // and the encoder never has to understand the game's audio.

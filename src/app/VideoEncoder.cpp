@@ -122,6 +122,11 @@ bool VideoEncoder::open(const Settings& settings, const std::filesystem::path& o
   arguments.insert(arguments.end(),
       {"-c:v", encoder, qualityFlag(settings.codec),
           std::to_string(std::clamp(settings.quality, 0, 51)), "-pix_fmt", "yuv420p"});
+  // The effort preset is what decides how much of the frame budget encoding takes. Passing it
+  // explicitly also pins it: the encoder's own default is slower and would change between builds.
+  if (!settings.preset.empty() && settings.codec != Codec::Vp9) {
+    arguments.insert(arguments.end(), {"-preset", settings.preset});
+  }
   if (withAudio) {
     // The delay is expressed with `adelay` so the track starts at the frame the intro ends on,
     // which is when the chart clock begins.

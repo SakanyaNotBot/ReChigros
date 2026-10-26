@@ -55,6 +55,31 @@ int main(int argc, char** argv) {
   // shift every following frame and corrupt the file.
   std::vector<std::uint8_t> frame(static_cast<std::size_t>(settings.width)
       * static_cast<std::size_t>(settings.height) * 4U, 0U);
+
+  // The effort preset is part of the command line, so a misspelt or misplaced flag would only
+  // surface as a failed encode. Launching a second encoder with a preset the tool does not know
+  // has to fail somewhere -- at the first frame or when the process is collected -- which is
+  // what proves the flag actually reaches the process.
+  {
+    rechigros::app::VideoEncoder::Settings bad = settings;
+    bad.preset = "not-a-real-preset";
+    rechigros::app::VideoEncoder probe;
+    std::string probeError;
+    const auto probeOutput = outputDir / "preset-probe.mp4";
+    std::filesystem::remove(probeOutput, errorCode);
+    bool rejected = !probe.open(bad, probeOutput, probeError);
+    if (!rejected) {
+      bool acceptedAll = true;
+      for (int index = 0; index < 90 && acceptedAll; ++index) {
+        if (!probe.writeFrame(frame, probeError)) acceptedAll = false;
+      }
+      std::string finishError;
+      const bool finished = probe.finish(finishError);
+      rejected = !acceptedAll || !finished;
+    }
+    probe.abort();
+    check(rejected, "an unknown preset makes the encoder process fail");
+  }
   bool wroteAll = true;
   for (int index = 0; index < 30; ++index) {
     for (std::size_t pixel = 0; pixel < frame.size(); pixel += 4) {
