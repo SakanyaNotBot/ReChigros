@@ -77,10 +77,12 @@ double recordingEndPlayhead(const AppContext& context) {
   // music and the last note would keep drawing an outro for a chart whose notes stop early,
   // which is why a recording of a short chart came out seconds longer than its own audio.
   if (context.game.musicLoaded && context.game.musicDurationSec > 0.0) {
+    // The music is what ends the run, and the offsets only shift the chart inside it, so they
+    // must not stretch the recording: a calibrated offset is not extra song.
     return context.game.musicDurationSec;
   }
   // Without decodable music there is no playhead to stop on, so the last note is the only
-  // reference the run has left.
+  // reference the run has left, shifted by the same offsets the picture applies.
   const double chartEnd = context.game.chart != nullptr ? context.game.chart->chartEndTimeSec : 0.0;
   return std::max(0.0, chartEnd + recordingOffsetSec(context));
 }
@@ -655,9 +657,13 @@ void RecordSession::mixHitSounds(AppContext& context, std::vector<float>& mix,
                                                          : 0U;
     const auto& sound = banks[bank];
     if (sound.empty()) continue;
-    // The track advances at `speed`, so a note at chart time t is heard at t / speed.
+    // The picture shows a note when the playhead reaches its chart time plus the offsets, and the
+    // track advances at `speed`, so that playhead maps to this sample position. Omitting the
+    // offsets would sound every hit before or after the note it belongs to whenever the player
+    // has calibrated a non-zero offset.
+    const double playheadAtNote = note->sect + recordingOffsetSec(context);
     const auto startFrame = static_cast<std::int64_t>(
-        std::llround(note->sect / std::max(0.001, speed) * kAudioSampleRate));
+        std::llround(std::max(0.0, playheadAtNote) / std::max(0.001, speed) * kAudioSampleRate));
     if (startFrame < 0 || startFrame >= totalFrames) continue;
     const auto available = totalFrames - startFrame;
     const auto count = std::min<std::int64_t>(sound.frameCount(), available);
