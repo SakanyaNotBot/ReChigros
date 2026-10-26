@@ -950,14 +950,32 @@ void GameRenderer::Impl::drawHitEffects(const scene::StageLayout& layout,
       }
     }
     if (lineIndex < 0 || static_cast<std::size_t>(lineIndex) >= lineFrames.size()) continue;
+    // The burst has to be placed where the head was when it was hit, not where it is by the
+    // time the frame is drawn; an autoplay hit can be noticed a frame after the note's own time,
+    // and using the frame's state would slide the effect past the head.
+    scene::LineFrame judgedFrame = lineFrames[static_cast<std::size_t>(lineIndex)];
+    if (note->master != nullptr && burst.timeSec != input.chartTimeSec) {
+      const float stageAspect =
+          layout.stage.height > 1.0e-6F ? layout.stage.width / layout.stage.height : 16.0F / 9.0F;
+      const auto state = note->master->fillState(burst.timeSec, stageAspect);
+      judgedFrame.x = layout.stage.x + state.xNorm * layout.stage.width;
+      judgedFrame.y = layout.stage.y + state.yNorm * layout.stage.height;
+      judgedFrame.rotateDeg = state.rotateDeg;
+      const double radians = static_cast<double>(state.rotateDeg) * 3.14159265358979323846 / 180.0;
+      judgedFrame.cosLine = static_cast<float>(std::cos(radians));
+      judgedFrame.sinLine = static_cast<float>(std::sin(radians));
+      judgedFrame.floorPosition = state.floorPosition;
+      judgedFrame.bpm = note->master->bpm > 0.0 ? note->master->bpm : 120.0;
+      judgedFrame.valid = true;
+      judgedFrame.renderable = true;
+    }
     scene::NotePassParams poseParams;
-    poseParams.chartTimeSec = input.chartTimeSec;
+    poseParams.chartTimeSec = burst.timeSec;
     poseParams.stageWidth = layout.stage.width;
     poseParams.stageHeight = layout.stage.height;
     poseParams.scrollSpeed = input.scrollSpeed;
     poseParams.officialFormat = chart->formatVersion > 0;
-    const scene::NoteHeadPose pose =
-        scene::noteHeadPose(*note, lineFrames[static_cast<std::size_t>(lineIndex)], poseParams);
+    const scene::NoteHeadPose pose = scene::noteHeadPose(*note, judgedFrame, poseParams);
     if (!pose.valid) continue;
     hitEffects.spawnHoldHead(*chart, burst, input.chartTimeSec, input.visualTimeSec, pose.x,
         pose.y, pose.rotationDeg, noteWidth, musicSpeed);
