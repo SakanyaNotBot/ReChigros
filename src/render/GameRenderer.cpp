@@ -268,7 +268,16 @@ struct GameRenderer::Impl {
   void refreshHoldSheet();
   void prepareForChart(game::Chart* chart);
   void drawBackgroundPass(const scene::StageLayout& layout, float artworkAlpha, float dimAlpha,
-      float sideArtworkAlpha, float sideDimAlpha, bool opening);
+      float sideArtworkAlpha, float sideDimAlpha, bool opening, bool deferSideColumns);
+  // The fixed side columns of a letterboxed stage. They are a separate pass because one level
+  // draws a canvas larger than the play field: those columns have to end up above it, not
+  // underneath, so they are painted after the level's own objects instead of with the backdrop.
+  void drawSideColumns(const scene::StageLayout& layout, const gl::Texture* artwork,
+      float sideArtworkAlpha, float sideDimAlpha);
+  // True while the Desultory Signals grid canvas is on screen; its canvas is wider than the
+  // play field, so the fixed columns are repainted over it.
+  [[nodiscard]] bool dsGridCanvasVisible(const RenderFrameInput& input,
+      const game::Chart* chart) const;
   void drawLinePass(const RenderFrameInput& input, game::Chart* chart,
       const game::JudgementEngine* judgement, const scene::StageLayout& layout);
   void drawNotePasses(const scene::StageLayout& layout, const RenderFrameInput& input,
@@ -592,8 +601,82 @@ scene::LineTint GameRenderer::Impl::lineTintFor(const RenderFrameInput& input,
       : scene::LineTint{254.0F / 255.0F, 1.0F, 169.0F / 255.0F, 1.0F};
 }
 
+void GameRenderer::Impl::drawSideColumns(const scene::StageLayout& layout,
+    const gl::Texture* artwork, float sideArtworkAlpha, float sideDimAlpha) {
+  if (!layout.hasSideBlanks) return;
+  const auto& stage = layout.stage;
+  const auto projection = layout.projection();
+  const float leftWidth = std::max(0.0F, stage.x);
+  const float rightX = std::min(layout.viewWidth, stage.right());
+  const float rightWidth = std::max(0.0F, layout.viewWidth - rightX);
+  const auto drawSolid = [&](const math::Rect& rect, float alpha) {
+    if (alpha <= 0.001F || rect.empty()) return;
+    batch.begin();
+    batch.addQuadTopLeft(rect.x, rect.y, rect.width, rect.height, 0.0F, 0.0F, 0.0F, alpha, 0.0F,
+        0.0F, 1.0F, 1.0F);
+    batch.flush(projection, textures.white(), nullptr);
+  };
+  const auto drawColumn = [&](float x, float columnWidth) {
+    if (columnWidth <= 0.5F) return;
+    const math::Rect band{x, stage.y, columnWidth, stage.height};
+    if (artwork != nullptr && sideArtworkAlpha > 0.001F) {
+      // The blurred texture already holds the full-view cover crop; the band shows the
+      // corresponding slice of the same full-width background.
+      const float textureAspect = static_cast<float>(artwork->width()) /
+          std::max(1.0F, static_cast<float>(artwork->height()));
+      const float destinationWidth = layout.viewWidth;
+      const float destinationHeight = stage.height;
+      const float destinationAspect = destinationWidth / std::max(1.0F, destinationHeight);
+      float drawWidth = destinationWidth;
+      float drawHeight = destinationHeight;
+      if (textureAspect > destinationAspect) {
+        drawWidth = destinationHeight * textureAspect;
+      } else {
+        drawHeight = destinationWidth / textureAspect;
+      }
+      const float drawX = (destinationWidth - drawWidth) * 0.5F;
+      const float drawY = stage.y + (destinationHeight - drawHeight) * 0.5F;
+      const float left = std::max(drawX, band.left());
+      const float top = std::max(drawY, band.top());
+      const float right = std::min(drawX + drawWidth, band.right());
+      const float bottom = std::min(drawY + drawHeight, band.bottom());
+      if (right > left + 0.5F && bottom > top + 0.5F) {
+        const float u0 = (left - drawX) / drawWidth;
+        const float u1 = (right - drawX) / drawWidth;
+        const float v0 = (top - drawY) / drawHeight;
+        const float v1 = (bottom - drawY) / drawHeight;
+        batch.begin();
+        batch.addQuadTopLeft(left, top, right - left, bottom - top, 1.0F, 1.0F, 1.0F,
+            sideArtworkAlpha, u0, v0, u1, v1);
+        batch.flush(projection, *artwork, nullptr);
+      }
+    }
+    drawSolid(band, sideDimAlpha);
+  };
+  if (stage.y > 0.5F) {
+    drawSolid(math::Rect{0.0F, 0.0F, leftWidth, stage.y}, 1.0F);
+    drawSolid(math::Rect{rightX, 0.0F, rightWidth, stage.y}, 1.0F);
+  }
+  const float bottom = stage.bottom();
+  if (bottom < layout.viewHeight - 0.5F) {
+    drawSolid(math::Rect{0.0F, bottom, leftWidth, layout.viewHeight - bottom}, 1.0F);
+    drawSolid(math::Rect{rightX, bottom, rightWidth, layout.viewHeight - bottom}, 1.0F);
+  }
+  drawColumn(0.0F, leftWidth);
+  drawColumn(rightX, rightWidth);
+}
+
+bool GameRenderer::Impl::dsGridCanvasVisible(const RenderFrameInput& input,
+    const game::Chart* chart) const {
+  if (chart == nullptr || chart->levelEffects == nullptr) return false;
+  const auto& effect = *chart->levelEffects;
+  if (effect.effectName() != "DesultorySignalsLevelEffects") return false;
+  return effect.track("gridOpacity", static_cast<float>(input.chartTimeSec)) > 0.001F;
+}
+
 void GameRenderer::Impl::drawBackgroundPass(const scene::StageLayout& layout, float artworkAlpha,
-    float dimAlpha, float sideArtworkAlpha, float sideDimAlpha, bool opening) {
+    float dimAlpha, float sideArtworkAlpha, float sideDimAlpha, bool opening,
+    bool deferSideColumns) {
   const auto& stage = layout.stage;
   const auto projection = layout.projection();
 
@@ -649,34 +732,9 @@ void GameRenderer::Impl::drawBackgroundPass(const scene::StageLayout& layout, fl
 
   // Fixed side columns: the reference draws the blurred artwork clipped to each band and
   // then a fixed dark overlay, independent of the background-dim setting. The areas above
-  // and below the play field inside a band stay black.
-  if (layout.hasSideBlanks) {
-    const float leftWidth = std::max(0.0F, stage.x);
-    const float rightX = std::min(layout.viewWidth, stage.right());
-    const float rightWidth = std::max(0.0F, layout.viewWidth - rightX);
-    const auto drawColumn = [&](float x, float columnWidth) {
-      if (columnWidth <= 0.5F) return;
-      const math::Rect band{x, stage.y, columnWidth, stage.height};
-      if (artworkTexture != nullptr && sideArtworkAlpha > 0.001F) {
-        // The blurred texture already holds the full-view cover crop; the band shows the
-        // corresponding slice of the same full-width background.
-        drawCover(*artworkTexture, 0.0F, stage.y, layout.viewWidth, stage.height,
-            sideArtworkAlpha, band);
-      }
-      drawSolid(band, sideDimAlpha);
-    };
-    if (stage.y > 0.5F) {
-      drawSolid(math::Rect{0.0F, 0.0F, leftWidth, stage.y}, 1.0F);
-      drawSolid(math::Rect{rightX, 0.0F, rightWidth, stage.y}, 1.0F);
-    }
-    const float bottom = stage.bottom();
-    if (bottom < layout.viewHeight - 0.5F) {
-      drawSolid(math::Rect{0.0F, bottom, leftWidth, layout.viewHeight - bottom}, 1.0F);
-      drawSolid(math::Rect{rightX, bottom, rightWidth, layout.viewHeight - bottom}, 1.0F);
-    }
-    drawColumn(0.0F, leftWidth);
-    drawColumn(rightX, rightWidth);
-  }
+  // and below the play field inside a band stay black. A level whose canvas is wider than the
+  // play field repaints them after its own objects, so this pass can leave them out.
+  if (!deferSideColumns) drawSideColumns(layout, artworkTexture, sideArtworkAlpha, sideDimAlpha);
 
   // Play field backdrop: the artwork is drawn with the intro/outro transmission over the
   // black clear, then the stage dim overlay covers it. The chart-reveal ring is painted
@@ -1565,12 +1623,22 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
   const float sideDimAlpha = scene::sideDimAlpha(introStarted, introMix, input.transition.inOutro,
       input.transition.outroElapsedSec);
   const bool opening = !introStarted || input.transition.introLineScale < 0.999F;
-  drawBackgroundPass(sceneLayout, artworkAlpha, dimAlpha, sideArtworkAlpha, sideDimAlpha, opening);
+  // A level whose canvas covers more than the play field has to have the fixed side columns
+  // painted on top of it, so the backdrop leaves them for after the level's own objects.
+  const bool deferSideColumns = sceneLayout.hasSideBlanks && dsGridCanvasVisible(revealInput, chart);
+  drawBackgroundPass(sceneLayout, artworkAlpha, dimAlpha, sideArtworkAlpha, sideDimAlpha, opening,
+      deferSideColumns);
   gl::logErrors("scene.background");
 
   // A level effect may draw its own objects between the backdrop and the play field.
   drawLevelEffectObjects(chart, revealInput, sceneLayout);
   gl::logErrors("scene.levelObjects");
+  if (deferSideColumns) {
+    // The same blurred copy the backdrop uses, so the band keeps matching the play field.
+    drawSideColumns(sceneLayout, backgroundBlur.ensure(width, height, background),
+        sideArtworkAlpha, sideDimAlpha);
+    gl::logErrors("scene.sideColumns");
+  }
 
   if (chart != nullptr) {
     lineFrames.clear();
