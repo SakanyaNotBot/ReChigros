@@ -220,6 +220,8 @@ void applyPracticeSeek(AppContext& context, double targetChartTime) {
   game.smoothClockValid = true;
   game.smoothedPlayheadSec = game.playheadSec;
   game.lastCounts[0] = game.lastCounts[1] = game.lastCounts[2] = game.lastCounts[3] = 0;
+  // The animated readout follows the position; a seek replaces it, so it restarts there.
+  if (context.renderer != nullptr) context.renderer->resetHudDisplay();
 }
 
 void dispatchRecordedTouches(AppContext& context) {

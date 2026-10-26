@@ -437,26 +437,18 @@ float comboLabelOutroAlpha(float outroProgress) noexcept {
 
 namespace {
 
-// Score and accuracy catch-up state; only active when the score-jump effect is on.
-struct ScoreDisplayState {
-  double displayScore{std::numeric_limits<double>::quiet_NaN()};
-  double displayAccuracy{std::numeric_limits<double>::quiet_NaN()};
-  double lastUpdateSec{-1.0};
-};
-
-ScoreDisplayState& scoreDisplayState() {
-  static ScoreDisplayState state;
-  return state;
-}
+// The reference advances the displayed values by the elapsed wall time divided by a fixed
+// catch-up window, saturating at one window per frame so a long frame cannot overshoot.
+constexpr double kScoreDisplayCatchUpSec = 0.050;
 
 } // namespace
 
 double approachDisplayValue(double current, double target, double deltaMs) noexcept {
   if (!std::isfinite(target)) return std::numeric_limits<double>::quiet_NaN();
   if (!std::isfinite(current)) return target;
-  // The step is the elapsed fraction of the catch-up window, saturating at one frame's
+  // The step is the elapsed fraction of the catch-up window, saturating at one window's
   // worth so a long frame cannot overshoot the target.
-  double factor = deltaMs / 50.0;
+  double factor = deltaMs / (kScoreDisplayCatchUpSec * 1000.0);
   if (!std::isfinite(factor) || factor < 0.0) factor = 0.0;
   if (factor > 1.0) factor = 1.0;
   const double next = current + (target - current) * factor;
@@ -466,36 +458,47 @@ double approachDisplayValue(double current, double target, double deltaMs) noexc
 
 namespace {
 
-// Advances the displayed score/accuracy and returns the values to draw.
-void updateDisplayValues(const HudValues& values, int& scoreOut, int& accuracyHundredthsOut) {
-  ScoreDisplayState& state = scoreDisplayState();
-  double deltaMs = 50.0;
-  if (std::isfinite(values.visualTimeSec)) {
-    if (state.lastUpdateSec >= 0.0 && values.visualTimeSec >= state.lastUpdateSec) {
-      deltaMs = (values.visualTimeSec - state.lastUpdateSec) * 1000.0;
-    }
-    state.lastUpdateSec = values.visualTimeSec;
+// Advances the displayed score/accuracy and returns the values to draw. The state lives in
+// the caller's HudValues so it is per-run: a previous run's displayed score must not carry
+// over into the next one's first frame.
+void updateHudDisplayValues(HudValues& values, int& scoreOut, int& accuracyHundredthsOut) {
+  if (values.displayReset) {
+    values.displayScore = std::numeric_limits<double>::quiet_NaN();
+    values.displayAccuracy = std::numeric_limits<double>::quiet_NaN();
+    values.displayLastUpdateSec = -1.0;
+    values.displayReset = false;
   }
+  double deltaMs = kScoreDisplayCatchUpSec * 1000.0;
+  if (std::isfinite(values.visualTimeSec)) {
+    if (values.displayLastUpdateSec >= 0.0 && values.visualTimeSec >= values.displayLastUpdateSec) {
+      deltaMs = (values.visualTimeSec - values.displayLastUpdateSec) * 1000.0;
+    }
+    values.displayLastUpdateSec = values.visualTimeSec;
+  }
+  // The reference clamps the frame delta to one catch-up window; a paused frame or a seek
+  // must not fast-forward the readout.
+  if (!std::isfinite(deltaMs) || deltaMs < 0.0) deltaMs = kScoreDisplayCatchUpSec * 1000.0;
+  if (deltaMs > 100.0) deltaMs = 100.0;
 
   const int scoreTarget = std::clamp(values.score, 0, 1000000);
   const double accuracyTarget = values.showAccuracy ? values.accuracy
                                                     : std::numeric_limits<double>::quiet_NaN();
 
   if (!values.scoreJumpEffect) {
-    state.displayScore = static_cast<double>(scoreTarget);
-    state.displayAccuracy = accuracyTarget;
+    values.displayScore = static_cast<double>(scoreTarget);
+    values.displayAccuracy = accuracyTarget;
   } else {
-    state.displayScore = approachDisplayValue(state.displayScore, static_cast<double>(scoreTarget),
-        deltaMs);
-    state.displayAccuracy = approachDisplayValue(state.displayAccuracy, accuracyTarget, deltaMs);
+    values.displayScore = approachDisplayValue(values.displayScore,
+        static_cast<double>(scoreTarget), deltaMs);
+    values.displayAccuracy = approachDisplayValue(values.displayAccuracy, accuracyTarget, deltaMs);
   }
 
-  const int displayScore = std::isfinite(state.displayScore)
-      ? std::clamp(static_cast<int>(std::lround(state.displayScore)), 0, 1000000)
+  const int displayScore = std::isfinite(values.displayScore)
+      ? std::clamp(static_cast<int>(std::lround(values.displayScore)), 0, 1000000)
       : scoreTarget;
   int hundredths = 0;
-  if (std::isfinite(state.displayAccuracy)) {
-    hundredths = static_cast<int>(std::lround(state.displayAccuracy * 100.0));
+  if (std::isfinite(values.displayAccuracy)) {
+    hundredths = static_cast<int>(std::lround(values.displayAccuracy * 100.0));
   } else if (std::isfinite(values.accuracy)) {
     hundredths = static_cast<int>(std::lround(values.accuracy * 100.0));
   }
@@ -813,8 +816,13 @@ float hudY(const StageLayout& layout, float uiY) noexcept {
   return layout.centerY() - uiY * hudUnit(layout);
 }
 
+void updateHudDisplayValuesForTest(HudValues& values, int& scoreOut,
+    int& accuracyHundredthsOut) {
+  updateHudDisplayValues(values, scoreOut, accuracyHundredthsOut);
+}
+
 void drawHud(batch::SpriteBatch& batch, text::TextRenderer& text, const StageLayout& layout,
-    const HudValues& values, const HudColors& colors, const HudTextures& textures,
+    HudValues& values, const HudColors& colors, const HudTextures& textures,
     const HudTransforms& transforms, const HudHitOffset& hitOffset, float alpha,
     const math::Mat4& projection) {
   if (!(alpha > 0.001F) || !text.ready()) return;
@@ -896,7 +904,7 @@ void drawHud(batch::SpriteBatch& batch, text::TextRenderer& text, const StageLay
 
   int displayScore = values.score;
   int accuracyHundredths = static_cast<int>(std::lround(values.accuracy * 100.0));
-  updateDisplayValues(values, displayScore, accuracyHundredths);
+  updateHudDisplayValues(values, displayScore, accuracyHundredths);
 
   const float textAlpha = colors.textA * alpha;
   const float bottomTextYOffset = kBottomTextYFixAt1080 * layout.stage.height / 1080.0F;

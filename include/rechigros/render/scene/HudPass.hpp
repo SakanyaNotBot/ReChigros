@@ -4,6 +4,7 @@
 #include "rechigros/render/scene/StageLayout.hpp"
 
 #include <array>
+#include <limits>
 #include <string>
 
 namespace rechigros::render::batch { class SpriteBatch; }
@@ -72,6 +73,16 @@ struct HudValues {
   bool showCombo{true};
   // Optional catch-up animation of the score and accuracy readouts.
   bool scoreJumpEffect{false};
+  // Displayed (animated) score and accuracy, owned by the caller so a fresh run starts from a
+  // clean slate instead of inheriting the previous run's display. The renderer carries them
+  // from frame to frame; both are NaN when the display is not yet primed, which the pass reads
+  // as "start at the target".
+  double displayScore{std::numeric_limits<double>::quiet_NaN()};
+  double displayAccuracy{std::numeric_limits<double>::quiet_NaN()};
+  // Clock the display values were last advanced with; negative when not yet started.
+  double displayLastUpdateSec{-1.0};
+  // Set when the display state must be discarded before the next advance (new run, seek).
+  bool displayReset{};
   // Normalised progress of the 40-frame start and exit animations (1 and 0 when idle).
   float introProgress{1.0F};
   float outroProgress{0.0F};
@@ -146,8 +157,12 @@ inline constexpr float kComboLabelUiY = 405.0F;
 // button and progress bar, song title bottom-left, difficulty bottom-right, score
 // top-right, optional accuracy, and the centre combo number/label. `alpha` scales the
 // whole overlay. Each string owns its own texture, so quads are flushed per string.
+// Advances the animated score/accuracy readout one frame and reports the values to draw. It is
+// public so the catch-up curve can be checked without a graphics device.
+void updateHudDisplayValuesForTest(HudValues& values, int& scoreOut, int& accuracyHundredthsOut);
+
 void drawHud(batch::SpriteBatch& batch, text::TextRenderer& text, const StageLayout& layout,
-    const HudValues& values, const HudColors& colors, const HudTextures& textures,
+    HudValues& values, const HudColors& colors, const HudTextures& textures,
     const HudTransforms& transforms, const HudHitOffset& hitOffset, float alpha,
     const math::Mat4& projection);
 

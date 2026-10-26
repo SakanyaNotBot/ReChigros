@@ -182,6 +182,10 @@ public:
   // subset of the material settings; fields it leaves out keep the built-in value. Passing
   // an empty path clears the skin and restores the built-in values.
   void setSkinDirectory(const std::filesystem::path& skinDirectory);
+  // Discards the animated score/accuracy readout so the next frame starts it over. A seek
+  // replaces the run's position outright, so the displayed value has to follow it instead of
+  // sliding toward it from wherever the previous position left it.
+  void resetHudDisplay();
   // Selects the chart illustration used as the play-field backdrop (and for the fixed side
   // panels). An empty or unreadable path keeps the built-in backdrop.
   void setBackgroundImage(const std::filesystem::path& image);

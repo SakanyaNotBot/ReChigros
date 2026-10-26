@@ -34,6 +34,66 @@ bool close(float first, float second, float epsilon = 1.0e-4F) {
 int main() {
   using namespace rechigros::render::scene;
 
+  // --- animated score readout --------------------------------------------------
+  // The displayed score and accuracy are owned by the frame input, so a new run starts from a
+  // clean slate. They are advanced by the elapsed clock over a fixed catch-up window, which is
+  // what makes the digits slide instead of jumping; with the effect off they follow the target
+  // exactly. The reset flag is what a seek or a fresh run sets.
+  {
+    HudValues values;
+    values.scoreJumpEffect = true;
+    values.score = 1000000;
+    values.accuracy = 1.0;
+    values.showAccuracy = true;
+    values.visualTimeSec = 0.0;
+    int score = 0;
+    int hundredths = 0;
+
+    // The first frame primes the display at the target rather than sliding up from zero.
+    updateHudDisplayValuesForTest(values, score, hundredths);
+    require(score == 1000000, "an unprimed readout starts at the target");
+    require(hundredths == 100, "an unprimed accuracy starts at the target");
+
+    // A later frame with the same target stays there.
+    values.visualTimeSec = 0.5;
+    updateHudDisplayValuesForTest(values, score, hundredths);
+    require(score == 1000000, "a steady target holds the readout");
+
+    // A jump to a lower target moves part of the way, not all of it: the step is the elapsed
+    // time over a 50 ms catch-up window, so a 60 Hz frame covers a third of the remaining gap.
+    values.score = 0;
+    values.accuracy = 0.5;
+    values.visualTimeSec = 0.5 + 1.0 / 60.0;
+    updateHudDisplayValuesForTest(values, score, hundredths);
+    require(score == 666667,
+        "one 60 Hz frame covers a third of the remaining gap toward the target");
+    require(hundredths == 83, "the accuracy readout follows the same catch-up");
+    // After enough frames it converges.
+    for (int frame = 0; frame < 60; ++frame) {
+      values.visualTimeSec += 1.0 / 60.0;
+      updateHudDisplayValuesForTest(values, score, hundredths);
+    }
+    require(score == 0, "the readout converges on the target");
+    require(hundredths == 50, "the accuracy readout converges on the target");
+
+    // The reset flag discards the state, so the next frame starts at the new target instead
+    // of sliding toward it from the previous run's value.
+    values.score = 500000;
+    values.accuracy = 1.0;
+    values.displayReset = true;
+    values.visualTimeSec += 1.0 / 60.0;
+    updateHudDisplayValuesForTest(values, score, hundredths);
+    require(score == 500000, "a reset readout starts at the new target");
+    require(hundredths == 100, "a reset accuracy starts at the new target");
+
+    // With the effect off the readout is the target, with no lag at all.
+    values.scoreJumpEffect = false;
+    values.score = 123456;
+    values.visualTimeSec += 1.0 / 60.0;
+    updateHudDisplayValuesForTest(values, score, hundredths);
+    require(score == 123456, "the effect being off shows the target directly");
+  }
+
   // --- intro line curve -------------------------------------------------------
   require(close(introLineScale(0.0F), 0.0F), "intro curve starts at zero");
   require(close(introLineScale(1.0F), 1.0F), "intro curve ends at one");

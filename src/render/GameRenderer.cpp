@@ -170,6 +170,12 @@ struct GameRenderer::Impl {
   fx::BlockedComboField blockedComboLabel;
   // Visual clock of the previous frame, so the Ametrine ramp advances by a real delta.
   double ametrineLastSec{-1.0};
+  // Displayed score and accuracy of the catch-up readout, carried across frames and reset when
+  // a run starts or seeks. NaN means "not primed yet".
+  double hudDisplayScore{std::numeric_limits<double>::quiet_NaN()};
+  double hudDisplayAccuracy{std::numeric_limits<double>::quiet_NaN()};
+  double hudDisplayLastUpdateSec{-1.0};
+  bool hudDisplayReset{true};
   fx::PauseBackdropPass pauseBackdrop;
   scene::BackgroundBlur backgroundBlur;
   scene::PauseHudBlur pauseHudBlur;
@@ -537,6 +543,11 @@ void GameRenderer::Impl::prepareForChart(game::Chart* chart) {
   badSpawned.clear();
   hitEffects.clear();
   clickEffects.reset();
+  // A new chart starts the readout from zero rather than from the previous chart's value.
+  hudDisplayScore = std::numeric_limits<double>::quiet_NaN();
+  hudDisplayAccuracy = std::numeric_limits<double>::quiet_NaN();
+  hudDisplayLastUpdateSec = -1.0;
+  hudDisplayReset = true;
   // The level mod's ramp and challenge state belong to one chart; a switch starts over.
   ametrineLastSec = -1.0;
   if (chart->levelEffects != nullptr) chart->levelEffects->resetChallenge();
@@ -1105,6 +1116,12 @@ void GameRenderer::Impl::drawHudPass(const RenderFrameInput& input,
   values.revealScale = input.hud.revealScale;
   values.fps = input.hud.fps;
   values.showFps = input.hud.showFps;
+  // The catch-up readout carries over between frames, so the state lives here rather than in
+  // the pass; a new chart starts it over, which is what a fresh run shows.
+  values.displayScore = hudDisplayScore;
+  values.displayAccuracy = hudDisplayAccuracy;
+  values.displayLastUpdateSec = hudDisplayLastUpdateSec;
+  values.displayReset = hudDisplayReset;
   // A failed level challenge replaces the combo readouts with the distorted block pattern,
   // so the plain widgets are suppressed while that state is up.
   if (chart != nullptr && chart->levelEffects != nullptr) {
@@ -1187,6 +1204,11 @@ void GameRenderer::Impl::drawHudPass(const RenderFrameInput& input,
   scene::drawHud(batch, text, layout, values, colors, hudTextures, transforms, hitOffset,
       hudAlpha,
       layout.projection());
+  // The pass advanced the readout; keep the state for the next frame.
+  hudDisplayScore = values.displayScore;
+  hudDisplayAccuracy = values.displayAccuracy;
+  hudDisplayLastUpdateSec = values.displayLastUpdateSec;
+  hudDisplayReset = false;
 
   // A failed challenge replaces the combo readout with the distorted block field, drawn at
   // the same anchor the number would occupy.
@@ -1860,6 +1882,13 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
     bindDefaultBlend();
     gl::logErrors("scene.antialias");
   }
+}
+
+void GameRenderer::resetHudDisplay() {
+  impl_->hudDisplayScore = std::numeric_limits<double>::quiet_NaN();
+  impl_->hudDisplayAccuracy = std::numeric_limits<double>::quiet_NaN();
+  impl_->hudDisplayLastUpdateSec = -1.0;
+  impl_->hudDisplayReset = true;
 }
 
 void GameRenderer::setSkinDirectory(const std::filesystem::path& skinDirectory) {
