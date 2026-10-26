@@ -170,16 +170,36 @@ float OfficialLevelEffects::evaluateTrack(const std::vector<LevelEffectKey>& key
   return static_cast<float>(a + (b - a) * eased);
 }
 
+namespace {
+// Null until the application installs one; the plain file path below covers a desktop tree.
+OfficialLevelEffects::AssetReader& assetReader() {
+  static OfficialLevelEffects::AssetReader reader;
+  return reader;
+}
+} // namespace
+
+void OfficialLevelEffects::setAssetReader(AssetReader reader) {
+  assetReader() = std::move(reader);
+}
+
 std::shared_ptr<const OfficialLevelEffects> OfficialLevelEffects::load(
     const std::filesystem::path& assetRoot) {
-  // The table lives beside the executable rather than inside a chart pack, so it is read
-  // directly from the asset root.
-  std::ifstream input(assetRoot / "official_effects" / "chapter9_phase2.json",
-      std::ios::binary);
-  if (!input) return nullptr;
-  std::ostringstream buffer;
-  buffer << input.rdbuf();
-  const auto text = buffer.str();
+  constexpr std::string_view kRelative = "official_effects/chapter9_phase2.json";
+  std::string text;
+  // The asset reader is the only way to reach a packaged asset; the file open below is the
+  // fallback for a tree whose assets are ordinary files.
+  if (assetReader()) {
+    const auto bytes = assetReader()(assetRoot, kRelative);
+    text.assign(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+  }
+  if (text.empty()) {
+    std::ifstream input(assetRoot / "official_effects" / "chapter9_phase2.json",
+        std::ios::binary);
+    if (!input) return nullptr;
+    std::ostringstream buffer;
+    buffer << input.rdbuf();
+    text = buffer.str();
+  }
   if (text.empty()) return nullptr;
   const auto root = json::parse(text, nullptr, false);
   if (root.is_discarded() || !root.is_object()) return nullptr;

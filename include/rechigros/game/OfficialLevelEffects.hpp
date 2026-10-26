@@ -4,8 +4,10 @@
 
 #include <array>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -40,6 +42,14 @@ struct LevelEffectSlashKey {
 // whitelist) or, failing that, by its song name.
 class OfficialLevelEffects final {
 public:
+  // Reads one asset and returns its bytes, or an empty vector. A packaged platform keeps its
+  // assets inside the application package, which an ordinary file stream cannot open, so the
+  // application installs a reader that goes through the platform's asset access. Without one
+  // the table is read as a plain file, which is what an unpacked desktop tree needs.
+  using AssetReader = std::function<std::vector<std::uint8_t>(
+      const std::filesystem::path& assetRoot, std::string_view relativePath)>;
+  static void setAssetReader(AssetReader reader);
+
   // Loads the shared JSON file. Returns null when it is missing or unreadable.
   static std::shared_ptr<const OfficialLevelEffects> load(
       const std::filesystem::path& assetRoot);

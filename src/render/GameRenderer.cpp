@@ -1610,8 +1610,13 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
         blockOverlay.drawAll(chart->blockAreaList, static_cast<float>(input.chartTimeSec), deltaSec,
             layout.stage.x, layout.stage.y, layout.stage.width, layout.stage.height, batch,
             layout.stageProjection(), textures.white());
+        // The touch feedback belongs to the same fallback as the silhouettes it sits on. The
+        // composite path lights the zone through its own shader, from the finger positions it
+        // is handed, so drawing the pulse there as well doubles the light -- and the pulse is
+        // sized from the zone, which for a tall zone is a screen-sized quad rather than a glow
+        // around the finger.
+        drawBlockedTouchPulses(input, layout, chart);
       }
-      drawBlockedTouchPulses(input, layout, chart);
       gl::logErrors("scene.blocks");
     }
     if (!input.transition.inOutro && input.showHitParticles) {

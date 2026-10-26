@@ -10,6 +10,7 @@
 #include "rechigros/app/UiStyle.hpp"
 #include "rechigros/app/UiText.hpp"
 #include "rechigros/audio/AudioEngine.hpp"
+#include "rechigros/game/OfficialLevelEffects.hpp"
 #include "rechigros/platform/AssetManager.hpp"
 #include "rechigros/platform/FileSystem.hpp"
 #include "rechigros/render/GameRenderer.hpp"
@@ -408,6 +409,13 @@ bool Application::initialize() {
   reportLaunchStage("GL context + ImGui", launchStage, launchFrequency);
   launchStage = launchMark();
   const auto assetRoot = platform::assetRoot();
+  // A packaged platform keeps its assets inside the application package, so the level-effect
+  // table has to be read through the platform's asset access rather than a file stream. This
+  // is installed before anything can load a chart.
+  game::OfficialLevelEffects::setAssetReader(
+      [](const std::filesystem::path& root, std::string_view relative) {
+        return platform::AssetManager::readBinary(root, relative);
+      });
   audio_ = std::make_unique<audio::AudioEngine>();
   audio_->initialize();
   reportLaunchStage("audio device", launchStage, launchFrequency);
