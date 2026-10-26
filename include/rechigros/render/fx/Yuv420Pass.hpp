@@ -46,8 +46,9 @@ private:
   // One single-channel target per plane, each with its own framebuffer.
   unsigned int planeTextures_[3]{};
   unsigned int planeFbos_[3]{};
-  // Reused row buffer for the vertical flip, so a recording does not allocate per frame.
-  std::vector<std::uint8_t> scratchRow_;
+  // One staging buffer per plane, so the three transfers can be started together and collected
+  // afterwards instead of each one waiting for the graphics device in turn.
+  unsigned int packBuffers_[3]{};
   int width_{};
   int height_{};
   bool ready_{};
