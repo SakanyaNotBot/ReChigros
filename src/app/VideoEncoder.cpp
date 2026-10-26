@@ -304,34 +304,37 @@ void VideoEncoder::abort() noexcept {
     return;
   }
   if (!active_) {
-    // A run that already failed left its child behind: the encoder process may have died on its
-    // own, so it is killed and collected here before the handle is dropped. Destroying a process
-    // handle without collecting it leaves the runtime bookkeeping half torn down, which is what
-    // turned a dead encoder into a crash of the whole application.
-    if (input_ != nullptr) {
-      SDL_CloseIO(static_cast<SDL_IOStream*>(input_));
-      input_ = nullptr;
-    }
+    // This run already failed, so the child is gone or going. It is collected first: closing the
+    // input stream while the reader still exists flushes into a pipe nobody drains, and closing it
+    // while another thread is inside a write is what corrupted the stream. Once the child is reaped
+    // there is no reader left, so the close below only releases the handle.
     if (process_ != nullptr) {
       auto* process = static_cast<SDL_Process*>(process_);
       SDL_KillProcess(process, true);
       int exitCode = -1;
       SDL_WaitProcess(process, true, &exitCode);
-      SDL_DestroyProcess(process);
+    }
+    if (input_ != nullptr) {
+      SDL_CloseIO(static_cast<SDL_IOStream*>(input_));
+      input_ = nullptr;
+    }
+    if (process_ != nullptr) {
+      SDL_DestroyProcess(static_cast<SDL_Process*>(process_));
       process_ = nullptr;
     }
     return;
   }
   auto* process = static_cast<SDL_Process*>(process_);
+  // The child is stopped before its pipe is closed, in that order: closing first would drain the
+  // pipe into a reader that is still alive, and the writer may be parked in it. Killing shortens
+  // that wait to the drain the encoder no longer needs to finish.
+  SDL_KillProcess(process, true);
+  int exitCode = -1;
+  SDL_WaitProcess(process, true, &exitCode);
   if (input_ != nullptr) {
     SDL_CloseIO(static_cast<SDL_IOStream*>(input_));
     input_ = nullptr;
   }
-  // Killing the process discards the partial file; waiting would block for as long as the
-  // encoder needs to drain frames the user no longer wants.
-  SDL_KillProcess(process, true);
-  int exitCode = -1;
-  SDL_WaitProcess(process, true, &exitCode);
   SDL_DestroyProcess(process);
   process_ = nullptr;
   active_ = false;
