@@ -1504,11 +1504,8 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       !chart->prprEffects.empty() && sceneFbo.valid();
   const bool useLowRes = input.lowResolutionMode && !useEffects && !useBlockComposite &&
       halfResFbo.valid();
-  // The pause overlay is resolved through the antialias pass whenever a menu is up, but not
-  // during the resume fade: the reference excludes that window explicitly, because the fade
-  // composites over an already resolved backdrop.
-  const bool pauseWantsAa = input.pause.mode != PauseMode::None
-      && input.pause.mode != PauseMode::FadeOut;
+  // The pause overlay is resolved through the antialias pass while it is up.
+  const bool pauseWantsAa = input.pause.mode != PauseMode::None;
   const bool useAa = input.antialias && (pauseWantsAa || useEffects || useLowRes)
       && aaFbo.valid();
   const unsigned int sceneTarget = useAa ? aaFbo.fbo() : targetFbo;
@@ -1812,10 +1809,8 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
     float flatten = scene::PAUSE_BACKDROP_FLATTEN;
     if (input.pause.mode == PauseMode::Menu) {
       alpha = scene::pauseBackdropIntroAlpha(input.pause.elapsedSec);
-    } else if (input.pause.mode == PauseMode::Countdown
-        || input.pause.mode == PauseMode::FadeOut) {
-      // The resume fade is the countdown backdrop retreating, so it uses the same curves. The
-      // two modes stay distinct because the antialias predicate treats them differently.
+    } else if (input.pause.mode == PauseMode::Countdown) {
+      // The resume countdown retreats the paused backdrop along its own curves.
       alpha = scene::resumeBackdropAlpha(input.pause.elapsedSec);
       brightness = scene::resumeBackdropBrightness(input.pause.elapsedSec);
       flatten = scene::resumeBackdropFlatten(input.pause.elapsedSec);

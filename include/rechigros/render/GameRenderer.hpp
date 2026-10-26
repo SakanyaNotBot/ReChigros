@@ -14,7 +14,9 @@ namespace rechigros::game { class Chart; class JudgementEngine; }
 namespace rechigros::render {
 
 // Pause overlay state owned by the application shell.
-enum class PauseMode { None, Menu, Countdown, FadeOut };
+// The pause overlay's state. The resume countdown ends the pause directly; there is no state
+// between "countdown finished" and "playing".
+enum class PauseMode { None, Menu, Countdown };
 
 // Everything the renderer needs that the chart itself does not carry. Every field
 // is defaulted, so the plain three-argument render() overload keeps working.
