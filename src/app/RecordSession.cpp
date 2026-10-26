@@ -326,7 +326,8 @@ bool RecordSession::step(AppContext& context) {
     input.multiPressHighlight = context.settings.multiPressHighlight;
     input.storyMode = context.settings.storyMode;
     input.chartReveal = context.settings.chartReveal;
-    input.showChartDebug = false;
+    // A play setting like the rest: the debug overlay is drawn when the player asked for it.
+    input.showChartDebug = context.settings.showDebugInfo;
     input.transition.inIntro = inIntro;
     input.transition.introLineScale = inIntro
         ? render::scene::introLineScale(
@@ -364,9 +365,17 @@ bool RecordSession::step(AppContext& context) {
     input.hud.showAccuracy = context.settings.realtimeAccuracy;
     input.hud.scoreJumpEffect = context.settings.scoreJumpEffect;
     input.hud.comboLabel = settings_.comboLabel.empty() ? "RECORD" : settings_.comboLabel;
-    input.hud.hitOffsetIndicatorMode = 0;
+    // The offset indicator follows the play setting, but stays suppressed for the same reason it
+    // is suppressed during an autoplay run: there is no hit offset to report when nothing is
+    // played by hand.
+    input.hud.hitOffsetIndicatorMode =
+        std::clamp(context.settings.hitOffsetIndicatorMode, 0, 2);
     input.hud.hitOffsetSuppressed = true;
-    input.hud.showFps = false;
+    // The frame counter is a play setting; forcing it off made the video disagree with the screen
+    // the player configured. A recording renders at a fixed rate, so that rate is what the counter
+    // reports -- the live counter measures draw speed, which an offscreen run does not have.
+    input.hud.showFps = context.settings.showFps;
+    input.hud.fps = static_cast<float>(settings_.fps);
     input.hud.visualTimeSec = elapsed;
     // The reveal camera shrinks the HUD along with the play field; the renderer resolves the
     // stage itself, so the values it needs for the HUD are computed here the same way.

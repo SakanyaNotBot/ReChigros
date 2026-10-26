@@ -324,7 +324,9 @@ bool updateRecording(AppContext& context) {
     // so the interface keeps drawing a progress bar instead of freezing for the whole video.
     if (recording.step(context)) return true;
     if (recording.state() == RecordSession::State::Finished) {
-      notify(context, "渲染完成：" + recording.outputPath().string());
+      // The path is shown in the interface, which draws UTF-8. A narrow path is in the local code
+      // page, so joining it here would show a mangled name for any folder outside ASCII.
+      notify(context, "渲染完成：" + platform::pathToUtf8(recording.outputPath()));
     } else if (recording.state() == RecordSession::State::Failed) {
       notify(context, "渲染失败：" + recording.error());
     }

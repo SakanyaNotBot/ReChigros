@@ -218,7 +218,7 @@ std::int64_t recordModifiedAt(const std::filesystem::path& root,
 
 std::string hashFile(const std::filesystem::path& file, std::uint64_t& sizeOut) {
   std::ifstream input(file, std::ios::binary);
-  if (!input) throw std::runtime_error("Cannot open package: " + file.string());
+  if (!input) throw std::runtime_error("Cannot open package: " + platform::pathToUtf8(file));
   std::uint64_t hash = 1469598103934665603ULL;
   std::uint64_t size = 0;
   std::array<char, 64 * 1024> buffer{};
