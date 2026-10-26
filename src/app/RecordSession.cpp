@@ -552,8 +552,10 @@ void RecordSession::failAndRelease(AppContext& context) noexcept {
   }
   queueFilled_.notify_all();
   queueSpace_.notify_all();
-  if (encoder_.active()) encoder_.abort();
+  // Joining first is what makes this safe: the writer notices the stop before its next write, so
+  // the encoder's streams are already untouched when they are closed.
   if (encoderThread_.joinable()) encoderThread_.join();
+  if (encoder_.active()) encoder_.abort();
   {
     std::lock_guard<std::mutex> guard(queueMutex_);
     frameQueue_.clear();
@@ -596,6 +598,9 @@ void RecordSession::encoderLoop() {
       }
       frame = std::move(frameQueue_.front());
       frameQueue_.pop_front();
+      // The producer may have signalled a stop while this thread was waking up; writing after
+      // that point would touch a stream the main thread is already tearing down.
+      if (encoderStop_) break;
     }
     queueSpace_.notify_one();
     const auto writeStart = std::chrono::steady_clock::now();

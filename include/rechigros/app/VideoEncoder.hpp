@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <atomic>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -80,6 +82,13 @@ public:
   [[nodiscard]] bool inputIsPlanar() const noexcept { return inputIsPlanar_; }
 
 private:
+  // The writer thread and the thread that closes the encoder both touch the child's pipes. Closing
+  // a stream while a write is inside it corrupts the stream's state, so those operations are
+  // serialised here rather than relying on the writer having stopped by then.
+  mutable std::mutex pipeMutex_;
+  // Set once the caller wants the encoder torn down. The write loop checks it so a blocking write
+  // can finish and return rather than being invalidated underneath by a stream close.
+  std::atomic<bool> closing_{false};
   void closePipes() noexcept;
   // Reads the tail of the encoder's error output, or an empty string when it said nothing.
   [[nodiscard]] std::string readDiagnostics() const;

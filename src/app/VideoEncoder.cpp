@@ -190,6 +190,8 @@ bool VideoEncoder::open(const Settings& settings, const std::filesystem::path& o
   }
   process_ = process;
   input_ = input;
+  // A fresh run clears the teardown request left by a previous one.
+  closing_.store(false, std::memory_order_release);
   active_ = true;
   return true;
 }
@@ -212,10 +214,23 @@ bool VideoEncoder::writeFrame(const std::vector<std::uint8_t>& pixels, std::stri
   }
   const auto* data = pixels.data();
   std::size_t remaining = pixels.size();
+  // Closing the stream from another thread invalidates it underneath this loop, so the whole write
+  // holds the pipe lock and re-reads the stream each pass.
+  std::lock_guard<std::mutex> pipeGuard(pipeMutex_);
   auto* stream = static_cast<SDL_IOStream*>(input_);
+  if (stream == nullptr) {
+    error = "the video encoder is no longer accepting frames";
+    return false;
+  }
   // The whole frame is handed over in one call. Splitting it into fixed-size pieces turned every
   // frame into a run of partial writes, and each of those costs the same regardless of its size.
   while (remaining > 0) {
+    // A teardown request stops the loop at a frame boundary instead of letting the writer keep
+    // pushing into a stream the caller is about to close.
+    if (closing_.load(std::memory_order_acquire)) {
+      error = "the video encoder was closed";
+      return false;
+    }
     const std::size_t written = SDL_WriteIO(stream, data, remaining);
     data += written;
     remaining -= written;
@@ -234,6 +249,7 @@ bool VideoEncoder::writeFrame(const std::vector<std::uint8_t>& pixels, std::stri
 }
 
 bool VideoEncoder::finish(std::string& error) {
+  std::lock_guard<std::mutex> pipeGuard(pipeMutex_);
   if (!active_) return true;
   if (platform_) {
     const bool ok = finishPlatform(error);
@@ -276,6 +292,11 @@ std::string VideoEncoder::readDiagnostics() const {
 }
 
 void VideoEncoder::abort() noexcept {
+  // The writer can be parked inside a blocking write while the child is gone. Waiting for the pipe
+  // lock here would keep the caller from ever joining that writer, so the lock is only taken when
+  // it is free; a write in flight then finishes on its own and the streams are dropped after it.
+  closing_.store(true, std::memory_order_release);
+  std::unique_lock<std::mutex> pipeGuard(pipeMutex_);
   if (platform_) {
     platformenc::abort();
     platform_ = false;
