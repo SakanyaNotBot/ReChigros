@@ -8,6 +8,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
@@ -101,6 +102,16 @@ public:
   [[nodiscard]] const std::vector<BlockedTouch>& blockedTouches() const noexcept {
     return blockedTouches_;
   }
+
+  // Receives the swallowed-finger edge. The audio duck and the effect chain both react to the
+  // transition rather than the level, and the session is the only place that knows the edge:
+  // the caller used to derive it from blockedTouches(), which is empty whenever no zone is
+  // authored, so a latch released by a lift was never reported and the two stayed out of step.
+  // The observer is called once per update with the new state; returning true asks the session
+  // to re-publish the current state on the next frame, which keeps an observer that attaches
+  // mid-run from missing the edge that is already in effect.
+  using BlockTouchObserver = std::function<void(bool touchingAnyBlock)>;
+  void setBlockTouchObserver(BlockTouchObserver observer);
   // Chart time the swallowed fingers were last confirmed, or -1 while none is held. The pulse
   // expands from this instant, and the reference re-stamps it every frame of the press.
   [[nodiscard]] double blockedTouchPulseSec() const noexcept { return blockedTouchPulseSec_; }
@@ -148,11 +159,22 @@ private:
   void settleHoldTails(double time);
   void detectMisses(double time);
   void updateBlocks(double time, float frameDeltaSec);
+  // Publishes the current swallowed-finger state to the audio filter and the effect chain.
+  // Runs on every path that can change it, including the early return taken when no zone is
+  // authored, because the falling edge is what the two listeners act on.
+  // Both react to the edge, not the level, so this runs once per frame from every path that
+  // can change it -- including the early return taken when no zone is authored.
+  void publishBlockTouchState(double time);
 
   Chart* chart_{};
   Viewport viewport_{};
   JudgementEngine judgement_{};
   std::unordered_map<std::int64_t, std::unique_ptr<Touch>> touches_;
+  BlockTouchObserver blockTouchObserver_;
+  // Last published swallowed state. Starts false so an observer attached before the first
+  // frame is not told about an edge that has not happened.
+  bool publishedBlockTouch_{};
+  bool blockTouchRepublish_{};
   std::size_t judgeCursor_{};
   bool challengeMode_{};
   bool autoplay_{};

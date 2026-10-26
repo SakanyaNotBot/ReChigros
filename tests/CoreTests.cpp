@@ -637,6 +637,69 @@ int main(){
       require(doubled.allNotesSorted[0]->judgeResult < 0,
           "a touch under an even subtract count judges nothing");
     }
+
+    // --- the swallowed-finger edge reaches its listeners on every path --------
+    // The audio duck and the level-mod latch act on the transition, not on the finger list.
+    // A caller comparing the list itself misses the falling edge in the one case that matters:
+    // a chart with no zone at all, where the list is empty every frame. The session therefore
+    // publishes the edge, and it has to publish a level on the first frame so an observer that
+    // attaches mid-run is not left believing a stale value.
+    {
+      auto chart = singleNoteChart(NOTE_TAP);
+      GameplaySession session;
+      session.setViewport(viewport);
+      session.setChart(&chart);
+      std::vector<bool> edges;
+      session.setBlockTouchObserver([&edges](bool touching) { edges.push_back(touching); });
+      session.update(0.5, 1.0F / 60.0F);
+      require(edges.size() == 1 && edges[0] == false,
+          "an observer attached before the first frame hears the resting level once");
+      session.update(0.6, 1.0F / 60.0F);
+      require(edges.size() == 1, "a steady level publishes no further edge");
+
+      // A zone that swallows a finger produces a rising edge, and lifting produces the
+      // falling one even though the zone list stays populated.
+      auto zoned = zonedChart({centralZone()});
+      GameplaySession zonedSession;
+      zonedSession.setViewport(viewport);
+      zonedSession.setChart(&zoned);
+      std::vector<bool> zonedEdges;
+      zonedSession.setBlockTouchObserver(
+          [&zonedEdges](bool touching) { zonedEdges.push_back(touching); });
+      zonedSession.update(0.5, 1.0F / 60.0F);
+      zonedSession.touchDown(1, 800.0F, 450.0F);
+      zonedSession.update(0.95, 1.0F / 60.0F);
+      require(zonedEdges.size() == 2 && zonedEdges[0] == false && zonedEdges[1] == true,
+          "a finger entering a zone raises the edge once");
+      zonedSession.touchUp(1);
+      zonedSession.update(0.96, 1.0F / 60.0F);
+      require(zonedEdges.size() == 3 && zonedEdges[2] == false,
+          "lifting the finger lowers the edge");
+    }
+
+    // --- autoplay never feeds a press into the judgement ----------------------
+    // An autoplay run plays itself; a real finger must not be able to claim a note, and it
+    // must not be latched inside a zone either. The same rule holds for replay playback,
+    // which applies recorded judgements instead of reading input at all.
+    {
+      auto chart = singleNoteChart(NOTE_TAP);
+      GameplaySession session;
+      session.setViewport(viewport);
+      session.setChart(&chart);
+      session.setAutoplay(true);
+      session.update(0.90, 1.0F / 60.0F);
+      // The note is already claimed by the autoplay cursor at its own time; a press arriving
+      // before that must not change anything about how it is judged.
+      session.touchDown(1, 800.0F, 450.0F);
+      session.update(0.95, 1.0F / 60.0F);
+      require(chart.allNotesSorted[0]->judgeResult < 0,
+          "a press does not judge a note an autoplay run has not reached yet");
+      session.update(1.0, 1.0F / 60.0F);
+      require(chart.allNotesSorted[0]->judgeResult == 0,
+          "the autoplay cursor judges the note at its own time");
+      require(session.blockedTouches().empty(),
+          "an autoplay run reports no swallowed finger");
+    }
   }
 
   std::cout<<"All ReChigros core tests passed\n";return 0;

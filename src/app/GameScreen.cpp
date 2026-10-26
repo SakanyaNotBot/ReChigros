@@ -1498,13 +1498,12 @@ void resetRunFeedbackState(AppContext& context) {
   }
 }
 
-// Ducks the music while a zone holds a finger and forwards the state to the level mod, acting
-// only on the transition: the audio filter ramps on its own, and the challenge state is a latch
-// that must not be re-sent every frame.
-void syncBlockTouchState(AppContext& context) {
+// Ducks the music while a zone holds a finger and forwards the state to the level mod. The
+// session reports the transition, so the two listeners hear every edge -- including the one
+// that ends a latch, which a caller-side comparison against the finger list cannot see when no
+// zone is authored at all.
+void applyBlockTouchState(AppContext& context, bool touching) {
   auto& game = context.game;
-  const bool touching = !game.session.blockedTouches().empty();
-  if (touching == gBlockAudioFilterOn) return;
   gBlockAudioFilterOn = touching;
   if (context.audio != nullptr) context.audio->setLowPassEnabled(touching);
   if (game.chart != nullptr && game.chart->levelEffects != nullptr) {
@@ -1594,6 +1593,10 @@ bool gameEnter(AppContext& context) {
   game.chartOffsetSec = game.chart->offset;
   game.session.setChart(game.chart.get(), game.challenge);
   game.session.setAutoplay(game.autoplay);
+  // The duck and the level-mod latch follow the session's own swallowed-finger edge. The
+  // context outlives the session, so capturing it is safe for the whole run.
+  game.session.setBlockTouchObserver(
+      [&context](bool touching) { applyBlockTouchState(context, touching); });
   game.session.judgement().setJudgementDetailDistribution(
       context.settings.judgementDetailDistribution);
   game.session.judgement().setReplayPlayback(context.play.replayMode);
@@ -1848,9 +1851,8 @@ void gameUpdate(AppContext& context, float frameDeltaSec) {
   for (const int type : game.session.takeSoundEvents()) {
     if (context.audio != nullptr) context.audio->triggerSoundEffect(type);
   }
-  // Both depend on state the session produced this frame: the audio duck follows the swallowed
-  // fingers, and the challenge latches on a note counted by this frame's judgement.
-  syncBlockTouchState(context);
+  // The audio duck and the level-mod latch were already driven by the session during the update
+  // above; the challenge counter still depends on this frame's judgement.
   syncLevelEffectChallenge(context);
 
   // The run ends when the music reaches the end of the track, and nothing else decides it: the
@@ -2102,6 +2104,10 @@ bool gamePointerDown(AppContext& context, std::int64_t pointerId, float x, float
   }
 
   if (game.replayPlayback) return false;
+  // An autoplay run plays itself. The press is dropped before it reaches the judgement, so a
+  // finger can neither claim a note nor be latched inside a zone; the pause control above is
+  // handled before this point and keeps working. Replay playback already returned above.
+  if (game.autoplay) return false;
   // Mirroring is applied before recording so a replay reproduces the same gameplay.
   x = mirrorTouchX(context, x);
   recordTouch(context, ReplayTouchEvent::Kind::Down, pointerId, x, y);
@@ -2114,7 +2120,7 @@ void gamePointerMove(AppContext& context, std::int64_t pointerId, float x, float
   auto& game = context.game;
   if (!game.loaded || game.finished || game.inOutro) return;
   if (game.pause != GameRuntime::Pause::None || game.inIntro) return;
-  if (game.replayPlayback) return;
+  if (game.replayPlayback || game.autoplay) return;
   x = mirrorTouchX(context, x);
   recordTouch(context, ReplayTouchEvent::Kind::Move, pointerId, x, y);
   game.session.touchMove(pointerId, x, y);
@@ -2125,7 +2131,7 @@ void gamePointerUp(AppContext& context, std::int64_t pointerId) {
   auto& game = context.game;
   if (!game.loaded) return;
   if (game.pause != GameRuntime::Pause::None) return;
-  if (game.replayPlayback) return;
+  if (game.replayPlayback || game.autoplay) return;
   recordTouch(context, ReplayTouchEvent::Kind::Up, pointerId, 0.0F, 0.0F);
   game.session.touchUp(pointerId);
   ++context.forwardedPointerEvents;

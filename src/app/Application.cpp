@@ -888,8 +888,20 @@ void Application::printBatchSummary() {
   const int resultFrames = screenFrameCounts_[static_cast<int>(Screen::Result)];
   const bool homeOnly = initialPath_.empty();
   const bool replayRun = !replayPlaybackPath_.empty();
-  bool chartRunPass = gameFrames >= 30 && app_->forwardedPointerEvents >= 3
-      && app_->totalNotesJudgedForBatch >= 1;
+  // A run that judges from input proves the synthetic presses reached the judgement. An
+  // autoplay run plays itself and a replay re-applies recorded judgements, so neither forwards
+  // a press into the session and neither has one to count.
+  const bool manualRun = !app_->game.autoplay && !app_->game.replayPlayback;
+  bool chartRunPass = gameFrames >= 30 && app_->totalNotesJudgedForBatch >= 1
+      && (!manualRun || app_->forwardedPointerEvents >= 3);
+  // A run that plays itself must not take a press into the judgement. The count is the only
+  // observable that separates "the press was ignored" from "the press was swallowed by a zone
+  // later on", so it is checked rather than inferred.
+  if (!manualRun && app_->forwardedPointerEvents != 0) {
+    std::cout << "autoplay: " << app_->forwardedPointerEvents
+              << " press(es) reached the judgement\n";
+    chartRunPass = false;
+  }
   if (expectPause_) {
     chartRunPass = chartRunPass && pauseMenuSeen_ && pauseCountdownSeen_ && pauseResumedSeen_;
   }

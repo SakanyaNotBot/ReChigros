@@ -297,6 +297,22 @@ std::vector<std::array<float, 2>> GameplaySession::blockedTouchPositions() const
   return positions;
 }
 
+void GameplaySession::setBlockTouchObserver(BlockTouchObserver observer) {
+  blockTouchObserver_ = std::move(observer);
+  // A new observer has missed every edge so far, so the next frame states the current one.
+  blockTouchRepublish_ = blockTouchObserver_ != nullptr;
+  publishedBlockTouch_ = false;
+}
+
+void GameplaySession::publishBlockTouchState(double time) {
+  (void)time;
+  const bool touching = !blockedTouches_.empty();
+  if (!blockTouchRepublish_ && touching == publishedBlockTouch_) return;
+  blockTouchRepublish_ = false;
+  publishedBlockTouch_ = touching;
+  if (blockTouchObserver_) blockTouchObserver_(touching);
+}
+
 void GameplaySession::updateBlocks(double time, float frameDeltaSec) {
   blockedTouches_.clear();
   // Zone state only feeds the per-finger touch block latch, so with no zone, or with no finger
@@ -305,6 +321,7 @@ void GameplaySession::updateBlocks(double time, float frameDeltaSec) {
   if (blocks_.empty() || touches_.empty()) {
     blockedTouchIds_.clear();
     blockedTouchPulseSec_ = -1.0;
+    publishBlockTouchState(time);
     return;
   }
   const auto view = stage();
@@ -347,6 +364,7 @@ void GameplaySession::updateBlocks(double time, float frameDeltaSec) {
   } else {
     blockedTouchPulseSec_ = time;
   }
+  publishBlockTouchState(time);
 }
 
 void GameplaySession::updateChallengeTiming(float delta) noexcept {
