@@ -344,6 +344,34 @@ int main(){
     require(replayBursts>0,"a replayed hold still produces body feedback");
   }
 
+  // --- autoplay hold feedback: head at the note time, body on the half-beat grid ------
+  {
+    // The head burst must be stamped at the note's own time, and the first body burst must land
+    // one half-beat interval after the head rather than on the same frame: the two are separate
+    // sources, and collapsing them is what makes a hold look like it fires its effect late.
+    Chart headChart = singleNoteChart(NOTE_HOLD, 1.0);
+    GameplaySession headSession;
+    headSession.setViewport(viewport);
+    headSession.setAutoplay(true);
+    headSession.setChart(&headChart);
+    const double noteTime = headChart.allNotesSorted[0]->sect;
+    std::vector<double> headTimes;
+    std::vector<double> bodyTimes;
+    for (double time = noteTime - 0.1; time <= noteTime + 1.0; time += 1.0 / 60.0) {
+      headSession.update(time, 1.0F / 60.0F);
+      for (const auto& burst : headSession.takeHoldHeadBursts()) headTimes.push_back(burst.timeSec);
+      for (const auto& burst : headSession.takeHoldBodyBursts()) bodyTimes.push_back(burst.timeSec);
+    }
+    require(headTimes.size() == 1, "an autoplay hold emits exactly one head burst");
+    require(close(headTimes[0], noteTime), "the head burst is stamped at the note time");
+    require(!bodyTimes.empty(), "an autoplay hold emits body bursts");
+    // 120 bpm: half a beat is 0.25 s. The first body burst has to be after the head, by at most
+    // one interval, and never on the head frame itself.
+    require(bodyTimes[0] > noteTime + 1.0e-4, "the first body burst is not stamped at the head");
+    require(bodyTimes[0] - noteTime <= 0.25 + 2.0 / 60.0,
+        "the first body burst lands within one half-beat interval");
+  }
+
   // --- runtime preparation: incremental floor cursor and parallel per-line pass -----
   {
     // A large chart takes the parallel per-line path; every derived value must still equal a
