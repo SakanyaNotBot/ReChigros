@@ -298,6 +298,11 @@ struct GameRenderer::Impl {
   // storyboard chain first when the chart asks for it.
   void drawScene(const RenderFrameInput& input, game::Chart* chart,
       const game::JudgementEngine* judgement, unsigned int targetFbo, bool applyEffects = true);
+  // True from the chart time the Message level lets its canvas cover the whole viewport. The
+  // switch is derived from the level-effect table, so a seek backwards puts the letterboxed
+  // stage back instead of leaving the expanded one up.
+  [[nodiscard]] bool messageFullscreenStage(const RenderFrameInput& input,
+      const game::Chart* chart) const noexcept;
   scene::LineTint lineTintFor(const RenderFrameInput& input,
       const game::JudgementEngine* judgement) const;
 };
@@ -1429,16 +1434,31 @@ std::vector<game::PrprEffect> GameRenderer::Impl::collectGlobalEffects(
   return globals;
 }
 
+bool GameRenderer::Impl::messageFullscreenStage(const RenderFrameInput& input,
+    const game::Chart* chart) const noexcept {
+  if (chart == nullptr || chart->levelEffects == nullptr) return false;
+  const auto& effect = *chart->levelEffects;
+  if (effect.effectName() != "MessageLevelEffects") return false;
+  // A negative hide time means the level never expands; otherwise it expands from that time
+  // on, which is also where its backdrop stops being visible under the opaque mask.
+  const float hideTime = effect.scalar("rawImageHideTime", -1.0F);
+  if (hideTime < 0.0F) return true;
+  return static_cast<float>(input.chartTimeSec) >= hideTime;
+}
+
 void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* chart,
     const game::JudgementEngine* judgement, unsigned int targetFbo, bool applyEffects) {
   // The play field keeps the reference aspect rule: a positive target aspect is honoured,
   // otherwise the official 16:9 stage is fitted into the viewport and clamped so it is
   // never wider than the window. The chart-reveal camera always uses the official stage.
+  // The Message level is the one exception: once its canvas covers the viewport the stage
+  // stops being letterboxed, so the side bands and their blurred artwork go away.
+  const bool fullscreenStage = messageFullscreenStage(input, chart);
   const float targetAspect = input.chartReveal
       ? 16.0F / 9.0F
       : (input.aspectRatio > 0.0F ? input.aspectRatio : 16.0F / 9.0F);
   scene::StageLayout layout = scene::computeStageLayout(
-      static_cast<float>(width), static_cast<float>(height), targetAspect, false);
+      static_cast<float>(width), static_cast<float>(height), targetAspect, fullscreenStage);
   // Demo mode reflects the play field about the stage centre. The reflection lives in the
   // stage projection, so notes, judge lines and hit effects all move with it while the HUD
   // (projected with `projection()`) keeps its unmirrored layout.

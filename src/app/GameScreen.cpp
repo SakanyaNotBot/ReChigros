@@ -1660,8 +1660,12 @@ bool gameEnter(AppContext& context) {
   gameLeave(context);
   std::unique_ptr<game::Chart> chart;
   try {
+    // The story-mode setting decides whether a chart carries a level-effect chain at all: with
+    // it off, every chart except the one that always plays its effects is loaded as a plain
+    // chart. Passing it here rather than filtering at draw time is what keeps the chain, the
+    // HUD suppression and the challenge state from leaking into a plain run.
     chart = chart::ChartLoader::loadFromFile(context.play.chartFile, platform::assetRoot(),
-        context.play.songName);
+        context.play.songName, context.settings.storyMode);
   } catch (const std::exception& exception) {
     context.loadError = exception.what();
     return false;
@@ -1693,13 +1697,14 @@ void gameEnterWithLoading(AppContext& context) {
   const auto chartFile = context.play.chartFile;
   const auto songName = context.play.songName;
   const auto musicFile = context.play.musicFile;
+  const bool storyMode = context.settings.storyMode;
   // The device rate has to be read before the worker starts: the worker resamples the track to
   // it, and opening the device is the engine's business, not the worker's.
   std::uint32_t sampleRate = 0;
   if (context.audio != nullptr) sampleRate = context.audio->outputSampleRate();
   auto failure = std::make_shared<std::string>();
   game.chartLoad = std::async(std::launch::async,
-      [chartFile, songName, musicFile, sampleRate, failure]() -> GameRuntime::LoadedRun {
+      [chartFile, songName, musicFile, sampleRate, storyMode, failure]() -> GameRuntime::LoadedRun {
         GameRuntime::LoadedRun loaded;
         // The audio decode is the larger half of a run start, so it rides along with the parse
         // instead of blocking the frame that installs the result.
@@ -1710,7 +1715,9 @@ void gameEnterWithLoading(AppContext& context) {
           }
         }
         try {
-          loaded.chart = chart::ChartLoader::loadFromFile(chartFile, platform::assetRoot(), songName);
+          // Sampled when the load starts, like the rest of the run's settings.
+          loaded.chart = chart::ChartLoader::loadFromFile(chartFile, platform::assetRoot(),
+              songName, storyMode);
         } catch (const std::exception& exception) {
           *failure = exception.what();
         } catch (...) {

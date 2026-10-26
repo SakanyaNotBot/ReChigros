@@ -268,6 +268,84 @@ int main() {
     }
   }
 
+  // --- the Ametrine challenge mod ----------------------------------------------
+  // This level's anomaly is not a track: its vignette follows the challenge state, which
+  // fails on a Bad or a Miss inside an authored window. It has no chart in the local fixture
+  // set, so the mechanism is pinned here instead of through a screenshot.
+  {
+    std::filesystem::path root;
+    for (std::filesystem::path candidate = std::filesystem::current_path();
+         !candidate.empty(); candidate = candidate.parent_path()) {
+      if (std::filesystem::exists(candidate / "assets" / "official_effects" /
+              "chapter9_phase2.json")) {
+        root = candidate / "assets";
+        break;
+      }
+      if (!candidate.has_parent_path() || candidate.parent_path() == candidate) break;
+    }
+    const auto table = root.empty() ? nullptr : OfficialLevelEffects::load(root);
+    if (table == nullptr) {
+      std::cout << "  (shipped table not found; Ametrine cases skipped)\n";
+    } else {
+      const auto ametrine = OfficialLevelEffects::forSongName(*table, "ametrine");
+      require(ametrine != nullptr, "the Ametrine level selects its effect");
+      require(ametrine->effectName() == "AmetrineLevelMod", "the effect is the Ametrine level mod");
+      // It is the one chapter-9 level that keeps the HUD up.
+      require(!ametrine->hideHud(), "the Ametrine level keeps the HUD visible");
+
+      // Its chain is a single simple-vignette pass driven by the challenge, not by a track.
+      const auto passes = ametrine->buildPrprEffects();
+      require(passes.size() == 1, "the Ametrine chain is one pass");
+      if (!passes.empty()) {
+        require(passes[0].shader == "official_simple_vignette",
+            "the Ametrine pass is the simple vignette");
+        const auto darkness = passes[0].variables.find("vignetteDarkness");
+        require(darkness != passes[0].variables.end(),
+            "the Ametrine pass carries a vignette darkness uniform");
+        require(!darkness->second.animated(), "the Ametrine darkness is not track-driven");
+      }
+
+      // The falloff constants the reference authors for this level.
+      require(close(ametrine->settingFloat("simpleVignette", "radius", -1.0F), 0.24F),
+          "the Ametrine vignette radius is the authored one");
+      require(close(ametrine->settingFloat("simpleVignette", "smoothness", -1.0F), 0.55F),
+          "the Ametrine vignette smoothness is the authored one");
+
+      // The vignette ramps toward the authored darkness inside the window: 2 s to full.
+      ametrine->resetChallenge();
+      require(ametrine->ametrineVignette() == 0.0F, "the vignette starts clear");
+      for (int step = 0; step < 30; ++step) ametrine->updateAmetrineVignette(43.0F, 0.1F);
+      require(ametrine->ametrineVignette() == 0.0F, "the vignette stays clear before the window");
+      for (int step = 0; step < 5; ++step) ametrine->updateAmetrineVignette(45.0F, 0.1F);
+      const float partial = ametrine->ametrineVignette();
+      require(partial > 0.0F && partial < 1.0F, "the vignette ramps in, it does not pop");
+      for (int step = 0; step < 25; ++step) ametrine->updateAmetrineVignette(45.0F, 0.1F);
+      require(close(ametrine->ametrineVignette(), 1.0F), "the vignette reaches full darkness");
+
+      // A Bad or a Miss inside the window fails the check; outside it does not.
+      require(!ametrine->isChallengeFailed(), "a fresh Ametrine run has not failed");
+      ametrine->onBadOrMiss(30.0F, false);
+      require(!ametrine->isChallengeFailed(), "a Bad before the window does not fail the check");
+      ametrine->onBadOrMiss(50.0F, false);
+      require(ametrine->isChallengeFailed(), "a Bad inside the window fails the check");
+
+      // A failed check keeps the screen dark after the window; a clean one clears up.
+      for (int step = 0; step < 40; ++step) ametrine->updateAmetrineVignette(92.0F, 0.1F);
+      require(close(ametrine->ametrineVignette(), 1.0F),
+          "a failed check keeps the vignette after the window");
+      ametrine->resetChallenge();
+      for (int step = 0; step < 40; ++step) ametrine->updateAmetrineVignette(45.0F, 0.1F);
+      for (int step = 0; step < 40; ++step) ametrine->updateAmetrineVignette(92.0F, 0.1F);
+      require(ametrine->ametrineVignette() == 0.0F,
+          "a clean window clears the vignette afterwards");
+
+      // The other chapter-9 level with a challenge has no tracks either, and it is not
+      // selected by any shipped digest, so it never reaches a run.
+      require(OfficialLevelEffects::forSongName(*table, "petrichor") != nullptr,
+          "the Petrichor entry still exists in the table");
+    }
+  }
+
   // --- message particle field -------------------------------------------------
   {
     using rechigros::game::MessageParticleField;

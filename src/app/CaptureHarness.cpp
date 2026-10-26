@@ -346,6 +346,28 @@ void setupCaptureScreen(AppContext& context, const std::string& spec, float aspe
     context.screen = Screen::Calibration;
     return;
   }
+  // The same run with the story-mode gate off. The reference plays these charts as plain
+  // charts in that state, so this capture is the control for every anomaly screenshot: it must
+  // show the ordinary play field with its HUD, and it must differ from the gated capture.
+  if (screen == "game-nostory") {
+    if (!chartId.empty()) context.activeChartId = chartId;
+    applyReferenceSettings(context, aspectRatioOverride);
+    context.settings.storyMode = false;
+    startCaptureChart(context, false);
+    std::printf("capture-story-mode: 0\n");
+    return;
+  }
+  // The same run with the storyboard chain switched off. Every other layer stays as it was
+  // (the HUD suppression included), so a comparison against the normal capture isolates the
+  // post-processing chain from the chart's own block areas.
+  if (screen == "game-noshader") {
+    if (!chartId.empty()) context.activeChartId = chartId;
+    applyReferenceSettings(context, aspectRatioOverride);
+    context.settings.disableChartShader = true;
+    startCaptureChart(context, false);
+    std::printf("capture-chain: off\n");
+    return;
+  }
   if (screen == "game-loading") {
     // The run is started through the interface path, so the loading panel is up while the
     // worker parses the chart. Capturing a frame right after this shows the panel rather than
