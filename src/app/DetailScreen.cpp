@@ -506,7 +506,7 @@ void drawDetailScreen(AppContext& context) {
     if (ImGui::IsItemActive() && !practiceTriggered && pressStartSec >= 0.0
         && context.nowSec - pressStartSec > 0.45) {
       practiceTriggered = true;
-      startChart(context, true);
+      startChartWithLoading(context, true);
     }
     if (ImGui::IsItemDeactivated()) {
       const bool wasTap = pressStartSec >= 0.0 && !practiceTriggered;
@@ -637,7 +637,7 @@ void drawDetailScreen(AppContext& context) {
     context.settingsReturn = Screen::Detail;
     navigateTo(context, Screen::Settings);
   }
-  if (startPressed) startChart(context, false);
+  if (startPressed) startChartWithLoading(context, false);
   if (renderPressed) {
     // The recording page renders the chart this page describes, so it has to be the loaded one.
     context.renderReturn = Screen::Detail;

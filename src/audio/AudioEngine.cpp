@@ -615,7 +615,11 @@ bool AudioEngine::loadMusic(const std::filesystem::path& path) {
   if (!initialize()) return false;
 
   const auto rate = impl_->sampleRate_.load(std::memory_order_acquire);
-  AudioBuffer decoded = Decoder::decodeFile(path, rate);
+  return installDecodedMusic(Decoder::decodeFile(path, rate));
+}
+
+bool AudioEngine::installDecodedMusic(AudioBuffer decoded) {
+  if (!initialize()) return false;
   if (decoded.empty()) return false;
 
   impl_->paused_.store(true, std::memory_order_release);

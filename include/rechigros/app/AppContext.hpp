@@ -2,6 +2,7 @@
 
 #include "rechigros/app/ChartLibrary.hpp"
 #include "rechigros/app/CoverCache.hpp"
+#include "rechigros/audio/Decoder.hpp"
 #include "rechigros/app/RecordSession.hpp"
 #include "rechigros/app/Replay.hpp"
 #include "rechigros/app/Settings.hpp"
@@ -11,6 +12,7 @@
 #include "rechigros/game/PlayResult.hpp"
 
 #include <filesystem>
+#include <future>
 #include <memory>
 #include <string>
 #include <vector>
@@ -51,6 +53,25 @@ struct GameRuntime {
   std::unique_ptr<game::Chart> chart;
   game::GameplaySession session;
   bool loaded{};
+  // A dense chart takes a few hundred milliseconds to read, parse and prepare, and the screen
+  // that starts a run shows a loading panel while that happens on a worker thread. The runtime
+  // is not usable until the panel clears.
+  bool loading{};
+  double loadingElapsedSec{};
+  // What the loader produced. The chart is always present when the load succeeded; the music
+  // buffer is only filled when the worker decoded it, which is the case for a music-backed run.
+  struct LoadedRun {
+    std::unique_ptr<game::Chart> chart;
+    bool musicDecoded{};
+    audio::AudioBuffer music;
+  };
+  // Filled by the worker; empty once consumed. The future yields no chart on failure, with the
+  // reason left in loadingError.
+  std::future<LoadedRun> chartLoad;
+  std::string loadingError;
+  // The run the loader was started for. The settings and mode are captured when it starts so
+  // the worker and the frame that consumes it agree even if the library changes underneath.
+  PlaySetup loadingPlay;
   bool started{};
   bool inIntro{true};
   bool inOutro{};
@@ -77,10 +98,9 @@ struct GameRuntime {
   double stalledSec{};
   float frameDeltaSec{};
   bool musicLoaded{};
-  // Pause state machine: menu -> countdown -> fadeout -> play. The fadeout state covers the
-  // short window where the countdown has finished but the play field is still frozen, so a
-  // pause taken during it resumes the same run instead of restarting one.
-  enum class Pause : int { None, Menu, Countdown, Fadeout };
+  // Pause state machine: menu -> countdown -> play. The countdown ends the pause outright;
+  // there is no intermediate state between "countdown finished" and "playing".
+  enum class Pause : int { None, Menu, Countdown };
   Pause pause{Pause::None};
   double pauseElapsedSec{};
   double pausePlayheadSec{};
@@ -91,8 +111,6 @@ struct GameRuntime {
   bool pauseResumesFromZero{};
   int countdown{};
   double countdownElapsedSec{};
-  // Elapsed time inside the resume fade that follows the countdown.
-  double fadeoutElapsedSec{};
   // Practice seeking and per-attempt judgement windows.
   double seekRequestSec{-1.0};
   game::PracticeJudgeWindows practiceWindows;

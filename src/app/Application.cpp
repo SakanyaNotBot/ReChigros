@@ -841,8 +841,7 @@ void Application::updateBatchMode() {
       if (step == 2) pushEscape();
       if (step == 12 && game.pause == GameRuntime::Pause::Menu) pauseMenuSeen_ = true;
       if (step == 20) pushEscape();
-      if (step == 30 && (game.pause == GameRuntime::Pause::Countdown
-                            || game.pause == GameRuntime::Pause::Fadeout)) {
+      if (step == 30 && game.pause == GameRuntime::Pause::Countdown) {
         pauseCountdownSeen_ = true;
       }
       if (step > 60 && game.pause == GameRuntime::Pause::None) pauseResumedSeen_ = true;

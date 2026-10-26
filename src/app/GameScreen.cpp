@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <future>
 #include <cmath>
 #include <cstdio>
 #include <memory>
@@ -1527,19 +1528,10 @@ void syncLevelEffectChallenge(AppContext& context) {
 
 } // namespace
 
-bool gameEnter(AppContext& context) {
-  gameLeave(context);
-  std::unique_ptr<game::Chart> chart;
-  try {
-    chart = chart::ChartLoader::loadFromFile(context.play.chartFile, platform::assetRoot(),
-        context.play.songName);
-  } catch (const std::exception& exception) {
-    context.loadError = exception.what();
-    return false;
-  } catch (...) {
-    context.loadError = "未知错误";
-    return false;
-  }
+// Everything a run needs once its chart has been parsed. Split from the load itself so the
+// loading screen can hand the chart over when its worker finishes.
+bool beginRun(AppContext& context, std::unique_ptr<game::Chart> chart,
+    audio::AudioBuffer* decodedMusic = nullptr) {
   if (!chart) {
     context.loadError = "谱面为空";
     return false;
@@ -1608,10 +1600,14 @@ bool gameEnter(AppContext& context) {
     context.audio->setPlaybackSpeed(game.musicSpeed);
     context.audio->setMusicVolume(context.settings.musicVolume);
     context.audio->setSoundEffectVolume(context.settings.soundEffectVolume);
-    if (!context.play.musicFile.empty() && context.audio->loadMusic(context.play.musicFile)) {
+    // A run started through the loading screen already has its music decoded, so the frame
+    // that starts it only swaps the buffer in. The synchronous path still decodes here.
+    const bool musicReady = decodedMusic != nullptr
+        ? context.audio->installDecodedMusic(std::move(*decodedMusic))
+        : (!context.play.musicFile.empty() && context.audio->loadMusic(context.play.musicFile));
+    if (musicReady) {
       game.musicLoaded = true;
       game.musicDurationSec = context.audio->getMusicDurationSeconds();
-      (void)0;
     }
   }
 
@@ -1655,6 +1651,108 @@ bool gameEnter(AppContext& context) {
   game.smoothClockValid = false;
   game.smoothedPlayheadSec = 0.0;
   return true;
+}
+
+bool gameEnter(AppContext& context) {
+  // Timed because the run start is the one frame the player waits on: everything below runs
+  // before the first gameplay frame is drawn.
+  const auto startMark = std::chrono::steady_clock::now();
+  gameLeave(context);
+  std::unique_ptr<game::Chart> chart;
+  try {
+    chart = chart::ChartLoader::loadFromFile(context.play.chartFile, platform::assetRoot(),
+        context.play.songName);
+  } catch (const std::exception& exception) {
+    context.loadError = exception.what();
+    return false;
+  } catch (...) {
+    context.loadError = "未知错误";
+    return false;
+  }
+  const bool entered = beginRun(context, std::move(chart));
+  const auto elapsed = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - startMark).count();
+  std::printf("run-start: blocking=%.1f ms entered=%d\n", elapsed, entered ? 1 : 0);
+  return entered;
+}
+
+// Why the last background load failed, kept by the worker because the frame that consumes the
+// future must be able to report a reason rather than a bare null.
+std::shared_ptr<std::string> gLoadingFailure;
+
+void gameEnterWithLoading(AppContext& context) {
+  gameLeave(context);
+  auto& game = context.game;
+  game = GameRuntime{};
+  game.loading = true;
+  game.loadingElapsedSec = 0.0;
+  game.loadingPlay = context.play;
+  game.loadingError.clear();
+  // The file and the name are copied into the worker: the context's play setup may be replaced
+  // by another navigation while the parse is still running.
+  const auto chartFile = context.play.chartFile;
+  const auto songName = context.play.songName;
+  const auto musicFile = context.play.musicFile;
+  // The device rate has to be read before the worker starts: the worker resamples the track to
+  // it, and opening the device is the engine's business, not the worker's.
+  std::uint32_t sampleRate = 0;
+  if (context.audio != nullptr) sampleRate = context.audio->outputSampleRate();
+  auto failure = std::make_shared<std::string>();
+  game.chartLoad = std::async(std::launch::async,
+      [chartFile, songName, musicFile, sampleRate, failure]() -> GameRuntime::LoadedRun {
+        GameRuntime::LoadedRun loaded;
+        // The audio decode is the larger half of a run start, so it rides along with the parse
+        // instead of blocking the frame that installs the result.
+        if (!musicFile.empty() && sampleRate > 0) {
+          if (auto music = audio::Decoder::decodeFile(musicFile, sampleRate); !music.empty()) {
+            loaded.musicDecoded = true;
+            loaded.music = std::move(music);
+          }
+        }
+        try {
+          loaded.chart = chart::ChartLoader::loadFromFile(chartFile, platform::assetRoot(), songName);
+        } catch (const std::exception& exception) {
+          *failure = exception.what();
+        } catch (...) {
+          *failure = "未知错误";
+        }
+        return loaded;
+      });
+  // The worker keeps the reason; the frame that consumes the future reads it here.
+  gLoadingFailure = failure;
+}
+
+void pollChartLoad(AppContext& context) {
+  auto& game = context.game;
+  if (!game.loading || !game.chartLoad.valid()) return;
+  if (game.chartLoad.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+  GameRuntime::LoadedRun loaded = game.chartLoad.get();
+  // The future is spent; keep the runtime from treating it as still running.
+  game.loading = false;
+  if (!loaded.chart) {
+    context.loadError = gLoadingFailure != nullptr && !gLoadingFailure->empty()
+        ? *gLoadingFailure
+        : std::string("谱面加载失败");
+    gLoadingFailure.reset();
+    game.loadingError = context.loadError;
+    game = GameRuntime{};
+    notify(context, context.loadError);
+    navigateTo(context, Screen::Library);
+    return;
+  }
+  gLoadingFailure.reset();
+  // Only the part that cannot leave the main thread is timed here: the parse already happened
+  // on the worker, so this is what a press still costs the frame that consumes it.
+  const auto startMark = std::chrono::steady_clock::now();
+  const bool entered = beginRun(context, std::move(loaded.chart),
+      loaded.musicDecoded ? &loaded.music : nullptr);
+  const auto elapsed = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - startMark).count();
+  std::printf("run-start: deferred=%.1f ms entered=%d\n", elapsed, entered ? 1 : 0);
+  if (!entered) {
+    notify(context, context.loadError.empty() ? "谱面加载失败" : context.loadError);
+    navigateTo(context, Screen::Library);
+  }
 }
 
 void gameLeave(AppContext& context) {
@@ -1707,6 +1805,14 @@ void restartRunFromZero(AppContext& context) {
 
 void gameUpdate(AppContext& context, float frameDeltaSec) {
   auto& game = context.game;
+  // A run whose chart is still being parsed has no gameplay clock to advance. The load is
+  // polled here so the frame that completes it starts the run on a normal boundary rather than
+  // inside the loader's own thread.
+  if (game.loading) {
+    game.loadingElapsedSec += static_cast<double>(frameDeltaSec);
+    pollChartLoad(context);
+    return;
+  }
   if (!game.loaded || !game.chart) return;
   // The chart advance follows the reference: a non-positive or overlong frame interval
   // falls back to one 60 Hz frame instead of stalling the playhead or jumping it. The
@@ -1987,8 +2093,75 @@ void gameRender(AppContext& context) {
   context.renderer->render(input, game.chart.get(), &judgement);
 }
 
+// The loading panel shown while a run's chart is being parsed. The reference puts a small
+// translucent card with an indeterminate spinner over a dark gradient and keeps it up until the
+// first gameplay frame is ready, so starting a run never shows an empty screen.
+void drawLoadingPanel(const AppContext& context) {
+  ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+  const ImVec2 size(static_cast<float>(context.windowWidth),
+      static_cast<float>(context.windowHeight));
+  // Three-stop vertical gradient, the same tones the reference's loading root uses.
+  const ImU32 top = IM_COL32(0x10, 0x13, 0x1A, 0xFF);
+  const ImU32 middle = IM_COL32(0x15, 0x1A, 0x23, 0xFF);
+  const ImU32 bottom = IM_COL32(0x0D, 0x10, 0x16, 0xFF);
+  const float half = size.y * 0.5F;
+  drawList->AddRectFilledMultiColor(ImVec2(0.0F, 0.0F), ImVec2(size.x, half), top, top, middle,
+      middle);
+  drawList->AddRectFilledMultiColor(ImVec2(0.0F, half), ImVec2(size.x, size.y), middle, middle,
+      bottom, bottom);
+
+  const float density = std::max(1.0F, context.displayDpi / 96.0F);
+  const float panelWidth = 280.0F * density;
+  const float panelHeight = 132.0F * density;
+  const ImVec2 centre(size.x * 0.5F, size.y * 0.5F);
+  const ImVec2 minimum(centre.x - panelWidth * 0.5F, centre.y - panelHeight * 0.5F);
+  const ImVec2 maximum(minimum.x + panelWidth, minimum.y + panelHeight);
+  const float rounding = 8.0F * density;
+  drawList->AddRectFilled(minimum, maximum, IM_COL32(0x1B, 0x22, 0x2D, 0xE6), rounding);
+  drawList->AddRect(minimum, maximum, IM_COL32(0x2F, 0x3B, 0x4A, 0xFF), rounding, 0,
+      std::max(1.0F, density));
+
+  // Indeterminate spinner: an arc that sweeps while the load runs. Its angle follows the wall
+  // clock the frame already carries, so the panel keeps turning even though gameplay time is
+  // standing still.
+  const float spinnerRadius = 16.0F * density;
+  const float spinnerThickness = std::max(1.5F, 3.0F * density);
+  const ImVec2 spinnerCentre(centre.x, minimum.y + 44.0F * density);
+  const float phase = static_cast<float>(
+      std::fmod(context.nowSec * 2.4, 2.0 * std::numbers::pi));
+  const ImU32 track = IM_COL32(0x2F, 0x3B, 0x4A, 0xFF);
+  const ImU32 sweep = IM_COL32(0x56, 0xD6, 0xC9, 0xFF);
+  drawList->PathClear();
+  drawList->PathArcTo(spinnerCentre, spinnerRadius, 0.0F, 2.0F * std::numbers::pi, 48);
+  drawList->PathStroke(track, 0, spinnerThickness);
+  drawList->PathClear();
+  drawList->PathArcTo(spinnerCentre, spinnerRadius, phase, phase + 1.7F, 32);
+  drawList->PathStroke(sweep, 0, spinnerThickness);
+
+  // Two lines, matching the reference's loading caption.
+  const char* caption = "加载中...";
+  const char* detail = "(正在解析谱面与解码音频)";
+  const float captionSize = 15.0F * density;
+  const float detailSize = 12.0F * density;
+  const ImVec2 captionExtent = ImGui::GetFont()->CalcTextSizeA(captionSize, FLT_MAX, 0.0F, caption);
+  const ImVec2 detailExtent = ImGui::GetFont()->CalcTextSizeA(detailSize, FLT_MAX, 0.0F, detail);
+  const float textTop = spinnerCentre.y + spinnerRadius + 12.0F * density;
+  drawList->AddText(ImGui::GetFont(), captionSize,
+      ImVec2(centre.x - captionExtent.x * 0.5F, textTop), IM_COL32(0xF3, 0xF7, 0xFB, 0xFF),
+      caption);
+  drawList->AddText(ImGui::GetFont(), detailSize,
+      ImVec2(centre.x - detailExtent.x * 0.5F, textTop + captionExtent.y + 4.0F * density),
+      IM_COL32(0xA9, 0xB4, 0xC2, 0xFF), detail);
+}
+
 void drawGameOverlay(AppContext& context) {
   auto& game = context.game;
+  // The loading panel replaces the gameplay overlay: there is no HUD to draw yet and the pause
+  // control has nothing to act on.
+  if (game.loading) {
+    drawLoadingPanel(context);
+    return;
+  }
   if (!game.loaded) return;
   ImDrawList* drawList = ImGui::GetBackgroundDrawList();
 

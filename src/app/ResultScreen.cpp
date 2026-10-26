@@ -886,10 +886,11 @@ void drawResultScreen(AppContext& context) {
     if (retry.pressed) {
       const PlaySetup setup = context.play;
       if (!setup.chartId.empty()) {
-        startChart(context, setup.practice);
+        startChartWithLoading(context, setup.practice);
       } else {
         context.play = setup;
-        if (gameEnter(context)) context.screen = Screen::Game;
+        context.screen = Screen::Game;
+        gameEnterWithLoading(context);
       }
     }
   }

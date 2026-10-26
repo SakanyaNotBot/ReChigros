@@ -16,6 +16,9 @@ void notify(AppContext& context, std::string message);
 
 void openChartDetail(AppContext& context, const std::string& chartId);
 void startChart(AppContext& context, bool practice);
+// As above, but the chart and the audio are read on a worker thread behind the play screen's
+// loading panel. The interface uses this so a press answers immediately.
+void startChartWithLoading(AppContext& context, bool practice);
 void startSavedReplay(AppContext& context, const std::string& replayId);
 void handleIncomingPath(AppContext& context, const std::filesystem::path& path);
 // Starts a chart from an arbitrary location with a replay file layered on top.
@@ -47,6 +50,10 @@ void drawToast(AppContext& context);
 
 // Gameplay control used by the main loop.
 bool gameEnter(AppContext& context);
+// Starts a run whose chart is parsed on a worker thread. The loading panel is drawn until it
+// finishes; pollChartLoad consumes the result once per frame.
+void gameEnterWithLoading(AppContext& context);
+void pollChartLoad(AppContext& context);
 void gameUpdate(AppContext& context, float frameDeltaSec);
 void gameRender(AppContext& context);
 void gameLeave(AppContext& context);

@@ -346,6 +346,28 @@ void setupCaptureScreen(AppContext& context, const std::string& spec, float aspe
     context.screen = Screen::Calibration;
     return;
   }
+  if (screen == "game-loading") {
+    // The run is started through the interface path, so the loading panel is up while the
+    // worker parses the chart. Capturing a frame right after this shows the panel rather than
+    // an empty screen, which is what a screenshot cannot otherwise distinguish.
+    if (!chartId.empty()) context.activeChartId = chartId;
+    applyReferenceSettings(context, aspectRatioOverride);
+    const auto record = context.library.find(context.activeChartId);
+    if (!record) return;
+    context.play = PlaySetup{};
+    context.play.chartId = record->id;
+    context.play.songName = record->songName;
+    context.play.difficulty = record->difficulty;
+    context.play.chartFile = record->chartFile;
+    context.play.musicFile = record->musicFile;
+    context.play.bgFile = record->bgFile;
+    context.play.chartOffsetMs = record->chartOffsetMs;
+    context.play.autoplay = true;
+    context.screen = Screen::Game;
+    gameEnterWithLoading(context);
+    std::printf("capture-loading: started=%d\n", context.game.loading ? 1 : 0);
+    return;
+  }
   if (screen == "game" || screen == "game-pause" || screen == "game-practice"
       || screen == "game-practice-pause" || screen == "game-countdown") {
     if (!chartId.empty()) context.activeChartId = chartId;

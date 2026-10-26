@@ -291,6 +291,40 @@ void startChart(AppContext& context, bool practice) {
   context.screen = Screen::Game;
 }
 
+// Starts a run from the interface. The chart and the audio are read on a worker thread with the
+// loading panel up, so the press answers immediately instead of freezing the picture for the
+// length of a parse. The headless verification runs keep using the synchronous entry above,
+// because they inspect the run state on the very next frame.
+void startChartWithLoading(AppContext& context, bool practice) {
+  const auto record = context.library.find(context.activeChartId);
+  if (!record) {
+    notify(context, "谱面不存在或已删除");
+    return;
+  }
+  if (!record->complete()) {
+    notify(context, "谱面文件不完整");
+    return;
+  }
+  context.play = PlaySetup{};
+  context.play.chartId = record->id;
+  context.play.songName = record->songName;
+  context.play.difficulty = record->difficulty;
+  context.play.chartFile = record->chartFile;
+  context.play.musicFile = record->musicFile;
+  context.play.bgFile = record->bgFile;
+  context.play.chartOffsetMs = record->chartOffsetMs;
+  context.play.audioOffsetMs = context.settings.audioOffsetMs;
+  context.play.practice = practice;
+  context.play.autoplay = context.settings.autoplay;
+  context.play.challenge = context.settings.challengeMode;
+  context.play.mirrorX = context.settings.mirrorX;
+  context.play.musicSpeed = context.settings.musicSpeed;
+  context.play.scrollSpeed = context.settings.scrollSpeed;
+  commitSettings(context);
+  context.screen = Screen::Game;
+  gameEnterWithLoading(context);
+}
+
 void startSavedReplay(AppContext& context, const std::string& replayId) {
   const auto info = context.replays.find(replayId);
   if (!info) {
@@ -333,11 +367,10 @@ void startSavedReplay(AppContext& context, const std::string& replayId) {
   context.play.challenge = context.settings.challengeMode;
   context.play.replayMode = true;
   context.play.replayFile = info->file;
-  if (!gameEnter(context)) {
-    notify(context, context.loadError.empty() ? "谱面加载失败" : context.loadError);
-    return;
-  }
+  // Replay playback loads a chart like any other run, so it goes through the same loading
+  // panel rather than freezing the picture while the chart and the music are read.
   context.screen = Screen::Game;
+  gameEnterWithLoading(context);
 }
 
 void handleIncomingPath(AppContext& context, const std::filesystem::path& path) {

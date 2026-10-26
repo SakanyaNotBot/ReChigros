@@ -1,5 +1,7 @@
 #pragma once
 
+#include "rechigros/audio/Decoder.hpp"
+
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -35,6 +37,13 @@ public:
   /// Decodes `path` as the current music track. Replaces any previous track and
   /// rewinds the playhead.
   bool loadMusic(const std::filesystem::path& path);
+
+  /// Installs music already decoded with `Decoder::decodeFile` for this engine's output
+  /// rate. Decoding a track takes hundreds of milliseconds, so a caller that wants the
+  /// screen to keep drawing decodes on its own thread and hands the buffer over here;
+  /// the swap takes an exclusive window and is real-time safe. An empty buffer is
+  /// rejected and leaves the current track alone.
+  bool installDecodedMusic(AudioBuffer decoded);
 
   /// Starts or resumes playback from the current playhead.
   void play();
