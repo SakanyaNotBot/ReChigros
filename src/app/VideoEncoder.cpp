@@ -128,7 +128,11 @@ bool VideoEncoder::open(const Settings& settings, const std::filesystem::path& o
     const int delayMs = static_cast<int>(std::max(0.0, settings.audioDelaySec) * 1000.0);
     arguments.insert(arguments.end(), {"-c:a", "aac", "-b:a", "192k"});
     if (delayMs > 0) {
-      arguments.insert(arguments.end(), {"-af", "adelay=" + std::to_string(delayMs)});
+      // A single number delays only the first channel; the delay has to be given once per
+      // channel or one side of the stereo track starts late.
+      const std::string channels = "adelay=" + std::to_string(delayMs) + "|" +
+          std::to_string(delayMs);
+      arguments.insert(arguments.end(), {"-af", channels});
     }
     // The audio is not held to the video's length: the picture runs past the music during the exit
     // animation, and stopping there would cut the animation off. The track simply ends.

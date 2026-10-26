@@ -33,6 +33,7 @@ xcuserdata/
 
 # Local delivery artifacts copied out of the disposable build tree
 /artifacts/
+/platform/android/artifacts/
 
 
 # Device performance A/B evidence kept outside the build tree

@@ -927,9 +927,10 @@ void GameRenderer::Impl::drawHitEffects(const scene::StageLayout& layout,
   if (chart == nullptr || hitFx == nullptr) return;
   const float noteWidth =
       layout.stage.width * noteWidthRatio(layout.stage.width, layout.stage.height) * input.keyScale;
+  const bool autoplayBursts = input.practice.autoPlay && !input.replayPlayback;
   hitEffects.update(*chart, input.chartTimeSec, input.visualTimeSec, layout.stage.x,
       layout.stage.y, layout.stage.width, layout.stage.height, noteWidth,
-      input.practice.enabled ? input.practice.speed : 1.0F);
+      input.practice.enabled ? input.practice.speed : 1.0F, autoplayBursts);
   // Hold bursts are timed by the gameplay session and arrive as events. A head burst is
   // placed where the head was when it was hit (above the line for an early hit, on the line
   // once the head has arrived); body bursts sit on the line contact point.
@@ -968,7 +969,7 @@ void GameRenderer::Impl::drawHitEffects(const scene::StageLayout& layout,
   // Autoplay draws the bursts the chart rolled during preparation; a manual run and a
   // replay draw the ones their own judgements produce. The reference keeps the two apart,
   // so a note is never burst twice.
-  if (input.practice.autoPlay && !input.replayPlayback) {
+  if (autoplayBursts) {
     clickEffects.draw(*chart, batch, layout.stageProjection(), *hitFx, textures.white(),
         input.chartTimeSec, input.visualTimeSec, layout.stage.x, layout.stage.y,
         layout.stage.width, layout.stage.height, noteWidth, hitAtlas, hitStyle, hitSkin,
@@ -2047,6 +2048,37 @@ bool GameRenderer::captureFrameYuv(const RenderFrameInput& input, game::Chart* c
   const bool converted = impl_->captureYuv.convert(impl_->captureTarget.color(), outPlanes);
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   return converted;
+}
+
+bool GameRenderer::captureFrameYuvAsync(const RenderFrameInput& input, game::Chart* chart,
+    const game::JudgementEngine* judgement, std::vector<std::uint8_t>& outPlanes,
+    bool& frameReady) {
+  frameReady = false;
+  if (!impl_->capturing || !impl_->captureTarget.valid()) return false;
+  if (!impl_->captureYuv.valid()) return false;
+  const int width = impl_->captureWidth;
+  const int height = impl_->captureHeight;
+  impl_->width = width;
+  impl_->height = height;
+  impl_->captureTarget.bind();
+  glViewport(0, 0, width, height);
+  impl_->drawScene(input, chart, judgement, impl_->captureTarget.fbo());
+  const bool converted =
+      impl_->captureYuv.convertAsync(impl_->captureTarget.color(), outPlanes, frameReady);
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  return converted;
+}
+
+bool GameRenderer::takePendingCaptureFrame(std::vector<std::uint8_t>& outPlanes) {
+  if (!impl_->capturing || !impl_->captureYuv.valid()) return false;
+  if (!impl_->captureYuv.hasPending()) return false;
+  const bool collected = impl_->captureYuv.takePending(outPlanes);
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  return collected;
+}
+
+bool GameRenderer::hasPendingCaptureFrame() const noexcept {
+  return impl_->capturing && impl_->captureYuv.valid() && impl_->captureYuv.hasPending();
 }
 
 void GameRenderer::endCapture() noexcept {

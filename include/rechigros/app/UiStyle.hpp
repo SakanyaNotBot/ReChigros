@@ -51,8 +51,9 @@ bool iconButton(const char* id, std::uint64_t texture, ImVec2 topLeft, ImVec2 si
     const char* tooltip = nullptr, bool straightLeft = false, bool straightRight = false,
     bool accentEdge = false);
 
-// Starts a borderless full-window container covering the whole viewport.
-void beginFullscreenWindow(const char* id);
+// Starts a borderless full-window container covering the whole viewport. Topmost containers can
+// be raised above a page that still owns focus.
+void beginFullscreenWindow(const char* id, bool topmost = false);
 void endFullscreenWindow();
 
 // Colour constants shared by the screens. The values mirror the interface palette so every

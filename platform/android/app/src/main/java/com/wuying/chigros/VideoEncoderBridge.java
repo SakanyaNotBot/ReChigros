@@ -54,6 +54,7 @@ final class VideoEncoderBridge {
     private static final java.util.List<MediaCodec.BufferInfo> audioPacketInfo =
             new java.util.ArrayList<>();
     private static MediaFormat audioFormat;
+    private static boolean audioPrepared;
 
     private VideoEncoderBridge() {
     }
@@ -133,7 +134,10 @@ final class VideoEncoderBridge {
             Log.e(TAG, "cannot read audio track", error);
             pcmBytes = null;
         }
-        return pcmBytes != null;
+        if (pcmBytes != null && videoEncoder != null && !audioPrepared) {
+            prepareAudioTrack();
+        }
+        return pcmBytes != null && (videoEncoder == null || audioPrepared);
     }
 
     /**
@@ -293,17 +297,29 @@ final class VideoEncoderBridge {
         }
         muxer.start();
         muxerStarted = true;
+        Log.i(TAG, "muxer started videoTrack=" + videoTrack + " audioTrack=" + audioTrack);
         flushAudioPackets();
     }
 
     /** Writes the audio packets buffered before the container was opened. */
     private static void flushAudioPackets() {
         if (!muxerStarted || audioTrack < 0) return;
-        for (int i = 0; i < audioPackets.size(); ++i) {
+        long byteCount = 0;
+        long firstPresentationUs = -1;
+        long lastPresentationUs = -1;
+        final int packetCount = audioPackets.size();
+        for (int i = 0; i < packetCount; ++i) {
             final byte[] packet = audioPackets.get(i);
+            final MediaCodec.BufferInfo info = audioPacketInfo.get(i);
             final ByteBuffer buffer = ByteBuffer.wrap(packet);
-            muxer.writeSampleData(audioTrack, buffer, audioPacketInfo.get(i));
+            muxer.writeSampleData(audioTrack, buffer, info);
+            byteCount += packet.length;
+            if (firstPresentationUs < 0) firstPresentationUs = info.presentationTimeUs;
+            lastPresentationUs = info.presentationTimeUs;
         }
+        Log.i(TAG, "audio muxed track=" + audioTrack + " packets=" + packetCount
+                + " bytes=" + byteCount + " firstPtsUs=" + firstPresentationUs
+                + " lastPtsUs=" + lastPresentationUs);
         audioPackets.clear();
         audioPacketInfo.clear();
     }
@@ -354,6 +370,7 @@ final class VideoEncoderBridge {
      * any sample is written, so the audio cannot be encoded lazily beside the video.
      */
     private static void prepareAudioTrack() {
+        if (audioPrepared) return;
         MediaCodec encoder = null;
         try {
             final int channels = 2;
@@ -371,64 +388,90 @@ final class VideoEncoderBridge {
             final int frameBytes = channels * floatBytes;
             final int totalFrames = pcmBytes.length / frameBytes;
             final MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
-            final ByteBuffer shorts = ByteBuffer.allocateDirect(16384).order(ByteOrder.nativeOrder());
+            final ByteBuffer shorts = ByteBuffer.allocate(16384).order(ByteOrder.nativeOrder());
             ShortBuffer shortView = shorts.asShortBuffer();
             int cursor = 0;
             long presentedSamples = 0;
+            long encodedBytes = 0;
+            long firstPresentationUs = -1;
+            long lastPresentationUs = -1;
             boolean inputDone = false;
+            boolean sawEndOfStream = false;
+            final long idleTimeoutNs = 10_000_000_000L;
+            long lastProgressNs = System.nanoTime();
 
             while (true) {
                 if (!inputDone) {
                     final int index = encoder.dequeueInputBuffer(10_000L);
                     if (index >= 0) {
                         final ByteBuffer input = encoder.getInputBuffer(index);
-                        if (input != null) {
-                            input.clear();
-                            shorts.clear();
-                            shortView = shorts.asShortBuffer();
-                            int samples = 0;
-                            while (cursor < totalFrames && samples + channels <= shortView.capacity()) {
-                                final int base = cursor * frameBytes;
-                                for (int c = 0; c < channels; ++c) {
-                                    final int offset = base + c * floatBytes;
-                                    final float value = Float.intBitsToFloat(
-                                            (pcmBytes[offset] & 0xFF)
-                                                    | ((pcmBytes[offset + 1] & 0xFF) << 8)
-                                                    | ((pcmBytes[offset + 2] & 0xFF) << 16)
-                                                    | ((pcmBytes[offset + 3] & 0xFF) << 24));
-                                    final int scaled = (int) (Math.max(-1.0f, Math.min(1.0f, value)) * 32767.0f);
-                                    shorts.putShort((short) scaled);
-                                    samples++;
-                                }
-                                cursor++;
-                            }
-                            final int written = shorts.position();
-                            input.put(shorts.array(), 0, Math.min(written, input.capacity()));
-                            final long presentationUs = (pcmDelayMs * 1000L)
-                                    + presentedSamples * 1_000_000L / pcmSampleRate;
-                            final boolean last = cursor >= totalFrames;
-                            encoder.queueInputBuffer(index, 0, Math.min(written, input.capacity()),
-                                    presentationUs, last ? MediaCodec.BUFFER_FLAG_END_OF_STREAM : 0);
-                            presentedSamples += written / (channels * 2L);
-                            if (last) inputDone = true;
+                        if (input == null) {
+                            throw new IllegalStateException("audio encoder returned a null input buffer");
                         }
+                        input.clear();
+                        shorts.clear();
+                        shortView = shorts.asShortBuffer();
+                        final int sampleCapacity =
+                                Math.min(shortView.capacity(), input.remaining() / 2);
+                        if (cursor < totalFrames && sampleCapacity < channels) {
+                            throw new IllegalStateException("audio encoder input buffer is too small");
+                        }
+                        int samples = 0;
+                        while (cursor < totalFrames && samples + channels <= sampleCapacity) {
+                            final int base = cursor * frameBytes;
+                            for (int c = 0; c < channels; ++c) {
+                                final int offset = base + c * floatBytes;
+                                final float value = Float.intBitsToFloat(
+                                        (pcmBytes[offset] & 0xFF)
+                                                | ((pcmBytes[offset + 1] & 0xFF) << 8)
+                                                | ((pcmBytes[offset + 2] & 0xFF) << 16)
+                                                | ((pcmBytes[offset + 3] & 0xFF) << 24));
+                                final int scaled = (int) (Math.max(-1.0f, Math.min(1.0f, value)) * 32767.0f);
+                                shorts.putShort((short) scaled);
+                                samples++;
+                            }
+                            cursor++;
+                        }
+                        final int written = shorts.position();
+                        input.put(shorts.array(), 0, written);
+                        final long presentationUs = (pcmDelayMs * 1000L)
+                                + presentedSamples * 1_000_000L / pcmSampleRate;
+                        final boolean last = cursor >= totalFrames;
+                        encoder.queueInputBuffer(index, 0, written, presentationUs,
+                                last ? MediaCodec.BUFFER_FLAG_END_OF_STREAM : 0);
+                        presentedSamples += written / (channels * 2L);
+                        if (last) inputDone = true;
+                        lastProgressNs = System.nanoTime();
                     }
                 }
                 final int index = encoder.dequeueOutputBuffer(info, 10_000L);
                 if (index == MediaCodec.INFO_TRY_AGAIN_LATER) {
-                    if (inputDone) break;
+                    if (System.nanoTime() - lastProgressNs >= idleTimeoutNs) {
+                        throw new IllegalStateException("audio encoder output timed out");
+                    }
                     continue;
                 }
                 if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                     // The track is added now, while the muxer is still unstarted; its samples are
                     // held until the video track exists and the container has been opened.
+                    if (muxerStarted || audioTrack >= 0) {
+                        throw new IllegalStateException("audio track format changed too late");
+                    }
                     audioFormat = encoder.getOutputFormat();
                     audioTrack = muxer.addTrack(audioFormat);
+                    lastProgressNs = System.nanoTime();
                     continue;
                 }
-                if (index < 0) continue;
+                if (index < 0) {
+                    if (System.nanoTime() - lastProgressNs >= idleTimeoutNs) {
+                        throw new IllegalStateException("audio encoder output timed out");
+                    }
+                    continue;
+                }
+                lastProgressNs = System.nanoTime();
                 final ByteBuffer output = encoder.getOutputBuffer(index);
-                if (output != null && info.size > 0) {
+                if (output != null && info.size > 0
+                        && (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
                     final byte[] packet = new byte[info.size];
                     output.position(info.offset);
                     output.limit(info.offset + info.size);
@@ -437,10 +480,24 @@ final class VideoEncoderBridge {
                     copy.set(0, packet.length, info.presentationTimeUs, info.flags);
                     audioPackets.add(packet);
                     audioPacketInfo.add(copy);
+                    encodedBytes += packet.length;
+                    if (firstPresentationUs < 0) firstPresentationUs = info.presentationTimeUs;
+                    lastPresentationUs = info.presentationTimeUs;
                 }
                 encoder.releaseOutputBuffer(index, false);
-                if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) break;
+                if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                    sawEndOfStream = true;
+                    break;
+                }
             }
+            if (!sawEndOfStream || audioTrack < 0) {
+                throw new IllegalStateException("audio encoder did not finish its track");
+            }
+            audioPrepared = true;
+            Log.i(TAG, "audio encoded pcmFrames=" + presentedSamples
+                    + " packets=" + audioPackets.size() + " bytes=" + encodedBytes
+                    + " track=" + audioTrack + " firstPtsUs=" + firstPresentationUs
+                    + " lastPtsUs=" + lastPresentationUs + " eos=" + sawEndOfStream);
         } catch (IOException | RuntimeException error) {
             // A recording without music is still a complete recording, so this is not fatal.
             Log.e(TAG, "cannot prepare audio", error);
@@ -466,6 +523,7 @@ final class VideoEncoderBridge {
         audioPackets.clear();
         audioPacketInfo.clear();
         audioFormat = null;
+        audioPrepared = false;
         videoEncoder = null;
         muxer = null;
         muxerStarted = false;

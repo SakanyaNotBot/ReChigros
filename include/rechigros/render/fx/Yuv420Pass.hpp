@@ -33,24 +33,36 @@ public:
   // planes at half size.
   bool convert(gl::Texture& source, std::vector<std::uint8_t>& out) noexcept;
 
+  // Starts the current conversion and collects the preceding one when there is one. The first
+  // frame returns with frameReady false; takePending collects the final frame after the last call.
+  bool convertAsync(gl::Texture& source, std::vector<std::uint8_t>& out,
+      bool& frameReady) noexcept;
+  bool takePending(std::vector<std::uint8_t>& out) noexcept;
+  [[nodiscard]] bool hasPending() const noexcept { return pendingCount_ != 0; }
+
   [[nodiscard]] std::size_t frameBytes() const noexcept {
     return static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_) * 3U / 2U;
   }
 
 private:
-  // Renders one plane. `plane` selects luma or which colour difference the shader writes.
-  void renderPlane(int index, gl::Texture& source, int planeSelector) noexcept;
+  // Renders one plane into one slot. `plane` selects luma or which colour difference the
+  // shader writes; `slot` picks the target set so a transfer in flight is never overwritten.
+  void renderPlane(int slot, int index, gl::Texture& source, int planeSelector) noexcept;
+  bool request(gl::Texture& source) noexcept;
 
   gl::ShaderProgram lumaProgram_;
   gl::ShaderProgram chromaProgram_;
-  // One single-channel target per plane, each with its own framebuffer.
-  unsigned int planeTextures_[3]{};
-  unsigned int planeFbos_[3]{};
-  // One staging buffer per plane, so the three transfers can be started together and collected
-  // afterwards instead of each one waiting for the graphics device in turn.
-  unsigned int packBuffers_[3]{};
+  // Two sets of single-channel targets, one per plane. The set being written differs from the
+  // set being transferred, so rendering the next frame never waits for the previous transfer.
+  unsigned int planeTextures_[2][3]{};
+  unsigned int planeFbos_[2][3]{};
+  // Two sets of staging buffers let one frame complete its transfer while the next is drawn.
+  unsigned int packBuffers_[2][3]{};
   int width_{};
   int height_{};
+  int readSlot_{};
+  int writeSlot_{};
+  int pendingCount_{};
   bool ready_{};
 };
 

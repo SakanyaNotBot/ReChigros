@@ -81,7 +81,7 @@ public:
   // moment its note was actually judged so a slow frame does not restart it.
   void update(game::Chart& chart, double chartTimeSec, double visualTimeSec,
       float stageX, float stageY, float stageWidth, float stageHeight, float noteWidth,
-      float musicSpeed = 1.0F);
+      float musicSpeed = 1.0F, bool skipJudgedNotes = false);
 
   void clear() noexcept;
 

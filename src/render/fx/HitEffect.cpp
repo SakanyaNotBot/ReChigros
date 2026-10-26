@@ -116,7 +116,7 @@ void HitEffectField::spawn(float x, float y, double startSec, float red, float g
 
 void HitEffectField::update(game::Chart& chart, double chartTimeSec, double visualTimeSec,
     float stageX, float stageY, float stageWidth, float stageHeight, float noteWidth,
-    float musicSpeed) {
+    float musicSpeed, bool skipJudgedNotes) {
   noteWidth_ = noteWidth;
 
   // Expire finished bursts first so the spawn budget reflects live effects only.
@@ -127,6 +127,9 @@ void HitEffectField::update(game::Chart& chart, double chartTimeSec, double visu
                      }),
       effects_.end());
 
+  // Autoplay draws its bursts from the chart's pre-rolled effect list, so the judgement scan
+  // must not also emit one for the same hit. Hold bodies still arrive as session events below.
+  if (skipJudgedNotes) return;
   if (tracked_.size() != chart.allNotesSorted.size()) tracked_.resize(chart.allNotesSorted.size());
 
   const float stageAspect = stageHeight > 1.0e-6F ? stageWidth / stageHeight : 16.0F / 9.0F;

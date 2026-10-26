@@ -225,7 +225,7 @@ bool iconButton(const char* id, std::uint64_t texture, ImVec2 topLeft, ImVec2 si
   return pressed;
 }
 
-void beginFullscreenWindow(const char* id) {
+void beginFullscreenWindow(const char* id, bool topmost) {
   const ImGuiViewport* viewport = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(viewport->WorkPos);
   ImGui::SetNextWindowSize(viewport->WorkSize);
@@ -233,9 +233,10 @@ void beginFullscreenWindow(const char* id) {
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0F);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0F);
   ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0F, 0.0F, 0.0F, 0.0F));
-  ImGui::Begin(id, nullptr,
-      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings
-          | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus);
+  ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove
+      | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNavFocus;
+  if (!topmost) flags |= ImGuiWindowFlags_NoBringToFrontOnFocus;
+  ImGui::Begin(id, nullptr, flags);
 }
 
 void endFullscreenWindow() {

@@ -217,6 +217,14 @@ public:
   // form when the conversion is unavailable on this context.
   bool captureFrameYuv(const RenderFrameInput& input, game::Chart* chart,
       const game::JudgementEngine* judgement, std::vector<std::uint8_t>& outPlanes);
+  // Draws the current frame and starts its transfer while collecting the preceding frame. The
+  // first call reports no frame yet. takePendingCaptureFrame collects the last one; hasPending
+  // says whether anything is outstanding, so a caller can drain before closing the encoder.
+  bool captureFrameYuvAsync(const RenderFrameInput& input, game::Chart* chart,
+      const game::JudgementEngine* judgement, std::vector<std::uint8_t>& outPlanes,
+      bool& frameReady);
+  bool takePendingCaptureFrame(std::vector<std::uint8_t>& outPlanes);
+  [[nodiscard]] bool hasPendingCaptureFrame() const noexcept;
   void endCapture() noexcept;
   [[nodiscard]] int captureWidth() const noexcept;
   [[nodiscard]] int captureHeight() const noexcept;

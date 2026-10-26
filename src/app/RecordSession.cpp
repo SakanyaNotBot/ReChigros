@@ -6,13 +6,17 @@
 
 #include "rechigros/app/AppContext.hpp"
 #include "rechigros/audio/Decoder.hpp"
+#include "rechigros/audio/Mixer.hpp"
 #include "rechigros/game/Chart.hpp"
 #include "rechigros/game/GameConstants.hpp"
 #include "rechigros/game/GameplaySession.hpp"
+#include "rechigros/platform/AssetManager.hpp"
 #include "rechigros/platform/FileSystem.hpp"
 #include "rechigros/render/scene/Transition.hpp"
+#include "rechigros/render/skin/SkinConfig.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <ctime>
@@ -53,6 +57,83 @@ std::string timestampName() {
   std::ostringstream text;
   text << std::put_time(&local, "%Y%m%d-%H%M%S");
   return text.str();
+}
+
+float recordingMusicSpeed(const AppContext& context) {
+  const float speed = context.settings.musicSpeed;
+  return std::isfinite(speed) && speed > 0.0F ? speed : 1.0F;
+}
+
+float recordingGain(float gain) {
+  return std::isfinite(gain) ? audio::mixer::clampGain(gain) : 0.0F;
+}
+
+double recordingOffsetSec(const AppContext& context) {
+  return context.game.chartOffsetSec + context.game.userOffsetSec;
+}
+
+double recordingEndPlayhead(const AppContext& context) {
+  // The picture has to cover the whole chart even when the chart ends after the audio: a chart
+  // offset can push the last note past the music file's length.
+  const double chartEnd = context.game.chart != nullptr ? context.game.chart->chartEndTimeSec : 0.0;
+  const double chartPlayhead = std::max(0.0, chartEnd + recordingOffsetSec(context));
+  if (context.game.musicLoaded && context.game.musicDurationSec > 0.0) {
+    return std::max(context.game.musicDurationSec, chartPlayhead);
+  }
+  return chartPlayhead;
+}
+
+double recordingContentSeconds(const AppContext& context) {
+  return recordingEndPlayhead(context) / static_cast<double>(recordingMusicSpeed(context));
+}
+
+std::filesystem::path recordingSkinDirectory(const AppContext& context) {
+  if (context.settings.selectedSkin.empty()) return {};
+  const auto directory = context.dataRoot / "skins" / context.settings.selectedSkin;
+  std::error_code error;
+  return std::filesystem::is_directory(directory, error) ? directory : std::filesystem::path{};
+}
+
+audio::AudioBuffer recordingHitSound(const AppContext& context, int noteType) {
+  using game::NOTE_DRAG;
+  using game::NOTE_FLICK;
+  using game::NOTE_HOLD;
+  using game::NOTE_TAP;
+  struct SoundSpec {
+    int type;
+    const char* skinName;
+    const char* assetPath;
+    float frequency;
+    float seconds;
+    float amplitude;
+  };
+  static constexpr std::array<SoundSpec, 3> specs{{
+      {NOTE_TAP, "click", "audio/tap.wav", 880.0F, 0.030F, 0.35F},
+      {NOTE_DRAG, "drag", "audio/drag.wav", 660.0F, 0.035F, 0.30F},
+      {NOTE_FLICK, "flick", "audio/flick.wav", 1100.0F, 0.025F, 0.35F},
+  }};
+  if (noteType == NOTE_HOLD) noteType = NOTE_TAP;
+  const auto found = std::find_if(specs.begin(), specs.end(),
+      [noteType](const SoundSpec& spec) { return spec.type == noteType; });
+  if (found == specs.end()) return {};
+  const auto skinDirectory = recordingSkinDirectory(context);
+  static constexpr std::array<const char*, 3> extensions{{".wav", ".ogg", ".mp3"}};
+  for (const char* extension : extensions) {
+    const auto candidate = render::skin::resolveSkinFile(
+        skinDirectory, std::string(found->skinName) + extension);
+    if (candidate.empty()) continue;
+    auto decoded = audio::Decoder::decodeFile(candidate, kAudioSampleRate);
+    if (!decoded.empty()) return decoded;
+  }
+  const auto fallback = platform::AssetManager::materialize(
+      platform::assetRoot(), found->assetPath);
+  if (!fallback.empty()) {
+    auto decoded = audio::Decoder::decodeFile(fallback, kAudioSampleRate);
+    if (!decoded.empty()) return decoded;
+  }
+  return audio::AudioBuffer(
+      audio::synthesizeTone(found->frequency, found->seconds, kAudioSampleRate, found->amplitude),
+      kAudioSampleRate);
 }
 
 } // namespace
@@ -114,25 +195,17 @@ bool RecordSession::start(AppContext& context, const Settings& settings, std::st
   std::filesystem::path file = settings_.outputDirectory / (name + ".mp4");
   outputPath_ = file;
 
-  const double chartEnd = context.game.chart->chartEndTimeSec;
-  // The picture has to run past the last note: the HUD keeps its layout while the play field
-  // blurs and then fades out over its own window, and the exit transition follows. Stopping at
-  // the chart's end cut the video off exactly when the song ended, so the recording covers the
-  // HUD's exit as well.
-  // The chart clock only starts after the opening lead, so the picture is that lead longer than the
-  // chart. Leaving it out of the total ended the video early by exactly the intro, which is why the
-  // HUD exit was still on screen in the last frame.
-  const double duration =
-      std::max(0.1, kIntroLeadSec + chartEnd + kOutroTailSec + kHudExitSec);
+  const double contentSeconds = recordingContentSeconds(context);
+  // Stream duration and playback rate determine the content length; both transitions use wall time.
+  const double duration = std::max(
+      0.1, kIntroLeadSec + contentSeconds + kOutroTailSec + kHudExitSec);
   totalFrames_ = std::max(1, static_cast<int>(std::ceil(duration * settings_.fps)));
   renderedFrames_ = 0;
 
   // The audio track is the chart's music, decoded once and written as raw samples for the encoder.
   // It starts after the opening transition, so the first beat lands on the first note.
   audioTrackPath_.clear();
-  if (settings_.noteHitsound) {
-    audioTrackPath_ = writeAudioTrack(context, file);
-  }
+  audioTrackPath_ = writeAudioTrack(context, file);
 
   VideoEncoder::Settings encoderSettings;
   encoderSettings.width = resolution.width;
@@ -160,13 +233,29 @@ bool RecordSession::start(AppContext& context, const Settings& settings, std::st
   encoderUsesPlanar_ = encoder_.inputIsPlanar();
   startEncoderThread();
 
+  context.renderer->setSkinDirectory(recordingSkinDirectory(context));
+  context.renderer->setBackgroundImage(context.play.bgFile);
   render::RenderFrameInput probe;
   // The recording always runs the chart in autoplay, which is what makes it reproducible: no
   // input is injected, and the judged result comes from the chart itself.
   context.game.autoplay = true;
+  context.game.challenge = context.settings.challengeMode;
+  context.game.mirrorX = context.settings.mirrorX;
+  context.game.musicSpeed = recordingMusicSpeed(context);
+  context.game.scrollSpeed = context.settings.scrollSpeed;
   context.game.session.setChart(context.game.chart.get(), context.game.challenge);
   context.game.session.setAutoplay(true);
   context.game.session.setMusicSpeed(context.game.musicSpeed);
+  context.game.session.judgement().setJudgementDetailDistribution(
+      context.settings.judgementDetailDistribution);
+  game::GameplaySession::Viewport viewport;
+  viewport.width = static_cast<float>(resolution.width);
+  viewport.height = static_cast<float>(resolution.height);
+  viewport.targetAspect = context.settings.aspectRatio;
+  viewport.scrollSpeed = context.settings.scrollSpeed;
+  viewport.dpi = context.displayDpi;
+  viewport.keyScale = context.settings.keyScale;
+  context.game.session.setViewport(viewport);
   if (!context.renderer->beginCapture(probe, context.game.chart.get(), resolution.width,
           resolution.height)) {
     encoder_.abort();
@@ -200,15 +289,21 @@ bool RecordSession::step(AppContext& context) {
     // derived from the frame number, not accumulated, so the video cannot drift.
     const double elapsed = static_cast<double>(frame) * frameDuration;
     const bool inIntro = elapsed < kIntroLeadSec;
-    const double chartTime = inIntro ? 0.0 : elapsed - kIntroLeadSec;
+    // The playhead advances at the user's music speed: at 2x, one second of video covers two
+    // seconds of music. The opening transition is wall time and is not scaled. Chart time is the
+    // playhead with the chart and user offsets removed, which is what the session judges against.
+    const double speed = static_cast<double>(recordingMusicSpeed(context));
+    const double playhead = inIntro ? 0.0 : (elapsed - kIntroLeadSec) * speed;
+    const double chartTime = playhead - recordingOffsetSec(context);
 
     render::RenderFrameInput input;
     input.chartTimeSec = chartTime;
-    input.playheadSec = chartTime;
+    input.playheadSec = playhead;
     input.visualTimeSec = elapsed;
     input.userOffsetSec = context.game.userOffsetSec;
     input.dpi = context.displayDpi;
     input.scrollSpeed = context.settings.scrollSpeed;
+    input.keyScale = context.settings.keyScale;
     input.mirrorX = context.settings.mirrorX;
     input.backgroundDim = context.settings.backgroundDim;
     input.aspectRatio = context.settings.aspectRatio;
@@ -237,8 +332,9 @@ bool RecordSession::step(AppContext& context) {
     // The session advances only while the chart clock is inside the chart. Past its end the picture
     // keeps drawing the exit, but nothing is left to judge: advancing there would only spend work on
     // a chart that cannot change any more.
-    if (!inIntro && chartTime <= chartEnd) {
-      context.game.session.update(chartTime, static_cast<float>(frameDuration));
+    if (!inIntro && chartTime >= 0.0 && chartTime <= chartEnd) {
+      // The session integrates in chart time, so the frame delta is scaled the same way.
+      context.game.session.update(chartTime, static_cast<float>(frameDuration * speed));
       (void)context.game.session.takeSoundEvents();
     }
     const auto& judgement = context.game.session.judgement();
@@ -262,6 +358,29 @@ bool RecordSession::step(AppContext& context) {
     input.hud.hitOffsetSuppressed = true;
     input.hud.showFps = false;
     input.hud.visualTimeSec = elapsed;
+    // The reveal camera shrinks the HUD along with the play field; the renderer resolves the
+    // stage itself, so the values it needs for the HUD are computed here the same way.
+    if (context.settings.chartReveal && !inIntro && !inOutro && chartTime >= 0.0) {
+      const double revealTotal =
+          context.game.musicDurationSec > 0.05 ? context.game.musicDurationSec : chartEnd;
+      constexpr double kRevealTransitionSec = 1.0;
+      constexpr double kRevealTargetScale = 0.30;
+      const auto smooth = [](double value) {
+        value = std::clamp(value, 0.0, 1.0);
+        return value * value * (3.0 - 2.0 * value);
+      };
+      input.hud.revealCameraActive = true;
+      if (revealTotal > 0.0 && playhead >= revealTotal - kRevealTransitionSec) {
+        const double start = std::max(0.0, revealTotal - kRevealTransitionSec);
+        input.hud.revealScale = static_cast<float>(
+            kRevealTargetScale + (1.0 - kRevealTargetScale) * smooth((playhead - start) /
+                                    kRevealTransitionSec));
+      } else {
+        input.hud.revealScale = static_cast<float>(
+            1.0 + (kRevealTargetScale - 1.0) * smooth(playhead / kRevealTransitionSec));
+      }
+      input.hud.revealScale = std::clamp(input.hud.revealScale, 0.30F, 1.0F);
+    }
     input.hud.introProgress = inIntro
         ? render::scene::introUiEase(
               static_cast<float>(std::clamp(elapsed / (40.0 / 60.0), 0.0, 1.0)))
@@ -282,6 +401,10 @@ bool RecordSession::step(AppContext& context) {
     // Hit feedback is part of what a run looks like; the interface can turn the particles off
     // while keeping the sound.
     input.showHitParticles = settings_.noteHitParticles;
+    // The recording runs autoplay; the renderer selects its burst source from this flag.
+    input.practice.enabled = false;
+    input.practice.speed = static_cast<float>(context.game.musicSpeed);
+    input.practice.autoPlay = true;
     // Hold bursts are produced by the session while it advances and drawn by the hit-effect pass.
     // They are consumed once per frame, so a recording that skipped them would show every hold
     // without its effect -- the one thing a viewer notices first in a hold-heavy chart.
@@ -293,9 +416,10 @@ bool RecordSession::step(AppContext& context) {
     // The planar layout is produced on the graphics device, which spares both the readback and the
     // encoder a conversion per frame. The coloured path stays as the fallback for a context that
     // cannot run the conversion.
+    bool frameReady = true;
     const bool converted = encoderUsesPlanar_
-        && context.renderer->captureFrameYuv(input, context.game.chart.get(), &judgement,
-            framePixels_);
+        && context.renderer->captureFrameYuvAsync(input, context.game.chart.get(), &judgement,
+            framePixels_, frameReady);
     if (!converted
         && !context.renderer->captureFrame(input, context.game.chart.get(), &judgement,
             framePixels_)) {
@@ -306,27 +430,48 @@ bool RecordSession::step(AppContext& context) {
     const auto captureEnd = std::chrono::steady_clock::now();
     captureMs_ += std::chrono::duration<double, std::milli>(captureEnd - captureStart).count();
     // The frame goes to the encoder thread and the next one is drawn straight away, so the two
-    // stages overlap instead of alternating.
-    const bool queued = submitFrame(framePixels_);
-    const auto submitEnd = std::chrono::steady_clock::now();
-    encodeWaitMs_ += std::chrono::duration<double, std::milli>(submitEnd - captureEnd).count();
-    ++timedFrames_;
-    if (!queued) {
-      {
-        std::lock_guard<std::mutex> guard(queueMutex_);
-        error_ = encoderError_.empty() ? "the encoder stopped accepting frames" : encoderError_;
-      }
-      state_ = State::Failed;
-      return false;
+    // stages overlap instead of alternating. A deferred conversion reports ready only from its
+    // second call, so the first frame of a run arrives one draw later and the final one is
+    // collected below.
+    if (!converted || frameReady) {
+      if (!enqueueTimedFrame(framePixels_)) return false;
     }
     ++renderedFrames_;
   }
 
   if (renderedFrames_ >= totalFrames_) {
+    // The last frame is still in its transfer; collect it before the encoder is told the stream
+    // is over, otherwise the tail of the video is short by the frames the pipeline holds.
+    if (encoderUsesPlanar_) {
+      while (context.renderer->takePendingCaptureFrame(framePixels_)) {
+        if (!enqueueTimedFrame(framePixels_)) return false;
+      }
+      if (context.renderer->hasPendingCaptureFrame()) {
+        state_ = State::Failed;
+        error_ = "a converted frame could not be collected";
+        return false;
+      }
+    }
     finish(context);
     return false;
   }
   return true;
+}
+
+bool RecordSession::enqueueTimedFrame(const std::vector<std::uint8_t>& pixels) {
+  const auto submitStart = std::chrono::steady_clock::now();
+  const bool queued = submitFrame(pixels);
+  const auto submitEnd = std::chrono::steady_clock::now();
+  encodeWaitMs_ += std::chrono::duration<double, std::milli>(submitEnd - submitStart).count();
+  ++timedFrames_;
+  if (!queued) {
+    {
+      std::lock_guard<std::mutex> guard(queueMutex_);
+      error_ = encoderError_.empty() ? "the encoder stopped accepting frames" : encoderError_;
+    }
+    state_ = State::Failed;
+  }
+  return queued;
 }
 
 void RecordSession::reportTimings() const {
@@ -482,41 +627,37 @@ void RecordSession::releaseResources(AppContext& context) noexcept {
 }
 
 void RecordSession::mixHitSounds(AppContext& context, std::vector<float>& mix,
-    std::int64_t frames) const {
+    std::int64_t frames, double speed) const {
   if (context.game.chart == nullptr) return;
-  // An autoplay run hits every note at the note's own time, so the hit times come straight from the
-  // chart rather than from the judged frame: the picture may notice a note on a later frame, but the
-  // sound of a hit belongs where the note is. This is what makes a recorded run sound like the run
-  // it shows.
-  constexpr float kHitSeconds = 0.045F;
-  constexpr float kHitAmplitude = 0.35F;
-  const auto hitFrames = static_cast<std::int64_t>(std::ceil(kHitSeconds * kAudioSampleRate));
-  if (hitFrames <= 0) return;
+  // Every hit in an autoplay run lands at the note's own time, so the schedule comes from the
+  // chart rather than from the frame that noticed it: the picture may catch up later, but a hit
+  // is heard where the note is.
   const auto totalFrames = static_cast<std::int64_t>(mix.size() / 2U);
-  using game::NOTE_DRAG;
-  using game::NOTE_FLICK;
-  using game::NOTE_HOLD;
-  using game::NOTE_TAP;
+  if (totalFrames <= 0) return;
+  const float gain = recordingGain(context.settings.soundEffectVolume);
+  if (gain <= 0.0F) return;
+  std::array<audio::AudioBuffer, 3> banks{recordingHitSound(context, game::NOTE_TAP),
+      recordingHitSound(context, game::NOTE_DRAG), recordingHitSound(context, game::NOTE_FLICK)};
   for (const auto* note : context.game.chart->allNotesSorted) {
-    if (note == nullptr || note->type == NOTE_HOLD) continue;
-    const auto startFrame =
-        static_cast<std::int64_t>(std::llround(note->sect * kAudioSampleRate));
+    if (note == nullptr) continue;
+    if (note->isFake) continue;
+    const int type = note->type == game::NOTE_HOLD ? game::NOTE_TAP : note->type;
+    const std::size_t bank = type == game::NOTE_DRAG    ? 1U
+        : type == game::NOTE_FLICK                       ? 2U
+                                                         : 0U;
+    const auto& sound = banks[bank];
+    if (sound.empty()) continue;
+    // The track advances at `speed`, so a note at chart time t is heard at t / speed.
+    const auto startFrame = static_cast<std::int64_t>(
+        std::llround(note->sect / std::max(0.001, speed) * kAudioSampleRate));
     if (startFrame < 0 || startFrame >= totalFrames) continue;
-    // A short decaying tone: without the shipped samples the recording keeps the rhythm of the
-    // hits, which is the part that carries the feel of the run.
-    const float frequency = note->type == NOTE_FLICK ? 1100.0F
-        : note->type == NOTE_DRAG                 ? 660.0F
-                                                  : 880.0F;
-    for (std::int64_t offset = 0; offset < hitFrames; ++offset) {
-      const auto frame = startFrame + offset;
-      if (frame >= totalFrames) break;
-      const float progress = static_cast<float>(offset) / static_cast<float>(hitFrames);
-      const float envelope = (1.0F - progress) * (1.0F - progress);
-      const float phase = 6.2831853F * frequency * static_cast<float>(offset)
-          / static_cast<float>(kAudioSampleRate);
-      const float sample = std::sin(phase) * envelope * kHitAmplitude;
-      mix[static_cast<std::size_t>(frame) * 2U] += sample;
-      mix[static_cast<std::size_t>(frame) * 2U + 1U] += sample;
+    const auto available = totalFrames - startFrame;
+    const auto count = std::min<std::int64_t>(sound.frameCount(), available);
+    const float* samples = sound.data();
+    for (std::int64_t offset = 0; offset < count; ++offset) {
+      const auto frame = static_cast<std::size_t>(startFrame + offset) * 2U;
+      mix[frame] += samples[static_cast<std::size_t>(offset) * 2U] * gain;
+      mix[frame + 1U] += samples[static_cast<std::size_t>(offset) * 2U + 1U] * gain;
     }
   }
   (void)frames;
@@ -531,28 +672,52 @@ std::filesystem::path RecordSession::writeAudioTrack(AppContext& context,
   if (!context.play.musicFile.empty()) {
     buffer = audio::Decoder::decodeFile(context.play.musicFile, kAudioSampleRate);
   }
-  // A chart with no decodable music still gets a track carrying its hit sounds; only a run with no
-  // music and no hits stays silent.
+  // The music and the hit sounds are independent: turning the hit sound off must not silence the
+  // song, and a chart without decodable music still carries its hits.
   if (buffer.empty() && !settings_.noteHitsound) return {};
   // The track covers the chart plus the exit: the music ends with the song, while the hit sounds
   // of the final notes and the fade still have to be audible, so the track is sized from the
-  // picture, not from the music file.
-  const double chartEnd = context.game.chart != nullptr
-      ? context.game.chart->chartEndTimeSec
-      : buffer.durationSeconds();
-  // The encoder delays this track by the opening lead, so it starts where the chart clock does and
-  // the lead must not be added here; the track only has to cover the chart and its exit.
-  const double trackSeconds = std::max(0.1, chartEnd + kOutroTailSec + kHudExitSec);
+  // chart clock, not from the music file.
+  double chartEnd = context.game.chart != nullptr ? context.game.chart->chartEndTimeSec : 0.0;
+  if (chartEnd <= 0.0) chartEnd = buffer.durationSeconds();
+  if (chartEnd <= 0.0) chartEnd = 0.1;
+  const double speed = std::max(0.001, static_cast<double>(recordingMusicSpeed(context)));
+  // The track is played at the user's speed, so one second of audio holds `speed` seconds of
+  // chart. Sizing it by the chart end alone would cut the tail of a slowed-down run and leave
+  // silence at the end of a sped-up one.
+  const double contentSeconds = chartEnd / speed;
+  const double trackSeconds =
+      std::max(0.1, contentSeconds + kOutroTailSec + kHudExitSec);
   const std::int64_t frames = static_cast<std::int64_t>(std::ceil(trackSeconds * kAudioSampleRate));
   if (frames <= 0) return {};
-  // The music is decoded at the sample rate the encoder is told to expect, so no conversion is
-  // needed; it is copied in and the hit sounds are summed on top of it.
   std::vector<float> mix(static_cast<std::size_t>(frames) * 2U, 0.0F);
-  const std::int64_t musicFrames = std::min<std::int64_t>(buffer.frameCount(), frames);
-  if (musicFrames > 0) {
-    std::copy_n(buffer.data(), static_cast<std::size_t>(musicFrames) * 2U, mix.begin());
+  // Music is read through the playback speed: at 2x every output frame advances two input frames,
+  // with linear interpolation, which is what the interactive player does. Its gain is the user's
+  // music volume and is independent of the hit-sound switch.
+  const float musicGain = recordingGain(context.settings.musicVolume);
+  const std::int64_t musicFrames = buffer.frameCount();
+  if (musicFrames > 0 && musicGain > 0.0F) {
+    const float* music = buffer.data();
+    for (std::int64_t index = 0; index < frames; ++index) {
+      const double position = static_cast<double>(index) * speed;
+      if (position >= static_cast<double>(musicFrames)) break;
+      const auto first = static_cast<std::int64_t>(position);
+      const auto second = std::min<std::int64_t>(first + 1, musicFrames - 1);
+      const auto fraction = static_cast<float>(position - static_cast<double>(first));
+      for (std::size_t channel = 0; channel < 2U; ++channel) {
+        const float a = music[static_cast<std::size_t>(first) * 2U + channel];
+        const float b = music[static_cast<std::size_t>(second) * 2U + channel];
+        mix[static_cast<std::size_t>(index) * 2U + channel] =
+            (a + (b - a) * fraction) * musicGain;
+      }
+    }
   }
-  if (settings_.noteHitsound) mixHitSounds(context, mix, frames);
+  // Hits sit on the chart clock, which advances at the same speed, so their position in this
+  // track is their chart time divided by the speed.
+  if (settings_.noteHitsound) mixHitSounds(context, mix, frames, speed);
+  // The interactive mixer soft-clips every sample as it leaves the callback; a recording that
+  // summed music and hits without doing the same would clip on loud passages.
+  for (float& sample : mix) sample = audio::mixer::clampSample(sample);
   std::filesystem::path track = videoPath;
   track += ".pcm";
   // A name holding characters outside the ANSI code page cannot be opened through a narrow path, so

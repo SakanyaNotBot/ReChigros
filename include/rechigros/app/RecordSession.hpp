@@ -86,12 +86,15 @@ private:
   void stopEncoderThread();
   // Hands one frame to the encoder thread, blocking only while the queue is full.
   bool submitFrame(const std::vector<std::uint8_t>& pixels);
+  // Timing wrapper for a produced frame: queue handoff plus the wait it cost.
+  bool enqueueTimedFrame(const std::vector<std::uint8_t>& pixels);
   // Blocks until every queued frame has been written.
   bool drainEncoder(std::string& error);
   void encoderLoop();
   // Sums one short percussive sample per hit into `mix` at the note's own time, so a recorded run
   // sounds like the run it shows.
-  void mixHitSounds(AppContext& context, std::vector<float>& mix, std::int64_t frames) const;
+  void mixHitSounds(AppContext& context, std::vector<float>& mix, std::int64_t frames,
+      double speed) const;
   // Writes the decoded music plus every judged hit sound beside `videoPath` as raw samples for the
   // encoder. Empty on failure.
   std::filesystem::path writeAudioTrack(AppContext& context,

@@ -26,6 +26,7 @@ android {
         targetSdk 36
         versionCode 1
         versionName '0.1.0'
+        testInstrumentationRunner 'com.wuying.chigros.VideoEncoderBridgeProbe'
         externalNativeBuild {
             cmake {
                 cppFlags '-std=c++20', '-O2', '-fexceptions', '-frtti'
@@ -40,6 +41,7 @@ android {
     externalNativeBuild {
         cmake { path projectRoot.toPath().resolve('CMakeLists.txt').toFile(); version '3.22.1' }
     }
+    testBuildType 'release'
     sourceSets {
         main.java.srcDirs += new File(sdlRoot, 'android-project/app/src/main/java')
         main.assets.srcDirs = [new File(projectRoot, 'assets')]

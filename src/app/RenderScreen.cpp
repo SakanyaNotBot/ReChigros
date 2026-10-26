@@ -342,7 +342,9 @@ void drawRecordingProgress(AppContext& context) {
   // The overlay owns a clickable control, and an immediate-mode widget has to belong to a window.
   // Submitting it with none open makes the toolkit create its own fallback window, which then
   // shows up as a stray panel over the recording.
-  ui::beginFullscreenWindow("##recording_progress");
+  // The settings page owns focus when the run starts, so explicitly raise this window above it.
+  ImGui::SetNextWindowFocus();
+  ui::beginFullscreenWindow("##recording_progress", true);
   ImDrawList* drawList = ImGui::GetWindowDrawList();
   // The window rectangle in draw-list coordinates: the draw list spans the whole window, so this
   // does not go through the canvas at all.

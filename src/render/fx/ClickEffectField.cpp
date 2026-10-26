@@ -71,11 +71,21 @@ void ClickEffectField::draw(game::Chart& chart, batch::SpriteBatch& out,
   const float effectSize = noteWidth * style.spriteScale * style.sizeScale;
   const float stageAspect = stageHeight > 1.0e-6F ? stageWidth / stageHeight : 16.0F / 9.0F;
 
+  // A hold is shown by its head and body events instead: the pre-rolled click burst would put a
+  // second, differently positioned effect on the same hit. Reference-autoplay skips it outright.
+  const auto skipHold = [](const game::ClickEffectItem& item) {
+    return item.note != nullptr && item.note->isHold;
+  };
+
   // Entries are time-sorted, so the ones whose animation has finished form a prefix.
   // A burst that never started keeps the prefix pinned until it is reached.
   while (cursor_ < static_cast<int>(effects.size())) {
     const game::ClickEffectItem& item = effects[static_cast<std::size_t>(cursor_)];
     if (item.timeSec > chartTimeSec) break;
+    if (skipHold(item)) {
+      ++cursor_;
+      continue;
+    }
     if (!item.animStartCached) break;
     if ((visualTimeSec - item.animStartSec) <= duration) break;
     ++cursor_;
@@ -85,6 +95,7 @@ void ClickEffectField::draw(game::Chart& chart, batch::SpriteBatch& out,
   for (int index = cursor_; index < static_cast<int>(effects.size()); ++index) {
     game::ClickEffectItem& item = effects[static_cast<std::size_t>(index)];
     if (item.timeSec > chartTimeSec) break;
+    if (skipHold(item)) continue;
     if (!item.animStartCached) {
       item.animStartCached = true;
       item.animStartSec = static_cast<float>(visualTimeSec);
@@ -153,6 +164,7 @@ void ClickEffectField::draw(game::Chart& chart, batch::SpriteBatch& out,
   for (int index = cursor_; index < static_cast<int>(effects.size()); ++index) {
     const game::ClickEffectItem& item = effects[static_cast<std::size_t>(index)];
     if (item.timeSec > chartTimeSec) break;
+    if (skipHold(item)) continue;
     if (!item.animStartCached || !item.positionCached) continue;
     const double elapsed = visualTimeSec - item.animStartSec;
     if (elapsed < 0.0 || elapsed > duration) continue;
