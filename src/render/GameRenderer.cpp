@@ -2041,25 +2041,11 @@ bool GameRenderer::captureFrameYuv(const RenderFrameInput& input, game::Chart* c
   impl_->height = height;
   impl_->captureTarget.bind();
   glViewport(0, 0, width, height);
-  const auto drawStart = std::chrono::steady_clock::now();
   impl_->drawScene(input, chart, judgement, impl_->captureTarget.fbo());
-  const auto drawEnd = std::chrono::steady_clock::now();
   // The scene stays in its render target and is converted straight out of it, so the frame is
   // never read back at full colour depth.
   const bool converted = impl_->captureYuv.convert(impl_->captureTarget.color(), outPlanes);
-  const auto convertEnd = std::chrono::steady_clock::now();
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
-  {
-    static int frames = 0;
-    static double drawMs = 0.0;
-    static double convertMs = 0.0;
-    drawMs += std::chrono::duration<double, std::milli>(drawEnd - drawStart).count();
-    convertMs += std::chrono::duration<double, std::milli>(convertEnd - drawEnd).count();
-    if (++frames % 120 == 0) {
-      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-          "[capture] draw=%.2fms convert=%.2fms/frame", drawMs / frames, convertMs / frames);
-    }
-  }
   return converted;
 }
 
