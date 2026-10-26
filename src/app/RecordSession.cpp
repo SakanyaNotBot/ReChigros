@@ -501,8 +501,16 @@ void RecordSession::cancel(AppContext& context) {
   // The reader is stopped first: it owns the queue the encoder thread is draining, and stopping
   // the encoder underneath it would leave the thread writing to a closed stream.
   stopEncoderThread();
-  if (state_ == State::Running && encoder_.active()) encoder_.abort();
+  const bool wasRunning = state_ == State::Running;
+  if (wasRunning && encoder_.active()) encoder_.abort();
   releaseResources(context);
+  // A cancelled encode leaves an unfinished container: the encoder was killed before it wrote
+  // the index, so the file cannot be opened by any player. Keeping it only leaves the user with
+  // a broken video next to their real ones, so the partial output goes away with the run.
+  if (wasRunning && !outputPath_.empty()) {
+    std::error_code cleanup;
+    std::filesystem::remove(outputPath_, cleanup);
+  }
   state_ = State::Cancelled;
 }
 
