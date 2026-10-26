@@ -159,6 +159,53 @@ int main() {
     require(missing == nullptr, "a missing level-effect table loads as null");
   }
 
+  // --- the table on a platform whose assets are not files ---------------------
+  // A packaged platform keeps its assets inside the application package, where a file stream
+  // cannot reach them. The table would then load as null and every chart would silently lose
+  // its effect -- on that platform only, never on a desktop tree. The application installs a
+  // reader for exactly this case, so the loader is checked with the filesystem deliberately
+  // unable to serve the table.
+  {
+    const std::string tableText = R"({
+      "version": "2",
+      "songs": { "message": { "effect": "MessageLevelEffects", "hideHud": true } },
+      "effects": { "MessageLevelEffects": { "tracks": {}, "settings": {}, "scalars": {} } }
+    })";
+    const std::filesystem::path absentRoot = "definitely-not-a-real-asset-root";
+
+    // No reader: the filesystem is the only source, so the table is absent.
+    OfficialLevelEffects::setAssetReader(nullptr);
+    require(OfficialLevelEffects::load(absentRoot) == nullptr,
+        "without a reader and without a file the table loads as null");
+
+    // With a reader that serves the same bytes, the table loads even though no file exists.
+    std::string served;
+    OfficialLevelEffects::setAssetReader(
+        [&tableText, &served](const std::filesystem::path& root, std::string_view relative) {
+          served = std::string(relative);
+          // The loader must ask for the table's own relative path, not a whole-tree scan.
+          if (relative != "official_effects/chapter9_phase2.json") return std::vector<std::uint8_t>{};
+          (void)root;
+          return std::vector<std::uint8_t>(tableText.begin(), tableText.end());
+        });
+    const auto throughReader = OfficialLevelEffects::load(absentRoot);
+    require(throughReader != nullptr, "an installed reader supplies the table without a file");
+    require(served == "official_effects/chapter9_phase2.json",
+        "the loader asks the reader for the table's relative path");
+    const auto selected = OfficialLevelEffects::forChart(*throughReader,
+        "8d5072369f4e120775a469e7541dd9e8", "Message", true);
+    require(selected != nullptr, "a table read through the asset reader selects its effect");
+
+    // A reader that returns nothing must not mask a file that does exist later in the run.
+    OfficialLevelEffects::setAssetReader(
+        [](const std::filesystem::path&, std::string_view) { return std::vector<std::uint8_t>{}; });
+    require(OfficialLevelEffects::load(absentRoot) == nullptr,
+        "a reader with no bytes leaves the table absent");
+
+    // Leave the process as it was found; later cases rely on the file path.
+    OfficialLevelEffects::setAssetReader(nullptr);
+  }
+
   // --- the shipped table ------------------------------------------------------
   {
     // The test runs from the build tree, so walk up to the source asset root.
