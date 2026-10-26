@@ -144,6 +144,42 @@ python tools/parity/unadjudicated.py     # 输出应为 0
 - 回归：`tests/LevelEffectTests.cpp` 新增用例，在文件系统**故意读不到**表的前提下由读取器提供字节，
   断言表能加载、读取器被问了正确的相对路径、选出的效果可用。把读取器分支关掉这两条断言即失败。
 
+#### 1.1 补充：剧情模式没有透传给加载器（本轮复查发现，已修）
+
+初版只修了资产读取。「所有异象是否都实现了」的复查又发现两处真缺陷：
+
+- **storyMode 只传给了渲染器，没传给加载器。** gameEnter 调 loadFromFile 时用默认
+  storyMode=true，于是效果链**总是**挂上，渲染端只挡了对象层（Hate 背景黑幕、Message 粒子）。
+  结果是：**剧情模式关闭时，ハテ / DS / Message 的 shader 链照跑、HUD 照样被隐藏**。
+  参考实现的做法是 loadByChart(context, md5, storyMode) 在加载时就返回 nullptr（非 Message 时），
+  链根本不挂。现在按此修：设置透传进加载器，Message 照旧保留。
+- **Message 的 rawImageHideTime（=109 s）没实现。** 参考实现里到这一刻 Message 的画布
+  从 16:9 letterbox 变为**覆盖整个视口**（原始背景被不透明 kaleido 遮罩盖住）。现在由渲染器
+  从效果表推出该时刻，向后 seek 会自动把 letterbox 放回来。
+
+实测（捕获路径 --screen game-nostory 关剧情模式，HUD 用「近白像素」判别，不会被红/黄噪点干扰）：
+
+| 谱面 | 剧情开 | 剧情关 |
+|---|---|---|
+| ハテ IN | HateLevelEffects hideHud=1，HUD 隐藏（白墨 0/0/0） | none hideHud=0，HUD 显示（114/149/59） |
+| Desultory Signals | DesultorySignalsLevelEffects hideHud=1，HUD 隐藏 | none hideHud=0，HUD 显示（836/1486/1409） |
+| Message SP | MessageLevelEffects hideHud=1，HUD 隐藏 | **仍为** MessageLevelEffects hideHud=1（与参考一致） |
+
+Message 舞台切换实测（1:1 舞台 + 16:9 窗口）：切换前亮带横向只覆盖 x=633..1286（1.7% 列），
+切换后 x=0..1919（100%）；侧栏接缝切换前在 x≈424、切换后消失。
+
+**测量陷阱**：批处理里 --frame-stats 的 now_sec 是程序时钟（帧数/60），而谱面时钟跟随**音频实时**——
+一轮 7006 帧只跑约 35 秒墙钟，所以「第 7000 帧」并不等于谱面 116 秒。按谱面时间取证必须跑够真实时长
+（约 110 s 墙钟才到 109 s），或用帧驱动的数据。
+
+#### 1.2 Ametrine 与 Petrichor 的现状
+
+- **Ametrine**：本机没有它的谱面（白名单摘要 677a9f… / 76c0b07… 在仓库里找不到），摘要路径无法在本机
+  验证。机制部分（唯一 simpleVignette 通道、radius 0.24 / smoothness 0.55、2 s 渐暗、窗口内 Bad/Miss
+  判失败、失败后保持、干净则散开、HUD 不隐藏）已由 tests/LevelEffectTests.cpp 新增用例钉住。
+- **Petrichor**：效果表里有条目，但参考实现的白名单里也没有它的摘要，即它按摘要永远选不中；
+  这与移植版一致，不是缺失。
+
 ### 2. 噪域触点照亮变成整屏红块
 
 **根因：触点反馈在两条渲染路径上都画了。**
