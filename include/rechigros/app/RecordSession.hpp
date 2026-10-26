@@ -76,8 +76,16 @@ public:
 
 private:
   void releaseResources(AppContext& context) noexcept;
+  // Deletes the output file of a run that did not finish. An encoder killed before it writes the
+  // container index leaves a file no player can open, so it is removed rather than left beside
+  // real recordings.
   // Prints the accumulated stage timings once, so a slow recording can be attributed.
   void reportTimings() const;
+  void discardIncompleteOutput() noexcept;
+  // Stops the encoder thread and releases the capture target after the run failed. A failure part
+  // way through leaves a live thread behind, and letting the session be destroyed with it still
+  // running terminates the process instead of reporting the error.
+  void failAndRelease(AppContext& context) noexcept;
   // Frame handoff to the encoder thread. Encoding a frame costs more than drawing it, so the work
   // is done on its own thread: the renderer hands over a finished frame and immediately starts the
   // next one. Without this the recording advances at the encoder's pace, which is what makes

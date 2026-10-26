@@ -283,11 +283,22 @@ void VideoEncoder::abort() noexcept {
     return;
   }
   if (!active_) {
+    // A run that already failed left its child behind: the encoder process may have died on its
+    // own, so it is killed and collected here before the handle is dropped. Destroying a process
+    // handle without collecting it leaves the runtime bookkeeping half torn down, which is what
+    // turned a dead encoder into a crash of the whole application.
+    if (input_ != nullptr) {
+      SDL_CloseIO(static_cast<SDL_IOStream*>(input_));
+      input_ = nullptr;
+    }
     if (process_ != nullptr) {
-      SDL_DestroyProcess(static_cast<SDL_Process*>(process_));
+      auto* process = static_cast<SDL_Process*>(process_);
+      SDL_KillProcess(process, true);
+      int exitCode = -1;
+      SDL_WaitProcess(process, true, &exitCode);
+      SDL_DestroyProcess(process);
       process_ = nullptr;
     }
-    input_ = nullptr;
     return;
   }
   auto* process = static_cast<SDL_Process*>(process_);

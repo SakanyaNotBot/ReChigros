@@ -435,6 +435,7 @@ bool RecordSession::step(AppContext& context) {
             framePixels_)) {
       state_ = State::Failed;
       error_ = "a frame could not be rendered";
+      failAndRelease(context);
       return false;
     }
     const auto captureEnd = std::chrono::steady_clock::now();
@@ -444,7 +445,13 @@ bool RecordSession::step(AppContext& context) {
     // second call, so the first frame of a run arrives one draw later and the final one is
     // collected below.
     if (!converted || frameReady) {
-      if (!enqueueTimedFrame(framePixels_)) return false;
+      if (!enqueueTimedFrame(framePixels_)) {
+        // A failed handoff leaves the encoder thread running. Returning with it still joinable
+        // would destroy a running thread together with the session, which aborts the process, so
+        // the thread is stopped and the unfinished output removed here.
+        failAndRelease(context);
+        return false;
+      }
     }
     ++renderedFrames_;
   }
@@ -459,6 +466,7 @@ bool RecordSession::step(AppContext& context) {
       if (context.renderer->hasPendingCaptureFrame()) {
         state_ = State::Failed;
         error_ = "a converted frame could not be collected";
+        failAndRelease(context);
         return false;
       }
     }
@@ -507,10 +515,7 @@ void RecordSession::cancel(AppContext& context) {
   // A cancelled encode leaves an unfinished container: the encoder was killed before it wrote
   // the index, so the file cannot be opened by any player. Keeping it only leaves the user with
   // a broken video next to their real ones, so the partial output goes away with the run.
-  if (wasRunning && !outputPath_.empty()) {
-    std::error_code cleanup;
-    std::filesystem::remove(outputPath_, cleanup);
-  }
+  if (wasRunning) discardIncompleteOutput();
   state_ = State::Cancelled;
 }
 
@@ -522,18 +527,46 @@ void RecordSession::finish(AppContext& context) {
   if (!drainEncoder(error)) {
     state_ = State::Failed;
     error_ = error;
-    releaseResources(context);
+    failAndRelease(context);
     return;
   }
   if (!encoder_.finish(error)) {
     state_ = State::Failed;
     error_ = error;
-    releaseResources(context);
+    failAndRelease(context);
     return;
   }
   releaseResources(context);
   state_ = State::Finished;
   reportTimings();
+}
+
+void RecordSession::failAndRelease(AppContext& context) noexcept {
+  // The writer is stopped before the thread is collected. The encoder may already be a dead child
+  // whose pipe is gone, and a writer still parked inside that pipe holds state the encoder tears
+  // down; joining first would collect the thread while it is still in there, which is a race the
+  // process loses intermittently.
+  {
+    std::lock_guard<std::mutex> guard(queueMutex_);
+    encoderStop_ = true;
+  }
+  queueFilled_.notify_all();
+  queueSpace_.notify_all();
+  if (encoder_.active()) encoder_.abort();
+  if (encoderThread_.joinable()) encoderThread_.join();
+  {
+    std::lock_guard<std::mutex> guard(queueMutex_);
+    frameQueue_.clear();
+    encoderRunning_ = false;
+  }
+  releaseResources(context);
+  discardIncompleteOutput();
+}
+
+void RecordSession::discardIncompleteOutput() noexcept {
+  if (outputPath_.empty()) return;
+  std::error_code cleanup;
+  std::filesystem::remove(outputPath_, cleanup);
 }
 
 
