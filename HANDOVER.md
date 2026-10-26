@@ -295,6 +295,62 @@ Message 舞台切换实测（1:1 舞台 + 16:9 窗口）：切换前亮带横向
 - 真机（Android）本轮未接上，`adb devices` 为空；第 1 条的设备侧结论来自
   「文件流读不到安装包内资产」这一机制与桌面侧的读取器回归测试，仍需真机复核。
 
+## 零之五、章节九真谱面复核与资源层逐字节比对（2026-10-26 晚）
+
+### 1. 真谱面（E:/Chigros-Reference/shader_dump/chart）与白名单的对应
+
+| 谱面 | EZ | HD | IN | AT/SP |
+|---|---|---|---|---|
+| Ametrine | 无（未命中） | AmetrineLevelMod | AmetrineLevelMod | AT 无 |
+| Desultory Signals | 有 | 有 | 有 | 有 |
+| ハテ | 无 | 无 | HateLevelEffects | AT 无 |
+| Message | — | — | — | MessageLevelEffects（SP） |
+
+- 与参考白名单逐条一致；Ametrine 的 hideHud=0，其余三首 hideHud=1。
+- Ametrine 暗角实测（同谱面同时刻、只关效果做对照）：
+  桌面 角部中位数 11.0 → 3.0、中心 19.0 不变；蓝叠设备 11.0 → 6.0、中心 16.0→17.0。
+  结论：暗角存在、只在 44–86 s 窗口内出现、只压暗四周、HUD 保持可见。
+
+### 2. 蓝叠（BlueStacks 5 中国版）接入
+
+- 安装目录 C:/Program Files/BlueStacks_nxt_cn（数据在 E:/BlueStacks_nxt_cn，实例 Pie64，adb 端口 5555）。
+- adb connect 127.0.0.1:5555 → SM-S908E / Android 9 / x86_64 / 2400x1080。
+- 设备端启动参数走 intent extra args；数据根用应用外部目录。注意 adb push 目录/ 会把内容摊平，
+  必须推到 <root>/packs 才形成库结构（否则库为空并静默回退到默认库）。
+- 设备端 A/B（截图 build/shots/dev_hate_in2.png / dev_hate_ez.png）：
+  ハテ IN 显示完整异象且 HUD 全部消失；ハテ EZ 无异象、HUD 完整。
+  这直接证明效果表已能从安装包内读到（问题 1 的根因修复在 Android 上有效）。
+
+### 3. 资源层逐字节比对（参考 App 的 APK 对照）
+
+从设备拉取参考包 com.wuying.phigros 的 base.apk 解包后比对：
+
+- prpr 着色器 26 个：代码逐行一致（去掉注释后 0 处差异；5 个文件的差异只是注释按措辞规则改写）。
+- official_shaders（block_composite/prepass）、效果表 chapter9_phase2.json（MD5 83e802f8…）、
+  official_fonts/blocked_ui.ttf（MD5 51458c49…）、14 张 official_textures 全部一致。
+
+### 4. 修掉的第三处偏差：DS 网格与固定侧栏的绘制顺序
+
+- 参考实现里 DS 的网格是 2000 单位画布，会溢出 16:9 舞台；因此它把固定侧栏推迟到
+  网格与游玩对象之后绘制，让侧栏盖住溢出的网格。移植版侧栏随背景一起画，网格压在侧栏上。
+- 修法：背景阶段在网格可见时跳过侧栏，网格之后再补一次侧栏 pass。
+- 实测（1:1 舞台 + 16:9 窗口、网格完全不透明时）：侧栏内白色网格像素 0，舞台内 25605。
+
+### 5. 审计：与参考一致的部分（证据方式）
+
+- 判定窗口 0.080 / 0.180 / 0.220；挑战 0.040 / 0.090 / 0.140 + 帧时长抖动项。
+- 评分 acc*900000 + maxCombo*100000/n（挑战 acc*1e6），四舍五入；准确率权重 0.65。
+- FlickTracker 逐行一致（三帧历史、0.01 阈值、投影速度、新 flick 5 倍门限、flicked/stopped 锁存）。
+- GameConstants 全量一致（PGR 0.05625/0.6、RPE 1350/900、HEIGHT_RATIO 0.83175、SPEED_RATIO、
+  命中粒子 15..35 / 半径 0.2 / 厚度 0.2、判定色与 alpha）。
+- 音频：音量映射 0..5（参考 0..500% /100）、hold 头用 tap 音、低通开启值 22000 Hz、播放速度钳制。
+
+### 6. 仍未验证 / 风险
+
+- 参考实现的音频 DSP 在编译好的 native 库里，低通关闭截止频率（移植版取 1500 Hz）与重采样质量
+  无法与源码逐字比对，只能听感/频谱间接比较。
+- 蓝叠是 x86_64 + 软件 GL（emugl），不代表真机 GPU 的精度与性能。
+- 本轮审计集中在章节九 + 判定/计分/音频常数；其余界面交互未逐项复核。
 ## 零、接手第一件事
 
 **工作树当前是干净的。** 第 5～10 轮成果已提交为 `77c4009`；本轮又追加了两个提交：
