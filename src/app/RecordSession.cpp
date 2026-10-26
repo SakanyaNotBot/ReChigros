@@ -73,14 +73,16 @@ double recordingOffsetSec(const AppContext& context) {
 }
 
 double recordingEndPlayhead(const AppContext& context) {
-  // The picture has to cover the whole chart even when the chart ends after the audio: a chart
-  // offset can push the last note past the music file's length.
-  const double chartEnd = context.game.chart != nullptr ? context.game.chart->chartEndTimeSec : 0.0;
-  const double chartPlayhead = std::max(0.0, chartEnd + recordingOffsetSec(context));
+  // The run ends where the interactive run ends: when the music does. Using the later of the
+  // music and the last note would keep drawing an outro for a chart whose notes stop early,
+  // which is why a recording of a short chart came out seconds longer than its own audio.
   if (context.game.musicLoaded && context.game.musicDurationSec > 0.0) {
-    return std::max(context.game.musicDurationSec, chartPlayhead);
+    return context.game.musicDurationSec;
   }
-  return chartPlayhead;
+  // Without decodable music there is no playhead to stop on, so the last note is the only
+  // reference the run has left.
+  const double chartEnd = context.game.chart != nullptr ? context.game.chart->chartEndTimeSec : 0.0;
+  return std::max(0.0, chartEnd + recordingOffsetSec(context));
 }
 
 double recordingContentSeconds(const AppContext& context) {
@@ -196,7 +198,8 @@ bool RecordSession::start(AppContext& context, const Settings& settings, std::st
   outputPath_ = file;
 
   const double contentSeconds = recordingContentSeconds(context);
-  // Stream duration and playback rate determine the content length; both transitions use wall time.
+  // The recording covers the opening, everything up to the end of the music, and the exit that
+  // follows it. Both transitions are wall time and are not scaled by the music speed.
   const double duration = std::max(
       0.1, kIntroLeadSec + contentSeconds + kOutroTailSec + kHudExitSec);
   totalFrames_ = std::max(1, static_cast<int>(std::ceil(duration * settings_.fps)));
@@ -282,6 +285,11 @@ bool RecordSession::step(AppContext& context) {
       resolutions[static_cast<std::size_t>(settings_.resolutionIndex)];
   const double frameDuration = 1.0 / static_cast<double>(settings_.fps);
   const double chartEnd = context.game.chart->chartEndTimeSec;
+  // The exit starts where the run actually ends: when the music stops. A chart whose last note
+  // comes before its song would otherwise spend the rest of the song in a finished state that
+  // keeps drawing the exit over and over.
+  const double outroAt =
+      context.game.musicDurationSec > 0.05 ? context.game.musicDurationSec : chartEnd;
 
   for (int index = 0; index < kFramesPerStep && renderedFrames_ < totalFrames_; ++index) {
     const int frame = renderedFrames_;
@@ -322,10 +330,10 @@ bool RecordSession::step(AppContext& context) {
         ? render::scene::introLineScale(
               static_cast<float>(std::clamp(elapsed / (55.0 / 60.0), 0.0, 1.0)))
         : 1.0F;
-    const bool inOutro = chartTime > chartEnd;
+    const bool inOutro = playhead > outroAt;
     input.transition.inOutro = inOutro;
     input.transition.outroElapsedSec = inOutro
-        ? static_cast<float>(chartTime - chartEnd)
+        ? static_cast<float>(playhead - outroAt)
         : 0.0F;
 
     // The session advances with the chart clock so the judgement state matches the picture.
@@ -390,7 +398,7 @@ bool RecordSession::step(AppContext& context) {
     // HUD over a blurred field.
     input.hud.alpha = 1.0F;
     if (inOutro) {
-      const double outroElapsed = chartTime - chartEnd;
+      const double outroElapsed = playhead - outroAt;
       if (outroElapsed > kOutroTailSec) {
         const double fade = (outroElapsed - kOutroTailSec) / kHudExitSec;
         input.hud.alpha = static_cast<float>(std::clamp(1.0 - fade, 0.0, 1.0));
@@ -675,17 +683,11 @@ std::filesystem::path RecordSession::writeAudioTrack(AppContext& context,
   // The music and the hit sounds are independent: turning the hit sound off must not silence the
   // song, and a chart without decodable music still carries its hits.
   if (buffer.empty() && !settings_.noteHitsound) return {};
-  // The track covers the chart plus the exit: the music ends with the song, while the hit sounds
-  // of the final notes and the fade still have to be audible, so the track is sized from the
-  // chart clock, not from the music file.
-  double chartEnd = context.game.chart != nullptr ? context.game.chart->chartEndTimeSec : 0.0;
-  if (chartEnd <= 0.0) chartEnd = buffer.durationSeconds();
-  if (chartEnd <= 0.0) chartEnd = 0.1;
+  // The track has to cover exactly the picture, so it uses the same content length the video
+  // does. Sizing it from the chart alone left the tail of a recording silent whenever the music
+  // outlasted the last note, which is the normal case for a song with an outro.
   const double speed = std::max(0.001, static_cast<double>(recordingMusicSpeed(context)));
-  // The track is played at the user's speed, so one second of audio holds `speed` seconds of
-  // chart. Sizing it by the chart end alone would cut the tail of a slowed-down run and leave
-  // silence at the end of a sped-up one.
-  const double contentSeconds = chartEnd / speed;
+  const double contentSeconds = std::max(0.1, recordingContentSeconds(context));
   const double trackSeconds =
       std::max(0.1, contentSeconds + kOutroTailSec + kHudExitSec);
   const std::int64_t frames = static_cast<std::int64_t>(std::ceil(trackSeconds * kAudioSampleRate));
