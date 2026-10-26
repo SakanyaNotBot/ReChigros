@@ -23,6 +23,10 @@ constexpr char kNormalSpace = ' ';
 // authored at the head of the document, so a generous window covers every real chart and a
 // document that puts it elsewhere falls back to reading the whole file.
 constexpr std::size_t kChartMetaHeadBytes = 256 * 1024;
+// How far past the head window the metadata-block search looks before giving up. Every format
+// this reads puts the block ahead of the note data, so this is a bound on a search that only
+// ever walks the document's opening.
+constexpr std::size_t kChartMetaSearchBytes = 1024 * 1024;
 
 std::string toLower(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(),
@@ -222,6 +226,19 @@ std::string readHead(const std::filesystem::path& file, std::size_t maximum) {
   input.read(head.data(), static_cast<std::streamsize>(head.size()));
   head.resize(static_cast<std::size_t>(input.gcount()));
   return head;
+}
+
+// Reads a bounded window that starts at `offset`. Used to look for a marker just past the head
+// window without reading the rest of a document that may be tens of megabytes.
+std::string readRange(const std::filesystem::path& file, std::size_t offset, std::size_t maximum) {
+  std::ifstream input(file, std::ios::binary);
+  if (!input) return {};
+  input.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+  if (!input) return {};
+  std::string window(maximum, '\0');
+  input.read(window.data(), static_cast<std::streamsize>(window.size()));
+  window.resize(static_cast<std::size_t>(input.gcount()));
+  return window;
 }
 
 std::vector<std::string> readLines(const std::filesystem::path& file) {
@@ -655,12 +672,38 @@ ChartInfo readInfoFromChartFile(const std::filesystem::path& chartFile) {
   ChartInfo info;
   if (!platform::fileExists(chartFile)) return info;
   if (toLower(chartFile.extension().string()) != ".json") return info;
-  // Only the metadata block near the head of the file is needed. A chart can be tens of
-  // megabytes, and reading and parsing all of it just to reach `META` made building the
-  // library list the single most expensive frame in the session.
+  // Only a metadata block is wanted here, and a chart can be tens of megabytes. Parsing the
+  // whole document for it made building the library list the single most expensive step of a
+  // launch: every installed chart was read end to end on every start.
+  //
+  // Two cheap tests come first, both of which settle an official-format chart without parsing
+  // anything. Such a chart carries no metadata block at all -- its fields come from the pack's
+  // own info file -- so scanning it for one can only ever fail slowly.
+  {
+    const auto head = readHead(chartFile, kChartMetaHeadBytes);
+    if (head.empty()) return info;
+    // A chart whose document reaches end-of-file inside the head window is small enough to
+    // parse whole, so it needs no further screening. Anything longer is searched for a
+    // metadata block first: a chart without one would otherwise be parsed end to end, notes
+    // and all, to learn that there is nothing to read.
+    const bool wholeFileInHead = head.size() < kChartMetaHeadBytes;
+    const bool blockInHead = head.find("\"META\"") != std::string::npos
+        || head.find("\"meta\"") != std::string::npos
+        || head.find("\"Meta\"") != std::string::npos;
+    if (!wholeFileInHead && !blockInHead) {
+      // The block, when there is one, sits ahead of the note data in every format this reads.
+      // A bounded scan past the first window finds it without walking the notes.
+      const auto window = readRange(chartFile, kChartMetaHeadBytes, kChartMetaSearchBytes);
+      const bool blockBeyondHead = window.find("\"META\"") != std::string::npos
+          || window.find("\"meta\"") != std::string::npos
+          || window.find("\"Meta\"") != std::string::npos;
+      if (!blockBeyondHead) return info;
+    }
+  }
   Json root = parseJsonObject(readHead(chartFile, kChartMetaHeadBytes));
   if (root.empty()) {
-    // The metadata block sits past the head window; fall back to the whole document.
+    // The block sits past the head window and the window is not a parsable prefix; parse the
+    // document, but only because the bounded scan above proved the block is in it.
     const auto content = platform::readTextFile(chartFile);
     if (content.empty()) return info;
     root = parseJsonObject(content);

@@ -197,11 +197,17 @@ namespace {
 // one is a black screen the player sees.
 std::uint64_t launchMark() { return SDL_GetPerformanceCounter(); }
 
+// Total milliseconds the printed launch stages account for, so the tail of the launch path
+// cannot hide in the gap between the stages and the reported total.
+double launchAccountedMs = 0.0;
+
 void reportLaunchStage(const char* stage, std::uint64_t from, std::uint64_t frequency) {
   if (frequency == 0) return;
   const std::uint64_t now = SDL_GetPerformanceCounter();
-  std::printf("launch: %-22s %7.1f ms\n", stage,
-      static_cast<double>(now - from) * 1000.0 / static_cast<double>(frequency));
+  const double elapsedMs =
+      static_cast<double>(now - from) * 1000.0 / static_cast<double>(frequency);
+  std::printf("launch: %-22s %7.1f ms\n", stage, elapsedMs);
+  if (std::string_view(stage) != "total to first frame") launchAccountedMs += elapsedMs;
 }
 } // namespace
 
@@ -401,16 +407,21 @@ bool Application::initialize() {
 
   reportLaunchStage("GL context + ImGui", launchStage, launchFrequency);
   launchStage = launchMark();
-  audio_ = std::make_unique<audio::AudioEngine>();
   const auto assetRoot = platform::assetRoot();
+  audio_ = std::make_unique<audio::AudioEngine>();
   audio_->initialize();
+  reportLaunchStage("audio device", launchStage, launchFrequency);
+  launchStage = launchMark();
+
   audio_->loadSoundEffects(assetRoot);
+  reportLaunchStage("audio clips", launchStage, launchFrequency);
+  launchStage = launchMark();
 
   renderer_ = std::make_unique<render::GameRenderer>();
   if (!renderer_->initialize(assetRoot)) {
     std::cerr << "Renderer initialization failed (asset root: " << assetRoot.string() << ")\n";
   }
-  reportLaunchStage("audio", launchStage, launchFrequency);
+  reportLaunchStage("renderer + shaders", launchStage, launchFrequency);
   launchStage = launchMark();
   // Interface glyph cache. Every label is rasterised at the pixel size it is finally drawn
   // at, which keeps text sharp at any window size and density.
@@ -462,6 +473,8 @@ bool Application::initialize() {
   // screen can be inspected and compared without walking the interface by hand.
   if (!screenSetup_.empty()) {
     setupCaptureScreen(*app_, screenSetup_, aspectRatioOverride_);
+    reportLaunchStage("capture screen setup", launchStage, launchFrequency);
+    launchStage = launchMark();
   }
 
   SDL_SetEventEnabled(SDL_EVENT_DROP_FILE, true);
@@ -474,6 +487,8 @@ bool Application::initialize() {
     } else {
       handleIncomingPath(*app_, initialPath_);
     }
+    reportLaunchStage("chart load", launchStage, launchFrequency);
+    launchStage = launchMark();
   }
   if (!recordOutputPath_.empty()) {
     // The path and the name come from the command line, so the encode can be set up here; the
@@ -483,6 +498,16 @@ bool Application::initialize() {
     if (!beginCommandLineRecording(*app_)) recordOutputPath_.clear();
   }
   reportLaunchStage("total to first frame", launchStart, launchFrequency);
+  // Whatever the reported stages do not account for is the library scan a screen setup joins.
+  // Printing the join explicitly keeps the black-screen budget honest instead of hiding it in
+  // the difference between the total and the sum of the stages.
+  {
+    const std::uint64_t now = SDL_GetPerformanceCounter();
+    const double totalMs = static_cast<double>(now - launchStart) * 1000.0 /
+        static_cast<double>(launchFrequency);
+    std::printf("launch: %-22s %7.1f ms\n", "unattributed",
+        std::max(0.0, totalMs - launchAccountedMs));
+  }
   return true;
 }
 

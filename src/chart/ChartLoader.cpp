@@ -12,6 +12,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <fstream>
 #include <optional>
@@ -79,13 +80,18 @@ ChartFormat detectFormat(std::string_view content) {
 
 // Identifies a chart by MD5 over its bytes with the byte-order mark and ASCII whitespace
 // removed, so cosmetic reformatting does not change the identity.
-std::string normalizedDigest(const std::string& content) {
+std::string normalizedDigest(const std::string_view content) {
   std::size_t start = 0;
   if (content.size() >= 3 && static_cast<unsigned char>(content[0]) == 0xEF &&
       static_cast<unsigned char>(content[1]) == 0xBB &&
       static_cast<unsigned char>(content[2]) == 0xBF) {
     start = 3;
   }
+  // Copy the kept bytes into a staging window and hash it a block at a time. Feeding the
+  // digest one byte per call made this the most expensive step of loading a chart: a chart
+  // is tens of megabytes, and the digest is taken on every load.
+  std::array<char, 64 * 1024> window{};
+  std::size_t filled = 0;
   Md5 digest;
   for (std::size_t index = start; index < content.size(); ++index) {
     const char character = content[index];
@@ -93,8 +99,13 @@ std::string normalizedDigest(const std::string& content) {
         character == '\f' || character == '\v') {
       continue;
     }
-    digest.update(&character, 1);
+    window[filled++] = character;
+    if (filled == window.size()) {
+      digest.update(window.data(), filled);
+      filled = 0;
+    }
   }
+  if (filled > 0) digest.update(window.data(), filled);
   return digest.hexDigest();
 }
 
@@ -808,9 +819,20 @@ std::unique_ptr<game::Chart> ChartLoader::loadFromFile(const std::filesystem::pa
     const std::filesystem::path& assetRoot, const std::string& songName, bool storyMode) {
   std::ifstream input(path, std::ios::binary);
   if (!input) throw std::runtime_error("Cannot open chart: " + path.string());
-  std::ostringstream buffer;
-  buffer << input.rdbuf();
-  auto content = buffer.str();
+  // Read straight into one buffer. Streaming through a string stream copied the whole chart a
+  // second time, which on a dense chart is tens of megabytes of avoidable copying.
+  std::string content;
+  {
+    input.seekg(0, std::ios::end);
+    const std::streamoff length = input.tellg();
+    input.seekg(0, std::ios::beg);
+    if (length > 0) content.resize(static_cast<std::size_t>(length));
+    if (!content.empty()) {
+      input.read(content.data(), static_cast<std::streamsize>(content.size()));
+      content.resize(static_cast<std::size_t>(input.gcount()));
+    }
+  }
+  if (content.empty()) throw std::runtime_error("Cannot read chart: " + path.string());
   const ChartFormat format = detectFormat(content);
   game::Chart chart;
   switch (format) {
