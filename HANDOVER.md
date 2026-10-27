@@ -1462,3 +1462,115 @@ total ticks delta over 25 s: 3 = 0.03 s CPU
 `(573/0)`），而总帧数是 10689。这与"软件 GL 模拟器上 `glMapBufferRange` 回读极慢"一致，
 **不代表真机行为**；真实吞吐要按第十四节的真机数据（5.84 s / 611 帧）为准。
 
+
+
+---
+
+## 十六、真机验证（2026-10-27，Redmi 23049RAD8C / Android 15 / SDK 35 / arm64-v8a / root）
+
+设备 `88be2138`，`ro.board.platform=taro`（骁龙 8 Gen 1），1080x2400，root 可用（KernelSU）。
+这是**真 GPU + 真硬件编码器**，与蓝叠的软件 GL 完全不同，**以本节数字为准**。
+
+### 1. BUG 1 在真机上不复现（修复有效）
+
+15:20:39 从渲染页开始录制，全程界面在画：进度弹窗显示
+`正在渲染 / 3234 / 10689 帧 30%` 且进度条推进，进程 CPU 稳步增长。
+
+| | 模拟器（修复前） | 真机（修复后） |
+|---|---|---|
+| 主线程被占 | **69.11 / 68.55 / 74.33 s** | 0 |
+| 进度弹窗 | 从未画出 | 画出并持续更新 |
+| 产物 | 0 字节 mp4 + 68 MB pcm | 完整 126.5 MB mp4 |
+
+`[record] finished … frames=10689`，ffprobe：
+
+```
+video: h264, 1920x1080, 60/1, duration 178.116667
+audio: aac, duration 177.066667
+container duration 178.149667, size 126541621, bit_rate 5682485
+```
+
+**注意**：模拟器上那个"平台写入器卡住"的次级死锁**在真机上没有复现**，
+所以 20 s 有界等待在真机上没有被触发过；它是安全网，不是已证明的必要路径。
+
+### 2. BUG 4 分区存储：export 目录必须走媒体服务
+
+Android 15 上直接 `createNewFile` 写 `/storage/emulated/0/Movies` 被拒：
+
+```
+W ReChigrosImport: public directory is not writable: /storage/emulated/0/Movies
+W ReChigrosImport: java.io.IOException: Operation not permitted
+W ReChigrosImport:   at java.io.File.createNewFile(File.java:1022)
+```
+
+**这是本轮的关键教训**：第 4 节那套「查目录可写性」在 SDK 28 上够用，
+在 SDK 35 上**必须**改成「私有暂存 + 完成后交给媒体服务」：
+
+```
+I ReChigrosImport: published 20261027-153624.mp4 to Movies/Chigros
+I SDL/APP: [record] finished Movies/Chigros/20261027-153624.mp4 frames=10689
+```
+
+媒体库查询（相册/文件管理器读的就是这条）：
+
+```
+Row: 422 _display_name=20261027-153624.mp4, relative_path=Movies/Chigros/, _size=126386153
+```
+
+### 3. BUG 2 HUD 退场：真机产物逐帧验证
+
+用真机自己录的 10689 帧录像抽末段（168 s 起，60 fps）。判据：
+**淡出会让 maxInk 下降；位移出画面则它保持 255。**
+
+| 帧 | 顶部 15% 墨迹 | maxInk | 底部 15% 墨迹 |
+|---|---|---|---|
+| 500 | 2792 | **255** | 532 |
+| 505 | 1999 | **255** | 250 |
+| 510 | 1077 | **255** | 0 |
+| 515 | 350 | **255** | 0 |
+| 517 | 224 | **255** | 0 |
+
+约 0.28 s 内顶部从 2792 掉到 224、底部从 532 掉到 0，最亮像素**全程 255**。
+即"移出画面"而非"渐变消失"，与参考的 Y 缩放一致。
+
+### 4. BUG 5 冷启动：真机比模拟器快 3 倍
+
+| 阶段 | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| SDL_Init | 21.3 | 39.8 | 26.7 |
+| GL context + ImGui | 111.7 | 102.9 | 93.0 |
+| audio device | 51.0 | 90.6 | 80.6 |
+| **renderer + shaders** | **747.0** | **500.1** | **525.2** |
+| glyph cache | 44.6 | 39.9 | 38.1 |
+| library warm-up | 80.7 | 70.3 | 59.4 |
+| **到第一帧总计** | **1151.1** | **906.6** | **896.7** |
+
+渲染器细分（真 GPU）：`textures` 396–553 ms、`text` 58–192 ms、`shaders` 2.8–3.4 ms。
+
+对比模拟器同改动后（总计 2851–3311 ms、textures 1784–2203 ms）：
+**真机快 3 倍，纹理阶段快 4–5 倍**。**之前用模拟器数字判断"纹理是瓶颈"这个结论
+在真机上依然成立（仍是最大项），但绝对量级完全不同，不要交叉引用。**
+
+`Displayed … +579..+759ms` → 窗口约 0.6 s 出现，首帧 0.9–1.15 s，
+**剩余黑屏 300–550 ms**。真机上 `GL context + ImGui` 只有 93–112 ms
+（模拟器 195–660 ms），说明模拟器那块抖动也是软件 GL 的产物。
+
+### 5. BUG 3 校准页在真机上正常
+
+`build/shots/rn/calibration.png`：面板完整、判定线上有音符图、打击特效贴图解析成功。
+修复前报「校准音频加载失败」并立刻退回。
+
+### 6. 真机游玩画面
+
+`build/shots/rn/game_mid.png`：HUD 完整（62 连击 / AUTOPLAY、分数 0059104、
+曲名 ハテ EZ、难度 Lv.EZ）、判定线、音符、打击特效齐备。
+
+### 本节未完成
+
+- 设备在会话后段掉线（`device not found`，重连无效）。**BUG 3(b) 的返回路径
+  只做了代码核对与模拟器验证，尚未在真机上点过。**
+- 真机 root 可用，但没用到 `/proc/<pid>/task/<tid>/stack` 的原生栈取证——
+  因为 BUG 1 在真机上没有复现。
+- Android 15 的 `WRITE_EXTERNAL_STORAGE` 不再生效，`ensureSharedStoragePermission`
+  在 SDK>28 时直接返回 true；实际走的是媒体服务路径，权限分支在真机上未被覆盖。
+
