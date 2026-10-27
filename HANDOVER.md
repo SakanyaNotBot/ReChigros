@@ -1428,3 +1428,37 @@ HUD 一动不动。这就是"整体渐隐"的真身——比渐隐更糟，因�
 7. **装完 APK 要核对 `dumpsys package … lastUpdateTime`。** 本轮有两次"诊断日志没出现"，
    根因是 APK 根本没装上（时间戳没变），白等了一轮。
 
+
+### 补充：编码线程在设备上仍可能被平台写入器卡住（本轮实测）
+
+修掉主线程占用后，**又暴露出一个独立的卡死**，必须记录：
+
+**现象**：设备录制跑到中途，`mp4` 停在 4,239,512 字节不再增长，`ps -A -o TIME` 冻住。
+逐线程采样 25 秒墙钟：
+
+```
+tid  name         before  after  delta
+19892 SDLActivity      22     25      3
+19914 SDLThread       311    311      0
+total ticks delta over 25 s: 3 = 0.03 s CPU
+```
+
+**整个进程 25 秒只跑了 0.03 秒 CPU**，所有线程 state=S（睡眠）。这是死锁，不是慢。
+
+**机制**（可从日志时序与线程状态推出）：平台的 `MPEG4Writer` 在自己的线程里卡住
+（`Received total/0-length (13/0) buffers` 之后就再没有输出），而 JNI 调用
+（`queueFrame` → Java `queueFrame` 是 `synchronized`）正阻塞在它持有的桥接锁上；
+于是编码线程卡在 JNI 里，帧队列不再被消费，主线程的 `queueSpace_.wait` 永远等不到空位。
+
+**已做**：给帧队列等待加了 20 秒上限，超时报告 "the encoder stopped accepting frames"
+并走失败清理。**正常编码器远达不到这个上限**（桌面同一队列 1.44 ms/帧进、1.44 ms/帧出，
+端到端仍 `RECORD PASS frames=281`）。
+
+**未做 / 未验证**：平台写入器**自身**为什么停住没有查明——需要能挂原生调试器的环境
+（`/proc/<pid>/task/<tid>/stack` 与 `syscall` 在非 root 的蓝叠上都是 Permission denied）。
+现在它表现为**可报告的失败**而不是冻结的窗口，但不是"已解决"。
+
+**另注**：设备端每帧视频只有 ~12–572 帧进容器（`Received total/0-length (13/0) buffers`、
+`(573/0)`），而总帧数是 10689。这与"软件 GL 模拟器上 `glMapBufferRange` 回读极慢"一致，
+**不代表真机行为**；真实吞吐要按第十四节的真机数据（5.84 s / 611 帧）为准。
+
