@@ -1273,3 +1273,158 @@ Lead 负责跨领域接线、合并结论、跑门禁。注意**同时最多 4 �
 
 **教训**：任何“时长/时间轴”改动必须同时检查四个量——视频总帧数、音频轨长度、
 退场触发点、以及帧内的 chartTime/playhead。只改其中一个一定会造成音画不同步。
+
+
+---
+
+## 十五、本轮（2026-10-27）五个缺陷：根因、数字、踩到的坑
+
+本轮全部结论都有**设备实测数字**或**逐帧像素证据**。设备是蓝叠（`127.0.0.1:5555`，
+`ro.build.version.sdk=28` / Android 9 / x86_64 / 2400x1080，软件 GL）。
+**注意：不要用 AVD 配置文件推断设备系统版本**——本机同时存在多个 AVD，实际连上的这台是 SDK 28。
+
+### 1. 安卓端「开始渲染」后画面静止卡死
+
+**根因**：音乐轨在**第一帧视频之前**就必须进容器（muxer 只接受未启动前的轨道），
+而这段编码跑在**处理按钮的那一帧里**。`VideoEncoder::openPlatform` →
+`platformenc::addAudioTrack` → Java `setAudioTrack` → `prepareAudioTrack` 同步编码整首歌。
+
+三次实测（同一命令）：
+
+| 次 | `audio track loaded` | `audio encoded … eos=true` | 主线程被占 |
+|---|---|---|---|
+| 1 | 11:45:26.197 | 11:46:35.308 | **69.11 s** |
+| 2 | 11:50:12.027 | 11:51:20.573 | **68.55 s** |
+| 3 | 11:54:25.710 | 11:55:40.042 | **74.33 s** |
+
+两条日志 **pid/tid 相同**（都是主线程）。卡死期间：
+
+- `mp4` **恒为 0 字节**（muxer 要等视频轨格式，而帧只能等这次调用返回）
+- `pcm` 恒为 **67,993,600 字节** = 8,499,200 帧 × 2ch × 4B @48 kHz = 177.06 s
+- `ps -A -o TIME` 在 65 s 墙钟里只涨了 **4 s** → **阻塞，不是慢**
+
+**修法**：编码移到独立线程；`audioTrackState()` 暴露 0/1/2/3，`RecordSession::step()`
+在 `Preparing` 时返回 `true`（"还有活"）但**不产帧**，界面因此能画进度条。结果收集到局部变量、
+最后一次性加锁发布，代际计数器让被取消的 worker 丢弃结果且不 join。
+
+**修后实测**：CPU 从卡死时的 00:00:05 变成持续增长（6→9→12→15→19→21→24 s），
+进度弹窗出现并显示 `20 / 10689 帧 0%`，`mp4` 从第一次 muxer 写入起就有内容。
+
+**踩到的坑**：`audioTrackState()` 最初写成 `synchronized`，和帧交接用同一把类锁，
+**单帧里测到 638 ms 的 monitor contention**。改为读 volatile 字段、不加锁。
+
+### 2. 结尾 HUD 退场动画
+
+**参考里根本没有「整体渐隐」**（`GameRenderer.java`）：
+
+| 内容 | 行 | 代码 |
+|---|---|---|
+| 退场是以舞台中心为轴的 Y 缩放 | 8857-8859 | `y = rootY + (y-rootY)*rootScaleY; h *= rootScaleY;` |
+| 缩放曲线 1 → 1.1875 | 8925-8929 | `1 + (START-1)*smoothstep(t)` |
+| HUD 透明度**与退场无关** | 8903 | `float hudAlpha = introStarted ? 1f : 0f;` |
+| COMBO 标签额外淡出 | 8641-8646 | `1 - smoothstep(t * 40/35)` |
+| 准确率共用该 alpha | 8599 | `hudAlpha * officialComboLabelOutroAlpha(...)` |
+
+`drawHudTexts`（8545-8639）全函数体里只有 4 处 alpha，其中 3 处是上面那个标签 alpha。
+
+**移植侧缺陷**：`GameScreen.cpp:2072-2084` 把 `outroProgress` 写死 0、只乘 0.40 s 的 alpha；
+`RecordSession.cpp` 更是从未赋值。`HudPass.cpp` 的实现**本来就是对的**，只是没人喂值。
+
+**修法**：`outroProgress = clamp(elapsed / (40/60), 0, 1)`，alpha 恒 1。
+
+**逐帧证据**（录制产物抽帧，顶部 15% 条带）：若在淡出，`maxInk` 会下降；若只是移出画面，它保持。
+
+| 帧 | 墨迹数 | maxInk | 底部条带 |
+|---|---|---|---|
+| 173 | 4018 | **255** | 518 |
+| 178 | 2735 | **255** | 165 |
+| 183 | 1201 | **255** | 0 |
+| 187 | 165 | **254** | 0 |
+
+**反向对照**（把 `RecordSession` 改回旧写法重新录制）：每帧恒为 **1823 / 255 / 535**，
+HUD 一动不动。这就是"整体渐隐"的真身——比渐隐更糟，因为淡出窗口起点 1.7 s 已在录制结束之后。
+
+### 3. 校准工具打不开 / 退不出设置页（两个独立缺陷）
+
+**(a) 打不开**：校准音频用 `platform::assetRoot() / "audio" / "calibration.wav"` 走
+`decodeFile` → `ma_decoder_init_file`，而打包构建里它**不是文件**。
+`unzip -l app-release.apk` 确认 `assets/audio/calibration.wav`（352,844 B）在包里，
+但文件路径打不开。改用 `AssetManager::materialize`。
+
+**(b) 退不出**：`SettingsScreen.cpp` 打开校准时执行 `context.settingsReturn = Screen::Settings`，
+**覆盖了设置页自己的返回目标**。于是校准页返回 → 进设置页，设置页返回 → 又回设置页。
+修法：给校准页独立字段 `CalibrationRuntime::returnTo`，不再复用它人的目标。
+
+### 4. SDL3 文件框架与导出目录
+
+**先读头文件得到的硬结论**（SDL 3.4.18，`third_party/SDL3/include/SDL3/SDL_version.h`）：
+
+- `SDL_GetUserFolder` 在 Android 上是**空桩**：`src/filesystem/android/SDL_sysfilesystem.c`
+  里对所有 `SDL_Folder` 都 `SDL_Unsupported(); return NULL;`。
+  → `SDL_FOLDER_VIDEOS/DOWNLOADS` **拿不到**导出目录，这是后端没写，不是参数问题。
+- `SDL_Storage` **没有 Android/SAF 后端**：`src/storage/` 只有 `generic` 和 `steam`；
+  Android 上 `SDL_OpenUserStorage` 等价于 `SDL_GetPrefPath`（即原来的私有目录），
+  **换 Storage 换不来任何新位置/新权限**，所以没有迁移 56 处 `std::filesystem` 调用点。
+- Android `SDL_ShowOpenFolderDialog` 直接 `SDL_Unsupported()`，所以两个"选目录/选文件夹"
+  入口在该平台如实报告不可用。
+- 对话框 filter 是**扩展名列表**（`json;pec;txt`），`validate_list` 明确拒绝 `*.json` 和
+  `*.*`；旧的 glob 写法全部改写，"所有文件"改成不传 filter。
+
+**已迁移**：`src/platform/FileDialog.cpp` 删掉手写 Windows 壳代码（COM 公寓 /
+`GetOpenFileNameW` / `SHBrowseForFolderW` / 手写双 NUL 多选解析）与 Activity 自建请求路径，
+两个平台都走 `SDL_ShowOpenFileDialog` / `SDL_ShowOpenFolderDialog`。
+
+**导出目录**：`Environment.DIRECTORY_MOVIES/Chigros` 与 `DIRECTORY_DOWNLOADS/Chigros`
+（参考实现的 `EXPORT_DIR` 就是 `"Chigros"`，`ui/ReplayManager.java:38`）。
+三个设备侧缺陷必须同时修才能写进去：
+
+1. **权限没声明**：`AndroidManifest.xml` 原来只有 `INTERNET`。加
+   `WRITE_EXTERNAL_STORAGE`（`maxSdkVersion="28"`）+ 首次使用时请求。
+2. **目录没校验可写性**：存在但拒绝写的目录看起来可用，会在录制末尾才失败。现在用探针文件
+   试写，不可写则回退私有目录。
+3. **路径没落地**：实测生效——`/sdcard/Movies/Chigros` 于 13:20 创建，
+   `dumpsys` 显示 `WRITE_EXTERNAL_STORAGE: granted=true`，
+   渲染页"输出目录"显示 `/storage/emulated/0/Movies/Chigros`。
+
+### 5. 冷启动黑屏
+
+**量化**（三冷启动，`am force-stop` 间隔）：
+
+| 阶段 | 修前中位数 | 修后中位数 |
+|---|---|---|
+| `SDL_Init` | 72.1 ms | 78.5 ms |
+| `GL context + ImGui` | 644.4 ms | 613.5 ms |
+| `renderer + shaders` | **2827.6 ms** | **2278.2 ms** |
+| `glyph cache` | 50.1 ms | 45.6 ms |
+| **到第一帧总计** | **3913.3 ms** | **3231.2 ms** |
+
+**拆开渲染器**后才看清钱花在哪：`text=60ms textures=2656ms shaders=13ms`——
+**97% 是纹理加载**，其中绝大部分是解码（纯 CPU，不需要 GL 上下文）。桌面逐资源探针
+（`RECHIGROS_TEXTURE_LOG=1`）：`hit_fx.png` 解码 141.9 ms、`background.jpg` 67.9 ms、
+`WireNoise.png` 28.4 ms。
+
+**修法**：启动纹理的解码放到 worker 线程，并且**与字形层初始化重叠**
+（`beginPrefetchAssets` / `awaitPrefetchAssets`）。
+
+**这里踩了一个坑**：第一版 start 完立刻 await，四个忙线程把字形层从 60 ms 顶到 **570 ms**，
+渲染器阶段反而更慢（2498 → 2458 ms，等于没赚）。**必须重叠，不能只是换个顺序。**
+
+**剩余归因**：窗口在 ~300 ms 就显示（`Displayed … +273..+326ms`），所以 2.85–3.23 s 里
+约 **2.5–2.9 s 是窗口已存在之后的黑屏**。现在最大块是 `textures`（1.8–2.2 s，设备解码比桌面慢
+一个量级）和 `GL context + ImGui`（195–623 ms，模拟器软件 GL 抖动 430 ms）。
+
+### 本轮踩到的坑（新增，务必记住）
+
+1. **修完必须做反向对照。** HUD 退场那条如果只报"墨迹数下降"，淡出也能满足；
+   加上 `maxInk` 才能区分"移出画面"与"变淡"。反向对照（改回旧代码）则是证明
+   "这个改动确实起了作用"的唯一手段。
+2. **`ps -A -o TIME` 冻结是判断"阻塞 vs 慢"最快的手段。** 65 s 墙钟只涨 4 s 就是阻塞。
+3. **等待一个线程完成的工作，不要用与高频路径共享的锁。** 638 ms 的 monitor contention
+   就出在这个细节上。
+4. **"目录存在"不等于"目录可写"。** 分区存储之前的系统上，公共目录存在但拒绝写入。
+5. **加解码线程要让它重叠在别的阶段下面。** 立刻 join 只会把并行变成串行的额外开销。
+6. **设备系统版本要从设备读，不要从 AVD 配置推断。** 本机多 AVD，
+   实际连的是 SDK 28 而不是 API 31。
+7. **装完 APK 要核对 `dumpsys package … lastUpdateTime`。** 本轮有两次"诊断日志没出现"，
+   根因是 APK 根本没装上（时间戳没变），白等了一轮。
+

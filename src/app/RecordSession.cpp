@@ -552,17 +552,21 @@ void RecordSession::finish(AppContext& context) {
   // recording would be missing.
   std::string error;
   if (!drainEncoder(error)) {
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "[record] drain failed: %s", error.c_str());
     state_ = State::Failed;
     error_ = error;
     failAndRelease(context);
     return;
   }
   if (!encoder_.finish(error)) {
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "[record] finish failed: %s", error.c_str());
     state_ = State::Failed;
     error_ = error;
     failAndRelease(context);
     return;
   }
+  SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "[record] finished %s frames=%d",
+      platform::pathToUtf8(outputPath_).c_str(), renderedFrames_);
   releaseResources(context);
   state_ = State::Finished;
   reportTimings();
@@ -594,6 +598,10 @@ void RecordSession::failAndRelease(AppContext& context) noexcept {
 
 void RecordSession::discardIncompleteOutput() noexcept {
   if (outputPath_.empty()) return;
+  // A packaged build has no console, and a deleted output is the one failure a player sees as
+  // "the recording vanished", so the reason is reported through the platform log as well.
+  SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "[record] discarding %s (%s)",
+      platform::pathToUtf8(outputPath_).c_str(), error_.c_str());
   std::error_code cleanup;
   std::filesystem::remove(outputPath_, cleanup);
 }
@@ -655,9 +663,17 @@ void RecordSession::encoderLoop() {
 bool RecordSession::submitFrame(const std::vector<std::uint8_t>& pixels) {
   {
     std::unique_lock<std::mutex> lock(queueMutex_);
-    queueSpace_.wait(lock, [this] {
-      return encoderStop_ || frameQueue_.size() < kMaxQueuedFrames;
-    });
+    // The wait is bounded. The encoder thread can park inside the platform encoder, which on some
+    // devices never returns: the platform's writer stalls while holding the bridge lock, the frame
+    // hand-off then blocks on that same lock, and the queue never drains. Without a bound the
+    // recorder waits for ever with the interface frozen behind it; with one it reports the failure
+    // and the player keeps their session.
+    if (!queueSpace_.wait_for(lock, std::chrono::seconds(20), [this] {
+          return encoderStop_ || frameQueue_.size() < kMaxQueuedFrames;
+        })) {
+      error_ = "the encoder stopped accepting frames";
+      return false;
+    }
     if (encoderStop_) return false;
     // The queue owns its pixels: the renderer reuses its own buffer for the next frame, and the
     // encoder thread must not read it while that is happening.

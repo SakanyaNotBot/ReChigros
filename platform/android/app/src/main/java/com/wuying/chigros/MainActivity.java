@@ -346,6 +346,9 @@ public final class MainActivity extends SDLActivity {
                     Log.w(TAG, "public directory is not writable: " + dir);
                     return null;
                 }
+            } catch (IOException | SecurityException error) {
+                Log.w(TAG, "public directory is not writable: " + dir, error);
+                return null;
             } finally {
                 //noinspection ResultOfMethodCallIgnored
                 probe.delete();
@@ -372,12 +375,16 @@ public final class MainActivity extends SDLActivity {
      */
     public static boolean ensureSharedStoragePermission() {
         if (android.os.Build.VERSION.SDK_INT > 28) return true;
+        // Permission checks live on the activity, and the caller arrives from the native side with
+        // no reference to it; the instance kept by onResume is the one the system will answer for.
+        final MainActivity activity = instance;
+        if (activity == null) return false;
         try {
-            if (checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            if (activity.checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
                     == android.content.pm.PackageManager.PERMISSION_GRANTED) {
                 return true;
             }
-            requestPermissions(
+            activity.requestPermissions(
                     new String[] { android.Manifest.permission.WRITE_EXTERNAL_STORAGE },
                     REQUEST_SHARED_STORAGE);
             return false;
