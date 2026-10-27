@@ -47,7 +47,9 @@ public final class VideoEncoderBridgeProbe extends Instrumentation {
                 "aac-bridge-probe-" + System.currentTimeMillis() + ".mp4");
         final int sampleRate = 48_000;
         final int pcmFrames = sampleRate * 60;
-        final long expectedAudioUs = pcmFrames * 1_000_000L / sampleRate;
+        final int delayMs = 200;
+        final int leadFrames = delayMs * sampleRate / 1000;
+        final long expectedAudioUs = (pcmFrames + leadFrames) * 1_000_000L / sampleRate;
         final byte[] samples = new byte[pcmFrames * 2 * Float.BYTES];
         final FloatBuffer floats = ByteBuffer.wrap(samples)
                 .order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
@@ -70,7 +72,7 @@ public final class VideoEncoderBridgeProbe extends Instrumentation {
         final int videoFrames = 30;
         check(MainActivity.startVideoEncoder(output.getAbsolutePath(), width, height, 30, 23),
                 "startVideoEncoder returned false");
-        check(MainActivity.setVideoAudioTrack(pcm.getAbsolutePath(), sampleRate, 2, 0),
+        check(MainActivity.setVideoAudioTrack(pcm.getAbsolutePath(), sampleRate, 2, delayMs),
                 "setVideoAudioTrack returned false");
         int lastProgress = 0;
         int progressSamples = 0;
@@ -130,11 +132,13 @@ public final class VideoEncoderBridgeProbe extends Instrumentation {
         final ByteBuffer packetBuffer = ByteBuffer.allocateDirect(65_536);
         int audioPackets = 0;
         long audioBytes = 0;
+        long firstAudioPtsUs = -1;
         long lastAudioPtsUs = -1;
         while (true) {
             final int size = extractor.readSampleData(packetBuffer, 0);
             if (size < 0) break;
             check(size > 0, "zero-length AAC packet at index " + audioPackets);
+            if (firstAudioPtsUs < 0) firstAudioPtsUs = extractor.getSampleTime();
             audioPackets++;
             audioBytes += size;
             lastAudioPtsUs = extractor.getSampleTime();
@@ -145,6 +149,7 @@ public final class VideoEncoderBridgeProbe extends Instrumentation {
         check(Math.abs(audioPackets - expectedPackets) <= 2,
                 "AAC packet count is " + audioPackets + " expected " + expectedPackets);
         check(audioBytes >= 30_000L, "AAC payload is only " + audioBytes + " bytes");
+        check(firstAudioPtsUs == 0, "first AAC PTS is " + firstAudioPtsUs);
         check(lastAudioPtsUs >= expectedAudioUs - 200_000L, "last AAC PTS is " + lastAudioPtsUs);
 
         results.putString("output", output.getAbsolutePath());
@@ -153,12 +158,14 @@ public final class VideoEncoderBridgeProbe extends Instrumentation {
         results.putInt("audioPackets", audioPackets);
         results.putLong("audioBytes", audioBytes);
         results.putLong("audioDurationUs", audioDurationUs);
+        results.putLong("firstAudioPtsUs", firstAudioPtsUs);
         results.putLong("lastAudioPtsUs", lastAudioPtsUs);
         results.putInt("audioProgressSamples", progressSamples);
         Log.i(TAG, "PASS output=" + output + " pcmFrames=" + pcmFrames
                 + " videoFrames=" + videoFrames + " audioPackets=" + audioPackets
                 + " audioBytes=" + audioBytes + " audioDurationUs=" + audioDurationUs
-                + " lastAudioPtsUs=" + lastAudioPtsUs + " progressSamples=" + progressSamples);
+                + " firstAudioPtsUs=" + firstAudioPtsUs + " lastAudioPtsUs=" + lastAudioPtsUs
+                + " progressSamples=" + progressSamples);
     }
 
     private static void check(boolean condition, String message) {

@@ -237,13 +237,13 @@ final class VideoEncoderBridge {
     }
 
     private static boolean submitFrame(java.nio.ByteBuffer frame, long presentationUs) {
-        // The caller already paces itself against its own queue, so the input buffer is normally
-        // free the moment it asks. A blocking wait here would add latency for no benefit, so the
-        // call only polls and any output that has piled up is drained while retrying.
+        // Poll first so a free input slot has no wait. If the codec is busy, drain output and give
+        // it short bounded waits instead of spinning until a valid frame is rejected.
         int index = videoEncoder.dequeueInputBuffer(0L);
-        for (int attempt = 0; index < 0 && attempt < 64; ++attempt) {
+        final long deadlineNs = System.nanoTime() + 100_000_000L;
+        while (index < 0 && System.nanoTime() < deadlineNs) {
             drainVideo(false);
-            index = videoEncoder.dequeueInputBuffer(0L);
+            index = videoEncoder.dequeueInputBuffer(2_000L);
         }
         if (index < 0) return false;
 
@@ -474,7 +474,12 @@ final class VideoEncoderBridge {
 
             final int floatBytes = 4;
             final int frameBytes = channels * floatBytes;
-            final int totalFrames = pcm.length / frameBytes;
+            final int contentFrames = pcm.length / frameBytes;
+            final int requestedLeadFrames = pcmDelayMs * pcmSampleRate / 1000;
+            // The opening silence absorbs the codec's priming without dropping any music samples.
+            final int primingFrames = Math.min(2048, requestedLeadFrames);
+            final int leadFrames = requestedLeadFrames - primingFrames;
+            final int totalFrames = leadFrames + contentFrames + primingFrames;
             final MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
             final FloatBuffer floats = ByteBuffer.wrap(pcm)
                     .order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
@@ -510,7 +515,8 @@ final class VideoEncoderBridge {
                         final long conversionStartNs = System.nanoTime();
                         while (cursor < totalFrames && samples + channels <= sampleCapacity) {
                             for (int c = 0; c < channels; ++c) {
-                                final float value = floats.get();
+                                final float value = cursor < leadFrames ? 0.0f
+                                        : cursor < leadFrames + contentFrames ? floats.get() : 0.0f;
                                 final int scaled = (int) (Math.max(-1.0f, Math.min(1.0f, value))
                                         * 32767.0f);
                                 shortView.put((short) scaled);
@@ -520,8 +526,7 @@ final class VideoEncoderBridge {
                         }
                         conversionNs += System.nanoTime() - conversionStartNs;
                         final int written = shortView.position() * Short.BYTES;
-                        final long presentationUs = (pcmDelayMs * 1000L)
-                                + presentedSamples * 1_000_000L / pcmSampleRate;
+                        final long presentationUs = presentedSamples * 1_000_000L / pcmSampleRate;
                         final boolean last = cursor >= totalFrames;
                         encoder.queueInputBuffer(index, 0, written, presentationUs,
                                 last ? MediaCodec.BUFFER_FLAG_END_OF_STREAM : 0);

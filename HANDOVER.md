@@ -1658,3 +1658,68 @@ float→short 同时改成 little-endian `FloatBuffer` + 编码器输入的 nati
 未完成 mp4；这与第 15 节记录的平台写入器问题相同，本项只验收音频准备和首帧，不宣称
 模拟器整段录制已经修好。真机本轮不在线，需重连后复核硬件 AAC 与完整产物。
 
+### 2. 录制音画同步：开场静音必须进样本，不能只写起始 PTS
+
+**同步参考（完整函数已读）**：
+
+- `easy-phi-main/test_files/test_shared.hpp:35-95` 初始化视频 `time_base={1,fps}`、音频
+  `time_base={1,sampleRate}`，两帧的 PTS 都从 0 开始；`writeAudio`（97-115）按样本数推进音频，
+  `writeVideoFrame`（117-130）按帧推进视频，`flushStream`（150-156）只负责时间基换算与交错写包。
+- `open_rpe_recorder.cpp:586-617` 先混出最终 PCM，再以 `frameCut / fps` 逐帧绘制。
+  对齐依据在样本和帧本身，不依赖封装器猜测相对起点。
+- `Phi-Recorder-main/src-tauri/src/render.rs:568-592` 把音乐放入输出样本数组，
+  `618-622` 按音符时间放打击音；`875-954` 再映射音视频流。
+- 原项目 `GameRenderer.java:565-566` 的开场延迟为 **1083 ms**，`4263-4265` 的谱面时间是
+  `musicPos - chart.offset - userOffsetSec`。
+
+**测量数据根**：`build/sync-data-{zero,plus,minus}/packs/sync`，单张 9 秒合成谱面，
+BPM 120，分数每次命中都变化。必须直接传入 `chart.json`，不能用 `--screen render`：
+截图 harness 的 `applyReferenceSettings` 会把 `audioOffsetMs` 重置为 0，造成假对照。
+
+桌面命令（三个数据根各一次）：
+
+```
+build/desktop-release/src/app/ReChigros.exe --data-root build/sync-data-zero \
+  build/sync-data-zero/packs/sync/chart.json --window 1280x720 --fixed-delta \
+  --record build/sync-before-zero.mp4
+```
+
+移动端把 `packs` 与 `settings.txt` 推到设备后，用同一参数和 `--record` 输出到应用外部目录。
+分析脚本是 `build/measure_sync.py`、`build/measure_score.py`：前者读 ffprobe、首包、音频瞬态，
+后者从右上角分数变化确定真实判定帧。COMBO 区域会被飞过的音符污染，已弃用该探针。
+
+**桌面结论**：现有 `adelay=1083|1083` 已把静音写进样本，无需改桌面路径。
+0 ms 时打击音与分数帧的误差为 **0.2–3.5 ms**；+200 ms 的判定帧整体 +12 帧、打击瞬态
+约 +202.9 ms，-200 ms 整体 -12 帧、约 -200.0 ms；三条容器音轨均为 **12.183 s**
+（解码后均 12.202667 s），校准没有改变音乐长度。
+
+**移动端根因与反向对照**：旧真机产物 `build/shots/rn_record.mp4` 是视频起点 0、
+音频起点 1.083 s，原始 PCM 本身没有这段静音。保留输入槽修复、只恢复旧 PTS 路径录得
+`build/sync-reverse-android.mp4`：首打击瞬态 **0.046479 s**，首次分数判定 **1.083333 s**，
+即声音早 **1036.854 ms**；muxer 还把首音频包归一化到 0。这就是原缺陷的完整复现。
+
+另有 AAC priming：仅把静音放进 PCM 后，打击音仍晚 **46.146 ms**。设备输出格式没有
+delay/padding 字段；从开场静音中取 **2048 帧**吸收 priming、末尾补回等量静音，既不丢音乐，
+也不改变输入总帧数。最终 `build/sync-primed-android.mp4`：
+
+| 指标 | 结果 |
+|---|---|
+| 视频 / 音频 start_time | **0 / 0** |
+| 视频 / 音频首包 PTS | **0 / 0** |
+| 首打击瞬态 vs 首次分数判定 | 1.086812 vs 1.083333，**晚 3.479 ms** |
+| 后续打击误差 | 约 **0.6–10.6 ms**，均 <16.7 ms |
+| 完整录制 | `frames=731`，19,201,654 B |
+| 反向对照 | **早 1036.854 ms** |
+
+移动端 +200/-200 ms 也分别移动判定帧 ±12 帧和打击音约 ±200 ms，音轨长度不变；
+证据在 `build/sync-offsets-android-measure.txt`。
+
+**顺带必须修的测量阻断**：`submitFrame` 原来做 64 次零等待轮询，模拟器尚未来得及释放
+输入槽就拒绝第二帧，成品被删除。改为先轮询，再排空输出并做总共至多 100 ms 的短等待，
+短谱面才得以完整生成。它不是用放宽同步判据换来的成功。
+
+**回归与限制**：ctest 8/8、自检 56/56，Android 主包与测试包均编译成功，最终安装
+`lastUpdateTime=21:53:29`。测试 APK 仍因第 1 条所述蓝叠主机问题无法执行。2048 帧 priming
+已在软件 AAC 上实测，**真机硬件 AAC 尚未复核**。录制日志为 731 帧而 ffprobe 视频为 715 帧，
+说明尾部捕获/收集仍有独立差异，留待噪域与捕获路径项排查；前 6 秒同步测量不受尾帧影响。
+
