@@ -370,6 +370,70 @@ public final class MainActivity extends SDLActivity {
     }
 
     /**
+     * Copies a finished file into the shared media library and returns where it landed.
+     *
+     * <p>A recent release does not let an application create a file in the shared library by path:
+     * the folder exists and is readable, but every write is refused. The platform media service is
+     * the supported way in, so the finished file is handed to it here and the private copy removed.
+     * The returned path is the one the player sees, or null when the file could not be published and
+     * the caller should keep its own copy.
+     */
+    public static String publishMediaFile(String sourcePath, String category) {
+        if (sourcePath == null) return null;
+        // The resolver belongs to the activity, and the caller arrives from the native side with no
+        // reference to it; the instance kept by onResume is the one that owns the application
+        // context this needs.
+        final MainActivity activity = instance;
+        if (activity == null) return null;
+        final File source = new File(sourcePath);
+        if (!source.isFile() || source.length() == 0) return null;
+        final boolean movies = !"Download".equals(category);
+        final String collection = movies
+                ? android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI.toString()
+                : android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI.toString();
+        final String relativePath = (movies ? "Movies" : "Download") + "/Chigros";
+        final String mime = movies ? "video/mp4" : "application/octet-stream";
+        android.net.Uri uri = null;
+        try {
+            final android.content.ContentValues values = new android.content.ContentValues();
+            values.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, source.getName());
+            values.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mime);
+            values.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, relativePath);
+            // The entry stays hidden from other applications until the bytes are all in place, so
+            // a viewer never sees a half written recording.
+            values.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1);
+            uri = activity.getContentResolver().insert(android.net.Uri.parse(collection), values);
+            if (uri == null) {
+                Log.e(TAG, "media service refused the entry for " + source);
+                return null;
+            }
+            try (java.io.InputStream in = new java.io.FileInputStream(source);
+                    java.io.OutputStream out = activity.getContentResolver().openOutputStream(uri)) {
+                if (out == null) throw new IOException("no output stream for " + uri);
+                final byte[] buffer = new byte[1 << 16];
+                int read;
+                while ((read = in.read(buffer)) > 0) out.write(buffer, 0, read);
+            }
+            values.clear();
+            values.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0);
+            activity.getContentResolver().update(uri, values, null, null);
+            //noinspection ResultOfMethodCallIgnored
+            source.delete();
+            Log.i(TAG, "published " + source.getName() + " to " + relativePath);
+            return relativePath + "/" + source.getName();
+        } catch (IOException | RuntimeException error) {
+            Log.e(TAG, "cannot publish " + source, error);
+            if (uri != null) {
+                try {
+                    activity.getContentResolver().delete(uri, null, null);
+                } catch (RuntimeException ignored) {
+                }
+            }
+            return null;
+        }
+    }
+
+    /**
      * Asks for the legacy shared-storage grant when the release still requires it. Reporting
      * whether it is already held lets the caller decide before it writes anything.
      */

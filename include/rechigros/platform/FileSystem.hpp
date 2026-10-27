@@ -25,6 +25,22 @@ void setAssetRootOverride(const std::filesystem::path& root);
 // Directory where an exported replay is expected to end up. Same fallback rule as above.
 [[nodiscard]] std::filesystem::path publicDownloadDirectory();
 
+// Folder a recording is actually written into. It is the shared video folder when the platform
+// lets a path be written there directly, and a private staging folder when it does not: a packaged
+// build on a recent release cannot create files in the shared library by path at all, and has to
+// hand a finished file to the platform own media service instead.
+[[nodiscard]] std::filesystem::path recordingWorkspace();
+
+// True when `directory` accepts a new file. Callers use it to decide whether a finished file has
+// to be published rather than written straight to its destination.
+[[nodiscard]] bool directoryIsWritable(const std::filesystem::path& directory);
+
+// Moves a finished file into the shared media library; `category` is "Movies" or "Download".
+// Returns where the file ended up, or describes no move by returning the input unchanged on a
+// platform that writes the shared folder directly. The caller keeps its file either way.
+[[nodiscard]] std::filesystem::path publishMedia(const std::filesystem::path& file,
+    const char* category);
+
 // Absolute path of the running executable; empty when it cannot be determined.
 [[nodiscard]] std::filesystem::path executablePath();
 

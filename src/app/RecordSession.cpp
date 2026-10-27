@@ -158,7 +158,7 @@ const std::vector<RecordSession::Resolution>& RecordSession::resolutions() {
 std::filesystem::path RecordSession::defaultOutputDirectory() {
   // The device's public video directory is where a recorded video is expected to appear, so the
   // gallery and any media application can find it without the user moving the file.
-  return platform::publicVideoDirectory();
+  return platform::recordingWorkspace();
 }
 
 std::string RecordSession::defaultFileName() { return timestampName(); }
@@ -564,6 +564,14 @@ void RecordSession::finish(AppContext& context) {
     error_ = error;
     failAndRelease(context);
     return;
+  }
+  // The shared video folder is where the player looks for the file, but a recent release does not
+  // allow writing it by path. A recording that landed in the staging folder is handed to the
+  // platform media service here, which also deletes the private copy; a published path becomes the
+  // reported one so the interface says where the video actually is.
+  const auto published = platform::publishMedia(outputPath_, "Movies");
+  if (!published.empty() && published != outputPath_) {
+    outputPath_ = published;
   }
   SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "[record] finished %s frames=%d",
       platform::pathToUtf8(outputPath_).c_str(), renderedFrames_);

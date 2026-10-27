@@ -167,6 +167,79 @@ std::filesystem::path publicVideoDirectory() {
   return fallback;
 }
 
+std::filesystem::path recordingWorkspace() {
+  // A recording is written into a real directory, and on a release that forbids writing the
+  // shared library by path there is no such directory to write to. The private staging folder
+  // stands in for it; publishMedia hands the finished file over to the platform afterwards.
+  auto shared = publicVideoDirectory();
+  if (directoryIsWritable(shared)) return shared;
+  std::error_code error;
+  const auto staging = userDataRoot() / "staging";
+  std::filesystem::create_directories(staging, error);
+  return staging;
+}
+
+bool directoryIsWritable(const std::filesystem::path& directory) {
+  if (directory.empty()) return false;
+  std::error_code error;
+  if (!std::filesystem::is_directory(directory, error)) return false;
+  // A directory that exists is not proof it accepts a file: the shared library on a recent
+  // release is present and readable but refuses every write. Probing with a real file is the
+  // only check that answers the question the caller is actually asking.
+  const auto probe = directory / ".rechigros-write-probe";
+  {
+    std::ofstream out(probe, std::ios::binary | std::ios::trunc);
+    if (!out) return false;
+    out.put(0);
+    if (!out) return false;
+  }
+  std::filesystem::remove(probe, error);
+  return true;
+}
+
+std::filesystem::path publishMedia(const std::filesystem::path& file, const char* category) {
+  if (file.empty()) return file;
+#if defined(__ANDROID__)
+  JNIEnv* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+  if (env == nullptr) return file;
+  jobject activity = static_cast<jobject>(SDL_GetAndroidActivity());
+  if (activity == nullptr) return file;
+  jclass cls = env->GetObjectClass(activity);
+  env->DeleteLocalRef(activity);
+  if (cls == nullptr) return file;
+  std::filesystem::path published = file;
+  const jmethodID method = env->GetStaticMethodID(cls, "publishMediaFile",
+      "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;");
+  if (method != nullptr) {
+    const std::string path = pathToUtf8(file);
+    jstring source = env->NewStringUTF(path.c_str());
+    jstring kind = env->NewStringUTF(category != nullptr ? category : "Movies");
+    auto result = static_cast<jstring>(
+        env->CallStaticObjectMethod(cls, method, source, kind));
+    env->DeleteLocalRef(source);
+    env->DeleteLocalRef(kind);
+    if (env->ExceptionCheck()) {
+      env->ExceptionClear();
+    } else if (result != nullptr) {
+      const char* utf8 = env->GetStringUTFChars(result, nullptr);
+      if (utf8 != nullptr) {
+        published = pathFromUtf8(utf8);
+        env->ReleaseStringUTFChars(result, utf8);
+      }
+      env->DeleteLocalRef(result);
+    }
+  } else {
+    env->ExceptionClear();
+  }
+  env->DeleteLocalRef(cls);
+  return published;
+#else
+  // The desktop writes the shared folder directly, so there is nothing to hand over.
+  (void)category;
+  return file;
+#endif
+}
+
 std::filesystem::path publicDownloadDirectory() {
   auto directory = sharedMediaDirectory("Download");
   if (!directory.empty()) directory /= "Chigros";
