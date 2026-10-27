@@ -564,6 +564,7 @@ void GameRenderer::Impl::prepareForChart(game::Chart* chart) {
   hudDisplayReset = true;
   // The level mod's ramp and challenge state belong to one chart; a switch starts over.
   ametrineLastSec = -1.0;
+  blockUpdateLastSec = 0.0;
   if (chart->levelEffects != nullptr) chart->levelEffects->resetChallenge();
   // The chart-shader setting skips loading the storyboard chain entirely, like the
   // reference does for the shader path.
@@ -1703,10 +1704,9 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
     // Red zones sit over the play field but under the hit effects.
     if (!chart->blockAreaList.empty() && !input.transition.inIntro &&
         input.chartTimeSec >= 0.0) {
-      // The one-shot fade needs a real frame delta; a paused or seeked frame must not
-      // advance it, so the delta is clamped and derived from the wall clock.
-      const double nowSec = std::chrono::duration<double>(
-          std::chrono::steady_clock::now().time_since_epoch()).count();
+      // The one-shot fade advances on the visual clock: live play measures real time, while an
+      // offscreen run measures the same elapsed time by frame number.
+      const double nowSec = input.visualTimeSec;
       const float deltaSec = blockUpdateLastSec == 0.0
           ? 0.0F
           : std::clamp(static_cast<float>(nowSec - blockUpdateLastSec), 0.0F, 0.1F);
@@ -2057,6 +2057,7 @@ bool GameRenderer::renderOffscreen(const RenderFrameInput& input, game::Chart* c
   impl_->halfResFbo.resize(std::max(1, width / 2), std::max(1, height / 2));
   impl_->blockComposite.resize(width, height);
   impl_->disableChartShaderSetting = input.disableChartShader;
+  impl_->chain.setFrozenNoiseClock(true);
   impl_->prepareForChart(chart);
 
   const scene::StageLayout layout =
@@ -2098,6 +2099,7 @@ bool GameRenderer::renderOffscreen(const RenderFrameInput& input, game::Chart* c
 
   impl_->width = previousWidth;
   impl_->height = previousHeight;
+  impl_->chain.setFrozenNoiseClock(false);
 
   const auto path = outputPng.string();
   return stbi_write_png(path.c_str(), width, height, 4, flipped.data(),
@@ -2120,6 +2122,7 @@ bool GameRenderer::beginCapture(const RenderFrameInput& input, game::Chart* char
   impl_->capturePreviousWidth = impl_->width;
   impl_->capturePreviousHeight = impl_->height;
   impl_->capturing = true;
+  impl_->chain.setFrozenNoiseClock(true);
   applyCaptureSize(input, chart);
   return true;
 }
@@ -2242,6 +2245,7 @@ bool GameRenderer::hasPendingCaptureFrame() const noexcept {
 void GameRenderer::endCapture() noexcept {
   if (!impl_->capturing) return;
   impl_->capturing = false;
+  impl_->chain.setFrozenNoiseClock(false);
   impl_->captureTarget.reset();
   impl_->captureYuv.release();
   impl_->width = impl_->capturePreviousWidth;

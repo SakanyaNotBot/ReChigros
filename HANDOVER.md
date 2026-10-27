@@ -1772,3 +1772,48 @@ Android 同项对照：旧 580 / 255，新 **0 / 122**（`build/hud-android-meas
 `hud-smoke-combo-reverse.png` 仍清晰显示 COMBO，证明探针会失败；恢复后同一帧无标签。
 ctest 8/8、自检 56/56，Android 重录成功，最终安装 `lastUpdateTime=22:13:36`。
 
+### 4. 捕获路径：视觉时钟、尾队列与真平面色度
+
+**素材与判据**：本机可访问目录和蓝叠公共目录都没有 TrueHome / True World 录像或谱面；
+参考私有目录当前也拒绝 `run-as`，因此指定曲目的逐帧对照**未完成**，不能用其他录像冒充。
+改用 `build/capture-redzone/chart.json`（未激活红区淡入，enableTime=2.6s）和
+`build/capture-prpr/chart.json`（official_vignette_plus），去掉音符以排除随机粒子。
+比较红区/中心区域 SHA-256、RGB 中位数、实际解码帧数，不做整帧原始像素差。
+
+**根因 A：离线捕获仍在读墙钟。** 交互的 `visualTimeSec` 本来就是实时钟，离线则按帧号推进；
+旧实现却直接读 `steady_clock`，所以同一视觉时刻的淡入取决于机器速度。参考
+`GameRenderer.java:14845-14866` 的实时更新只用于交互；冻结捕获应使用可复现的视觉时钟。
+现统一为 `input.visualTimeSec`，新谱面重置 `blockUpdateLastSec`。
+
+**根因 B：prpr 冻结噪声没接参考规则。** 参考 `GameRenderer.java:5910-5940` 明确：
+实时用会话时间，冻结捕获用 `chartTimeSec + FROZEN_NOISE_LEAD_SEC`，且该常量为 **3.0**。
+移植却只按 prepare 后的墙钟生成噪声。现捕获开始/离屏 PNG 启用 `chartTimeSec+3.0`，
+结束恢复实时时钟，释放链时清除开关。
+
+**重复捕获对照**（`build/capture-structural-{after,reverse,android}.txt`）：恢复旧时钟后，
+红区与 prpr 两组重复捕获的区域校验和全部不同；修复后桌面与 Android 均逐值一致。
+例：红区第 90 帧，旧 A/B 中位数为 [145,132,131] / [133,130,127]，修后两次均为
+[158,135,133]。这是同刻结构一致性，不是“看起来差不多”。
+
+**根因 C：正常完成和取消共用一个停止位。** `drainEncoder()` 设置 `encoderStop_` 后，
+写线程弹出一帧立即 break 并清空剩余队列，最多丢 16 帧。新增 `encoderDraining_`：
+正常完成排空后退出，取消/失败仍立即停止。基线实际解码为桌面 722/731、Android 715/731；
+恢复旧关闭逻辑为 730/731，修复后桌面和 Android 都是 **731/731**。
+
+**根因 D：编码桥把交错 U/V 当成所有设备的布局。** 蓝叠首帧实测：
+`luma=1920/1、chromaU=960/1、chromaV=960/1`，即真平面；旧代码却把 U/V 交错写进 U，
+造成整屏绿色。现 `pixelStride==1` 时分别写两个 plane，交错布局仍按原样成对写。
+`build/redzone-old-f90.png` 是旧绿色异常，`build/redzone-planar-f90.png` 已恢复；
+`build/redzone-input-yuv.png` 与 `build/redzone-interactive.png` 同场景一致，证明剩余
+桌面/模拟器明暗差不是编码器新增失真。临时 plane 日志和 YUV dump 均已删除。
+
+**其他 pass 推广检查**：场景 FBO、bloom、prpr 主 pass、DS 网格、kaleido、暂停背景/HUD
+模糊都按当前输出或源纹理尺寸重建/计算，未发现噪域同类旧窗口尺寸缓存。`block_probe`
+仍通过：合成与上屏 checksum 1292924955、touch checksum 3607153101、framebuffer/viewport/
+blend 复原通过。shader 的 `time`/`timeY`、screen/8 mask 与调用方 viewport 未被改动。
+
+**回归与未验证**：ctest 8/8、自检 56/56。重复捕获、尾帧和真平面修复在桌面与蓝叠均实跑。
+真机的交错 U/V 分支未能在本轮真机上复核；指定 TrueHome 素材也不可用，不能用这些结果
+推断该曲目或所有硬件编码器均已覆盖。最终无探针验收见 `build/capture-final.log`：
+`frames=731` 且 `nb_read_frames=731`，APK `lastUpdateTime=22:55:29`。
+

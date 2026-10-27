@@ -627,6 +627,7 @@ void RecordSession::startEncoderThread() {
   {
     std::lock_guard<std::mutex> guard(queueMutex_);
     encoderStop_ = false;
+    encoderDraining_ = false;
     encoderRunning_ = true;
     encoderError_.clear();
     frameQueue_.clear();
@@ -640,15 +641,18 @@ void RecordSession::encoderLoop() {
     std::vector<std::uint8_t> frame;
     {
       std::unique_lock<std::mutex> lock(queueMutex_);
-      queueFilled_.wait(lock, [this] { return encoderStop_ || !frameQueue_.empty(); });
+      queueFilled_.wait(lock, [this] {
+        return encoderStop_ || encoderDraining_ || !frameQueue_.empty();
+      });
       if (frameQueue_.empty()) {
-        // Nothing left to write and the producer has stopped.
-        if (encoderStop_) break;
+        // A graceful finish exits once every queued frame has been written; cancellation and
+        // failure still stop immediately.
+        if (encoderStop_ || encoderDraining_) break;
         continue;
       }
       frame = std::move(frameQueue_.front());
       frameQueue_.pop_front();
-      // The producer may have signalled a stop while this thread was waking up; writing after
+      // Cancellation may have signalled a stop while this thread was waking up; writing after
       // that point would touch a stream the main thread is already tearing down.
       if (encoderStop_) break;
     }
@@ -701,7 +705,7 @@ bool RecordSession::submitFrame(const std::vector<std::uint8_t>& pixels) {
 bool RecordSession::drainEncoder(std::string& error) {
   {
     std::unique_lock<std::mutex> lock(queueMutex_);
-    encoderStop_ = true;
+    encoderDraining_ = true;
   }
   queueFilled_.notify_all();
   queueSpace_.notify_all();

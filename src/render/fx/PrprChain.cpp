@@ -251,6 +251,7 @@ void PrprChain::release() noexcept {
   vignetteNoiseReady_ = false;
   noiseTarget_.reset();
   noiseClockBaseSec_ = 0.0;
+  frozenNoiseClock_ = false;
 }
 
 gl::Texture* PrprChain::prepareVignetteNoise(const game::PrprEffect& effect, int screenWidth,
@@ -300,7 +301,10 @@ gl::Texture* PrprChain::prepareVignetteNoise(const game::PrprEffect& effect, int
   shader.use();
   shader.set1i("screenTexture", 0);
   shader.set2f("UVScale", 1.0F, 1.0F);
-  // The noise advances with wall-clock time since the chain was prepared.\n  shader.set1f("time", static_cast<float>(monotonicSeconds() - noiseClockBaseSec_));
+  const double noiseTimeSec = frozenNoiseClock_
+      ? chartTimeSec + 3.0
+      : monotonicSeconds() - noiseClockBaseSec_;
+  shader.set1f("time", static_cast<float>(noiseTimeSec));
   shader.set1f("noiseBrightness", brightness);
   shader.set1f("noiseSaturation", saturation);
   (void)FullscreenQuad::instance().ensure();
@@ -361,7 +365,7 @@ void PrprChain::prepare(const std::filesystem::path& assetRoot,
     if (std::find(keys.begin(), keys.end(), key) == keys.end()) keys.push_back(key);
   }
 
-  // The noise generator backs the vignette presets; its phase runs from wall-clock time.
+  // Live playback starts the noise phase here; offscreen capture derives it from chart time.
   noiseClockBaseSec_ = monotonicSeconds();
   if (const auto bytes = platform::AssetManager::readBinary(assetRoot_,
           "prpr_shaders/official_vignette_noise.glsl"); !bytes.empty()) {

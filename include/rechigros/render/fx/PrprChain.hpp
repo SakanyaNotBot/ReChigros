@@ -53,6 +53,7 @@ public:
   // Binds the auxiliary textures the official presets expect.
   void setAuxTextures(gl::Texture* glitchMap, gl::Texture* glitchDogMap, gl::Texture* wireNoise,
       gl::Texture* displaceMap) noexcept;
+  void setFrozenNoiseClock(bool frozen) noexcept { frozenNoiseClock_ = frozen; }
 
 private:
   struct Program {
@@ -84,9 +85,10 @@ private:
   FullscreenPass vignetteNoise_;
   bool vignetteNoiseReady_{};
   std::unique_ptr<gl::Framebuffer> noiseTarget_;
-  // The noise animates from wall-clock time since the chain was prepared, so its phase
-  // does not restart when a chart restarts.
+  // Live playback advances the noise from wall time; offscreen capture uses a pinned
+  // chart-time phase instead so repeated frames are reproducible.
   double noiseClockBaseSec_{};
+  bool frozenNoiseClock_{};
   // Scratch target the bloom chain writes into before it becomes the chain input.
   std::unique_ptr<gl::Framebuffer> bloomTarget_;
   // Boxed because FullscreenPass owns GL handles and is intentionally not movable.

@@ -261,10 +261,15 @@ final class VideoEncoderBridge {
         final int lumaSize = width * height;
         final int chromaSize = (width / 2) * (height / 2);
         copyLuma(planes[0], frame, width, height);
-        // Both colour channels live in one interleaved pair of buffers: each row holds every
-        // sample for that row of the picture, with the two channels alternating. The pair is
-        // written together so neither channel overwrites the other.
-        copyChroma(planes[1], frame, lumaSize, width / 2, height / 2);
+        if (planes[1].getPixelStride() == 1 && planes[2].getPixelStride() == 1) {
+            copyChromaPlane(planes[1], frame, lumaSize, width / 2, height / 2);
+            copyChromaPlane(planes[2], frame, lumaSize + chromaSize, width / 2, height / 2);
+        } else {
+            // Both colour channels live in one interleaved pair of buffers: each row holds every
+            // sample for that row of the picture, with the two channels alternating. The pair is
+            // written together so neither channel overwrites the other.
+            copyChroma(planes[1], frame, lumaSize, width / 2, height / 2);
+        }
         // The size is the whole frame in its planar form. Reporting zero makes the codec discard
         // the buffer as carrying nothing, and the plane capacities are not a substitute: they are
         // separate views that describe more bytes than the one buffer they share.
@@ -282,6 +287,34 @@ final class VideoEncoderBridge {
         buffer.position(0);
         for (int y = 0; y < height; ++y) {
             final int rowStart = y * width;
+            if (pixelStride == 1) {
+                final int run = Math.min(width, buffer.remaining());
+                final java.nio.ByteBuffer row = source.duplicate();
+                row.position(rowStart);
+                row.limit(rowStart + run);
+                buffer.put(row);
+            } else {
+                for (int x = 0; x < width; ++x) {
+                    if (!buffer.hasRemaining()) return;
+                    buffer.put(source.get(rowStart + x));
+                    buffer.position(buffer.position() + Math.min(pixelStride - 1,
+                            buffer.remaining()));
+                }
+            }
+            final int padding = rowStride - width * pixelStride;
+            if (padding > 0) buffer.position(buffer.position() + Math.min(padding,
+                    buffer.remaining()));
+        }
+    }
+
+    private static void copyChromaPlane(android.media.Image.Plane plane, java.nio.ByteBuffer source,
+            int sourceOffset, int width, int height) {
+        final ByteBuffer buffer = plane.getBuffer();
+        final int rowStride = plane.getRowStride();
+        final int pixelStride = plane.getPixelStride();
+        buffer.position(0);
+        for (int y = 0; y < height; ++y) {
+            final int rowStart = sourceOffset + y * width;
             if (pixelStride == 1) {
                 final int run = Math.min(width, buffer.remaining());
                 final java.nio.ByteBuffer row = source.duplicate();

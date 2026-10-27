@@ -129,6 +129,7 @@ private:
   std::condition_variable queueFilled_;
   std::deque<std::vector<std::uint8_t>> frameQueue_;
   bool encoderStop_{};
+  bool encoderDraining_{};
   bool encoderRunning_{};
   std::string encoderError_;
   // Deep enough that the renderer never waits for the encoder in steady state. Each slot costs one
