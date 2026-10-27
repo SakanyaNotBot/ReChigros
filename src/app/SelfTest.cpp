@@ -517,6 +517,75 @@ int runSelfTest() {
       report(vertices > 0, name, "vertices=" + std::to_string(vertices));
     }
 
+    {
+      // Opening the calibration tool from the settings page must not disturb where leaving the
+      // settings page goes. Both are separate destinations: calibration always comes back to the
+      // settings page, while the settings page returns to whatever opened it. Writing the first
+      // into the second is what made the page impossible to leave after a calibration attempt -
+      // the back action landed on the settings page again.
+      //
+      // The row is pressed through the real pointer path rather than by setting the field, because
+      // the defect is in the press handler; a test that pokes the state would pass either way.
+      context.settingsReturn = Screen::Library;
+      context.settingsTab = 1;
+      context.screen = Screen::Settings;
+      context.settingsDirty = false;
+      bool openedCalibration = false;
+      // The row is found by asking the page which rectangle it registered as pressable, rather
+      // than by guessing a coordinate: the row's address shifts whenever a row is added above it.
+      // The calibration row is the last action block on the audio page, so the sweep walks the
+      // registered rectangles from the bottom up and presses the one that opens the page.
+      const auto pressAt = [&](float x, float y) {
+        context.screen = Screen::Settings;
+        io.AddMousePosEvent(x, y);
+        drawScreenHeadless(context, drawSettingsScreen);
+        io.AddMouseButtonEvent(0, true);
+        drawScreenHeadless(context, drawSettingsScreen);
+        drawScreenHeadless(context, drawSettingsScreen);
+        io.AddMouseButtonEvent(0, false);
+        drawScreenHeadless(context, drawSettingsScreen);
+        drawScreenHeadless(context, drawSettingsScreen);
+      };
+      // Only the rows inside the viewport register a rectangle, and the calibration row sits near
+      // the bottom of a page that scrolls, so the sweep walks the list from the top to the bottom
+      // of the scroll range instead of assuming the row is already on screen.
+      for (int scrollStep = 0; scrollStep < 24 && !openedCalibration; ++scrollStep) {
+        context.screen = Screen::Settings;
+        context.settingsTab = 1;
+        drawScreenHeadless(context, drawSettingsScreen);
+        io.AddMouseWheelEvent(0.0F, -6.0F);
+        drawScreenHeadless(context, drawSettingsScreen);
+        const std::vector<std::array<float, 4>> rects = registeredSettingsControlRects();
+        for (std::size_t index = rects.size(); index-- > 0 && !openedCalibration;) {
+          const auto& rect = rects[index];
+          pressAt((rect[0] + rect[2]) * 0.5F, (rect[1] + rect[3]) * 0.5F);
+          if (context.screen == Screen::Calibration) openedCalibration = true;
+          // Some rows toggle in place; restore the page so the next candidate is pressed on the
+          // audio tab rather than on whichever page the previous press opened.
+          if (!openedCalibration) {
+            context.screen = Screen::Settings;
+            context.settingsTab = 1;
+          }
+        }
+      }
+      io.AddMousePosEvent(-100.0F, -100.0F);
+      report(openedCalibration, "the calibration row opens the calibration page");
+      report(context.settingsReturn == Screen::Library,
+          "opening calibration leaves the settings page's target alone",
+          "settingsReturn=" + std::to_string(static_cast<int>(context.settingsReturn)));
+
+      // Leaving calibration lands back on the settings page...
+      context.calibration.audioLoaded = true;
+      exitCalibration(context, false);
+      report(context.screen == Screen::Settings,
+          "calibration returns to the settings page it came from");
+
+      // ...and the settings page can then still be left, which is what the defect prevented.
+      navigateTo(context, context.settingsReturn);
+      report(context.screen == Screen::Library,
+          "the settings page can still be left after a calibration attempt");
+    }
+
     // Settings owns its pointer state instead of using immediate-mode buttons. Exercise
     // complete press/release frames so page scrolling cannot steal a switch's press.
     context.settingsTab = 0;

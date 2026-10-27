@@ -192,25 +192,6 @@ void resetStage() {
   state.random.seed(0xC411B47EU);
 }
 
-void exitCalibration(AppContext& context, bool apply) {
-  if (context.audio != nullptr) {
-    context.audio->stop();
-    context.audio->setMusicLooping(false);
-    context.audio->setLowPassEnabled(false);
-    context.audio->setPlaybackSpeed(1.0F);
-  }
-  context.calibration.audioLoaded = false;
-  context.calibration.markers.clear();
-  resetStage();
-  if (apply) {
-    context.settings.audioOffsetMs =
-        std::clamp(static_cast<int>(std::lround(context.calibration.offsetMs)), -500, 500);
-    context.settingsDirty = true;
-  }
-  commitSettings(context);
-  navigateTo(context, context.calibration.returnTo);
-}
-
 struct PanelLayout {
   float x{};
   float width{};
@@ -703,6 +684,25 @@ void drawCalibrationScreen(AppContext& context) {
   if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) panelPointer().activeKey.clear();
 
   ui::endFullscreenWindow();
+}
+
+void exitCalibration(AppContext& context, bool apply) {
+  if (context.audio != nullptr) {
+    context.audio->stop();
+    context.audio->setMusicLooping(false);
+    context.audio->setLowPassEnabled(false);
+    context.audio->setPlaybackSpeed(1.0F);
+  }
+  context.calibration.audioLoaded = false;
+  context.calibration.markers.clear();
+  resetStage();
+  if (apply) {
+    context.settings.audioOffsetMs =
+        std::clamp(static_cast<int>(std::lround(context.calibration.offsetMs)), -500, 500);
+    context.settingsDirty = true;
+  }
+  commitSettings(context);
+  navigateTo(context, context.calibration.returnTo);
 }
 
 } // namespace rechigros::app

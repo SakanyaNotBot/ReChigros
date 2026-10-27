@@ -2063,4 +2063,8 @@ void drawSettingsScreen(AppContext& context) {
   ui::endFullscreenWindow();
 }
 
+std::vector<std::array<float, 4>> registeredSettingsControlRects() {
+  return screenState().controlRects;
+}
+
 } // namespace rechigros::app

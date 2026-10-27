@@ -1,5 +1,8 @@
 #pragma once
 
+#include <array>
+#include <vector>
+
 #include "rechigros/app/AppContext.hpp"
 
 #include <cstdint>
@@ -44,6 +47,15 @@ bool updateRecording(AppContext& context);
 // Draws the modal progress plate with its cancel action.
 void drawRecordingProgress(AppContext& context);
 void drawCalibrationScreen(AppContext& context);
+
+// Leaves the calibration page, optionally keeping the adjusted offset, and returns to the page it
+// was opened from. Exposed so the exit path can be exercised without a pointer.
+void exitCalibration(AppContext& context, bool apply);
+
+// Pressable rectangles the settings page registered while drawing, as {x0, y0, x1, y1} in view
+// pixels. The page reports them so a test can press a row without hard-coding coordinates that
+// shift whenever a row is added above it.
+[[nodiscard]] std::vector<std::array<float, 4>> registeredSettingsControlRects();
 void drawResultScreen(AppContext& context);
 void drawGameOverlay(AppContext& context);
 void drawToast(AppContext& context);
