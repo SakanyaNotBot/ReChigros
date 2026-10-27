@@ -59,6 +59,7 @@ struct Options {
   bool chartReveal{false};
   bool pauseMenu{false};
   float pauseElapsedSec{0.3F};
+  float outroProgress{0.0F};
   // Draws the frame-rate readout so the HUD number composer can be captured.
   bool showFps{false};
   // Drops the hold-body bursts so a frame can be compared with and without them.
@@ -107,6 +108,8 @@ Options parseOptions(int argc, char** argv) {
       options.pauseMenu = true;
     } else if (flag == "--pause-elapsed") {
       options.pauseElapsedSec = static_cast<float>(std::atof(next().c_str()));
+    } else if (flag == "--outro") {
+      options.outroProgress = static_cast<float>(std::atof(next().c_str()));
     } else if (flag == "--show-fps") {
       options.showFps = true;
     } else if (flag == "--no-hold-bursts") {
@@ -243,6 +246,7 @@ int main(int argc, char** argv) {
       input.hud.playheadSec = options.chartTime;
       input.hud.totalDurationSec = std::max(1.0, chart->chartEndTimeSec);
       input.hud.comboLabel = "COMBO";
+      input.hud.outroProgress = options.outroProgress;
       input.hud.showFps = options.showFps;
       input.hud.fps = 144.0F;
       input.backgroundDim = options.backgroundDim;

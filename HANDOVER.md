@@ -1723,3 +1723,52 @@ delay/padding 字段；从开场静音中取 **2048 帧**吸收 priming、末尾
 已在软件 AAC 上实测，**真机硬件 AAC 尚未复核**。录制日志为 731 帧而 ffprobe 视频为 715 帧，
 说明尾部捕获/收集仍有独立差异，留待噪域与捕获路径项排查；前 6 秒同步测量不受尾帧影响。
 
+### 3. HUD 退场：标签要淡出，数字与其余元素只做 Y 缩放
+
+**逐元素源码结论**（`GameRenderer.java`）：根变换在 8857-8859，缩放曲线在 8925-8929，
+`hudAlpha` 在 8903 只取决于开场，并非整体淡出。各元素如下：
+
+| 元素 | 参考位置 | 应有行为 |
+|---|---|---|
+| 暂停键 | 8951-8959 + 根变换 | 只随根 Y 缩放/平移 |
+| 进度条 | 8962-8963 + 根变换 | 只随根 Y 缩放/平移 |
+| 分数 | 8586-8595 | 只随根 Y 缩放/平移 |
+| 准确率 | 8596-8603 | Y 缩放 + 与标签共用退场 alpha |
+| COMBO 数字 | 8625-8630 | **只随根 Y 缩放/平移，不用标签 alpha** |
+| COMBO 标签 | 8632-8637 + 8641-8646 | Y 缩放 + `1-smoothstep(t*40/35)` 淡出 |
+| 曲名 | 8562-8570 | 只随根 Y 缩放/平移 |
+| 难度 | 8573-8583 | 只随根 Y 缩放/平移 |
+
+移植侧 `HudPass.cpp` 已计算 `comboAlpha` 并用于准确率，但标签绘制仍只传 `textAlpha`。
+这就是本项根因：不是根缩放缺失，也不是整体渐隐，而是**标签专用 alpha 没接到标签上**。
+修复只在 `HudElement::ComboLabel` 的调用上乘 `comboAlpha`，其他元素不动。
+
+**复现与修复数字**：`build/sync-before-zero.mp4` 第 640 帧中，数字和其余 HUD 已离开，
+RECORD 仍是全亮白字。修复后 `build/hud-after-zero.mp4` 同帧标签消失。中央标签区域：
+
+| 帧 | 修前近白像素 / max | 修后近白像素 / max |
+|---|---:|---:|
+| 610 | 1380 / 255 | 1360 / 255 |
+| 620 | 1474 / 255 | 991 / 255 |
+| 630 | 1013 / 255 | 473 / 255 |
+| 640 | **578 / 255** | **0 / 122** |
+
+Android 同项对照：旧 580 / 255，新 **0 / 122**（`build/hud-android-measure.txt`）。
+这区分了淡出与位移：其他元素在仍可见时 max 保持 255，标签则提前变暗并清除。
+
+**四种标签场景**：
+
+- RECORD：`hud-after-01.png` 至 `hud-after-04.png`，逐帧淡出。
+- AUTOPLAY：`hud-autoplay-f1950.png` 中途完整，`hud-autoplay-f2100.png` 已清除。
+- REPLAY：有效判定回放（14 notes、16 entries，实际 combo=14）在
+  `hud-replay-valid-f1950.png` 完整，`hud-replay-valid-f2100.png` 已清除；两次回放成绩均与录制一致。
+- COMBO：`rechigros_render_smoke --outro 0` 的 `hud-smoke-combo-0.png` 完整，
+  `--outro 0.875` 的 `hud-smoke-combo-875.png` 清除。该参数只用于诊断真实 HUD 渲染。
+
+注意 combo<3 时本来就不画标签，不能用“全 Miss 回放标签消失”冒充退场证据；上述 REPLAY
+特意使用有效判定条目，确保标签先出现。所有场景最终都走同一个 `ComboLabel` alpha 调用。
+
+**反向对照与回归**：暂时撤掉 `comboAlpha` 后，`--outro 0.875` 的
+`hud-smoke-combo-reverse.png` 仍清晰显示 COMBO，证明探针会失败；恢复后同一帧无标签。
+ctest 8/8、自检 56/56，Android 重录成功，最终安装 `lastUpdateTime=22:13:36`。
+

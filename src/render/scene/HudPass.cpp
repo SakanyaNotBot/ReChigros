@@ -1037,7 +1037,7 @@ void drawHud(batch::SpriteBatch& batch, text::TextRenderer& text, const StageLay
       placed.inkLeft = centerX - contentWidth * 0.5F;
       placed.inkTop = centerY - contentHeight * 0.5F;
       drawPlacedText(batch, canvas, HudElement::ComboLabel, transforms, placed, colors.textR,
-          colors.textG, colors.textB, textAlpha, projection);
+          colors.textG, colors.textB, textAlpha * comboAlpha, projection);
     }
   }
 
