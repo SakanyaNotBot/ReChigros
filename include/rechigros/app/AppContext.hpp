@@ -146,6 +146,10 @@ struct CalibrationRuntime {
   float offsetMs{};
   double previousLoopTime{-1.0};
   std::vector<CalibrationMarker> markers;
+  // The page the calibration screen was opened from. It is kept apart from the settings page's
+  // own return target: that one describes where leaving the settings page goes, and reusing it
+  // for the calibration exit sent the player back into the settings page they had just left.
+  Screen returnTo{Screen::Settings};
 };
 
 // Play-mode overrides applied on top of whatever a chart's own setup produces. Used by the

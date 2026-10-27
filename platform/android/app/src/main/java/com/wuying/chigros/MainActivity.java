@@ -320,6 +320,30 @@ public final class MainActivity extends SDLActivity {
         return VideoEncoderBridge.setAudioTrack(path, sampleRate, delayMs);
     }
 
+    /**
+     * Absolute path of one of the system's shared media folders, or null when it is unavailable.
+     *
+     * <p>A packaged application cannot assume where shared storage lives, and the directory it
+     * names differs per release, so the platform is asked for it here. The folder's own
+     * subdirectory for this application is created by the caller.
+     */
+    public static String sharedStorageDirectory(String category) {
+        try {
+            String kind = category != null ? category : "Movies";
+            java.io.File dir = android.os.Environment.getExternalStoragePublicDirectory(kind);
+            if (dir == null) return null;
+            return dir.getAbsolutePath();
+        } catch (RuntimeException error) {
+            Log.e(TAG, "cannot resolve public directory " + category, error);
+            return null;
+        }
+    }
+
+    /** Progress of the music encode: 0 none, 1 preparing, 2 ready, 3 failed. */
+    public static int videoAudioTrackState() {
+        return VideoEncoderBridge.audioTrackState();
+    }
+
     public static boolean queueVideoFrame(java.nio.ByteBuffer planes, int width, int height) {
         return VideoEncoderBridge.queueFrame(planes, width, height);
     }

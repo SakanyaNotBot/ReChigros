@@ -2069,19 +2069,18 @@ void gameRender(AppContext& context) {
   input.hud.introProgress = game.inIntro
       ? static_cast<float>(std::clamp(game.introElapsedSec / kHudIntroDurationSec, 0.0, 1.0))
       : 1.0F;
-  // The reference build does not scale the HUD (or the stage) at the exit: the HUD keeps
-  // its layout while the play field blurs, then fades out under the result entry. The
-  // reference recording fades the HUD over roughly 0.4 s (frames 7.30-7.70 s of the
-  // capture), so that window is used here.
-  input.hud.outroProgress = 0.0F;
+  // The exit moves the HUD off the screen rather than fading it. Every element rides a vertical
+  // scale about the stage centre, so the ones above the centre travel up and the ones below it
+  // travel down; the combo label alone also loses its opacity, on a slightly shorter window than
+  // the travel. The HUD itself keeps full opacity throughout.
+  // The exit moves the HUD off the screen rather than fading it. Every element rides a vertical
+  // scale about the stage centre, so the ones above the centre travel up and the ones below it
+  // travel down; the combo label alone also loses its opacity, on a slightly shorter window than
+  // the travel. The HUD itself keeps full opacity throughout.
+  input.hud.outroProgress = game.inOutro
+      ? static_cast<float>(std::clamp(game.outroElapsedSec / kHudOutroDurationSec, 0.0, 1.0))
+      : 0.0F;
   input.hud.alpha = 1.0F;
-  if (game.inOutro) {
-    constexpr double exitFadeSec = 0.40;
-    const double remaining = kOutroDurationSec - game.outroElapsedSec;
-    if (remaining < exitFadeSec) {
-      input.hud.alpha = static_cast<float>(std::clamp(remaining / exitFadeSec, 0.0, 1.0));
-    }
-  }
   input.practice.enabled = game.practice;
   input.practice.speed = game.musicSpeed;
   input.practice.autoPlay = game.autoplay;

@@ -13,6 +13,7 @@
 #include <iterator>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <system_error>
 
 #if defined(_WIN32)
@@ -91,31 +92,80 @@ std::filesystem::path cacheRoot() {
   return root;
 }
 
+namespace {
+// Asks the platform for one of its shared media folders. A packaged build reaches them through
+// the platform's own storage service, because they are not paths the app may assume; every other
+// build asks the desktop environment, which reports them directly.
+std::filesystem::path sharedMediaDirectory(const char* category) {
+#if defined(__ANDROID__)
+  JNIEnv* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+  if (env == nullptr) return {};
+  jobject activity = static_cast<jobject>(SDL_GetAndroidActivity());
+  if (activity == nullptr) return {};
+  jclass cls = env->GetObjectClass(activity);
+  env->DeleteLocalRef(activity);
+  if (cls == nullptr) return {};
+  std::filesystem::path result;
+  const jmethodID method =
+      env->GetStaticMethodID(cls, "sharedStorageDirectory", "(Ljava/lang/String;)Ljava/lang/String;");
+  if (method != nullptr) {
+    jstring name = env->NewStringUTF(category);
+    auto text = static_cast<jstring>(
+        env->CallStaticObjectMethod(cls, method, name));
+    env->DeleteLocalRef(name);
+    if (env->ExceptionCheck()) {
+      env->ExceptionClear();
+    } else if (text != nullptr) {
+      const char* utf8 = env->GetStringUTFChars(text, nullptr);
+      if (utf8 != nullptr) {
+        result = pathFromUtf8(utf8);
+        env->ReleaseStringUTFChars(text, utf8);
+      }
+      env->DeleteLocalRef(text);
+    }
+  } else {
+    env->ExceptionClear();
+  }
+  env->DeleteLocalRef(cls);
+  return result;
+#else
+  const SDL_Folder folder = std::string_view(category) == "Movies" ? SDL_FOLDER_VIDEOS
+      : std::string_view(category) == "Download"                    ? SDL_FOLDER_DOWNLOADS
+                                                                    : SDL_FOLDER_DOCUMENTS;
+  if (const char* known = SDL_GetUserFolder(folder)) return pathFromUtf8(known);
+  return {};
+#endif
+}
+} // namespace
+
 std::filesystem::path publicVideoDirectory() {
   // Each platform keeps user-visible media in a different place, so the location is asked for
-  // rather than guessed. When the platform reports nothing usable the per-user directory is used,
-  // which always exists and is always writable.
-  std::filesystem::path directory;
-#if defined(_WIN32)
-  if (const char* known = SDL_GetUserFolder(SDL_FOLDER_VIDEOS)) {
-    directory = pathFromUtf8(known);
-  }
-#elif defined(__ANDROID__)
-  // Android has no user-facing video folder outside shared storage; the app's own external files
-  // directory is what the system exposes to a non-privileged app.
-  if (const char* external = SDL_GetAndroidExternalStoragePath()) directory = pathFromUtf8(external);
-#elif defined(__APPLE__)
-  if (const char* home = SDL_getenv("HOME")) {
-    directory = pathFromUtf8(home) / "Movies";
-  }
-#else
-  if (const char* home = SDL_getenv("HOME")) {
-    directory = pathFromUtf8(home) / "Videos";
-  }
-#endif
+  // rather than guessed. The application's own name is appended so its recordings sit together
+  // instead of mixing with every other program's files. When the platform reports nothing usable
+  // the per-user directory is used, which always exists and is always writable.
+  auto directory = sharedMediaDirectory("Movies");
+  if (!directory.empty()) directory /= "Chigros";
   std::error_code error;
-  if (!directory.empty() && std::filesystem::is_directory(directory, error)) return directory;
+  if (!directory.empty()) {
+    std::filesystem::create_directories(directory, error);
+    error.clear();
+    if (std::filesystem::is_directory(directory, error)) return directory;
+  }
   const auto fallback = userDataRoot() / "recordings";
+  std::filesystem::create_directories(fallback, error);
+  return fallback;
+}
+
+std::filesystem::path publicDownloadDirectory() {
+  auto directory = sharedMediaDirectory("Download");
+  if (!directory.empty()) directory /= "Chigros";
+  std::error_code error;
+  if (!directory.empty()) {
+    std::filesystem::create_directories(directory, error);
+    error.clear();
+    if (std::filesystem::is_directory(directory, error)) return directory;
+  }
+  const auto fallback = userDataRoot() / "exports";
   std::filesystem::create_directories(fallback, error);
   return fallback;
 }

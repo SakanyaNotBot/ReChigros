@@ -153,6 +153,14 @@ inline constexpr float kComboLabelUiY = 405.0F;
 // The combo label fades out ahead of the rest of the HUD during the exit animation.
 [[nodiscard]] float comboLabelOutroAlpha(float outroProgress) noexcept;
 
+// How far the exit animation has stretched the HUD about the play field centre. The HUD leaves the
+// screen by growing past the edges, not by fading: everything above the centre travels up, and
+// everything below it travels down, by the same factor. Public so the curve can be checked without
+// a graphics device.
+[[nodiscard]] float hudRootScaleY(float introProgress, float outroProgress) noexcept;
+// The value the exit animation ends on, i.e. the stretch that has pushed the HUD out of frame.
+inline constexpr float kHudOutroRootScaleEnd = 1.1875F;
+
 // Draws the in-game HUD exactly where the play field's HUD canvas places it: pause
 // button and progress bar, song title bottom-left, difficulty bottom-right, score
 // top-right, optional accuracy, and the centre combo number/label. `alpha` scales the

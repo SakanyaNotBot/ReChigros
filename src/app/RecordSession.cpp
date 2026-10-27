@@ -286,6 +286,23 @@ bool RecordSession::step(AppContext& context) {
   const auto& resolution =
       resolutions[static_cast<std::size_t>(settings_.resolutionIndex)];
   const double frameDuration = 1.0 / static_cast<double>(settings_.fps);
+  // The container has to know both tracks before it starts, and it starts as soon as the first
+  // video frame arrives. Staging the music takes as long as the song plays, so that work is handed
+  // to a background thread; until it lands there is nothing to render into, and reporting "more
+  // work remains" keeps the interface drawing its progress overlay in the meantime.
+  switch (encoder_.audioTrackState()) {
+    case VideoEncoder::AudioTrackState::Preparing:
+      return true;
+    case VideoEncoder::AudioTrackState::Failed:
+      // A run without music is still a complete run: the picture is what the rendering is for.
+      break;
+    case VideoEncoder::AudioTrackState::None:
+      // Nothing was handed over, so there is no track to wait for. A silent run is a complete run.
+      break;
+    case VideoEncoder::AudioTrackState::Ready:
+    default:
+      break;
+  }
   const double chartEnd = context.game.chart->chartEndTimeSec;
   // The exit starts where the run actually ends: when the music stops. A chart whose last note
   // comes before its song would otherwise spend the rest of the song in a finished state that
@@ -404,17 +421,18 @@ bool RecordSession::step(AppContext& context) {
         ? render::scene::introUiEase(
               static_cast<float>(std::clamp(elapsed / (40.0 / 60.0), 0.0, 1.0)))
         : 1.0F;
-    // The HUD fades out over the last part of the exit, the same window the interactive path
-    // uses, so the recorded picture ends on the interface disappearing rather than on a frozen
-    // HUD over a blurred field.
+    // The exit animation starts with the outro itself, not after a delay: the HUD travels off the
+    // screen over its own window, which is what the recorded picture has to end on. The interactive
+    // path feeds the same progress from the same elapsed time.
+    // The exit animation runs over its own window from the moment the run leaves play: the HUD
+    // travels off the screen by growing about the play field centre, and only the combo label loses
+    // opacity. The interactive path feeds this same progress from the same elapsed time, so a
+    // recording shows what the player saw.
+    const double outroElapsed = inOutro ? playhead - outroAt : 0.0;
+    input.hud.outroProgress = inOutro
+        ? static_cast<float>(std::clamp(outroElapsed / (40.0 / 60.0), 0.0, 1.0))
+        : 0.0F;
     input.hud.alpha = 1.0F;
-    if (inOutro) {
-      const double outroElapsed = playhead - outroAt;
-      if (outroElapsed > kOutroTailSec) {
-        const double fade = (outroElapsed - kOutroTailSec) / kHudExitSec;
-        input.hud.alpha = static_cast<float>(std::clamp(1.0 - fade, 0.0, 1.0));
-      }
-    }
     input.songName = context.play.songName;
     input.levelName = context.play.difficulty;
     // Hit feedback is part of what a run looks like; the interface can turn the particles off

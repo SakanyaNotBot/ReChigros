@@ -22,6 +22,9 @@ void setAssetRootOverride(const std::filesystem::path& root);
 // exposes no such location.
 [[nodiscard]] std::filesystem::path publicVideoDirectory();
 
+// Directory where an exported replay is expected to end up. Same fallback rule as above.
+[[nodiscard]] std::filesystem::path publicDownloadDirectory();
+
 // Absolute path of the running executable; empty when it cannot be determined.
 [[nodiscard]] std::filesystem::path executablePath();
 

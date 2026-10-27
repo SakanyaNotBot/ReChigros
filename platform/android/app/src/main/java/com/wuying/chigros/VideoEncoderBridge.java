@@ -28,7 +28,7 @@ final class VideoEncoderBridge {
     private static final String MIME_AUDIO = MediaFormat.MIMETYPE_AUDIO_AAC;
 
     private static MediaCodec videoEncoder;
-    private static MediaCodec audioEncoder;
+
     private static MediaMuxer muxer;
     private static MediaCodec.BufferInfo videoInfo;
     private static MediaCodec.BufferInfo audioInfo;
@@ -55,6 +55,20 @@ final class VideoEncoderBridge {
             new java.util.ArrayList<>();
     private static MediaFormat audioFormat;
     private static boolean audioPrepared;
+
+    // Progress of the music encode. The track is encoded on its own thread because it takes as
+    // long as the song does; the recorder polls this before it starts producing frames, which is
+    // the order the container needs (a muxer only takes new tracks before it is started).
+    private static final int AUDIO_NONE = 0;
+    private static final int AUDIO_PREPARING = 1;
+    private static final int AUDIO_READY = 2;
+    private static final int AUDIO_FAILED = 3;
+    private static volatile int audioState = AUDIO_NONE;
+    // Bumped whenever a run starts or is aborted. A worker compares the value it captured with
+    // the current one and drops its result if they differ, so a track from a cancelled run can
+    // never be attached to the next one.
+    private static volatile int audioGeneration;
+    private static Thread audioThread;
 
     private VideoEncoderBridge() {
     }
@@ -100,10 +114,13 @@ final class VideoEncoderBridge {
             audioFormat = null;
             rgbaScratch = new byte[w * h * 4];
             lumaScratch = new int[w * h];
-            // The music is encoded up front. A muxer refuses new tracks once it has started, and
-            // the video track's format only becomes known while frames are flowing, so the audio
-            // track has to exist before that.
-            if (pcmBytes != null) prepareAudioTrack();
+            // The music track is *not* encoded here. It arrives through setAudioTrack, and encoding
+            // it takes as long as the whole song: doing that inside this call runs the encode on the
+            // thread that draws, which freezes the interface for the duration. It is started on its
+            // own thread instead and the caller polls audioTrackState() before producing frames.
+            audioGeneration++;
+            audioState = AUDIO_NONE;
+            audioThread = null;
             Log.i(TAG, "video encoder started " + w + "x" + h + " @" + frameRate + " bitRate=" + bitRate);
             return true;
         } catch (IOException | RuntimeException error) {
@@ -134,10 +151,57 @@ final class VideoEncoderBridge {
             Log.e(TAG, "cannot read audio track", error);
             pcmBytes = null;
         }
+        // The bytes are loaded here because the file belongs to the caller and is deleted as soon as
+        // this returns; the encode itself is handed to a worker. Reading the file costs well under a
+        // second, encoding the whole track costs as long as the song.
         if (pcmBytes != null && videoEncoder != null && !audioPrepared) {
-            prepareAudioTrack();
+            startAudioEncode();
         }
-        return pcmBytes != null && (videoEncoder == null || audioPrepared);
+        return pcmBytes != null;
+    }
+
+    /**
+     * Reports how far the music encode has got, so the caller can wait for it without blocking the
+     * thread that draws. See the AUDIO_* constants.
+     */
+    static synchronized int audioTrackState() {
+        if (audioPrepared) return AUDIO_READY;
+        return audioState;
+    }
+
+    /**
+     * Encodes the loaded track on a worker thread. The worker holds no lock while it runs, so the
+     * caller stays free to draw and to poll audioTrackState(); only the short hand-offs at either
+     * end are synchronised.
+     */
+    private static void startAudioEncode() {
+        if (audioState == AUDIO_PREPARING) return;
+        audioState = AUDIO_PREPARING;
+        final int generation = audioGeneration;
+        final Thread worker = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                boolean ok = false;
+                try {
+                    ok = prepareAudioTrack(generation);
+                } catch (Throwable failure) {
+                    // The caller waits on this state, so it has to leave the "preparing" value
+                    // behind no matter how the worker ends. An escaping failure would otherwise
+                    // leave the recording waiting forever for a track that will never arrive.
+                    Log.e(TAG, "audio encode failed", failure);
+                    ok = false;
+                }
+                synchronized (VideoEncoderBridge.class) {
+                    // A stale worker must not touch the state of the run that replaced it.
+                    if (generation == audioGeneration) {
+                        audioState = ok ? AUDIO_READY : AUDIO_FAILED;
+                    }
+                }
+            }
+        }, "ReChigrosAudioEncode");
+        worker.setDaemon(true);
+        audioThread = worker;
+        worker.start();
     }
 
     /**
@@ -369,8 +433,8 @@ final class VideoEncoderBridge {
      * the track format. The muxer needs the format before it starts, and it has to start before
      * any sample is written, so the audio cannot be encoded lazily beside the video.
      */
-    private static void prepareAudioTrack() {
-        if (audioPrepared) return;
+    private static boolean prepareAudioTrack(int generation) {
+        if (audioPrepared) return true;
         MediaCodec encoder = null;
         try {
             final int channels = 2;
@@ -382,11 +446,20 @@ final class VideoEncoderBridge {
             encoder = MediaCodec.createEncoderByType(MIME_AUDIO);
             encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
             encoder.start();
-            audioEncoder = encoder;
+
+            // The encode runs on a worker while the drawing thread stays free to call abort(), so
+            // everything it produces is collected in locals and published in one step at the end.
+            // Writing the shared fields directly would let a cancelled run leave half a track
+            // behind that the next run then mixes with its own.
+            final byte[] pcm = pcmBytes;
+            final java.util.List<byte[]> packets = new java.util.ArrayList<>();
+            final java.util.List<MediaCodec.BufferInfo> packetInfo = new java.util.ArrayList<>();
+            MediaFormat producedFormat = null;
+            int producedTrack = -1;
 
             final int floatBytes = 4;
             final int frameBytes = channels * floatBytes;
-            final int totalFrames = pcmBytes.length / frameBytes;
+            final int totalFrames = pcm.length / frameBytes;
             final MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
             final ByteBuffer shorts = ByteBuffer.allocate(16384).order(ByteOrder.nativeOrder());
             ShortBuffer shortView = shorts.asShortBuffer();
@@ -401,6 +474,9 @@ final class VideoEncoderBridge {
             long lastProgressNs = System.nanoTime();
 
             while (true) {
+                if (generation != audioGeneration) {
+                    throw new IllegalStateException("the audio encode was cancelled");
+                }
                 if (!inputDone) {
                     final int index = encoder.dequeueInputBuffer(10_000L);
                     if (index >= 0) {
@@ -422,10 +498,10 @@ final class VideoEncoderBridge {
                             for (int c = 0; c < channels; ++c) {
                                 final int offset = base + c * floatBytes;
                                 final float value = Float.intBitsToFloat(
-                                        (pcmBytes[offset] & 0xFF)
-                                                | ((pcmBytes[offset + 1] & 0xFF) << 8)
-                                                | ((pcmBytes[offset + 2] & 0xFF) << 16)
-                                                | ((pcmBytes[offset + 3] & 0xFF) << 24));
+                                        (pcm[offset] & 0xFF)
+                                                | ((pcm[offset + 1] & 0xFF) << 8)
+                                                | ((pcm[offset + 2] & 0xFF) << 16)
+                                                | ((pcm[offset + 3] & 0xFF) << 24));
                                 final int scaled = (int) (Math.max(-1.0f, Math.min(1.0f, value)) * 32767.0f);
                                 shorts.putShort((short) scaled);
                                 samples++;
@@ -457,8 +533,10 @@ final class VideoEncoderBridge {
                     if (muxerStarted || audioTrack >= 0) {
                         throw new IllegalStateException("audio track format changed too late");
                     }
-                    audioFormat = encoder.getOutputFormat();
-                    audioTrack = muxer.addTrack(audioFormat);
+                    // The muxer itself is only touched in the single locked step at the end: it is
+                    // released from the drawing thread when a run is torn down, and calling into it
+                    // from here would race that release.
+                    producedFormat = encoder.getOutputFormat();
                     lastProgressNs = System.nanoTime();
                     continue;
                 }
@@ -478,8 +556,8 @@ final class VideoEncoderBridge {
                     output.get(packet);
                     final MediaCodec.BufferInfo copy = new MediaCodec.BufferInfo();
                     copy.set(0, packet.length, info.presentationTimeUs, info.flags);
-                    audioPackets.add(packet);
-                    audioPacketInfo.add(copy);
+                    packets.add(packet);
+                    packetInfo.add(copy);
                     encodedBytes += packet.length;
                     if (firstPresentationUs < 0) firstPresentationUs = info.presentationTimeUs;
                     lastPresentationUs = info.presentationTimeUs;
@@ -490,19 +568,33 @@ final class VideoEncoderBridge {
                     break;
                 }
             }
-            if (!sawEndOfStream || audioTrack < 0) {
+            if (!sawEndOfStream || producedFormat == null) {
                 throw new IllegalStateException("audio encoder did not finish its track");
             }
-            audioPrepared = true;
+            // Publishing is the only step that touches shared state, and it happens in one place:
+            // a reader either sees the whole track or none of it. The track is registered with the
+            // muxer here rather than while encoding, so the muxer is never called from two threads.
+            synchronized (VideoEncoderBridge.class) {
+                if (generation != audioGeneration) {
+                    throw new IllegalStateException("the audio encode was cancelled");
+                }
+                audioFormat = producedFormat;
+                audioTrack = muxer.addTrack(producedFormat);
+                audioPackets.addAll(packets);
+                audioPacketInfo.addAll(packetInfo);
+                audioPrepared = true;
+                producedTrack = audioTrack;
+            }
             Log.i(TAG, "audio encoded pcmFrames=" + presentedSamples
-                    + " packets=" + audioPackets.size() + " bytes=" + encodedBytes
-                    + " track=" + audioTrack + " firstPtsUs=" + firstPresentationUs
+                    + " packets=" + packets.size() + " bytes=" + encodedBytes
+                    + " track=" + producedTrack + " firstPtsUs=" + firstPresentationUs
                     + " lastPtsUs=" + lastPresentationUs + " eos=" + sawEndOfStream);
+            return true;
         } catch (IOException | RuntimeException error) {
             // A recording without music is still a complete recording, so this is not fatal.
             Log.e(TAG, "cannot prepare audio", error);
+            return false;
         } finally {
-            audioEncoder = null;
             if (encoder != null) {
                 try {
                     encoder.stop();
@@ -514,6 +606,12 @@ final class VideoEncoderBridge {
     }
 
     static synchronized void abort() {
+        // Bumping the generation is what tells a worker still encoding that its result belongs to
+        // a run that no longer exists. It is not joined: the encode can be minutes long, and the
+        // caller of abort is the frame that has to keep drawing.
+        audioGeneration++;
+        audioThread = null;
+        audioState = AUDIO_NONE;
         try {
             release();
         } catch (RuntimeException error) {

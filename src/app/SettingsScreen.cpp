@@ -1105,7 +1105,10 @@ void drawAction(const DrawContext& draw, const Block& block, float left, float t
       context.calibration.offsetMs = static_cast<float>(context.settings.audioOffsetMs);
       context.calibration.audioLoaded = false;
       context.calibration.markers.clear();
-      context.settingsReturn = Screen::Settings;
+      // The calibration page returns to the settings page, which keeps its own target for when
+      // the player leaves it. Overwriting that target here is what made the settings back action
+      // land on the settings page again instead of the page it was opened from.
+      context.calibration.returnTo = Screen::Settings;
       context.screen = Screen::Calibration;
       break;
     default:

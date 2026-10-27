@@ -415,13 +415,21 @@ void drawComposedTopLeft(batch::SpriteBatch& batch, const text::GlyphStrip& stri
 }
 
 
+} // namespace
+
 // HUD start/exit animation factor for the current frame.
-float computeRootScale(float introProgress, float outroProgress) {
+float hudRootScaleY(float introProgress, float outroProgress) noexcept {
   if (outroProgress > 0.0F) {
     return 1.0F + (kRootScaleYStart - 1.0F) * smoothStep01(outroProgress);
   }
   const int count = static_cast<int>(sizeof(kLevelStartRootScaleY) / sizeof(float));
   return sampleCurve(kLevelStartRootScaleY, count, introProgress);
+}
+
+namespace {
+
+float computeRootScale(float introProgress, float outroProgress) {
+  return hudRootScaleY(introProgress, outroProgress);
 }
 
 } // namespace

@@ -375,6 +375,17 @@ bool VideoEncoder::openPlatform(const Settings& settings, const std::filesystem:
   return true;
 }
 
+VideoEncoder::AudioTrackState VideoEncoder::audioTrackState() const noexcept {
+  if (!platform_) return AudioTrackState::Ready;
+  switch (platformenc::audioTrackState()) {
+    case platformenc::AudioTrackState::Preparing: return AudioTrackState::Preparing;
+    case platformenc::AudioTrackState::Ready: return AudioTrackState::Ready;
+    case platformenc::AudioTrackState::Failed: return AudioTrackState::Failed;
+    case platformenc::AudioTrackState::None:
+    default: return AudioTrackState::None;
+  }
+}
+
 bool VideoEncoder::writePlatformFrame(const std::uint8_t* pixels, std::size_t bytes,
     std::string& error) {
   return platformenc::writeFrame(widthForPlatform_, heightForPlatform_, pixels, bytes, error);

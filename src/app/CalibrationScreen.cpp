@@ -208,7 +208,7 @@ void exitCalibration(AppContext& context, bool apply) {
     context.settingsDirty = true;
   }
   commitSettings(context);
-  navigateTo(context, context.settingsReturn);
+  navigateTo(context, context.calibration.returnTo);
 }
 
 struct PanelLayout {
@@ -633,7 +633,11 @@ void drawCalibrationScreen(AppContext& context) {
   if (!context.calibration.audioLoaded) {
     bool loaded = false;
     if (context.audio != nullptr) {
-      const auto music = platform::assetRoot() / "audio" / "calibration.wav";
+      // The bundled assets are not files in a packaged build: they live inside the package and
+      // only the platform's asset reader can reach them. Materialising hands back a real path the
+      // decoder can open, and returns the path unchanged on a plain directory tree.
+      const auto music =
+          platform::AssetManager::materialize(platform::assetRoot(), "audio/calibration.wav");
       context.audio->stop();
       context.audio->setMusicLooping(true);
       context.audio->setVolume(1.0F);

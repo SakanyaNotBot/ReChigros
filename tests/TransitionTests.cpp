@@ -573,6 +573,40 @@ int main() {
         "a near target snaps exactly");
   }
 
+  {
+    // The exit animation moves the HUD out of the frame instead of fading it: it grows about the
+    // play field centre, so elements above the centre travel up and those below travel down, and
+    // the text keeps full opacity the whole way. A fade would leave the stretch at one and dim the
+    // text, which is the behaviour this pins down.
+    using rechigros::render::scene::comboLabelOutroAlpha;
+    using rechigros::render::scene::hudRootScaleY;
+    using rechigros::render::scene::kHudOutroRootScaleEnd;
+    require(close(hudRootScaleY(1.0F, 0.0F), 1.0F, 1e-6),
+        "a finished HUD start leaves the HUD unstretched");
+    require(close(hudRootScaleY(1.0F, 1.0F), kHudOutroRootScaleEnd, 1e-6),
+        "the exit ends on the stretch that pushes the HUD out of frame");
+    // Monotone growth: the stretch never steps backwards while the exit runs.
+    float previous = hudRootScaleY(1.0F, 0.0F);
+    for (int step = 1; step <= 20; ++step) {
+      const float current = hudRootScaleY(1.0F, static_cast<float>(step) / 20.0F);
+      require(current >= previous - 1e-6F, "the exit stretch never shrinks");
+      previous = current;
+    }
+    // A mid exit pose: the HUD has visibly moved but has not arrived yet.
+    const float middle = hudRootScaleY(1.0F, 0.5F);
+    require(middle > 1.02F && middle < kHudOutroRootScaleEnd - 0.02F,
+        "halfway through the exit the HUD has travelled but is still visible");
+
+    // The combo label is the one element that also loses its opacity, and it starts fading with
+    // the exit rather than after it.
+    require(close(comboLabelOutroAlpha(0.0F), 1.0F, 1e-6), "the label is opaque before the exit");
+    require(close(comboLabelOutroAlpha(1.0F), 0.0F, 1e-6), "the label has cleared by the end");
+    require(comboLabelOutroAlpha(0.9F) < comboLabelOutroAlpha(0.5F),
+        "the label fades progressively through the exit");
+    // It clears before the travel finishes, which is why it is not drawn on the last frames.
+    require(comboLabelOutroAlpha(0.95F) < 0.02F, "the label clears ahead of the travel");
+  }
+
   if (g_failures != 0) {
     std::cerr << g_failures << " transition test(s) failed\n";
     return 1;

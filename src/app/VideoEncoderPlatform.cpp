@@ -207,6 +207,28 @@ bool addAudioTrack(const std::string& pcmPath, int sampleRate, int delayMs, std:
   return true;
 }
 
+AudioTrackState audioTrackState() {
+  Bridge bridge;
+  if (!bridge.valid) return AudioTrackState::None;
+  const jmethodID method =
+      bridge.env->GetStaticMethodID(bridge.cls, "videoAudioTrackState", "()I");
+  if (method == nullptr) {
+    bridge.env->ExceptionClear();
+    return AudioTrackState::None;
+  }
+  const jint state = bridge.env->CallStaticIntMethod(bridge.cls, method);
+  if (bridge.env->ExceptionCheck()) {
+    bridge.env->ExceptionClear();
+    return AudioTrackState::None;
+  }
+  switch (state) {
+    case 1: return AudioTrackState::Preparing;
+    case 2: return AudioTrackState::Ready;
+    case 3: return AudioTrackState::Failed;
+    default: return AudioTrackState::None;
+  }
+}
+
 } // namespace rechigros::app::platformenc
 
 #else
@@ -222,6 +244,7 @@ bool writeFrame(int, int, const std::uint8_t*, std::size_t, std::string&) { retu
 bool finish(std::string&) { return false; }
 void abort() noexcept {}
 bool addAudioTrack(const std::string&, int, int, std::string&) { return false; }
+AudioTrackState audioTrackState() { return AudioTrackState::None; }
 
 } // namespace rechigros::app::platformenc
 

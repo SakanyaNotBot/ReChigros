@@ -81,6 +81,13 @@ public:
   // True when this encoder was opened for planar frames, so the caller knows which layout to send.
   [[nodiscard]] bool inputIsPlanar() const noexcept { return inputIsPlanar_; }
 
+  // Progress of the music track handed to the encoder. A platform encoder stages it on its own
+  // thread, and the container takes the track before the first frame, so the recorder waits here
+  // instead of inside the call that started the run. A build with an external encoder has no such
+  // stage: the tool takes the track from its argument list, so that path is always ready.
+  enum class AudioTrackState { None, Preparing, Ready, Failed };
+  [[nodiscard]] AudioTrackState audioTrackState() const noexcept;
+
 private:
   // The writer thread and the thread that closes the encoder both touch the child's pipes. Closing
   // a stream while a write is inside it corrupts the stream's state, so those operations are

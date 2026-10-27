@@ -36,4 +36,12 @@ void abort() noexcept;
 // milliseconds so the audio starts where the chart clock does.
 bool addAudioTrack(const std::string& pcmPath, int sampleRate, int delayMs, std::string& error);
 
+// How far the supplied music track has got.
+enum class AudioTrackState { None, Preparing, Ready, Failed };
+
+// Reports the music encode's progress. Encoding a whole song takes as long as the song plays, so a
+// caller that needs the track in the container before the first frame polls this instead of
+// blocking: waiting inside the call that started the run would freeze the interface for minutes.
+[[nodiscard]] AudioTrackState audioTrackState();
+
 } // namespace rechigros::app::platformenc
