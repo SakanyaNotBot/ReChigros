@@ -3,12 +3,18 @@
 #include "rechigros/platform/Gif.hpp"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 #include "rechigros/platform/AssetManager.hpp"
 
+#include <SDL3/SDL_log.h>
 #include <stb_image.h>
 
 #include <algorithm>
@@ -28,6 +34,13 @@ Image decodeImageMemory(const std::uint8_t* data, std::size_t size) {
   image.pixels.assign(pixels, pixels + static_cast<std::size_t>(width) * height * 4);
   stbi_image_free(pixels);
   return image;
+}
+
+// Per-asset cost of the startup texture load, so the largest block of the launch can be
+// attributed. Enabled with RECHIGROS_TEXTURE_LOG so a normal run pays nothing.
+bool textureLoadLogEnabled() {
+  static const bool enabled = std::getenv("RECHIGROS_TEXTURE_LOG") != nullptr;
+  return enabled;
 }
 
 Image decodeImage(const std::filesystem::path& path) {
@@ -82,19 +95,72 @@ gl::Texture& TextureCache::white() {
 }
 
 gl::Texture* TextureCache::store(const std::string& key, Image image, bool white) {
+  const auto uploadStart = std::chrono::steady_clock::now();
   auto it = textures_.find(key);
   if (it != textures_.end()) {
     if (it->second.valid()) return &it->second;
     textures_.erase(it);
   }
   if (!image.valid()) return nullptr;
+  const int imageWidth = image.width;
+  const int imageHeight = image.height;
   if (white) forceWhite(image);
   premultiply(image);
   gl::Texture texture;
   if (!texture.uploadRgba(image.width, image.height, image.pixels.data())) return nullptr;
   texture.setFilter(true);
   const auto inserted = textures_.emplace(key, std::move(texture));
+  if (textureLoadLogEnabled()) {
+    // The upload is the part that has to run on the thread owning the graphics context, so its
+    // cost is what actually remains on the launch path once decoding moved to workers.
+    const double uploadMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - uploadStart).count();
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "[tex] upload %-40s %6.1f ms %dx%d",
+        key.c_str(), uploadMs, imageWidth, imageHeight);
+  }
   return &inserted.first->second;
+}
+
+void TextureCache::beginPrefetchAssets(const std::vector<std::string>& relativePaths) {
+  awaitPrefetchAssets();
+  if (relativePaths.empty()) return;
+  // Decoding is the expensive half of a texture load and touches no graphics state, so it is the
+  // half that can run beside the drawing thread. The context belongs to the caller and is never
+  // touched here; the decoded pixels are handed over through the map instead.
+  const unsigned cores = std::thread::hardware_concurrency();
+  const std::size_t workers = std::clamp<std::size_t>(cores == 0 ? 2U : cores, 1U, 4U);
+  // The threads outlive this call: the caller runs a stage that does not touch textures and only
+  // then awaits them, which is what makes the decode overlap instead of adding to the total.
+  auto next = std::make_shared<std::atomic<std::size_t>>(0);
+  auto paths = std::make_shared<std::vector<std::string>>(relativePaths);
+  prefetchThreads_.reserve(workers);
+  for (std::size_t worker = 0; worker < workers; ++worker) {
+    prefetchThreads_.emplace_back([this, next, paths] {
+      for (;;) {
+        const std::size_t index = next->fetch_add(1, std::memory_order_relaxed);
+        if (index >= paths->size()) return;
+        const std::string& relativePath = (*paths)[index];
+        const std::string key = "asset:" + relativePath;
+        {
+          std::lock_guard<std::mutex> guard(prefetchMutex_);
+          if (decoded_.find(key) != decoded_.end()) continue;
+        }
+        const auto bytes = platform::AssetManager::readBinary(assetRoot_, relativePath);
+        if (bytes.empty()) continue;
+        Image image = decodeImageMemory(bytes.data(), bytes.size());
+        if (!image.valid()) continue;
+        std::lock_guard<std::mutex> guard(prefetchMutex_);
+        decoded_.emplace(key, std::move(image));
+      }
+    });
+  }
+}
+
+void TextureCache::awaitPrefetchAssets() {
+  for (auto& thread : prefetchThreads_) {
+    if (thread.joinable()) thread.join();
+  }
+  prefetchThreads_.clear();
 }
 
 gl::Texture* TextureCache::loadAsset(const std::string& relativePath, bool white) {
@@ -102,9 +168,29 @@ gl::Texture* TextureCache::loadAsset(const std::string& relativePath, bool white
   if (const auto it = textures_.find(key); it != textures_.end() && it->second.valid()) {
     return &it->second;
   }
+  // An image decoded ahead of time only needs its upload, which is the part that has to be here.
+  if (const auto ready = decoded_.find(key); ready != decoded_.end()) {
+    Image image = std::move(ready->second);
+    decoded_.erase(ready);
+    return store(key, std::move(image), white);
+  }
+  const auto started = std::chrono::steady_clock::now();
   const auto bytes = platform::AssetManager::readBinary(assetRoot_, relativePath);
   if (bytes.empty()) return nullptr;
-  return store(key, decodeImageMemory(bytes.data(), bytes.size()), white);
+  const auto decodedAt = std::chrono::steady_clock::now();
+  auto image = decodeImageMemory(bytes.data(), bytes.size());
+  const auto uploadedAt = std::chrono::steady_clock::now();
+  gl::Texture* result = store(key, std::move(image), white);
+  if (textureLoadLogEnabled()) {
+    const auto ms = [](auto from, auto to) {
+      return std::chrono::duration<double, std::milli>(to - from).count();
+    };
+    const auto finished = std::chrono::steady_clock::now();
+    std::printf("[tex] %-44s read=%.1f decode=%.1f upload=%.1f ms bytes=%zu\n",
+        relativePath.c_str(), ms(started, decodedAt), ms(decodedAt, uploadedAt),
+        ms(uploadedAt, finished), bytes.size());
+  }
+  return result;
 }
 
 gl::Texture* TextureCache::loadFile(const std::filesystem::path& path, bool white) {

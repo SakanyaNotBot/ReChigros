@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Recordings and replay exports go to the shared media folders so the gallery and any file
+         browser can find them without the player moving the file. Releases that predate scoped
+         storage gate shared writes behind this permission, and it is not granted on install. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
     <application
         android:allowBackup="true"

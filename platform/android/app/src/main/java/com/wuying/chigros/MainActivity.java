@@ -301,6 +301,7 @@ public final class MainActivity extends SDLActivity {
     private static final int PICKER_REPLAY = 2;
     private static final int PICKER_SKIN = 3;
     private static final int REQUEST_PICKER = 0x51D1;
+    private static final int REQUEST_SHARED_STORAGE = 0x51D2;
 
     private static MainActivity instance;
     // Which picker the pending request asked for, so its answer can be read correctly.
@@ -332,10 +333,57 @@ public final class MainActivity extends SDLActivity {
             String kind = category != null ? category : "Movies";
             java.io.File dir = android.os.Environment.getExternalStoragePublicDirectory(kind);
             if (dir == null) return null;
+            if (!dir.exists() && !dir.mkdirs() && !dir.exists()) {
+                Log.e(TAG, "cannot create public directory " + dir);
+                return null;
+            }
+            // The folder being reported is not proof it can be written: on the releases that need
+            // the legacy grant it exists but refuses every write. Probing it here is what tells
+            // the caller to use its private folder instead of failing a long recording at the end.
+            final File probe = new File(dir, ".rechigros-write-probe");
+            try {
+                if (!probe.createNewFile() && !probe.exists()) {
+                    Log.w(TAG, "public directory is not writable: " + dir);
+                    return null;
+                }
+            } finally {
+                //noinspection ResultOfMethodCallIgnored
+                probe.delete();
+            }
             return dir.getAbsolutePath();
         } catch (RuntimeException error) {
             Log.e(TAG, "cannot resolve public directory " + category, error);
             return null;
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode != REQUEST_SHARED_STORAGE) return;
+        final boolean granted = results.length > 0
+                && results[0] == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        Log.i(TAG, "shared storage granted=" + granted);
+    }
+
+    /**
+     * Asks for the legacy shared-storage grant when the release still requires it. Reporting
+     * whether it is already held lets the caller decide before it writes anything.
+     */
+    public static boolean ensureSharedStoragePermission() {
+        if (android.os.Build.VERSION.SDK_INT > 28) return true;
+        try {
+            if (checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                return true;
+            }
+            requestPermissions(
+                    new String[] { android.Manifest.permission.WRITE_EXTERNAL_STORAGE },
+                    REQUEST_SHARED_STORAGE);
+            return false;
+        } catch (RuntimeException error) {
+            Log.e(TAG, "cannot request shared storage", error);
+            return false;
         }
     }
 

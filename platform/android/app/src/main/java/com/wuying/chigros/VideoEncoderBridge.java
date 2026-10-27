@@ -54,7 +54,7 @@ final class VideoEncoderBridge {
     private static final java.util.List<MediaCodec.BufferInfo> audioPacketInfo =
             new java.util.ArrayList<>();
     private static MediaFormat audioFormat;
-    private static boolean audioPrepared;
+    private static volatile boolean audioPrepared;
 
     // Progress of the music encode. The track is encoded on its own thread because it takes as
     // long as the song does; the recorder polls this before it starts producing frames, which is
@@ -164,7 +164,12 @@ final class VideoEncoderBridge {
      * Reports how far the music encode has got, so the caller can wait for it without blocking the
      * thread that draws. See the AUDIO_* constants.
      */
-    static synchronized int audioTrackState() {
+    static int audioTrackState() {
+        // Deliberately not synchronized: the caller polls this once per frame, while the frame
+        // hand-off holds the class lock for the whole copy. Sharing that lock made the poll wait
+        // for a frame to be copied (measured 638 ms on the device), which is exactly the stall
+        // this method exists to avoid. Both fields are volatile, so a poll always sees a whole
+        // value, and a stale read at worst repeats one frame of waiting.
         if (audioPrepared) return AUDIO_READY;
         return audioState;
     }

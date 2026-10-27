@@ -208,6 +208,9 @@ void reportLaunchStage(const char* stage, std::uint64_t from, std::uint64_t freq
   const double elapsedMs =
       static_cast<double>(now - from) * 1000.0 / static_cast<double>(frequency);
   std::printf("launch: %-22s %7.1f ms\n", stage, elapsedMs);
+  // A packaged build has no console, and the launch stages are the only way to attribute the time
+  // between the window appearing and the first frame, so they also go to the platform log.
+  SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "launch: %s %.1f ms", stage, elapsedMs);
   if (std::string_view(stage) != "total to first frame") launchAccountedMs += elapsedMs;
 }
 } // namespace

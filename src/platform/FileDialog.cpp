@@ -1,219 +1,134 @@
 #include "rechigros/platform/FileDialog.hpp"
 
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(__ANDROID__)
 
-// The Windows shell pickers live behind the common dialogs API, which needs COM.
-#include <windows.h>
-#include <commdlg.h>
-#include <shlobj.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_dialog.h>
 
+#include <atomic>
+#include <functional>
+#include <mutex>
 #include <string>
 #include <vector>
 
 namespace rechigros::platform {
 namespace {
 
-// A one-shot COM apartment for the lifetime of a dialog. The renderer runs on the main
-// thread, so the apartment is initialised and torn down around each call rather than once
-// at start-up.
-class ComScope final {
-public:
-  ComScope() {
-    const HRESULT result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-    initialised_ = SUCCEEDED(result);
-  }
-  ~ComScope() {
-    if (initialised_) CoUninitialize();
-  }
-  ComScope(const ComScope&) = delete;
-  ComScope& operator=(const ComScope&) = delete;
-
-private:
-  bool initialised_{};
+// The platform dialogs report their answer through a callback the platform may invoke on a thread
+// of its own choosing: the desktop backend runs the dialog on a worker, the packaged one answers
+// on the interface thread. These wrappers turn that into the blocking answer the callers are
+// written against, and they only ever wait on the interface thread.
+struct PickRequest {
+  std::mutex mutex;
+  std::atomic<bool> done{false};
+  std::vector<std::filesystem::path> paths;
 };
 
-// Runs the shared open dialog with `filter`, which is a pair of double-null terminated
-// strings. Returns an empty path when the user cancels.
-std::filesystem::path runOpenDialog(const wchar_t* filter, const wchar_t* title) {
-  ComScope com;
-  std::vector<wchar_t> buffer(32768, L'\0');
-  OPENFILENAMEW options{};
-  options.lStructSize = sizeof(options);
-  options.hwndOwner = GetActiveWindow();
-  options.lpstrFilter = filter;
-  options.lpstrFile = buffer.data();
-  options.nMaxFile = static_cast<DWORD>(buffer.size());
-  options.lpstrTitle = title;
-  options.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER | OFN_NOCHANGEDIR;
-  if (GetOpenFileNameW(&options) == FALSE) return {};
-  return std::filesystem::path(buffer.data());
-}
-
-// Multi-selection variant. The dialog returns the directory followed by the selected
-// file names, each terminated by a NUL; a single selection has no separate directory.
-std::vector<std::filesystem::path> runOpenDialogMulti(const wchar_t* filter, const wchar_t* title) {
-  ComScope com;
-  std::vector<wchar_t> buffer(65536, L'\0');
-  OPENFILENAMEW options{};
-  options.lStructSize = sizeof(options);
-  options.hwndOwner = GetActiveWindow();
-  options.lpstrFilter = filter;
-  options.lpstrFile = buffer.data();
-  options.nMaxFile = static_cast<DWORD>(buffer.size());
-  options.lpstrTitle = title;
-  options.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER | OFN_NOCHANGEDIR
-      | OFN_ALLOWMULTISELECT;
-  if (GetOpenFileNameW(&options) == FALSE) return {};
-  const std::filesystem::path first(buffer.data());
-  const wchar_t* cursor = buffer.data() + first.native().size() + 1;
-  if (*cursor == L'\0') return {first};
-  std::vector<std::filesystem::path> files;
-  while (*cursor != L'\0') {
-    const std::filesystem::path name(cursor);
-    files.push_back(first / name);
-    cursor += name.native().size() + 1;
+void pickCallback(void* userdata, const char* const* filelist, int filter) {
+  (void)filter;
+  auto* request = static_cast<PickRequest*>(userdata);
+  if (request == nullptr) return;
+  {
+    std::lock_guard<std::mutex> guard(request->mutex);
+    if (filelist != nullptr) {
+      for (const char* const* entry = filelist; *entry != nullptr; ++entry) {
+        // An entry that is not a path is the platform reporting why it could not show the dialog,
+        // which is not a selection and must not be handed back as one.
+        if (**entry == 0) continue;
+        request->paths.emplace_back(std::filesystem::u8path(*entry));
+      }
+    }
   }
-  return files;
+  request->done.store(true, std::memory_order_release);
 }
 
-std::filesystem::path runFolderDialog(const wchar_t* title) {
-  ComScope com;
-  BROWSEINFOW info{};
-  info.hwndOwner = GetActiveWindow();
-  info.pszDisplayName = nullptr;
-  info.lpszTitle = title;
-  info.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE | BIF_USENEWUI;
-  PIDLIST_ABSOLUTE item = SHBrowseForFolderW(&info);
-  if (item == nullptr) return {};
-  wchar_t path[MAX_PATH]{};
-  const bool ok = SHGetPathFromIDListW(item, path) != FALSE;
-  CoTaskMemFree(item);
-  if (!ok) return {};
-  return std::filesystem::path(path);
+// Filters are extension lists, not glob patterns: the shared validator accepts only letters,
+// digits, underscore, hyphen, dot and the semicolon separator, and rejects "*." and "*.*".
+SDL_DialogFileFilter chartFilters[] = { {"Chart", "json;pec;txt"} };
+SDL_DialogFileFilter packageFilters[] = { {"Chart package", "zip;pez;cgrp"} };
+SDL_DialogFileFilter replayFilters[] = { {"Replay", "cgrp;zip;json"} };
+SDL_DialogFileFilter skinFilters[] = { {"Skin package", "zip;pez"} };
+
+// Runs one dialog and waits for its answer.
+std::vector<std::filesystem::path> runDialog(
+    const std::function<void(SDL_DialogFileCallback, void*)>& show) {
+  PickRequest request;
+  show(pickCallback, &request);
+  // The callback is the only completion signal, and the platform calls it exactly once per
+  // request, including when the dialog is dismissed.
+  while (!request.done.load(std::memory_order_acquire)) {
+    SDL_Delay(1);
+  }
+  std::lock_guard<std::mutex> guard(request.mutex);
+  return request.paths;
+}
+
+std::filesystem::path firstOf(std::vector<std::filesystem::path> paths) {
+  return paths.empty() ? std::filesystem::path{} : paths.front();
 }
 
 } // namespace
 
 std::filesystem::path FileDialog::openChartFile() {
-  // The filter pairs are "description\0pattern\0", and the list ends with a double null.
-  static const wchar_t kFilter[] =
-      L"谱面文件 (*.json;*.txt)\0*.json;*.txt\0所有文件\0*.*\0\0";
-  return runOpenDialog(kFilter, L"选择谱面文件");
+  return firstOf(runDialog([](SDL_DialogFileCallback callback, void* userdata) {
+    SDL_ShowOpenFileDialog(callback, userdata, nullptr, chartFilters,
+        static_cast<int>(sizeof(chartFilters) / sizeof(chartFilters[0])), nullptr, false);
+  }));
 }
 
 std::filesystem::path FileDialog::openChartFolder() {
-  return runFolderDialog(L"选择谱面文件夹");
+#if defined(__ANDROID__)
+  // The packaged backend has no folder dialog: it answers this request with SDL_Unsupported and
+  // never calls back, so the caller falls back to picking a package instead.
+  return {};
+#else
+  return firstOf(runDialog([](SDL_DialogFileCallback callback, void* userdata) {
+    SDL_ShowOpenFolderDialog(callback, userdata, nullptr, nullptr, false);
+  }));
+#endif
 }
 
 std::filesystem::path FileDialog::openChartPackage() {
-  static const wchar_t kFilter[] = L"谱面包 (*.zip)\0*.zip\0所有文件\0*.*\0\0";
-  return runOpenDialog(kFilter, L"选择谱面包");
+  return firstOf(runDialog([](SDL_DialogFileCallback callback, void* userdata) {
+    SDL_ShowOpenFileDialog(callback, userdata, nullptr, packageFilters,
+        static_cast<int>(sizeof(packageFilters) / sizeof(packageFilters[0])), nullptr, false);
+  }));
 }
 
 std::filesystem::path FileDialog::openReplayFile() {
-  static const wchar_t kFilter[] =
-      L"回放文件 (*.cgrp;*.zip;*.json)\0*.cgrp;*.zip;*.json\0所有文件\0*.*\0\0";
-  return runOpenDialog(kFilter, L"选择回放文件");
+  return firstOf(runDialog([](SDL_DialogFileCallback callback, void* userdata) {
+    SDL_ShowOpenFileDialog(callback, userdata, nullptr, replayFilters,
+        static_cast<int>(sizeof(replayFilters) / sizeof(replayFilters[0])), nullptr, false);
+  }));
 }
 
 std::filesystem::path FileDialog::openSkinPackage() {
-  static const wchar_t kFilter[] = L"皮肤资源包 (*.zip)\0*.zip\0所有文件\0*.*\0\0";
-  return runOpenDialog(kFilter, L"选择皮肤资源包");
+  return firstOf(runDialog([](SDL_DialogFileCallback callback, void* userdata) {
+    SDL_ShowOpenFileDialog(callback, userdata, nullptr, skinFilters,
+        static_cast<int>(sizeof(skinFilters) / sizeof(skinFilters[0])), nullptr, false);
+  }));
 }
 
 std::filesystem::path FileDialog::pickDirectory() {
-  return runFolderDialog(L"选择输出目录");
+#if defined(__ANDROID__)
+  return {};
+#else
+  return firstOf(runDialog([](SDL_DialogFileCallback callback, void* userdata) {
+    SDL_ShowOpenFolderDialog(callback, userdata, nullptr, nullptr, false);
+  }));
+#endif
 }
 
 std::vector<std::filesystem::path> FileDialog::openChartSourceFiles() {
-  static const wchar_t kFilter[] =
-      L"谱面文件 (*.json;*.txt;*.pec)\0*.json;*.txt;*.pec\0"
-      L"音频 (*.ogg;*.mp3;*.wav;*.flac;*.m4a;*.aac)\0*.ogg;*.mp3;*.wav;*.flac;*.m4a;*.aac\0"
-      L"图片 (*.png;*.jpg;*.jpeg;*.webp;*.bmp)\0*.png;*.jpg;*.jpeg;*.webp;*.bmp\0"
-      L"所有文件\0*.*\0\0";
-  return runOpenDialogMulti(kFilter, L"选择谱面、音乐与背景");
+  return runDialog([](SDL_DialogFileCallback callback, void* userdata) {
+    SDL_ShowOpenFileDialog(callback, userdata, nullptr, nullptr, 0, nullptr, true);
+  });
 }
 
 bool FileDialog::available() noexcept { return true; }
 
 } // namespace rechigros::platform
 
-#elif defined(__ANDROID__)
-
-// The packaged build asks its own activity for the platform document picker. The answer
-// travels back through the drop-file path, so these calls only raise the request and report
-// that a dialog is on its way rather than waiting for it.
-#include <SDL3/SDL_system.h>
-#include <jni.h>
-
-namespace rechigros::platform {
-namespace {
-
-void requestPicker(int mode) {
-  JNIEnv* environment = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
-  if (environment == nullptr) return;
-  jobject activity = static_cast<jobject>(SDL_GetAndroidActivity());
-  if (activity == nullptr) return;
-  jclass activityClass = environment->GetObjectClass(activity);
-  if (activityClass == nullptr) {
-    environment->DeleteLocalRef(activity);
-    return;
-  }
-  const jmethodID method = environment->GetStaticMethodID(activityClass, "requestPicker", "(I)V");
-  if (method != nullptr) environment->CallStaticVoidMethod(activityClass, method, mode);
-  if (environment->ExceptionCheck()) environment->ExceptionClear();
-  environment->DeleteLocalRef(activityClass);
-  environment->DeleteLocalRef(activity);
-}
-
-constexpr int PICKER_FILE = 0;
-constexpr int PICKER_FOLDER = 1;
-constexpr int PICKER_REPLAY = 2;
-constexpr int PICKER_SKIN = 3;
-
-} // namespace
-
-std::filesystem::path FileDialog::openChartFile() {
-  requestPicker(PICKER_FILE);
-  return {};
-}
-
-std::filesystem::path FileDialog::openChartFolder() {
-  requestPicker(PICKER_FOLDER);
-  return {};
-}
-
-std::filesystem::path FileDialog::openChartPackage() {
-  requestPicker(PICKER_FILE);
-  return {};
-}
-
-// Every packaged picker answers asynchronously through the tagged drop path, so the return
-// value only reports that the request was raised.
-std::filesystem::path FileDialog::openReplayFile() {
-  requestPicker(PICKER_REPLAY);
-  return {};
-}
-
-std::filesystem::path FileDialog::openSkinPackage() {
-  requestPicker(PICKER_SKIN);
-  return {};
-}
-
-// The packaged picker layer has no directory-only mode, so the caller keeps its current output
-// directory and the interface reports that the choice is unavailable there.
-std::filesystem::path FileDialog::pickDirectory() { return {}; }
-
-std::vector<std::filesystem::path> FileDialog::openChartSourceFiles() {
-  requestPicker(PICKER_FILE);
-  return {};
-}
-
-// The picker is asynchronous here, so the answer arrives as a drop event instead of a
-// return value. Callers should treat an empty result as "ask again later".
-bool FileDialog::available() noexcept { return true; }
-
-} // namespace rechigros::platform
 #elif defined(__APPLE__)
 
 // The document picker needs a presenting view controller, which this layer does not own,

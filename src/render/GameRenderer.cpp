@@ -1298,8 +1298,26 @@ GameRenderer::GameRenderer() : impl_(std::make_unique<Impl>()) {}
 GameRenderer::~GameRenderer() = default;
 
 bool GameRenderer::initialize(const std::filesystem::path& assetRoot) {
+  // This is the largest single block of the launch, and a packaged build shows it as black screen,
+  // so each part reports its own cost instead of being one opaque number.
+  const auto launchStart = std::chrono::steady_clock::now();
+  const auto since = [&launchStart]() {
+    return std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - launchStart).count();
+  };
   impl_->assets = assetRoot;
   impl_->textures.setAssetRoot(assetRoot);
+  // Decode the startup artwork on worker threads while the text layer initialises. Decoding is the
+  // half of a texture load that costs the time on a device and needs no graphics context, so it
+  // runs underneath a stage that does not touch textures; the uploads below then run back to back
+  // on this thread. Names are the ones loadGameplayTextures asks for.
+  impl_->textures.beginPrefetchAssets({"res/background.jpg", "res/click.png", "res/click_mh.png",
+      "res/drag.png", "res/drag_mh.png", "res/flick.png", "res/flick_mh.png", "res/hold.png",
+      "res/hold_mh.png", "res/hit_fx.png", "res/pause.png", "res/timerLine.png",
+      "res/NoteRing.png", "res/arrow.png", "official_textures/Glitch4in1.png",
+      "official_textures/GlitchMap.png", "official_textures/WireNoise.png",
+      "official_textures/DisplaceMap.png", "official_textures/BlockNoise1.png",
+      "official_textures/BlockSpark.png"});
   if (!impl_->text.initialize(assetRoot)) {
     // A renderer that was not initialised draws nothing at all, which reads as an empty
     // scene on the device; the reason is logged instead of failing silently.
@@ -1308,15 +1326,20 @@ bool GameRenderer::initialize(const std::filesystem::path& assetRoot) {
         assetRoot.string().c_str());
     return false;
   }
+  const double textMs = since();
+  impl_->textures.awaitPrefetchAssets();
   impl_->loadGameplayTextures();
+  const double texturesMs = since() - textMs;
   // Both shipped shaders are loaded here and stay ready for the whole session; a missing
   // asset simply leaves the composite unavailable and the inline silhouettes in charge.
   (void)impl_->blockComposite.prepare(assetRoot, impl_->blockDisplaceMap, impl_->blockSparkMap,
       impl_->blockNoiseMap);
+  const double compositeMs = since() - textMs - texturesMs;
   bindDefaultBlend();
   impl_->initialized = true;
-  SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "[render] renderer initialized (asset root %s)",
-      assetRoot.string().c_str());
+  SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+      "[render] renderer initialized (asset root %s) text=%.1fms textures=%.1fms shaders=%.1fms",
+      assetRoot.string().c_str(), textMs, texturesMs, compositeMs);
   return true;
 }
 

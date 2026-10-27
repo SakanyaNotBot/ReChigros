@@ -4,7 +4,9 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -66,6 +68,18 @@ public:
 
   // Texture from the packaged asset root, e.g. "res/click.png"; null when missing.
   gl::Texture* loadAsset(const std::string& relativePath, bool white = false);
+
+  // Starts decoding the named assets on worker threads. Decoding is pure computation on bytes and
+  // is the expensive half of a texture load, so it runs beside whatever the caller does next; the
+  // upload still happens on the caller's thread, which owns the graphics context. A name that
+  // fails stays uncached and loadAsset decodes it again.
+  //
+  // Split in two so the work can overlap a stage that does not load textures: begin, do that
+  // stage, then await. Starting and waiting back to back is still correct, just not overlapped.
+  void beginPrefetchAssets(const std::vector<std::string>& relativePaths);
+  // Waits for a started prefetch. Every decoded image is then available to loadAsset, which only
+  // has to upload it.
+  void awaitPrefetchAssets();
   // Texture from an absolute path on disk.
   gl::Texture* loadFile(const std::filesystem::path& path, bool white = false);
   // Animated texture from a GIF on disk; null when the file is not a decodable GIF.
@@ -83,6 +97,11 @@ private:
   gl::Texture* store(const std::string& key, Image image, bool white);
 
   std::filesystem::path assetRoot_;
+  // Decoded but not yet uploaded images, keyed the same way as the textures. Filled by
+  // prefetchAssets so the startup load only has to upload.
+  std::unordered_map<std::string, Image> decoded_;
+  std::vector<std::thread> prefetchThreads_;
+  std::mutex prefetchMutex_;
   std::unordered_map<std::string, gl::Texture> textures_;
   std::unordered_map<std::string, AnimatedTexture> animated_;
   gl::Texture white_;
