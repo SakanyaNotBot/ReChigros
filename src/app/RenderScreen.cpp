@@ -388,22 +388,26 @@ void drawRecordingProgress(AppContext& context) {
           canvas.units(26.0F)),
       "正在渲染", title, ImGui::GetTime());
 
-  // The bar shows encoded frames against the total, which is the only number that matters for
-  // "how much longer".
   const float barY = y0 + canvas.units(50.0F);
   const float barHeight = canvas.units(16.0F);
   const float barLeft = x0 + pad;
   const float barRight = x0 + panelWidth - pad;
   fillPixels(barLeft, barY, barRight - barLeft, barHeight, 0xFF0D1117U);
-  const float progress = recording.progress();
+  const bool preparingAudio = recording.preparingAudio();
+  const float progress = preparingAudio ? recording.audioProgress() : recording.progress();
   const float filled = barLeft + (barRight - barLeft) * progress;
   if (filled > barLeft + 1.0F) {
     fillPixels(barLeft, barY, filled - barLeft, barHeight, 0xFF1F6FEBU);
   }
 
   char status[128];
-  std::snprintf(status, sizeof(status), "%d / %d 帧  %d%%", recording.renderedFrames(),
-      recording.totalFrames(), static_cast<int>(progress * 100.0F));
+  if (preparingAudio) {
+    std::snprintf(status, sizeof(status), "正在编码音频  %d%%",
+        static_cast<int>(progress * 100.0F));
+  } else {
+    std::snprintf(status, sizeof(status), "%d / %d 帧  %d%%", recording.renderedFrames(),
+        recording.totalFrames(), static_cast<int>(progress * 100.0F));
+  }
   ui::TextStyle detail;
   detail.sizeDp = 12.0F;
   detail.color = ui::rgba(0xFF8B949EU);

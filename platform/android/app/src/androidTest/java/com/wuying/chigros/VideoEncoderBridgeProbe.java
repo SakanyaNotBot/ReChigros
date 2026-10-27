@@ -46,7 +46,8 @@ public final class VideoEncoderBridgeProbe extends Instrumentation {
         final File output = new File(external,
                 "aac-bridge-probe-" + System.currentTimeMillis() + ".mp4");
         final int sampleRate = 48_000;
-        final int pcmFrames = sampleRate * 2;
+        final int pcmFrames = sampleRate * 60;
+        final long expectedAudioUs = pcmFrames * 1_000_000L / sampleRate;
         final byte[] samples = new byte[pcmFrames * 2 * Float.BYTES];
         final FloatBuffer floats = ByteBuffer.wrap(samples)
                 .order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
@@ -71,6 +72,26 @@ public final class VideoEncoderBridgeProbe extends Instrumentation {
                 "startVideoEncoder returned false");
         check(MainActivity.setVideoAudioTrack(pcm.getAbsolutePath(), sampleRate, 2, 0),
                 "setVideoAudioTrack returned false");
+        int lastProgress = 0;
+        int progressSamples = 0;
+        boolean sawIntermediateProgress = false;
+        final long audioDeadlineNs = System.nanoTime() + 120_000_000_000L;
+        while (true) {
+            final int state = MainActivity.videoAudioTrackState();
+            if (state == 2) break;
+            check(state != 3, "audio encoding failed");
+            check(System.nanoTime() < audioDeadlineNs, "audio encoding timed out");
+            final int progress = MainActivity.videoAudioTrackProgressPermille();
+            check(progress >= lastProgress && progress <= 1000,
+                    "audio progress moved backwards: " + lastProgress + " -> " + progress);
+            sawIntermediateProgress |= progress > 0 && progress < 1000;
+            lastProgress = progress;
+            progressSamples++;
+            Thread.sleep(2L);
+        }
+        check(sawIntermediateProgress, "audio progress never advanced before the track was ready");
+        check(MainActivity.videoAudioTrackProgressPermille() == 1000,
+                "a ready audio track did not report full progress");
         for (int frame = 0; frame < videoFrames; ++frame) {
             final ByteBuffer planes = ByteBuffer.allocateDirect(width * height * 3 / 2);
             for (int i = 0; i < width * height; ++i) {
@@ -103,7 +124,8 @@ public final class VideoEncoderBridgeProbe extends Instrumentation {
         }
         check(videoTrack >= 0, "H.264 track is absent");
         check(audioTrack >= 0, "AAC track is absent");
-        check(audioDurationUs >= 1_900_000L, "AAC duration is " + audioDurationUs);
+        check(audioDurationUs >= expectedAudioUs - 100_000L,
+                "AAC duration is " + audioDurationUs + " expected " + expectedAudioUs);
         extractor.selectTrack(audioTrack);
         final ByteBuffer packetBuffer = ByteBuffer.allocateDirect(65_536);
         int audioPackets = 0;
@@ -119,9 +141,11 @@ public final class VideoEncoderBridgeProbe extends Instrumentation {
             if (!extractor.advance()) break;
         }
         extractor.release();
-        check(audioPackets >= 90, "AAC packet count is " + audioPackets);
+        final int expectedPackets = (int) (expectedAudioUs * sampleRate / 1_000_000L / 1024L);
+        check(Math.abs(audioPackets - expectedPackets) <= 2,
+                "AAC packet count is " + audioPackets + " expected " + expectedPackets);
         check(audioBytes >= 30_000L, "AAC payload is only " + audioBytes + " bytes");
-        check(lastAudioPtsUs >= 1_800_000L, "last AAC PTS is " + lastAudioPtsUs);
+        check(lastAudioPtsUs >= expectedAudioUs - 200_000L, "last AAC PTS is " + lastAudioPtsUs);
 
         results.putString("output", output.getAbsolutePath());
         results.putInt("pcmFrames", pcmFrames);
@@ -130,10 +154,11 @@ public final class VideoEncoderBridgeProbe extends Instrumentation {
         results.putLong("audioBytes", audioBytes);
         results.putLong("audioDurationUs", audioDurationUs);
         results.putLong("lastAudioPtsUs", lastAudioPtsUs);
+        results.putInt("audioProgressSamples", progressSamples);
         Log.i(TAG, "PASS output=" + output + " pcmFrames=" + pcmFrames
                 + " videoFrames=" + videoFrames + " audioPackets=" + audioPackets
                 + " audioBytes=" + audioBytes + " audioDurationUs=" + audioDurationUs
-                + " lastAudioPtsUs=" + lastAudioPtsUs);
+                + " lastAudioPtsUs=" + lastAudioPtsUs + " progressSamples=" + progressSamples);
     }
 
     private static void check(boolean condition, String message) {

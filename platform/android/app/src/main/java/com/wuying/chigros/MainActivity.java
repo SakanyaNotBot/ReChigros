@@ -463,6 +463,10 @@ public final class MainActivity extends SDLActivity {
         return VideoEncoderBridge.audioTrackState();
     }
 
+    public static int videoAudioTrackProgressPermille() {
+        return VideoEncoderBridge.audioTrackProgressPermille();
+    }
+
     public static boolean queueVideoFrame(java.nio.ByteBuffer planes, int width, int height) {
         return VideoEncoderBridge.queueFrame(planes, width, height);
     }

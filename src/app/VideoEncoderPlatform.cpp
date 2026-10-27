@@ -229,6 +229,23 @@ AudioTrackState audioTrackState() {
   }
 }
 
+int audioTrackProgressPermille() {
+  Bridge bridge;
+  if (!bridge.valid) return 0;
+  const jmethodID method =
+      bridge.env->GetStaticMethodID(bridge.cls, "videoAudioTrackProgressPermille", "()I");
+  if (method == nullptr) {
+    bridge.env->ExceptionClear();
+    return 0;
+  }
+  const jint progress = bridge.env->CallStaticIntMethod(bridge.cls, method);
+  if (bridge.env->ExceptionCheck()) {
+    bridge.env->ExceptionClear();
+    return 0;
+  }
+  return progress;
+}
+
 } // namespace rechigros::app::platformenc
 
 #else
@@ -245,6 +262,7 @@ bool finish(std::string&) { return false; }
 void abort() noexcept {}
 bool addAudioTrack(const std::string&, int, int, std::string&) { return false; }
 AudioTrackState audioTrackState() { return AudioTrackState::None; }
+int audioTrackProgressPermille() { return 1000; }
 
 } // namespace rechigros::app::platformenc
 

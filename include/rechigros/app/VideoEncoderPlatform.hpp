@@ -39,9 +39,11 @@ bool addAudioTrack(const std::string& pcmPath, int sampleRate, int delayMs, std:
 // How far the supplied music track has got.
 enum class AudioTrackState { None, Preparing, Ready, Failed };
 
-// Reports the music encode's progress. Encoding a whole song takes as long as the song plays, so a
-// caller that needs the track in the container before the first frame polls this instead of
-// blocking: waiting inside the call that started the run would freeze the interface for minutes.
+// Reports the music encode's progress. A caller that needs the track in the container before the
+// first frame polls this instead of blocking the thread that draws the interface.
 [[nodiscard]] AudioTrackState audioTrackState();
+
+// Fraction of the input samples accepted by the audio encoder, in thousandths.
+[[nodiscard]] int audioTrackProgressPermille();
 
 } // namespace rechigros::app::platformenc

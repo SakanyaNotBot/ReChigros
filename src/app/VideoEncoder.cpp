@@ -386,6 +386,11 @@ VideoEncoder::AudioTrackState VideoEncoder::audioTrackState() const noexcept {
   }
 }
 
+float VideoEncoder::audioTrackProgress() const noexcept {
+  if (!platform_) return 1.0F;
+  return std::clamp(platformenc::audioTrackProgressPermille() / 1000.0F, 0.0F, 1.0F);
+}
+
 bool VideoEncoder::writePlatformFrame(const std::uint8_t* pixels, std::size_t bytes,
     std::string& error) {
   return platformenc::writeFrame(widthForPlatform_, heightForPlatform_, pixels, bytes, error);

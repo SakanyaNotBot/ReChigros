@@ -73,6 +73,8 @@ public:
   [[nodiscard]] float progress() const noexcept;
   [[nodiscard]] int renderedFrames() const noexcept { return renderedFrames_; }
   [[nodiscard]] int totalFrames() const noexcept { return totalFrames_; }
+  [[nodiscard]] bool preparingAudio() const noexcept;
+  [[nodiscard]] float audioProgress() const noexcept;
 
 private:
   void releaseResources(AppContext& context) noexcept;

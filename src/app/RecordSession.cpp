@@ -169,6 +169,13 @@ float RecordSession::progress() const noexcept {
       1.0F);
 }
 
+bool RecordSession::preparingAudio() const noexcept {
+  return state_ == State::Running
+      && encoder_.audioTrackState() == VideoEncoder::AudioTrackState::Preparing;
+}
+
+float RecordSession::audioProgress() const noexcept { return encoder_.audioTrackProgress(); }
+
 bool RecordSession::start(AppContext& context, const Settings& settings, std::string& error) {
   if (state_ == State::Running) {
     error = "a recording is already running";
@@ -287,9 +294,9 @@ bool RecordSession::step(AppContext& context) {
       resolutions[static_cast<std::size_t>(settings_.resolutionIndex)];
   const double frameDuration = 1.0 / static_cast<double>(settings_.fps);
   // The container has to know both tracks before it starts, and it starts as soon as the first
-  // video frame arrives. Staging the music takes as long as the song plays, so that work is handed
-  // to a background thread; until it lands there is nothing to render into, and reporting "more
-  // work remains" keeps the interface drawing its progress overlay in the meantime.
+  // video frame arrives. Staging the music is handed to a background thread; until it lands there
+  // is nothing to render into, and reporting "more work remains" keeps the interface drawing its
+  // progress overlay in the meantime.
   switch (encoder_.audioTrackState()) {
     case VideoEncoder::AudioTrackState::Preparing:
       return true;

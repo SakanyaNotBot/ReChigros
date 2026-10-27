@@ -87,6 +87,7 @@ public:
   // stage: the tool takes the track from its argument list, so that path is always ready.
   enum class AudioTrackState { None, Preparing, Ready, Failed };
   [[nodiscard]] AudioTrackState audioTrackState() const noexcept;
+  [[nodiscard]] float audioTrackProgress() const noexcept;
 
 private:
   // The writer thread and the thread that closes the encoder both touch the child's pipes. Closing

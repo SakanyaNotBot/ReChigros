@@ -1601,3 +1601,60 @@ SELF-TEST FAIL (2 of 56 checks failed)
 **教训**：写回归测试时先做一次反向对照。测试直接摆弄状态、而缺陷在交互路径上，
 这样的测试永远不会失败，也永远抓不到回归。
 
+---
+
+## 十七、六个后续缺陷（2026-10-27）
+
+### 1. 音频准备耗时与进度：AAC 调度是瓶颈，不是样本转换
+
+**复现**：蓝叠 SDK 28 / x86_64，数据根 `refdata-hate-ez`，进入渲染页后点击开始：
+
+```
+adb -s 127.0.0.1:5555 shell "am start -n com.wuying.chigros/.MainActivity -e args '--data-root /sdcard/Android/data/com.wuying.chigros/files/refdata-hate-ez --screen render:ハテ --frames 100000 --fixed-delta'"
+adb -s 127.0.0.1:5555 shell "input swipe 518 886 518 886 120"
+```
+
+修前第 5 秒和第 30 秒都显示 `0 / 10689 帧 0%`（`build/shots/bug1-before-5s.png`、
+`bug1-before-30s.png`）。输入是 8,499,200 帧、48 kHz、双声道 float PCM。
+
+**先量化再优化**：同一旧算法加阶段计时后，得到：
+
+| 阶段 | 修前 | 修后实测范围 |
+|---|---:|---:|
+| 读 PCM | 384 ms | 96–132 ms |
+| float→short | **284 ms** | 480–551 ms |
+| AAC 编码与队列等待 | **67,411 ms** | **1,926–3,215 ms** |
+| muxer 写整轨音频 | 548 ms | 483–678 ms |
+| 点击→首个 muxer 视频帧（完整墙钟） | **70.799 / 71.114 s** | **4.538 / 5.900 s** |
+
+所以「逐样本转换占大头」这个线索被实测否定。根因是旧循环每取出一个 AAC 包，
+就重新进入 `dequeueInputBuffer(10ms)`，而不是先排空已经可用的输出；每个包都可能多吃一次
+输入槽等待。修为有输入就提交，随后一次排空全部可用输出；仅在输入全部提交后阻塞等输出。
+float→short 同时改成 little-endian `FloatBuffer` + 编码器输入的 native `ShortBuffer`，
+但这不是主要收益来源。AAC profile、192 kbps、声道顺序、量化公式、PTS 公式均未改：
+修前修后都是 **8300 包 / 4,249,601 字节 / 首 PTS 1,083,000 μs / 末 PTS 178,128,332 μs**。
+
+参考源码没有这条录制音频准备管线；`PcmDecoder.java:201-209` 只提供解码后的 NIO 批量读取
+写法。此项不改变任何可见时序语义，不根据录像或猜测新增行为。
+
+**进度**：worker 以已提交 PCM 帧数发布 0..999 千分比，完整发布后才是 1000；经 JNI /
+`VideoEncoder` / `RecordSession` 到 `RenderScreen`。音频阶段显示真实百分比，视频阶段仍显示
+`renderedFrames / totalFrames`。连拍证据：
+
+- `build/shots/bug1-seq-3.png`：10%
+- `build/shots/bug1-seq-4.png`：40%
+- `build/shots/bug1-seq-5.png`：64%
+- `build/shots/bug1-seq-6.png`：91%
+- `build/shots/bug1-seq-7.png`：进入视频阶段，18 / 10689 帧
+
+**反向对照**：只把 worker 的进度发布固定为 0，保留其余优化，同一真实点击路径在
+`build/shots/bug1-reverse-5.png`、`bug1-reverse-6.png` 连续显示「正在编码音频 0%」，
+随后进入视频 18 帧；恢复后才是上面的递增序列。不是直接给界面塞一个假进度。
+
+**回归与未解决项**：桌面 ctest 8/8、自检 56/56；Android Release 构建成功。既有
+`VideoEncoderBridgeProbe` 已补「等音频就绪再送视频、进度单调递增、AAC 包数/时长」断言，
+但此蓝叠镜像安装 9 KB 测试 APK 后会让主机退出（主 APK 正常），所以**探针未在本机执行**，
+不能记为通过。模拟器后续仍可能报 `the platform encoder stopped accepting frames` 并删除
+未完成 mp4；这与第 15 节记录的平台写入器问题相同，本项只验收音频准备和首帧，不宣称
+模拟器整段录制已经修好。真机本轮不在线，需重连后复核硬件 AAC 与完整产物。
+
