@@ -1574,3 +1574,30 @@ Row: 422 _display_name=20261027-153624.mp4, relative_path=Movies/Chigros/, _size
 - Android 15 的 `WRITE_EXTERNAL_STORAGE` 不再生效，`ensureSharedStoragePermission`
   在 SDK>28 时直接返回 true；实际走的是媒体服务路径，权限分支在真机上未被覆盖。
 
+
+
+### 7. BUG 3(b) 的设置页返回路径：补上了一个能真正抓住缺陷的测试
+
+原修复（`calibration.returnTo` 独立字段）本身是对的，但**最初写的回归测试是废的**：
+它直接设置 context 字段再调 `exitCalibration`，而缺陷在**点击处理函数**里。
+反向对照证明：把 bug 加回去，测试**照样通过**。
+
+改成走真实指针路径后：
+1. 音频页会滚动，且**只有视口内的行才登记矩形**——不滚动时只登记 5 个，校准行不在其中；
+2. 所以测试先滚到该行，再向页面要它刚登记的矩形，按矩形中心点击；
+3. 按下与松开必须跨帧（一帧内完成不会登记点击）。
+
+反向对照（把 `context.settingsReturn = Screen::Settings` 加回去）：
+
+```
+[FAIL] opening calibration leaves the settings page's target alone  (settingsReturn=6)
+[FAIL] the settings page can still be left after a calibration attempt
+SELF-TEST FAIL (2 of 56 checks failed)
+```
+
+`settingsReturn=6` 就是 `Screen::Settings`，即"退不出设置页"的确切机制。
+修复在位时 **SELF-TEST PASS (56/56)**、ctest 8/8。
+
+**教训**：写回归测试时先做一次反向对照。测试直接摆弄状态、而缺陷在交互路径上，
+这样的测试永远不会失败，也永远抓不到回归。
+
