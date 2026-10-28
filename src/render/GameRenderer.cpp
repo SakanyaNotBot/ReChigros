@@ -109,6 +109,7 @@ struct GameRenderer::Impl {
     dsGrid.release();
     kaleido.release();
     sceneFbo.reset();
+    blockResultFbo.reset();
     pingFbo.reset();
     pongFbo.reset();
     aaFbo.reset();
@@ -155,6 +156,7 @@ struct GameRenderer::Impl {
   text::TextRenderer text;
   batch::SpriteBatch batch;
   gl::Framebuffer sceneFbo;
+  gl::Framebuffer blockResultFbo;
   gl::Framebuffer pingFbo;
   gl::Framebuffer pongFbo;
   // Antialias resolve target (full resolution) and the low-resolution scene target.
@@ -1363,6 +1365,7 @@ void GameRenderer::resize(int width, int height) noexcept {
   impl_->height = std::max(1, height);
   glViewport(0, 0, impl_->width, impl_->height);
   impl_->sceneFbo.resize(impl_->width, impl_->height);
+  impl_->blockResultFbo.resize(impl_->width, impl_->height);
   impl_->pingFbo.resize(impl_->width, impl_->height);
   impl_->pongFbo.resize(impl_->width, impl_->height);
   impl_->aaFbo.resize(impl_->width, impl_->height);
@@ -1599,9 +1602,9 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       blockComposite.allocated() && sceneFbo.valid();
 
   // A chart with storyboard effects renders into an offscreen target first so the
-  // shader chain can process the whole play field. The reference order is effects >
-  // red-zone composite > low-resolution fallback > direct scene, and the antialias target
-  // wraps every path that the reference resolves through FXAA.
+  // shader chain can process the whole play field. Zone composite precedes those effects;
+  // the low-resolution fallback and direct scene follow, with antialias around the paths
+  // that resolve through FXAA.
   const bool useEffects = applyEffects && !input.disableChartShader && chart != nullptr &&
       !chart->prprEffects.empty() && sceneFbo.valid();
   const bool useLowRes = input.lowResolutionMode && !useEffects && !useBlockComposite &&
@@ -1764,44 +1767,16 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       !(chart->levelEffects != nullptr && chart->levelEffects->hideHud() &&
           !input.transition.inOutro);
   if (useBlockComposite) {
-    // 1) Make the scene target hold the finished play field: the storyboard chain result
-    // when it ran, the raw play field otherwise. The composite samples this texture, so
-    // it can never be the target the composite writes to.
-    if (useEffects) {
-      // Same two-segment order as the plain path: stage-scoped first, then the global passes
-      // over the whole frame. The HUD is drawn after this, because the red-zone composite
-      // has to tear it along with the rest of the picture.
-      gl::Texture* result = applyStageScopedChain(*chart, &sceneFbo.color(), sceneLayout.stage,
-          input.chartTimeSec);
-      const std::vector<game::PrprEffect> globals = collectGlobalEffects(*chart);
-      if (!globals.empty()) {
-        if (result != nullptr && result->id() != sceneFbo.color().id()) {
-          sceneFbo.bind();
-          glViewport(0, 0, width, height);
-          glDisable(GL_BLEND);
-          fx::BlitPass::instance().ensure();
-          fx::BlitPass::instance().draw(*result, 1.0F, 1.0F, 1.0F, 1.0F, false);
-          bindDefaultBlend();
-        }
-        result = chain.apply(globals, &sceneFbo.color(), pingFbo, pongFbo, input.chartTimeSec);
-      }
-      if (result != nullptr && result->id() != sceneFbo.color().id()) {
-        sceneFbo.bind();
-        glViewport(0, 0, width, height);
-        glDisable(GL_BLEND);
-        fx::BlitPass::instance().ensure();
-        fx::BlitPass::instance().draw(*result, 1.0F, 1.0F, 1.0F, 1.0F, false);
-        bindDefaultBlend();
-      }
-      gl::logErrors("scene.effectChain");
-    }
-    // 2) The HUD belongs to the finished frame: the composite tears it with the rest.
-    if (hudVisible) {
+    const bool hasGlobal = useEffects && std::any_of(chart->prprEffects.begin(),
+        chart->prprEffects.end(), [](const game::PrprEffect& effect) { return effect.global; });
+    // Without a shader chain the HUD is part of the frame that the composite resamples.
+    // With one, it is added only for the global passes, after the zone and stage effects.
+    if (!useEffects && hudVisible) {
       drawHudPass(input, layout, chart, judgement);
       hudInsideScene = true;
       gl::logErrors("scene.hud");
     }
-    // 3) Zone masks, coverage/edge/glow pre-passes, then replace the frame inside the
+    // Zone masks, coverage/edge/glow pre-passes, then replace the frame inside the
     // zones with the displaced resample. The composite restores the target and viewport
     // it found, so no binding fix-up is needed afterwards. The staging vectors are reused
     // between frames so a zone frame does not allocate.
@@ -1831,7 +1806,8 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       if (!hoverPoints.empty()) fx::BlockOverlay::appendHoverQuads(hoverPoints, maskB);
     }
     blockComposite.rasteriseMasks(maskA, maskB);
-    glBindFramebuffer(GL_FRAMEBUFFER, sceneTarget);
+    const unsigned int blockTarget = useEffects ? blockResultFbo.fbo() : sceneTarget;
+    glBindFramebuffer(GL_FRAMEBUFFER, blockTarget);
     glViewport(0, 0, width, height);
     blockComposite.setStageRect(sceneLayout.stage.x, sceneLayout.stage.y,
         sceneLayout.stage.right(), sceneLayout.stage.bottom());
@@ -1855,6 +1831,39 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
     }
     bindDefaultBlend();
     gl::logErrors("scene.blockComposite");
+    if (useEffects) {
+      // The composite owns a separate target: sampling the scene and writing it back into the
+      // same texture would be a framebuffer feedback loop. Shader stages consume that result.
+      gl::Texture* result = applyStageScopedChain(*chart, &blockResultFbo.color(),
+          sceneLayout.stage, input.chartTimeSec);
+      if (hasGlobal) {
+        sceneFbo.bind();
+        glViewport(0, 0, width, height);
+        if (result != nullptr && result->id() != sceneFbo.color().id()) {
+          glDisable(GL_BLEND);
+          fx::BlitPass::instance().ensure();
+          fx::BlitPass::instance().draw(*result, 1.0F, 1.0F, 1.0F, 1.0F, false);
+          bindDefaultBlend();
+        }
+        if (hudVisible) {
+          drawHudPass(input, layout, chart, judgement);
+          hudInsideScene = true;
+        }
+        result = chain.apply(collectGlobalEffects(*chart), &sceneFbo.color(), pingFbo, pongFbo,
+            input.chartTimeSec);
+        gl::logErrors("scene.effectChainGlobal");
+      }
+      glBindFramebuffer(GL_FRAMEBUFFER, sceneTarget);
+      glViewport(0, 0, width, height);
+      clearTarget(0.0F, 0.0F, 0.0F, 1.0F);
+      if (result != nullptr) {
+        glDisable(GL_BLEND);
+        fx::BlitPass::instance().ensure();
+        fx::BlitPass::instance().draw(*result, 1.0F, 1.0F, 1.0F, 1.0F, false);
+        bindDefaultBlend();
+      }
+      gl::logErrors("scene.effectChain");
+    }
   } else if (useEffects) {
     // The chain runs in two segments, in this order:
     //   1. stage-scoped effects over the play field only, so the surround keeps the scene,
@@ -1896,10 +1905,9 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
     gl::logErrors("scene.effectChain");
   }
 
-  // The HUD is drawn after the chain, so a storyboard effect never blooms the score. On
-  // the composite path it was drawn into the scene instead, because it is part of the
-  // frame the zones tear. The low-resolution fallback renders the HUD together with the
-  // scene, then upscales the finished frame like the reference does.
+  // A global pass receives the HUD with the scene. Otherwise it is drawn after stage-scoped
+  // effects; without a shader chain the zone composite already resampled it. The low-resolution
+  // fallback renders the HUD together with the scene before upscaling the finished frame.
   if (hudVisible && !hudInsideScene) {
     drawHudPass(input, layout, chart, judgement);
   }
@@ -2051,6 +2059,7 @@ bool GameRenderer::renderOffscreen(const RenderFrameInput& input, game::Chart* c
   // The effect chain needs the offscreen targets, which the interactive path allocates
   // in resize(); this path sets the size directly and must allocate them itself.
   impl_->sceneFbo.resize(width, height);
+  impl_->blockResultFbo.resize(width, height);
   impl_->pingFbo.resize(width, height);
   impl_->pongFbo.resize(width, height);
   impl_->aaFbo.resize(width, height);
@@ -2135,6 +2144,7 @@ void GameRenderer::applyCaptureSize(const RenderFrameInput& input, game::Chart* 
   // The effect chain reads these targets and the interactive path allocates them in resize();
   // this path sets the size directly and has to allocate them itself.
   impl_->sceneFbo.resize(width, height);
+  impl_->blockResultFbo.resize(width, height);
   impl_->pingFbo.resize(width, height);
   impl_->pongFbo.resize(width, height);
   impl_->aaFbo.resize(width, height);
@@ -2251,6 +2261,7 @@ void GameRenderer::endCapture() noexcept {
   impl_->width = impl_->capturePreviousWidth;
   impl_->height = impl_->capturePreviousHeight;
   impl_->sceneFbo.resize(impl_->width, impl_->height);
+  impl_->blockResultFbo.resize(impl_->width, impl_->height);
   impl_->pingFbo.resize(impl_->width, impl_->height);
   impl_->pongFbo.resize(impl_->width, impl_->height);
   impl_->aaFbo.resize(impl_->width, impl_->height);

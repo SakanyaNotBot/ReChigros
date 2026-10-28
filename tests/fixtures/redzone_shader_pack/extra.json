@@ -1,0 +1,18 @@
+{
+  "bpm": 120,
+  "effects": [
+    {
+      "shader": "grayscale",
+      "start": [0, 0, 1],
+      "end": [20, 0, 1],
+      "global": true
+    },
+    {
+      "shader": "fisheye",
+      "start": [0, 0, 1],
+      "end": [20, 0, 1],
+      "global": false,
+      "vars": { "power": -0.1 }
+    }
+  ]
+}

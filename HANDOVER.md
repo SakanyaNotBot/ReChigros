@@ -1989,3 +1989,28 @@ AP/FC 未开启时的白边不能作为这项缺陷的对照；背景 dim 不同
 61/61；`shader-resource-probe.log` 的合成/上屏 checksum **2209987148**、touch
 checksum **1431594559**，framebuffer/viewport/blend 均恢复。
 
+### 4. 后处理链必须处理已经合成的噪域
+
+**根因**：参考 `GameRenderer.java:4339-4425` 先把场景与噪域合成，再执行舞台范围
+shader，最后仅在全局效果需要时合成 HUD 并执行全局 shader。移植却先执行完整效果链，
+再把噪域覆盖到结果上，所以 Message 的曲面、灰化、色散等都影响不到噪域。
+
+修复在 `GameRenderer::drawScene` 增加独立 `blockResultFbo`：噪域从 `sceneFbo` 采样，
+写到独立结果目标，再交给舞台/全局效果。不能简单交换调用，否则会在同一张纹理上
+读写形成 GL feedback。无后处理时 HUD 仍进入噪域；有后处理时 HUD 只在全局效果前
+合成，舞台局部效果不再错误处理它。`resize`、离屏 PNG、录制开始与结束都同步分配
+和恢复该目标尺寸。
+
+**实测**：`build/shader-order-pack` 使用灰度全局效果与默认参数的曲面局部效果。
+旧顺序 `shader-order-before.png` 中噪域仍为红色；新顺序 `shader-order-after.png`
+保留噪域结构且被灰化/曲面处理。单独全局灰度区域的 RGB 标准差为 32.107，证明没有
+变成全帧同色。`power=0.5` 的自定义曲面会让整张图采样到边缘，曾造成一次测量误判，
+已改用 shader 自带 `-0.1` 参数，不保留过强测试参数作为行为依据。
+
+Message SP 实谱在 85 秒跑通六条官方效果通道：`message-shader-after-85.png` 的
+背景随灰化改变，`message-shader-control-85.png` 为未启用 shader 的对照。
+`tests/fixtures/redzone_shader_pack` 与 `red-zone-post-effects` 固化该顺序，实测
+**56.39%**，矩阵总计 **27/27**；`shader-order-selftest.log` 为 **61/61**。
+红区独立探针仍通过，checksum 与上一项相同。参考应用的同秒 Message 对照因设备
+离线尚未补齐，当前只声明桌面实际渲染结果。
+

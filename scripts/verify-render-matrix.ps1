@@ -51,6 +51,7 @@ function Invoke-Case($Case) {
 
 $plain = Join-Path $Fixtures 'plain.json'
 $redzone = Join-Path $Fixtures 'redzone.json'
+$redzoneShader = Join-Path $Fixtures 'redzone_shader_pack\chart.json'
 $bloom = Join-Path $Fixtures 'bloom_pack\chart.json'
 $vignette = Join-Path $Fixtures 'vignette_pack\chart.json'
 $gif = Join-Path $Fixtures 'gif_pack\chart.json'
@@ -123,6 +124,9 @@ $cases = @(
   @{ Id = 'red-zones'; BaseChart = $plain; ChangedChart = $redzone;
      Base = @('--time', '1.0'); Changed = @('--time', '1.0'); Minimum = 0.5;
      Description = 'red zones are drawn' }
+  @{ Id = 'red-zone-post-effects'; BaseChart = $redzone; ChangedChart = $redzoneShader;
+     Base = @('--time', '5.0'); Changed = @('--time', '5.0'); Minimum = 25.0;
+     Description = 'stage and global shader passes process the composited red zones' }
   @{ Id = 'gif-line'; BaseChart = $gif; ChangedChart = $gif;
      Base = @('--time', '0.1'); Changed = @('--time', '0.6'); Minimum = 0.5;
      Description = 'a GIF line texture advances frames' }
