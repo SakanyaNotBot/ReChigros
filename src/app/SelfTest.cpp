@@ -674,6 +674,92 @@ int runSelfTest() {
     io.AddMousePosEvent(-100.0F, -100.0F);
     drawScreenHeadless(context, drawSettingsScreen);
 
+    const auto sliderX = [](const std::array<float, 4>& rect, float fraction) {
+      const ui::Canvas canvas = ui::canvas();
+      const float density = canvas.dp(1.0F);
+      const auto dp = [density](float value) { return std::round(value * density); };
+      const float width = rect[2] - rect[0];
+      constexpr float slope = 0.26794919F;
+      const float scale = std::min(1.0F, width / dp(100.0F));
+      const float endInset = dp(16.0F) * scale;
+      const float capWidth = dp(9.0F) * scale;
+      const float thumbWidth = dp(30.0F) * scale;
+      const float thumbGap = dp(2.0F) * scale;
+      const float halfCapDelta = dp(26.0F) * scale * slope;
+      const float valueLeft = endInset + capWidth - halfCapDelta + thumbGap + thumbWidth * 0.5F;
+      const float valueRight = std::max(valueLeft,
+          width - endInset - capWidth + halfCapDelta - thumbGap - thumbWidth * 0.5F);
+      return rect[0] + valueLeft + (valueRight - valueLeft) * fraction;
+    };
+    context.settingsTab = 0;
+    context.settings.uiScale = 1.0F;
+    ui::setInterfaceScale(1.0F);
+    context.settings.keyScale = 0.7F;
+    context.screen = Screen::Settings;
+    io.DisplaySize = ImVec2(1920.0F, 1080.0F);
+    io.AddMousePosEvent(640.0F, 500.0F);
+    io.AddMouseWheelEvent(0.0F, 10000.0F);
+    drawScreenHeadless(context, drawSettingsScreen);
+    drawScreenHeadless(context, drawSettingsScreen);
+    const auto sliderRects = registeredSettingsControlRects();
+    bool followsSpan = sliderRects.size() > 1;
+    std::string trajectory;
+    if (followsSpan) {
+      const auto& rect = sliderRects[1];
+      const float y = (rect[1] + rect[3]) * 0.5F;
+      io.AddMousePosEvent(sliderX(rect, 0.10F), y);
+      drawScreenHeadless(context, drawSettingsScreen);
+      io.AddMouseButtonEvent(0, true);
+      drawScreenHeadless(context, drawSettingsScreen);
+      for (const float fraction : {0.10F, 0.25F, 0.50F, 0.75F, 0.90F}) {
+        io.AddMousePosEvent(sliderX(rect, fraction), y);
+        drawScreenHeadless(context, drawSettingsScreen);
+        const float expected = fraction < 0.1001F ? 0.70F
+            : std::round((0.7F + fraction * 0.8F) * 100.0F) / 100.0F;
+        const bool pointMatches = std::abs(context.settings.keyScale - expected) < 0.001F;
+        followsSpan &= pointMatches;
+        char point[128];
+        std::snprintf(point, sizeof(point), "%.2f:%.2f/%.2f%s", fraction, expected,
+            context.settings.keyScale, fraction < 0.89F ? " " : "");
+        trajectory += point;
+      }
+      io.AddMouseButtonEvent(0, false);
+      drawScreenHeadless(context, drawSettingsScreen);
+      char geometry[192];
+      std::snprintf(geometry, sizeof(geometry), " uiScale=%.3f rect=%.1f,%.1f,%.1f,%.1f",
+          context.settings.uiScale, rect[0], rect[1], rect[2], rect[3]);
+      trajectory += geometry;
+    }
+    report(followsSpan, "slider drag follows the effective value span", trajectory);
+    if (sliderRects.size() > 1) {
+      const auto& rect = sliderRects[1];
+      const float y = (rect[1] + rect[3]) * 0.5F;
+      context.settings.keyScale = 0.7F;
+      io.AddMousePosEvent(sliderX(rect, 0.25F), y);
+      drawScreenHeadless(context, drawSettingsScreen);
+      io.AddMouseButtonEvent(0, true);
+      drawScreenHeadless(context, drawSettingsScreen);
+      io.AddMouseButtonEvent(0, false);
+      drawScreenHeadless(context, drawSettingsScreen);
+      char detail[96];
+      std::snprintf(detail, sizeof(detail), "expected=0.90 actual=%.3f", context.settings.keyScale);
+      report(std::abs(context.settings.keyScale - 0.90F) < 0.001F,
+          "slider release uses the effective value span", detail);
+      report(std::abs((rect[3] - rect[1]) - ui::canvas().dp(56.0F)) < 0.01F,
+          "slider hit target is 56dp high", "height=" + std::to_string(rect[3] - rect[1]));
+      context.settings.keyScale = 0.7F;
+      io.AddMousePosEvent(sliderX(rect, 0.50F), y);
+      drawScreenHeadless(context, drawSettingsScreen);
+      io.AddMouseButtonEvent(0, true);
+      drawScreenHeadless(context, drawSettingsScreen);
+      io.AddMousePosEvent(sliderX(rect, 0.50F), y + 80.0F);
+      drawScreenHeadless(context, drawSettingsScreen);
+      io.AddMouseButtonEvent(0, false);
+      drawScreenHeadless(context, drawSettingsScreen);
+      report(std::abs(context.settings.keyScale - 0.7F) < 0.001F,
+          "vertical drags scroll instead of changing the slider");
+    }
+
     context.settingsTab = 2;
     context.settings.replayEnabled = false;
     drawScreenHeadless(context, drawSettingsScreen);

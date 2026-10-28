@@ -840,7 +840,7 @@ struct SliderInput {
 
 // Slider capture: drag starts after a horizontal move, and a release also commits the value.
 SliderInput sliderInput(const char* key, float x0, float y0, float x1, float y1,
-    float dragThresholdPx, bool interactionsEnabled) {
+    float valueX0, float valueX1, float dragThresholdPx, bool interactionsEnabled) {
   PointerState& state = pointerState();
   SliderInput result;
   if (!interactionsEnabled) return result;
@@ -864,14 +864,14 @@ SliderInput sliderInput(const char* key, float x0, float y0, float x1, float y1,
     }
     if (state.sliderDragging) {
       result.active = true;
-      result.fraction = (pointer.position.x - x0) / std::max(1.0F, x1 - x0);
+      result.fraction = (pointer.position.x - valueX0) / std::max(1.0F, valueX1 - valueX0);
       state.pressX = pointer.position.x; // track deltas from the latest position
       state.pressY = pointer.position.y;
     }
   }
   if (pointer.released) {
     result.active = true;
-    result.fraction = (pointer.position.x - x0) / std::max(1.0F, x1 - x0);
+    result.fraction = (pointer.position.x - valueX0) / std::max(1.0F, valueX1 - valueX0);
     state.activeKey.clear();
     state.sliderDragging = false;
   }
@@ -912,7 +912,8 @@ void drawSlider(const DrawContext& draw, const Block& block, float left, float t
       top + m.dp(14.0F) + headHeight + m.dp(56.0F)};
   const float dragThreshold = m.dp(6.0F);
   const SliderInput input = sliderInput(("slider:" + block.key).c_str(), sliderRect.x0,
-      sliderRect.y0, sliderRect.x1, sliderRect.y1, dragThreshold, draw.interactionsEnabled);
+      sliderRect.y0, sliderRect.x1, sliderRect.y1, left + geometry.valueLeft,
+      left + geometry.valueRight, dragThreshold, draw.interactionsEnabled);
   if (input.active) {
     const float fraction = std::clamp(input.fraction, 0.0F, 1.0F);
     const float next = snapSliderValue(block, block.from + fraction * (block.to - block.from));
