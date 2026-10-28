@@ -1947,3 +1947,20 @@ fraction=0.8978，显示 1.42。截图 `build/shots/slider-final.png` 可见滑�
 且控件矩形不变，证明页面未滚动。`build/slider-lock-after.log` 为
 `SELF-TEST PASS (61/61)`，`build/slider-lock-after-build.log` 为 ctest 8/8。
 
+### 2. 自动演示与回放的四类打击音
+
+**复现与根因**：`tests/CoreTests.cpp` 新增自动演示/回放四条路径，每种音符头部都取一次
+`soundEvents`。旧代码先在自动 Tap 上失败（`build/hitsound-before.log`）。原因在
+`GameplaySession.cpp:407-421`：自动非 Hold 显式调用 `commitNote(..., false)` 禁止声音；
+自动 Hold 又在 `activateHold` 外多发一次 TAP，而后者内部本来就会发一次。
+
+参考 `GameRenderer.java:2853-2913` 的完整 `commitJudgement` 对 Perfect/Good 的非 Hold
+调用 `NativeAudioEngine.triggerSfx(n.type)`；`9839-9857` 的完整 `updateAutoplay`
+普通音符进入该函数，Hold 只在头部额外触发一次 TAP。现自动非 Hold 使用默认的
+`emitSound=true`，并删除自动 Hold 的重复直发。判定、事件消费顺序与 Hold 尾部规则不变。
+
+**回归**：四种类型在自动演示和回放中都恰好一个匹配事件，Hold 头部恰好一个 TAP。
+`build/hitsound-after-build.log` 为 ctest 8/8；`build/hitsound-after-selftest.log`
+的真实 6-note 自动场景从只有 Hold 的 **2 个**事件恢复为 **6 个**，手动无输入仍为 0；
+`build/hitsound-after-loop.log` 为 `BATCH-RUN PASS frames=900`。
+

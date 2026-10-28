@@ -372,6 +372,37 @@ int main(){
         "the first body burst lands within one half-beat interval");
   }
 
+  {
+    for (const int type : {NOTE_TAP, NOTE_DRAG, NOTE_FLICK, NOTE_HOLD}) {
+      Chart chart = singleNoteChart(type, 1.0);
+      GameplaySession session;
+      session.setViewport(viewport);
+      session.setAutoplay(true);
+      session.setChart(&chart);
+      session.update(chart.allNotesSorted[0]->sect, 1.0F / 60.0F);
+      const auto sounds = session.takeSoundEvents();
+      const int expected = type == NOTE_HOLD ? NOTE_TAP : type;
+      require(sounds.size() == 1 && sounds.front() == expected,
+          "autoplay emits exactly one matching sound for every note type");
+
+      Chart replayChart = singleNoteChart(type, 1.0);
+      const double noteTime = replayChart.allNotesSorted[0]->sect;
+      ReplayJudgement entry;
+      entry.type = type == NOTE_HOLD ? ReplayJudgement::Type::HoldPress : ReplayJudgement::Type::Tap;
+      entry.noteIndex = 0;
+      entry.judgement = 0;
+      entry.timeSec = noteTime;
+      GameplaySession replay;
+      replay.setViewport(viewport);
+      replay.setReplayPlayback({entry});
+      replay.setChart(&replayChart);
+      replay.update(noteTime, 1.0F / 60.0F);
+      const auto replaySounds = replay.takeSoundEvents();
+      require(replaySounds.size() == 1 && replaySounds.front() == expected,
+          "replay emits exactly one matching sound for every note type");
+    }
+  }
+
   // --- runtime preparation: incremental floor cursor and parallel per-line pass -----
   {
     // A large chart takes the parallel per-line path; every derived value must still equal a

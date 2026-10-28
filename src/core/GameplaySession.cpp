@@ -412,10 +412,9 @@ void GameplaySession::update(double time, float frameDelta) {
         if (note.type == NOTE_HOLD) {
           // The hold head is hit at its own note time, not at the frame that noticed it, so
           // the head burst sits where the head is drawn and the recorded delta is zero.
-          soundEvents_.push_back(NOTE_TAP);
           activateHold(note, true, note.sect, 0.0, false);
         } else {
-          commitNote(note, JudgementEngine::Judgement::Perfect, time - note.sect, time, false);
+          commitNote(note, JudgementEngine::Judgement::Perfect, time - note.sect, time);
         }
       }
       ++autoNoteIndex_;
