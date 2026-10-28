@@ -1604,7 +1604,7 @@ SELF-TEST FAIL (2 of 56 checks failed)
 
 ---
 
-## 十七、六个后续缺陷（2026-10-27）
+## 十七、五个后续缺陷（2026-10-27）
 
 ### 1. 音频准备耗时与进度：AAC 调度是瓶颈，不是样本转换
 
@@ -1862,4 +1862,62 @@ fraction=0.8978，显示 1.42。截图 `build/shots/slider-final.png` 可见滑�
 
 **回归**：桌面 ctest 8/8、自检 60/60；Android Release 构建成功。新增四项检查为有效
 值域轨迹、释放映射、56dp 命中高度、纵向滚动竞争。没有另加插值、按下特效或 DOWN 跳值。
+
+---
+
+## 十八、五项修复的最终验收与验证边界（2026-10-28）
+
+### 改动前后对照与提交
+
+每项的源码依据、完整复现步骤、反向对照和证据文件见第十七节对应小节。任务说明标题
+写六项，但实际列出的缺陷为五项；本节只验收这五项，没有另造问题。
+
+| 项 | 修复前实测 | 修复后实测 | 提交 |
+|---|---|---|---|
+| 音频准备与进度 | AAC 67,411ms；点击到首帧 70.799/71.114s；进度恒 0% | AAC 1,926–3,215ms；点击到首帧 4.538/5.900s；连拍 10/40/64/91% | `5e533af` |
+| 录制音画同步 | Android 反向产物声音早 1036.854ms | Android 首击晚 3.479ms，后续 0.6–10.6ms；桌面 0.2–3.5ms；±200ms 生效且音轨长度不变 | `b8c22d5` |
+| HUD 标签退场 | 第 640 帧 RECORD 区域 578/255（桌面）、580/255（蓝叠） | 同帧 0/122；数字和其余 HUD 仍只做根 Y 缩放 | `a7476ab` |
+| 捕获噪域与后处理 | 同刻区域校验和全部随墙钟分叉；桌面 722/731、蓝叠 715/731 帧；真平面绿屏 | 桌面与蓝叠同刻校验和稳定、均 731/731 帧；真平面颜色恢复 | `acc2ec9` |
+| 设置滑块 | 25/75/90% 分别得到 0.92/1.28/1.39 | 同轨迹 0.90/1.30/1.42；真实指针回归与蓝叠拖动一致 | `ea9711c` |
+
+### 全量门禁
+
+所有构建均单并发并使用 `build/with-lock.ps1`。最终源码的实际结果：
+
+| 检查 | 结果 | 日志 |
+|---|---|---|
+| 桌面 Release + ctest | 8/8 | `build/final-desktop.log` |
+| 应用自检 | 60/60，含四项真实滑块轨迹 | 命令 `ReChigros.exe --self-test` |
+| Android Release | BUILD SUCCESSFUL，29.7MB APK | `build/final-android-build-console.log` |
+| GLSL ES | 47/47 | `build/final-gles.log` |
+| 渲染矩阵 | 26/26 | `build/final-render-matrix.log` |
+| 应用循环 + 字体 | 11/11；245 个非 ASCII 字符全部有字形 | `build/final-app-loop.log` |
+| iOS 结构 | 48 项、0 warning | `build/final-ios.log` |
+| 蓝叠渲染 | PASS；系统/应用捕获均 155 色，亮像素 100% | `build/final-android-render-pass.log` |
+| 红区独立探针 | framebuffer/viewport/blend 复原、触点 uniform、上屏一致性均 PASS | `build/final-block-probe.log` |
+| 编码器探针 | PASS，含非法 preset 必须失败 | `build/final-record-check.log` |
+
+最终滑块 APK 安装后 `lastUpdateTime=2026-10-28 11:17:20`，无临时拖动日志；
+`build/shots/slider-clean.png` 是最终包的真实设备截图。
+
+### 门禁本身的两个测量坑（已修正/记录）
+
+1. Windows PowerShell 5.1 在 `scripts/build.ps1` 重配置时把 `cmake -E tar` 的符号链接
+   warning 包装成 `NativeCommandError`，在真正执行渲染矩阵前退出。按第七节的既有说明改用
+   `pwsh` 后，同一标准命令完整执行并通过；没有跳过依赖配置或降低断言。
+2. `check-android-render.ps1` 固定在启动 3.0s 截系统图。两次失败均为系统图全黑，
+   但同轮后期应用内捕获有效；第一次日志明确显示首帧在 **3.798s** 才完成，第二次仅纹理
+   初始化就用 **3.105s**。现脚本有界等待 `launch: total to first frame`，再给合成器
+   500ms，原有系统非黑、GL 错误与应用捕获断言全部保留。修复后系统图和捕获图都是
+   2400×1080、155 色，门禁 PASS。这是测量时序修复，不改变产品渲染行为。
+
+### 仍未验证项（不要当成已通过）
+
+- `VideoEncoderBridgeProbe` 只编译成功。此蓝叠安装其测试 APK 会退出主机，**探针未执行**。
+- 本轮真机不在线；2048 帧 AAC priming 补偿与交错 U/V 分支未在新代码上复核。旧真机数据
+  不能代替这两项验收，也不能由软件编码器推断所有硬件 AAC/MediaCodec 的行为。
+- 本机和可访问的设备公共目录没有指定的 TrueHome / True World 素材，参考私有目录拒绝
+  `run-as`；指定曲目的逐帧对照未完成。已做的是同刻结构指标、红区中间目标和捕获完整性验证。
+- 蓝叠为 x86_64 软件 GL，不覆盖所有真 GPU 的精度、驱动状态恢复和编码器平面布局。
+- iOS 只完成 48 项结构检查，未在 macOS 上生成 Xcode 工程、编译、链接或签名。
 

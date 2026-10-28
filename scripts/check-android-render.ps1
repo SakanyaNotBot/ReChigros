@@ -300,9 +300,22 @@ $arguments = "--frames $Frames --autoplay --gl-debug --capture-frame $remoteCapt
 $launchCommand = "am start -n $Package/.MainActivity --es args `"$arguments`""
 & $script:adb -s $script:serial shell $launchCommand 2>&1 | Out-Null
 
-# The system screenshot is taken while the play field is on screen. The run is short, so
-# the delay is fixed rather than derived from the frame budget.
-Start-Sleep -Milliseconds 3000
+# Startup texture decoding can outlast a fixed delay. Wait for the application's first-frame
+# report, then allow that frame to reach the compositor before taking the system screenshot.
+$firstFrameDeadline = (Get-Date).AddSeconds($TimeoutSeconds)
+$firstFrameReported = $false
+while ((Get-Date) -lt $firstFrameDeadline) {
+    $startupLog = & $script:adb -s $script:serial logcat -d 2>&1
+    if ($startupLog -match 'launch: total to first frame') {
+        $firstFrameReported = $true
+        break
+    }
+    Start-Sleep -Milliseconds 250
+}
+if (-not $firstFrameReported) {
+    Fail "the application did not report its first frame within $TimeoutSeconds seconds"
+}
+Start-Sleep -Milliseconds 500
 & $script:adb -s $script:serial shell screencap -p /sdcard/rechigros-check.png 2>&1 | Out-Null
 & $script:adb -s $script:serial pull /sdcard/rechigros-check.png $screenshotPath 2>&1 | Out-Null
 & $script:adb -s $script:serial shell rm -f /sdcard/rechigros-check.png 2>&1 | Out-Null
