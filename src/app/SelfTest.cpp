@@ -758,6 +758,36 @@ int runSelfTest() {
       drawScreenHeadless(context, drawSettingsScreen);
       report(std::abs(context.settings.keyScale - 0.7F) < 0.001F,
           "vertical drags scroll instead of changing the slider");
+
+      context.settings.keyScale = 0.7F;
+      io.AddMouseWheelEvent(0.0F, 10000.0F);
+      drawScreenHeadless(context, drawSettingsScreen);
+      drawScreenHeadless(context, drawSettingsScreen);
+      const auto lockedRects = registeredSettingsControlRects();
+      bool retained = lockedRects.size() > 1;
+      if (retained) {
+        const auto& locked = lockedRects[1];
+        const float lockedY = (locked[1] + locked[3]) * 0.5F;
+        const float outsideY = lockedY - 180.0F;
+        io.AddMousePosEvent(sliderX(locked, 0.50F), lockedY);
+        drawScreenHeadless(context, drawSettingsScreen);
+        io.AddMouseButtonEvent(0, true);
+        drawScreenHeadless(context, drawSettingsScreen);
+        io.AddMousePosEvent(sliderX(locked, 0.25F), lockedY);
+        drawScreenHeadless(context, drawSettingsScreen);
+        io.AddMousePosEvent(sliderX(locked, 0.25F), outsideY);
+        drawScreenHeadless(context, drawSettingsScreen);
+        io.AddMousePosEvent(sliderX(locked, 0.90F), outsideY);
+        drawScreenHeadless(context, drawSettingsScreen);
+        const auto currentRects = registeredSettingsControlRects();
+        retained = currentRects.size() > 1 && currentRects[1] == lockedRects[1]
+            && std::abs(context.settings.keyScale - 1.42F) < 0.001F;
+        io.AddMouseButtonEvent(0, false);
+        drawScreenHeadless(context, drawSettingsScreen);
+        retained &= std::abs(context.settings.keyScale - 1.42F) < 0.001F;
+      }
+      report(retained, "horizontal slider drags keep capture until release",
+          "expected=1.42 actual=" + std::to_string(context.settings.keyScale));
     }
 
     context.settingsTab = 2;

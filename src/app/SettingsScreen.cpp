@@ -1988,7 +1988,8 @@ void drawSettingsScreen(AppContext& context) {
       const float lateral = snapshot.position.x - pointer.pressX;
       if (!snapshot.down) {
         pointer.rowPressPending = false;
-      } else if (std::abs(travel) > m.dp(6.0F) && std::abs(travel) > std::abs(lateral)) {
+      } else if (!pointer.sliderDragging && std::abs(travel) > m.dp(6.0F)
+          && std::abs(travel) > std::abs(lateral)) {
         // The gesture is a vertical drag, not a click. A row may already have latched the
         // press on the frame it went down, so the press is released here rather than
         // waiting for it to expire; otherwise the list could never be dragged from a row.

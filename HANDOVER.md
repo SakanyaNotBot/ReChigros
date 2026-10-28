@@ -1635,8 +1635,10 @@ float→short 同时改成 little-endian `FloatBuffer` + 编码器输入的 nati
 但这不是主要收益来源。AAC profile、192 kbps、声道顺序、量化公式、PTS 公式均未改：
 修前修后都是 **8300 包 / 4,249,601 字节 / 首 PTS 1,083,000 μs / 末 PTS 178,128,332 μs**。
 
-参考源码没有这条录制音频准备管线；`PcmDecoder.java:201-209` 只提供解码后的 NIO 批量读取
-写法。此项不改变任何可见时序语义，不根据录像或猜测新增行为。
+原项目没有谱面渲染模式，不能在这里寻找离线录制实现；渲染管线以
+`easy-phi-main/test_files/test_shared.hpp:35-156` 和 `open_rpe_recorder.cpp:586-617`
+为源码依据。原项目的 `PcmDecoder.java:201-209` 只提供解码后的 NIO 批量读取写法。
+此项不改变任何可见时序语义，不根据录像或猜测新增行为。
 
 **进度**：worker 以已提交 PCM 帧数发布 0..999 千分比，完整发布后才是 1000；经 JNI /
 `VideoEncoder` / `RecordSession` 到 `RenderScreen`。音频阶段显示真实百分比，视频阶段仍显示
@@ -1920,4 +1922,28 @@ fraction=0.8978，显示 1.42。截图 `build/shots/slider-final.png` 可见滑�
   `run-as`；指定曲目的逐帧对照未完成。已做的是同刻结构指标、红区中间目标和捕获完整性验证。
 - 蓝叠为 x86_64 软件 GL，不覆盖所有真 GPU 的精度、驱动状态恢复和编码器平面布局。
 - iOS 只完成 48 项结构检查，未在 macOS 上生成 Xcode 工程、编译、链接或签名。
+
+---
+
+## 十九、后续反馈：交互、噪域、Message 与 RPE（2026-10-28）
+
+离线渲染行为以 `easy-phi-main` 为源码依据，不能用原项目没有谱面渲染模式来推断录制
+行为；交互和游玩视觉仍核对原项目，RPE 另以 `rpe-next-main` 的字段和求值函数为清单。
+
+### 1. 滑块横拖后的手势锁定
+
+**复现与根因**：`SelfTest.cpp` 新增真实指针序列：DOWN → 横拖超过 6dp → 纵向移动
+180px → 控件外继续横拖 → UP。修复前最后停在 **0.90**，正确目标为 **1.42**；
+`build/slider-lock-before-utf8.log` 记录 `SELF-TEST FAIL (1 of 61)`。页面在已经
+形成 `sliderDragging` 后仍用后续位移方向重新决定手势归属，并清空 `activeKey`。
+
+参考 `SettingsSliderView.java:113-149` 在第一次横向超过 6dp 时调用
+`requestDisallowInterceptTouchEvent(true)`，直到 UP/CANCEL 才释放；MOVE 不检查控件
+边界，所以上下移动或移出控件不丢失捕获。移植在 `SettingsScreen.cpp` 的纵向滚动分支
+增加 `!pointer.sliderDragging`，只在尚未形成横向拖动时允许页面抢手势，既有纵向滚动
+和值域映射不变。
+
+**反向对照与回归**：该测试先在不修复产品代码时运行并失败；修复后同一轨迹为 1.42，
+且控件矩形不变，证明页面未滚动。`build/slider-lock-after.log` 为
+`SELF-TEST PASS (61/61)`，`build/slider-lock-after-build.log` 为 ctest 8/8。
 
