@@ -2014,3 +2014,33 @@ Message SP 实谱在 85 秒跑通六条官方效果通道：`message-shader-afte
 红区独立探针仍通过，checksum 与上一项相同。参考应用的同秒 Message 对照因设备
 离线尚未补齐，当前只声明桌面实际渲染结果。
 
+### 5. Message 白色方形粒子的顺序与材质
+
+**复现与根因**：粒子场已有时间推进，但旧顺序先画粒子、再画 `bgAlpha=1` 的
+kaleido 背景，背景把粒子全部覆盖。参考 `GameRenderer.java:4551-4554` 明确先画背景、
+后画粒子；`4944-5054` 给出完整的推进、材质和绘制函数。`MessageParticleField.java:191-200`
+还明确粒子不做生命周期透明度渐隐，不能自行补一个 fade。
+
+修复位于 `GameRenderer.cpp`：先画不透明背景，再推进并绘制粒子场；只在
+`0 < delta <= 0.5` 时推进，开始前或 seek 回起点时重置。`MsgCube.png` 按
+`max(g, round(0.55*r))` 生成 alpha，保留硬边方块和软外晕。共享纹理缓存会预乘 RGB，
+而粒子批次还会再乘一次 alpha，所以改为专用上传并保留白色 RGB，避免 168 的核心 alpha
+被再次压成约 110。新增诊断参数 `--animate` 可让渲染器以 1/60 秒推进到指定时刻，
+直接写最终 PNG；这不是按录像拟合状态。
+
+**实测与反向对照**：原完整录像 `message-particles-before.mp4` 为 10272 帧；
+修复后 `message-particles-final.mp4` 也为 **10272/10272** 帧。定点捕获命令：
+
+```
+build/desktop-release/src/render/rechigros_render_smoke.exe \
+  --chart build/ref-data/message-sp/packs/3c13f255e5a31893/3c13f255e5a31893.json \
+  --assets assets --time 130 --frames 930 --capture --animate \
+  --width 1920 --height 1080 --out build/shots/message-direct-final-130.png
+```
+
+直接图与编码抽帧 `message-final-encoded-130.png` 都能看到上下两侧向中心运动的
+白色方形粒子，且不被背景遮盖；旧录像同时间窗没有这一层。`message-direct-130.png`
+是预乘修正前的对照，最终图恢复了白色核心。构建与 ctest **8/8**、应用自检
+**61/61**（`message-final-build.log`、`message-final-selftest.log`）。参考设备录制没有
+完成有效同刻对照，因此不声称设备端逐帧匹配；本轮证据来自完整参考函数和桌面真实出帧。
+

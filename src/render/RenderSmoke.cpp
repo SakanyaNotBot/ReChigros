@@ -70,6 +70,7 @@ struct Options {
   bool holdBodyBursts{true};
   bool capture{false};
   bool captureYuv{false};
+  bool animate{false};
   bool apfc{false};
 };
 
@@ -139,6 +140,8 @@ Options parseOptions(int argc, char** argv) {
       options.capture = true;
     } else if (flag == "--capture-yuv") {
       options.captureYuv = true;
+    } else if (flag == "--animate") {
+      options.animate = true;
     } else if (flag == "--apfc") {
       options.apfc = true;
     }
@@ -324,9 +327,21 @@ int main(int argc, char** argv) {
           renderer.endCapture();
         }
       } else if (options.capture) {
+        if (options.animate) {
+          const double first = options.chartTime - static_cast<double>(options.frames - 1) / 60.0;
+          input.chartTimeSec = first;
+          input.playheadSec = first;
+          input.visualTimeSec = first;
+        }
         if (renderer.beginCapture(input, chart.get(), options.width, options.height)) {
           std::vector<std::uint8_t> pixels;
           for (int frame = 0; frame < options.frames; ++frame) {
+            if (options.animate) {
+              const double time = options.chartTime - static_cast<double>(options.frames - 1 - frame) / 60.0;
+              input.chartTimeSec = time;
+              input.playheadSec = time;
+              input.visualTimeSec = time;
+            }
             pixels.clear();
             written = renderer.captureFrame(input, chart.get(), &session.judgement(), pixels);
             if (!written) break;

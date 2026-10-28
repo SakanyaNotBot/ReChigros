@@ -212,6 +212,7 @@ struct GameRenderer::Impl {
   double blockUpdateLastSec{};
   fx::DsGridPass dsGrid;
   fx::KaleidoBackdropPass kaleido;
+  gl::Texture messageCubeTexture;
   gl::Texture* kaleidoNormal{};
   gl::Texture* kaleidoColour{};
   gl::Texture* dsGridTexture{};
@@ -1420,41 +1421,7 @@ void GameRenderer::Impl::drawLevelEffectObjects(game::Chart* chart,
   }
 
   if (name == "MessageLevelEffects") {
-    // White squares drift in from above and below; the field advances on the chart clock
-    // and stays idle until the level's particle start time.
-    const float startTime = effect.scalar("particleStartTime", -1.0F);
-    if (startTime < 0.0F || chartTime >= startTime) {
-      const float bandWidth = effect.track("bandWidth", chartTime);
-      const float delta = messageParticleLastSec < 0.0
-          ? 0.0F
-          : std::clamp(static_cast<float>(input.chartTimeSec - messageParticleLastSec), 0.0F,
-                0.1F);
-      messageParticleLastSec = input.chartTimeSec;
-      messageParticles.update(delta, bandWidth);
-
-      const float stageHeight = layout.stage.height;
-      const float stageWidth = layout.stage.width;
-      batch.begin();
-      for (int index = 0; index < messageParticles.count(); ++index) {
-        const auto& particle = messageParticles.at(index);
-        if (particle.age >= game::MessageParticleField::LIFE_SEC) continue;
-        const float alpha = game::MessageParticleField::bandAlpha(particle, bandWidth);
-        if (!(alpha > 0.002F)) continue;
-        const float size = messageParticles.sizeAt(particle) * stageHeight;
-        if (!(size > 0.5F)) continue;
-        // World x spans the full play-field width; uv y maps onto the stage height.
-        const float x = layout.stage.x + stageWidth * 0.5F +
-            particle.worldX / game::MessageParticleField::UNITS * stageHeight;
-        const float y = layout.stage.y + particle.y * stageHeight;
-        batch.addQuad(x, y, size, size, 0.0F, 1.0F, 1.0F, 1.0F, alpha, 0.0F, 0.0F, 1.0F, 1.0F);
-      }
-      batch.flush(layout.projection(), textures.white(), nullptr);
-    } else {
-      messageParticleLastSec = -1.0;
-      messageParticles.reset();
-    }
-    // The kaleidoscope layer covers the stage rectangle and is opaque black apart from
-    // the pattern it mixes in.
+    // The opaque backdrop is drawn first, so it cannot cover the particle layer.
     const float bgAlpha = effect.track("bgAlpha", chartTime);
     if (bgAlpha > 0.001F && kaleido.ready()) {
       if (kaleidoNormal == nullptr || kaleidoColour == nullptr) {
@@ -1474,6 +1441,52 @@ void GameRenderer::Impl::drawLevelEffectObjects(game::Chart* chart,
             effect.track("kaleidoMix", chartTime), std::min(1.0F, bgAlpha), viewportX,
             viewportY, viewportWidth, viewportHeight);
       }
+    }
+    // White squares drift in from above and below; the field advances on the chart clock
+    // and stays idle until the level's particle start time.
+    const float startTime = effect.scalar("particleStartTime", -1.0F);
+    if (startTime < 0.0F || chartTime >= startTime) {
+      if (!messageCubeTexture.valid()) {
+        const auto bytes = platform::AssetManager::readBinary(assets, "official_textures/MsgCube.png");
+        auto image = asset::decodeImageMemory(bytes.data(), bytes.size());
+        for (std::size_t index = 0; index + 3 < image.pixels.size(); index += 4) {
+          const auto halo = static_cast<unsigned int>(image.pixels[index]) * 55U + 127U;
+          image.pixels[index + 3] = static_cast<std::uint8_t>(std::max<unsigned int>(
+              image.pixels[index + 1], halo / 255U));
+          image.pixels[index] = 255;
+          image.pixels[index + 1] = 255;
+          image.pixels[index + 2] = 255;
+        }
+        messageCubeTexture.uploadRgba(image.width, image.height, image.pixels.data());
+      }
+      const float bandWidth = effect.track("bandWidth", chartTime);
+      const float delta = messageParticleLastSec < 0.0
+          ? 0.0F
+          : static_cast<float>(input.chartTimeSec - messageParticleLastSec);
+      messageParticleLastSec = input.chartTimeSec;
+      if (delta > 0.0F && delta <= 0.5F) messageParticles.update(delta, bandWidth);
+
+      const float stageHeight = layout.stage.height;
+      const float stageWidth = layout.stage.width;
+      batch.begin();
+      for (int index = 0; index < messageParticles.count(); ++index) {
+        const auto& particle = messageParticles.at(index);
+        if (particle.age >= game::MessageParticleField::LIFE_SEC) continue;
+        const float alpha = game::MessageParticleField::bandAlpha(particle, bandWidth);
+        if (!(alpha > 0.004F)) continue;
+        const float size = messageParticles.sizeAt(particle) * stageHeight;
+        if (!(size > 0.5F)) continue;
+        // World x spans the full play-field width; uv y maps onto the stage height.
+        const float x = layout.stage.x + stageWidth * 0.5F +
+            particle.worldX / game::MessageParticleField::UNITS * stageHeight;
+        const float y = layout.stage.y + particle.y * stageHeight;
+        batch.addQuad(x, y, size, size, 0.0F, 1.0F, 1.0F, 1.0F, alpha, 0.0F, 0.0F, 1.0F, 1.0F);
+      }
+      const auto& texture = messageCubeTexture.valid() ? messageCubeTexture : textures.white();
+      batch.flush(layout.projection(), texture, nullptr);
+    } else {
+      messageParticleLastSec = -1.0;
+      messageParticles.reset();
     }
     return;
   }
