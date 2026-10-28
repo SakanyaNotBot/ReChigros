@@ -193,6 +193,33 @@ gl::Texture* TextureCache::loadAsset(const std::string& relativePath, bool white
   return result;
 }
 
+gl::Texture* TextureCache::loadAssetFlipped(const std::string& relativePath) {
+  const std::string key = "asset:" + relativePath;
+  if (const auto it = textures_.find(key); it != textures_.end() && it->second.valid()) {
+    return &it->second;
+  }
+  Image source;
+  if (const auto ready = decoded_.find(key); ready != decoded_.end()) {
+    source = std::move(ready->second);
+    decoded_.erase(ready);
+  } else {
+    const auto bytes = platform::AssetManager::readBinary(assetRoot_, relativePath);
+    if (bytes.empty()) return nullptr;
+    source = decodeImageMemory(bytes.data(), bytes.size());
+  }
+  if (!source.valid()) return nullptr;
+  Image flipped;
+  flipped.width = source.width;
+  flipped.height = source.height;
+  flipped.pixels.resize(source.pixels.size());
+  const auto rowBytes = static_cast<std::size_t>(source.width) * 4U;
+  for (int row = 0; row < source.height; ++row) {
+    std::copy_n(source.pixels.data() + static_cast<std::size_t>(source.height - 1 - row) * rowBytes,
+        rowBytes, flipped.pixels.data() + static_cast<std::size_t>(row) * rowBytes);
+  }
+  return store(key, std::move(flipped), false);
+}
+
 gl::Texture* TextureCache::loadFile(const std::filesystem::path& path, bool white) {
   const std::string key = "file:" + path.generic_string() + (white ? "#w" : "");
   if (const auto it = textures_.find(key); it != textures_.end() && it->second.valid()) {

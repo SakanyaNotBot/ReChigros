@@ -68,6 +68,7 @@ public:
 
   // Texture from the packaged asset root, e.g. "res/click.png"; null when missing.
   gl::Texture* loadAsset(const std::string& relativePath, bool white = false);
+  gl::Texture* loadAssetFlipped(const std::string& relativePath);
 
   // Starts decoding the named assets on worker threads. Decoding is pure computation on bytes and
   // is the expensive half of a texture load, so it runs beside whatever the caller does next; the

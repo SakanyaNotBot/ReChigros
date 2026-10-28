@@ -1964,3 +1964,28 @@ fraction=0.8978，显示 1.42。截图 `build/shots/slider-final.png` 可见滑�
 的真实 6-note 自动场景从只有 Hold 的 **2 个**事件恢复为 **6 个**，手动无输入仍为 0；
 `build/hitsound-after-loop.log` 为 `BATCH-RUN PASS frames=900`。
 
+### 3. Hate EZ 的边缘噪域与官方 shader 贴图方向
+
+**根因**：参考 `GameRenderer.java:13987-14011` 的 `loadOfficialShaderTexture` 先执行
+`flipBitmapVertical`，再上传 GL；`14989-15006` 对三张噪域贴图使用同一加载路径。
+移植的 `decodeImageMemory` 则直接把顶行在前的像素交给 GL，导致噪域采样行序相反。
+这里不是判定线宽度、颜色强度或 YUV 编码问题：去掉噪域后，双方原始判定线的
+中位宽度均为 **4px**，右侧区域黄色像素均为 **4768**。
+
+`TextureCache::loadAssetFlipped` 现在只给官方 shader 贴图补上行序翻转，并复用已解码
+缓存；普通音符、UI 与其他文件纹理不改。三张噪域图仍是 Point 采样，BlockNoise1 /
+FD_Noise 使用 mirrored wrap，PointNoise 使用 repeat。`block_probe` 的 wrap 也统一为
+该规则，触点贴图同步翻转。
+
+**对照与反向验证**：诊断新增保留参数 `--capture`（真实 RGBA 捕获）、`--capture-yuv`
+（原始 YUV420 平面）与 `--apfc`。只恢复三张噪域图的旧行序时，
+`build/shots/hate-ez-apfc-reverse-97.png` 的图案与参考明显错位；翻转后的
+`hate-ez-apfc-wide-97.png` 与同刻 `reference-hate97-apfc.png` 对齐。
+真实 `--record` 已生成 **10689/10689** 帧并抽帧，证明捕获路径不是单纯 YUV 放大。
+AP/FC 未开启时的白边不能作为这项缺陷的对照；背景 dim 不同只影响整体亮度，
+不改变这里的资源方向结论。用户随后确认当前结果正常。
+
+`build/shader-resource-build.log` 为 ctest 8/8，`shader-resource-selftest.log` 为
+61/61；`shader-resource-probe.log` 的合成/上屏 checksum **2209987148**、touch
+checksum **1431594559**，framebuffer/viewport/blend 均恢复。
+

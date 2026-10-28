@@ -357,10 +357,10 @@ void GameRenderer::Impl::loadGameplayTextures() {
   kaleido.prepare(assets);
 
   // Chapter-9 effect samplers; a missing file simply disables its preset.
-  effectGlitchMap = textures.loadAsset("official_textures/Glitch4in1.png");
-  effectGlitchDogMap = textures.loadAsset("official_textures/GlitchMap.png");
-  effectWireNoise = textures.loadAsset("official_textures/WireNoise.png");
-  effectDisplaceMap = textures.loadAsset("official_textures/DisplaceMap.png");
+  effectGlitchMap = textures.loadAssetFlipped("official_textures/Glitch4in1.png");
+  effectGlitchDogMap = textures.loadAssetFlipped("official_textures/GlitchMap.png");
+  effectWireNoise = textures.loadAssetFlipped("official_textures/WireNoise.png");
+  effectDisplaceMap = textures.loadAssetFlipped("official_textures/DisplaceMap.png");
   if (effectGlitchMap != nullptr) {
     effectGlitchMap->setFilter(false);
     effectGlitchMap->setWrapRepeat(true, true);
@@ -375,9 +375,9 @@ void GameRenderer::Impl::loadGameplayTextures() {
   // Red-zone composite samplers. Background pixels inside a zone are resampled through
   // the displacement and noise maps, so they have to tile and stay point sampled: a
   // filtered displacement map would smooth the staircase edge the material depends on.
-  blockDisplaceMap = textures.loadAsset("official_textures/BlockNoise1.png");
-  blockSparkMap = textures.loadAsset("official_textures/PointNoise.png");
-  blockNoiseMap = textures.loadAsset("official_textures/FD_Noise_00000.png");
+  blockDisplaceMap = textures.loadAssetFlipped("official_textures/BlockNoise1.png");
+  blockSparkMap = textures.loadAssetFlipped("official_textures/PointNoise.png");
+  blockNoiseMap = textures.loadAssetFlipped("official_textures/FD_Noise_00000.png");
   if (blockDisplaceMap != nullptr) {
     blockDisplaceMap->setFilter(false);
     blockDisplaceMap->setWrapMirrored(true, true);
@@ -1455,8 +1455,8 @@ void GameRenderer::Impl::drawLevelEffectObjects(game::Chart* chart,
     const float bgAlpha = effect.track("bgAlpha", chartTime);
     if (bgAlpha > 0.001F && kaleido.ready()) {
       if (kaleidoNormal == nullptr || kaleidoColour == nullptr) {
-        kaleidoNormal = textures.loadAsset("official_textures/KaleidoNormal.png");
-        kaleidoColour = textures.loadAsset("official_textures/KaleidoCol.png");
+        kaleidoNormal = textures.loadAssetFlipped("official_textures/KaleidoNormal.png");
+        kaleidoColour = textures.loadAssetFlipped("official_textures/KaleidoCol.png");
         // The pattern's polar coordinates span past the texture edge, so both maps mirror.
         if (kaleidoNormal != nullptr) kaleidoNormal->setWrapRepeat(true, true);
         if (kaleidoColour != nullptr) kaleidoColour->setWrapRepeat(true, true);
@@ -1480,7 +1480,7 @@ void GameRenderer::Impl::drawLevelEffectObjects(game::Chart* chart,
   if (!(opacity > 0.001F)) return;
 
   if (dsGridTexture == nullptr) {
-    dsGridTexture = textures.loadAsset("official_textures/DsGrid.png");
+    dsGridTexture = textures.loadAssetFlipped("official_textures/DsGrid.png");
     if (dsGridTexture != nullptr) dsGridTexture->setWrapRepeat(true, true);
   }
   if (dsGridTexture == nullptr) return;

@@ -391,19 +391,19 @@ int main(int argc, char** argv) {
     // Textures come from the shared cache, exactly as the application loads them.
     asset::TextureCache textures;
     textures.setAssetRoot(options.assetRoot);
-    gl::Texture* displaceMap = textures.loadAsset("official_textures/BlockNoise1.png");
-    gl::Texture* sparkMap = textures.loadAsset("official_textures/PointNoise.png");
-    gl::Texture* noiseMap = textures.loadAsset("official_textures/FD_Noise_00000.png");
+    gl::Texture* displaceMap = textures.loadAssetFlipped("official_textures/BlockNoise1.png");
+    gl::Texture* sparkMap = textures.loadAssetFlipped("official_textures/PointNoise.png");
+    gl::Texture* noiseMap = textures.loadAssetFlipped("official_textures/FD_Noise_00000.png");
     if (displaceMap == nullptr || sparkMap == nullptr || noiseMap == nullptr) {
       std::cerr << "Missing block noise textures under " << options.assetRoot.string() << '\n';
       exitCode = 5;
     } else {
       displaceMap->setFilter(false);
-      displaceMap->setWrapRepeat(true, true);
+      displaceMap->setWrapMirrored(true, true);
       sparkMap->setFilter(false);
       sparkMap->setWrapRepeat(true, true);
       noiseMap->setFilter(false);
-      noiseMap->setWrapRepeat(true, true);
+      noiseMap->setWrapMirrored(true, true);
       std::cout << "Noise maps: " << displaceMap->width() << 'x' << displaceMap->height() << ", "
                 << sparkMap->width() << 'x' << sparkMap->height() << ", "
                 << noiseMap->width() << 'x' << noiseMap->height() << '\n';

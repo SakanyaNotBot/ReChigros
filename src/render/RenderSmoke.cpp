@@ -11,10 +11,14 @@
 #include "rechigros/render/asset/TextureCache.hpp"
 
 #include <SDL3/SDL.h>
+#include <stb_image_write.h>
+
+#include <vector>
 
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <string>
@@ -64,6 +68,9 @@ struct Options {
   bool showFps{false};
   // Drops the hold-body bursts so a frame can be compared with and without them.
   bool holdBodyBursts{true};
+  bool capture{false};
+  bool captureYuv{false};
+  bool apfc{false};
 };
 
 Options parseOptions(int argc, char** argv) {
@@ -128,6 +135,12 @@ Options parseOptions(int argc, char** argv) {
       options.storyMode = false;
     } else if (flag == "--chart-reveal") {
       options.chartReveal = true;
+    } else if (flag == "--capture") {
+      options.capture = true;
+    } else if (flag == "--capture-yuv") {
+      options.captureYuv = true;
+    } else if (flag == "--apfc") {
+      options.apfc = true;
     }
   }
   return options;
@@ -249,6 +262,7 @@ int main(int argc, char** argv) {
       input.hud.outroProgress = options.outroProgress;
       input.hud.showFps = options.showFps;
       input.hud.fps = 144.0F;
+      input.apfcIndicator = options.apfc;
       input.backgroundDim = options.backgroundDim;
       input.keyScale = options.keyScale;
       input.mirrorX = options.mirrorX;
@@ -292,8 +306,41 @@ int main(int argc, char** argv) {
         input.pause.elapsedSec = options.pauseElapsedSec;
       }
 
-      const bool written = renderer.renderOffscreen(input, chart.get(), &session.judgement(),
-          options.outputPath, options.frames, options.width, options.height);
+      bool written = false;
+      if (options.captureYuv) {
+        if (renderer.beginCapture(input, chart.get(), options.width, options.height)) {
+          std::vector<std::uint8_t> planes;
+          for (int frame = 0; frame < options.frames; ++frame) {
+            planes.clear();
+            written = renderer.captureFrameYuv(input, chart.get(), &session.judgement(), planes);
+            if (!written) break;
+          }
+          if (written) {
+            std::ofstream output(options.outputPath, std::ios::binary | std::ios::trunc);
+            output.write(reinterpret_cast<const char*>(planes.data()),
+                static_cast<std::streamsize>(planes.size()));
+            written = output.good();
+          }
+          renderer.endCapture();
+        }
+      } else if (options.capture) {
+        if (renderer.beginCapture(input, chart.get(), options.width, options.height)) {
+          std::vector<std::uint8_t> pixels;
+          for (int frame = 0; frame < options.frames; ++frame) {
+            pixels.clear();
+            written = renderer.captureFrame(input, chart.get(), &session.judgement(), pixels);
+            if (!written) break;
+          }
+          if (written) {
+            written = stbi_write_png(options.outputPath.string().c_str(), options.width,
+                options.height, 4, pixels.data(), options.width * 4) != 0;
+          }
+          renderer.endCapture();
+        }
+      } else {
+        written = renderer.renderOffscreen(input, chart.get(), &session.judgement(),
+            options.outputPath, options.frames, options.width, options.height);
+      }
       if (written) {
         std::cout << "Wrote " << options.outputPath.string() << " (" << options.width << 'x'
                   << options.height << ", " << options.frames << " frames)\n";

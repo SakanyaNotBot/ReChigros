@@ -458,7 +458,13 @@ bool BlockCompositePass::ensureHoverProgram(const std::filesystem::path& assetRo
       : stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), &width, &height,
           &channels, 4);
   if (pixels == nullptr) return false;
-  hoverTexture_.uploadRgba(width, height, pixels);
+  std::vector<std::uint8_t> flipped(static_cast<std::size_t>(width) * height * 4U);
+  const auto rowBytes = static_cast<std::size_t>(width) * 4U;
+  for (int row = 0; row < height; ++row) {
+    std::copy_n(pixels + static_cast<std::size_t>(height - 1 - row) * rowBytes, rowBytes,
+        flipped.data() + static_cast<std::size_t>(row) * rowBytes);
+  }
+  hoverTexture_.uploadRgba(width, height, flipped.data());
   stbi_image_free(pixels);
   hoverTexture_.setFilter(true);
   return hoverTexture_.valid();
