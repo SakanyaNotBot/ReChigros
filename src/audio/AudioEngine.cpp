@@ -15,6 +15,7 @@
 #include <cstring>
 #include <mutex>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 
 namespace rechigros::audio {
@@ -46,6 +47,7 @@ class SfxQueue final {
 public:
   struct Event {
     int noteType{};
+    const AudioBuffer* customBuffer{};
     std::int64_t targetOutputFrame{};
   };
 
@@ -235,6 +237,7 @@ struct AudioEngine::Impl final {
     };
     retime(music_);
     for (auto& bank : banks_) retime(bank);
+    for (auto& [path, bank] : customBanks_) retime(*bank);
 
     const double playhead = playheadFrames_.load(std::memory_order_acquire);
     if (playhead >= 0.0) playheadFrames_.store(playhead * scale, std::memory_order_release);
@@ -290,7 +293,8 @@ struct AudioEngine::Impl final {
   }
 
   void spawnVoice(const SfxQueue::Event& event, std::int64_t callbackStartOutputFrames) {
-    auto* bank = bankFor(event.noteType);
+    auto* bank = event.customBuffer != nullptr
+        ? const_cast<AudioBuffer*>(event.customBuffer) : bankFor(event.noteType);
     if (bank == nullptr || bank->empty()) return;
 
     Voice* voice = claimVoice();
@@ -519,6 +523,8 @@ struct AudioEngine::Impl final {
   // Decoded audio, replaced only while the audio thread is standing down.
   AudioBuffer music_;
   std::array<AudioBuffer, kBankCount> banks_;
+  std::unordered_map<std::string, std::shared_ptr<AudioBuffer>> customBanks_;
+  std::mutex customMutex_;
 
   // Owned by the audio thread.
   std::array<Voice, kMaxVoices> voices_{};
@@ -557,6 +563,7 @@ void AudioEngine::shutdown() {
   impl_->stopDevice();
   impl_->music_.clear();
   for (auto& bank : impl_->banks_) bank.clear();
+  impl_->customBanks_.clear();
   impl_->flushVoices();
   impl_->queue_.clear();
   impl_->playheadFrames_.store(0.0, std::memory_order_release);
@@ -609,6 +616,24 @@ bool AudioEngine::loadSoundEffects(const std::filesystem::path& assetRoot) {
     }
   }
   return impl_->anyBankLoaded();
+}
+
+bool AudioEngine::loadHitSound(const std::filesystem::path& path) {
+  if (path.empty() || !initialize()) return false;
+  const std::string key = path.generic_string();
+  {
+    std::lock_guard<std::mutex> lock{impl_->customMutex_};
+    if (impl_->customBanks_.contains(key)) return true;
+  }
+  const auto rate = impl_->sampleRate_.load(std::memory_order_acquire);
+  auto decoded = Decoder::decodeFile(path, rate);
+  if (decoded.empty()) return false;
+  {
+    Impl::ExclusiveScope scope{*impl_};
+    std::lock_guard<std::mutex> lock{impl_->customMutex_};
+    impl_->customBanks_[key] = std::make_shared<AudioBuffer>(std::move(decoded));
+  }
+  return true;
 }
 
 bool AudioEngine::loadMusic(const std::filesystem::path& path) {
@@ -725,6 +750,25 @@ void AudioEngine::triggerSoundEffect(int noteType) {
 
   SfxQueue::Event event;
   event.noteType = noteType;
+  event.targetOutputFrame = impl_->estimateGeneratedOutputFrameNow();
+  impl_->queue_.push(event);
+}
+
+void AudioEngine::triggerSoundEffect(int noteType, const std::string& hitSound) {
+  if (hitSound.empty()) {
+    triggerSoundEffect(noteType);
+    return;
+  }
+  if (impl_->suspended_.load(std::memory_order_acquire)) return;
+  if (!impl_->running_.load(std::memory_order_acquire)) return;
+  if (noteType == game::NOTE_HOLD) noteType = game::NOTE_TAP;
+  SfxQueue::Event event;
+  event.noteType = noteType;
+  {
+    std::lock_guard<std::mutex> lock{impl_->customMutex_};
+    const auto found = impl_->customBanks_.find(hitSound);
+    if (found != impl_->customBanks_.end()) event.customBuffer = found->second.get();
+  }
   event.targetOutputFrame = impl_->estimateGeneratedOutputFrameNow();
   impl_->queue_.push(event);
 }

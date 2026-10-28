@@ -36,14 +36,73 @@ std::string lowercase(std::string text) {
   return text;
 }
 
+void replaceAllText(std::string& text, const std::string& from, const std::string& to) {
+  if (from.empty()) return;
+  for (std::size_t position = 0; (position = text.find(from, position)) != std::string::npos;) {
+    text.replace(position, from.size(), to);
+    position += to.size();
+  }
+}
+
+std::string adaptRpeShader(std::string body) {
+  if (body.find("CC_Texture0") == std::string::npos &&
+      body.find("v_texCoord") == std::string::npos) return body;
+  const bool portable = body.find("uniform sampler2D screenTexture") != std::string::npos;
+  const std::string coordinate = portable ? "uv" : "v_texCoord";
+  const std::string origin = portable ? "vec2(0.0)" : "vec2(0.0, 0.0333)";
+  const std::string size = portable ? "vec2(1.0)" : "vec2(0.7031, 1.0 / 1.2)";
+  replaceAllText(body, "CC_Texture0", "u_texture");
+  replaceAllText(body, "screenTexture", "u_texture");
+  replaceAllText(body, "screenSize", "resolution");
+  replaceAllText(body, "uniform sampler2D u_texture;", "");
+  for (const std::string declaration : {
+      "varying vec2 " + coordinate + ";",
+      "varying highp vec2 " + coordinate + ";",
+      "varying mediump vec2 " + coordinate + ";",
+      "varying lowp vec2 " + coordinate + ";"}) {
+    replaceAllText(body, declaration, "");
+  }
+  replaceAllText(body, coordinate, "rpeCoordinate");
+  replaceAllText(body, "texture2DProj", "rpeSampleProj");
+  replaceAllText(body, "texture2D", "rpeSample");
+  replaceAllText(body, "void main", "void rpeMain");
+  return "precision mediump float;\n"
+      "uniform sampler2D u_texture;\n"
+      "varying vec2 v_texCoord;\n"
+      "uniform vec2 rpeRectMin;\n"
+      "uniform vec2 rpeRectMax;\n"
+      "vec2 rpeCoordinate;\n"
+      "vec4 rpeSample(sampler2D source, vec2 coordinate) {\n"
+      "  vec2 local = (coordinate - " + origin + ") / " + size + ";\n"
+      "  if (local.x < 0.0 || local.x > 1.0 || local.y < 0.0 || local.y > 1.0) return vec4(0.0);\n"
+      "  return texture2D(source, mix(rpeRectMin, rpeRectMax, local));\n"
+      "}\n"
+      "vec4 rpeSampleProj(sampler2D source, vec4 coordinate) { return rpeSample(source, coordinate.xy / coordinate.w); }\n"
+      "vec4 rpeSampleProj(sampler2D source, vec3 coordinate) { return rpeSample(source, coordinate.xy / coordinate.z); }\n" +
+      body +
+      "\nvoid main() {\n"
+      "  if (v_texCoord.x < rpeRectMin.x || v_texCoord.x > rpeRectMax.x || "
+      "v_texCoord.y < rpeRectMin.y || v_texCoord.y > rpeRectMax.y) gl_FragColor = vec4(0.0);\n"
+      "  else {\n"
+      "    rpeCoordinate = " + origin + " + (v_texCoord - rpeRectMin) / "
+      "(rpeRectMax - rpeRectMin) * " + size + ";\n"
+      "    rpeMain();\n"
+      "  }\n"
+      "}\n";
+}
+
 // The prpr vertex shader folds UVScale into the sampled coordinate.
 const char* kPrprVertex = R"(
 in vec2 aPosition;
 out vec2 uv;
+out vec2 v_texCoord;
+out vec4 v_fragmentColor;
 uniform vec2 UVScale;
 void main() {
   gl_Position = vec4(aPosition, 0.0, 1.0);
   uv = (aPosition * 0.5 + 0.5 - vec2(0.5)) * UVScale + vec2(0.5);
+  v_texCoord = uv;
+  v_fragmentColor = vec4(1.0);
 }
 )";
 
@@ -62,7 +121,7 @@ void setUniformArray(gl::ShaderProgram& program, const std::string& name,
 // Evaluates a prpr variable at the given time. Constant values return directly;
 // animated streams are interpolated between their surrounding keys.
 bool isActiveAt(const game::PrprEffect& effect, double chartTimeSec) {
-  return chartTimeSec >= effect.startTime && chartTimeSec <= effect.endTime;
+  return chartTimeSec >= effect.startTime && chartTimeSec < effect.endTime;
 }
 
 // Converts a stage rectangle given in top-left screen pixels into the scissor box the
@@ -300,6 +359,10 @@ gl::Texture* PrprChain::prepareVignetteNoise(const game::PrprEffect& effect, int
   auto& shader = vignetteNoise_.program();
   shader.use();
   shader.set1i("screenTexture", 0);
+  shader.set1i("u_texture", 0);
+  shader.set1i("u_texture_legacy", 0);
+  shader.set2f("rpeRectMin", 0.0F, 0.0F);
+  shader.set2f("rpeRectMax", 1.0F, 1.0F);
   shader.set2f("UVScale", 1.0F, 1.0F);
   const double noiseTimeSec = frozenNoiseClock_
       ? chartTimeSec + 3.0
@@ -404,6 +467,14 @@ void PrprChain::prepare(const std::filesystem::path& assetRoot,
         if (!bytes.empty()) source.assign(bytes.begin(), bytes.end());
       }
     }
+    if (source.empty() && key.front() != '/') {
+      const auto bytes = platform::AssetManager::readBinary(assetRoot_, "prpr_shaders/" + key + ".glsl");
+      if (!bytes.empty()) source.assign(bytes.begin(), bytes.end());
+    }
+    if (source.empty() && key.front() != '/') {
+      const auto bytes = platform::AssetManager::readBinary(assetRoot_, "prpr_shaders/pr/" + key + ".glsl");
+      if (!bytes.empty()) source.assign(bytes.begin(), bytes.end());
+    }
     // A key that is itself a shader file name is also tried directly against the presets,
     // which is how a chart can name "vignette.glsl" rather than the preset key "vignette".
     if (source.empty() && !key.empty() && key.front() != '/' &&
@@ -460,9 +531,14 @@ void PrprChain::applyPass(const game::PrprEffect& effect, Program& program, gl::
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, input->id());
   shader.set1i("screenTexture", 0);
+  shader.set1i("u_texture", 0);
+  shader.set1i("u_texture_legacy", 0);
+  shader.set2f("rpeRectMin", 0.0F, 0.0F);
+  shader.set2f("rpeRectMax", 1.0F, 1.0F);
   shader.set2f("UVScale", 1.0F, 1.0F);
   shader.set1f("time", static_cast<float>(chartTimeSec));
   shader.set2f("screenSize", static_cast<float>(input->width()), static_cast<float>(input->height()));
+  shader.set2f("resolution", static_cast<float>(input->width()), static_cast<float>(input->height()));
 
   // Auxiliary samplers used by the chapter-9 presets.
   if (glitchMap_ != nullptr) {
@@ -536,6 +612,10 @@ void PrprChain::applyPassScissored(const game::PrprEffect& effect, Program& prog
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, input->id());
   shader.set1i("screenTexture", 0);
+  shader.set1i("u_texture", 0);
+  shader.set1i("u_texture_legacy", 0);
+  shader.set2f("rpeRectMin", 0.0F, 0.0F);
+  shader.set2f("rpeRectMax", 1.0F, 1.0F);
   // The quad still covers the whole target; the scissor decides which fragments survive,
   // so the coordinates stay in the same 0..1 space as the full-frame passes.
   shader.set2f("UVScale", 1.0F, 1.0F);

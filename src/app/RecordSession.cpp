@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <iomanip>
 #include <sstream>
+#include <unordered_map>
 
 namespace rechigros::app {
 namespace {
@@ -756,6 +757,7 @@ void RecordSession::mixHitSounds(AppContext& context, std::vector<float>& mix,
   if (gain <= 0.0F) return;
   std::array<audio::AudioBuffer, 3> banks{recordingHitSound(context, game::NOTE_TAP),
       recordingHitSound(context, game::NOTE_DRAG), recordingHitSound(context, game::NOTE_FLICK)};
+  std::unordered_map<std::string, audio::AudioBuffer> customBanks;
   for (const auto* note : context.game.chart->allNotesSorted) {
     if (note == nullptr) continue;
     if (note->isFake) continue;
@@ -763,8 +765,13 @@ void RecordSession::mixHitSounds(AppContext& context, std::vector<float>& mix,
     const std::size_t bank = type == game::NOTE_DRAG    ? 1U
         : type == game::NOTE_FLICK                       ? 2U
                                                          : 0U;
-    const auto& sound = banks[bank];
-    if (sound.empty()) continue;
+    const audio::AudioBuffer* sound = &banks[bank];
+    if (!note->hitSound.empty()) {
+      auto [entry, inserted] = customBanks.try_emplace(note->hitSound);
+      if (inserted) entry->second = audio::Decoder::decodeFile(note->hitSound, kAudioSampleRate);
+      if (!entry->second.empty()) sound = &entry->second;
+    }
+    if (sound->empty()) continue;
     // The picture shows a note when the playhead reaches its chart time plus the offsets, and the
     // track advances at `speed`, so that playhead maps to this sample position. Omitting the
     // offsets would sound every hit before or after the note it belongs to whenever the player
@@ -774,8 +781,8 @@ void RecordSession::mixHitSounds(AppContext& context, std::vector<float>& mix,
         std::llround(std::max(0.0, playheadAtNote) / std::max(0.001, speed) * kAudioSampleRate));
     if (startFrame < 0 || startFrame >= totalFrames) continue;
     const auto available = totalFrames - startFrame;
-    const auto count = std::min<std::int64_t>(sound.frameCount(), available);
-    const float* samples = sound.data();
+    const auto count = std::min<std::int64_t>(sound->frameCount(), available);
+    const float* samples = sound->data();
     for (std::int64_t offset = 0; offset < count; ++offset) {
       const auto frame = static_cast<std::size_t>(startFrame + offset) * 2U;
       mix[frame] += samples[static_cast<std::size_t>(offset) * 2U] * gain;

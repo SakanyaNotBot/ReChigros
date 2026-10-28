@@ -79,11 +79,67 @@ bool declaresFragmentOutput(const std::string& source) {
   return false;
 }
 
+void replaceAllText(std::string& text, const std::string& from, const std::string& to) {
+  for (std::size_t position = 0; (position = text.find(from, position)) != std::string::npos;) {
+    text.replace(position, from.size(), to);
+    position += to.size();
+  }
+}
+
+std::string adaptLegacyEffect(std::string body) {
+  if (body.find("CC_Texture0") == std::string::npos &&
+      body.find("v_texCoord") == std::string::npos) return body;
+  const bool portable = body.find("uniform sampler2D screenTexture") != std::string::npos;
+  const std::string coordinate = portable ? "uv" : "v_texCoord";
+  const std::string origin = portable ? "vec2(0.0)" : "vec2(0.0, 0.0333)";
+  const std::string size = portable ? "vec2(1.0)" : "vec2(0.7031, 1.0 / 1.2)";
+  replaceAllText(body, "CC_Texture0", "u_texture");
+  replaceAllText(body, "screenTexture", "u_texture");
+  replaceAllText(body, "screenSize", "resolution");
+  replaceAllText(body, "uniform sampler2D u_texture;", "");
+  for (const std::string declaration : {
+      "varying vec2 " + coordinate + ";",
+      "varying highp vec2 " + coordinate + ";",
+      "varying mediump vec2 " + coordinate + ";",
+      "varying lowp vec2 " + coordinate + ";"}) {
+    replaceAllText(body, declaration, "");
+  }
+  replaceAllText(body, coordinate, "rpeCoordinate");
+  replaceAllText(body, "texture2DProj", "rpeSampleProj");
+  replaceAllText(body, "texture2D", "rpeSample");
+  body = replaceWord(body, "texture", "u_texture_legacy");
+  replaceAllText(body, "void main", "void rpeMain");
+  return "precision mediump float;\n"
+      "uniform sampler2D u_texture;\n"
+      "varying vec2 v_texCoord;\n"
+      "uniform vec2 rpeRectMin;\n"
+      "uniform vec2 rpeRectMax;\n"
+      "vec2 rpeCoordinate;\n"
+      "vec4 rpeSample(sampler2D source, vec2 coordinate) {\n"
+      "  vec2 local = (coordinate - " + origin + ") / " + size + ";\n"
+      "  if (local.x < 0.0 || local.x > 1.0 || local.y < 0.0 || local.y > 1.0) return vec4(0.0);\n"
+      "  return texture2D(source, mix(rpeRectMin, rpeRectMax, local));\n"
+      "}\n"
+      "vec4 rpeSampleProj(sampler2D source, vec4 coordinate) { return rpeSample(source, coordinate.xy / coordinate.w); }\n"
+      "vec4 rpeSampleProj(sampler2D source, vec3 coordinate) { return rpeSample(source, coordinate.xy / coordinate.z); }\n" +
+      body +
+      "\nvoid main() {\n"
+      "  if (v_texCoord.x < rpeRectMin.x || v_texCoord.x > rpeRectMax.x || "
+      "v_texCoord.y < rpeRectMin.y || v_texCoord.y > rpeRectMax.y) gl_FragColor = vec4(0.0);\n"
+      "  else {\n"
+      "    rpeCoordinate = " + origin + " + (v_texCoord - rpeRectMin) / "
+      "(rpeRectMax - rpeRectMin) * " + size + ";\n"
+      "    rpeMain();\n"
+      "  }\n"
+      "}\n";
+}
+
 } // namespace
 
 std::string prepareShaderSourceForLanguage(bool fragment, bool esProfile,
     const std::string& source) {
-  std::string body = replaceWord(source, "attribute", "in");
+  const std::string adapted = fragment ? adaptLegacyEffect(source) : source;
+  std::string body = replaceWord(adapted, "attribute", "in");
   body = replaceWord(body, "varying", fragment ? "in" : "out");
   body = replaceWord(body, "texture2D", "texture");
   body = replaceWord(body, "gl_FragColor", "fragmentColor");

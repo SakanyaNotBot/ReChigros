@@ -82,6 +82,10 @@ public:
   /// Queues one effect. `noteType` uses the note constants; hold notes reuse tap.
   /// Lock-free and allocation-free on the calling thread.
   void triggerSoundEffect(int noteType);
+  /// Loads one additional effect from the chart package. An empty path or a failed decode
+  /// leaves the ordinary type bank available as a fallback.
+  bool loadHitSound(const std::filesystem::path& path);
+  void triggerSoundEffect(int noteType, const std::string& hitSound);
 
   /// Interpolated music position in seconds, for animation timing.
   [[nodiscard]] double cursorSeconds() const;

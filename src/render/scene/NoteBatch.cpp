@@ -112,6 +112,58 @@ float evalControl(const game::JudgeLine& line, int type, float controlHeight) {
   return line.calcNoteControl(controlHeight, type, type == kControlSkew ? 0.0F : 1.0F);
 }
 
+struct LocalPlacement {
+  float controlHeight{};
+  float visualFp{};
+  float transYFp{};
+  float offsetX{};
+  float shear{};
+};
+
+LocalPlacement localPlacement(const game::Note& note, const game::JudgeLine& line,
+    const LineFrame& frame, const NotePassParams& params) {
+  const float stageAspect = params.stageWidth / params.stageHeight;
+  const double bpm = frame.bpm > 0.0 ? frame.bpm : 120.0;
+  const double speed = note.speed * static_cast<double>(params.scrollSpeed);
+  const float baseFp = static_cast<float>((note.floorPosition - frame.floorPosition) *
+      game::PGR_HEIGHT * (kBeatSeconds / bpm) * params.stageHeight * speed);
+  LocalPlacement placement;
+  placement.controlHeight = game::rpeControlHeightFromBasePx(baseFp, note.yOffset, speed,
+      stageAspect, params.stageHeight);
+  placement.transYFp = note.yOffset * params.stageHeight *
+      (params.officialFormat ? 1.0F : static_cast<float>(speed));
+  const float yControl = params.officialFormat || note.isHold
+      ? 1.0F : evalControl(line, kControlY, placement.controlHeight);
+  placement.visualFp = params.officialFormat
+      ? applyYControlScale(baseFp, yControl) + placement.transYFp
+      : applyYControlScale(baseFp + placement.transYFp, yControl);
+  placement.offsetX = note.positionX * game::PGR_WIDTH * params.stageWidth;
+  const float xControl = evalControl(line, kControlX, placement.controlHeight);
+  if (params.officialFormat) {
+    const float skewControl = evalControl(line, kControlSkew, placement.controlHeight);
+    const float inclineSin = combineInclineSinr(frame.inclineSinr, skewControl);
+    if (isFinite(inclineSin)) {
+      placement.offsetX *= game::calcInclineValue(inclineSin,
+          applyYControlScale(baseFp, yControl), placement.transYFp, stageAspect,
+          params.stageHeight);
+    }
+  } else if (isFinite(frame.inclineSinr) && !note.isHold) {
+    const double angle = std::asin(std::clamp(frame.inclineSinr, -1.0F, 1.0F));
+    const float shift = std::tan(note.positionX * (75.375F / 675.0F) *
+        static_cast<float>(angle));
+    placement.offsetX -= shift * placement.visualFp * (note.isAbove ? 1.0F : -1.0F);
+  }
+  if (isFinite(xControl) && xControl != 0.0F) placement.offsetX *= xControl;
+  if (!params.officialFormat && !note.isHold) {
+    const float skew = evalControl(line, kControlSkew, placement.controlHeight);
+    placement.shear = std::tan(note.positionX * 75.375F * skew * kPi / 180.0F);
+  }
+  if (note.isHold && note.sect < params.chartTimeSec && !params.officialFormat) {
+    placement.visualFp = placement.transYFp;
+  }
+  return placement;
+}
+
 void addQuadFlippable(batch::SpriteBatch& out, float centerX, float centerY, float width,
     float height, float rotationDeg, float red, float green, float blue, float alpha,
     float u0, float v0, float u1, float v1, bool flip) {
@@ -256,42 +308,15 @@ NoteHeadPose noteHeadPose(const game::Note& note, const LineFrame& frame,
   NoteHeadPose pose;
   if (!frame.valid || !frame.renderable || note.master == nullptr) return pose;
   if (!(params.stageWidth > 1.0e-6F) || !(params.stageHeight > 1.0e-6F)) return pose;
-  const auto& line = *note.master;
-  const float stageAspect = params.stageWidth / params.stageHeight;
-  const double bpm = frame.bpm > 0.0 ? frame.bpm : 120.0;
-  const double beatScale = static_cast<double>(game::PGR_HEIGHT) * (kBeatSeconds / bpm) *
-      static_cast<double>(params.stageHeight);
-  const bool above = note.isAbove;
-  const double speed = note.speed * static_cast<double>(params.scrollSpeed);
-  const double baseFpD = (note.floorPosition - frame.floorPosition) * beatScale * speed;
-  const auto baseFpPx = static_cast<float>(baseFpD);
-  const float transYPx = note.yOffset * params.stageHeight;
-  const float controlHeight = game::rpeControlHeightFromBasePx(baseFpPx, note.yOffset, speed, stageAspect,
-      params.stageHeight);
-  const float yControl = evalControl(line, kControlY, controlHeight);
-  const float baseFpWithControl = applyYControlScale(baseFpPx, yControl);
-  const float visualFp = baseFpWithControl + transYPx;
-
-  const float skewControl = evalControl(line, kControlSkew, controlHeight);
-  const float inclineSinr = combineInclineSinr(frame.inclineSinr, skewControl);
-  float inclineValue = 1.0F;
-  if (isFinite(inclineSinr)) {
-    inclineValue = game::calcInclineValue(inclineSinr, baseFpWithControl, transYPx, stageAspect,
-        params.stageHeight);
-  }
-  float offsetX = static_cast<float>(note.positionX * game::PGR_WIDTH * params.stageWidth);
-  const float xControl = evalControl(line, kControlX, controlHeight);
-  offsetX *= inclineValue;
-  if (isFinite(xControl) && xControl != 0.0F) offsetX *= xControl;
-
-  const float atX = frame.x + offsetX * frame.cosLine;
-  const float atY = frame.y + offsetX * frame.sinLine;
-  const float dirX = above ? frame.sinLine : -frame.sinLine;
-  const float dirY = above ? -frame.cosLine : frame.cosLine;
+  const auto& placement = localPlacement(note, *note.master, frame, params);
+  const float atX = frame.x + placement.offsetX * frame.cosLine;
+  const float atY = frame.y + placement.offsetX * frame.sinLine;
+  const float dirX = note.isAbove ? frame.sinLine : -frame.sinLine;
+  const float dirY = note.isAbove ? -frame.cosLine : frame.cosLine;
   pose.valid = true;
-  pose.x = atX + visualFp * dirX;
-  pose.y = atY + visualFp * dirY;
-  pose.rotationDeg = frame.rotateDeg + (above ? 0.0F : 180.0F);
+  pose.x = atX + placement.visualFp * dirX;
+  pose.y = atY + placement.visualFp * dirY;
+  pose.rotationDeg = frame.rotateDeg + (note.isAbove ? 0.0F : 180.0F);
   return pose;
 }
 
@@ -351,7 +376,8 @@ void buildHeadBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
       const double speed = note.speed * static_cast<double>(params.scrollSpeed);
       const double baseFpD = (note.floorPosition - frame.floorPosition) * beatScale * speed;
       const auto baseFpPx = static_cast<float>(baseFpD);
-      const float transYPx = note.yOffset * params.stageHeight;
+      const float transYPx = note.yOffset * params.stageHeight *
+          (params.officialFormat ? 1.0F : static_cast<float>(speed));
       // Without a y control curve and a per-note y offset the position used by the final cull
       // is exactly the cheap floor offset, so notes clearly outside the visible range can be
       // rejected before evaluating the control curves. Revealed hidden notes are the only
@@ -364,9 +390,12 @@ void buildHeadBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
       }
       const float controlHeight =
           game::rpeControlHeightFromBasePx(baseFpPx, note.yOffset, speed, stageAspect, params.stageHeight);
-      const float yControl = evalControl(line, kControlY, controlHeight);
+      const float yControl = params.officialFormat || note.isHold
+          ? 1.0F : evalControl(line, kControlY, controlHeight);
       const float baseFpWithControl = applyYControlScale(baseFpPx, yControl);
-      const float visualFp = baseFpWithControl + transYPx;
+      const float visualFp = params.officialFormat
+          ? baseFpWithControl + transYPx
+          : applyYControlScale(baseFpPx + transYPx, yControl);
 
       if (!lineHiddenNote && params.officialFormat && note.sect > params.chartTimeSec &&
           visualFp < -0.001F) {
@@ -436,7 +465,7 @@ void buildHeadBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
       const float skewControl = evalControl(line, kControlSkew, controlHeight);
       const float inclineSinr = combineInclineSinr(frame.inclineSinr, skewControl);
       float inclineValue = 1.0F;
-      if (isFinite(inclineSinr)) {
+      if (params.officialFormat && isFinite(inclineSinr)) {
         inclineValue =
             game::calcInclineValue(inclineSinr, baseFpWithControl, transYPx, stageAspect, params.stageHeight);
       }
@@ -451,7 +480,7 @@ void buildHeadBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
 
       float offsetX = static_cast<float>(note.positionX * game::PGR_WIDTH * params.stageWidth);
       const float xControl = evalControl(line, kControlX, controlHeight);
-      offsetX *= inclineValue;
+      if (params.officialFormat) offsetX *= inclineValue;
       if (isFinite(xControl) && xControl != 0.0F) offsetX *= xControl;
       const float noteAtX = frame.x + offsetX * frame.cosLine;
       const float noteAtY = frame.y + offsetX * frame.sinLine;
@@ -463,14 +492,18 @@ void buildHeadBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
       const float headX = noteAtX + visualFp * dirX;
       const float headY = noteAtY + visualFp * dirY;
       const float drawRotation = frame.rotateDeg + (above ? 0.0F : 180.0F);
-      if (!isNoteRectInArea(headX, headY, std::abs(noteWidth), std::abs(noteHeight), drawRotation,
-              params.cullBounds)) {
+      const float shear = params.officialFormat
+          ? 0.0F : std::tan(note.positionX * 75.375F * skewControl * kPi / 180.0F);
+      if (!isNoteRectInArea(headX, headY,
+              std::abs(noteWidth) + std::abs(noteHeight * shear), std::abs(noteHeight),
+              drawRotation, params.cullBounds)) {
         continue;
       }
-      addQuadFlippable(out, headX, headY, noteWidth, noteHeight, drawRotation,
+      float u0 = params.flipU ? 1.0F : 0.0F;
+      const float u1 = params.flipU ? 0.0F : 1.0F;
+      out.addQuadSheared(headX, headY, noteWidth, noteHeight, drawRotation, shear,
           tintComponent(note.hasTint, note.tintR), tintComponent(note.hasTint, note.tintG),
-          tintComponent(note.hasTint, note.tintB), noteAlpha, 0.0F, 0.0F, 1.0F, 1.0F,
-          params.flipU);
+          tintComponent(note.hasTint, note.tintB), noteAlpha, u0, 0.0F, u1, 1.0F);
     }
   }
 }
@@ -537,7 +570,8 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
       const double speedForBody = speed;
       const double baseFpD = (note.floorPosition - frame.floorPosition) * beatScale * speed;
       const auto baseFpPx = static_cast<float>(baseFpD);
-      const float transYPx = note.yOffset * params.stageHeight;
+      const float transYPx = note.yOffset * params.stageHeight *
+          (params.officialFormat ? 1.0F : static_cast<float>(speed));
       // Same fast cull as the head pass: with no y control curve and no y offset the head and
       // tail positions are plain floor offsets, so a hold entirely outside the visible range
       // can be rejected before evaluating the control curves or the collapse animation.
@@ -562,9 +596,12 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
       }
       const float controlHeight =
           game::rpeControlHeightFromBasePx(baseFpPx, note.yOffset, speed, stageAspect, params.stageHeight);
-      const float yControl = evalControl(line, kControlY, controlHeight);
+      const float yControl = params.officialFormat || note.isHold
+          ? 1.0F : evalControl(line, kControlY, controlHeight);
       const float baseFpWithControl = applyYControlScale(baseFpPx, yControl);
-      const float visualFp = baseFpWithControl + transYPx;
+      const float visualFp = params.officialFormat
+          ? baseFpWithControl + transYPx
+          : applyYControlScale(baseFpPx + transYPx, yControl);
       const float signedLength = applyYControlScale(
           static_cast<float>(note.holdLength * params.stageHeight * speedForBody), yControl);
       float tailVisualFp = visualFp + signedLength;
@@ -589,7 +626,7 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
             (frame.alphaRaw < 0.0F && noteAlpha <= 0.0F)) {
           if (reveal) revealHidden = true;
         }
-        if (note.speed == 0.0) {
+        if (params.officialFormat && note.speed == 0.0) {
           noteAlpha = 0.0F;
           if (reveal) revealHidden = true;
         }
@@ -688,7 +725,7 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
       const float skewControl = evalControl(line, kControlSkew, controlHeight);
       const float inclineSinr = combineInclineSinr(frame.inclineSinr, skewControl);
       float inclineValue = 1.0F;
-      if (isFinite(inclineSinr)) {
+      if (params.officialFormat && isFinite(inclineSinr)) {
         inclineValue =
             game::calcInclineValue(inclineSinr, baseFpWithControl, transYPx, stageAspect, params.stageHeight);
       }
@@ -708,7 +745,7 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
 
       if (frame.cover && note.sect > params.chartTimeSec && visualFp < 0.0F) continue;
 
-      if (!headPassedLine && drawTailFp < drawHeadFp) {
+      if (params.officialFormat && !headPassedLine && drawTailFp < drawHeadFp) {
         if (drawHeadFp >= 0.0F && drawTailFp < 0.0F) {
           drawTailFp = 0.0F;
         } else if (drawHeadFp <= 0.0F && drawTailFp > 0.0F) {
@@ -716,14 +753,14 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
         }
       }
       const float unclampedTailFp = drawTailFp;
-      if (headPassedLine && drawTailFp < drawHeadFp) {
+      if (params.officialFormat && headPassedLine && drawTailFp < drawHeadFp) {
         drawTailFp = std::max(drawTailFp, 0.0F);
       }
-      const bool hideKeptHeadDuringTailClamp =
+      const bool hideKeptHeadDuringTailClamp = params.officialFormat &&
           note.clicked && headPassedLine && unclampedTailFp < drawHeadFp;
-      const bool tailClampedToJudgeLine =
+      const bool tailClampedToJudgeLine = params.officialFormat &&
           headPassedLine && unclampedTailFp < 0.0F && drawTailFp == 0.0F;
-      const bool reverseHoldLocked =
+      const bool reverseHoldLocked = params.officialFormat &&
           headPassedLine && speed < 0.0 && drawTailFp >= drawHeadFp && !tailClampedToJudgeLine;
       if (reverseHoldLocked) continue;
 
@@ -761,10 +798,14 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
         bodyStartFp = visualFp + bodyHeadAdjust;
         bodyEndFp = drawTailFp;
       }
-      const bool isReverseHold = headPassedLine && (drawTailFp < drawHeadFp);
+      const bool isReverseHold = params.officialFormat && headPassedLine &&
+          (drawTailFp < drawHeadFp);
       float drawStartFp;
       float drawEndFp;
-      if (isReverseHold) {
+      if (!params.officialFormat) {
+        drawStartFp = std::min(bodyStartFp, bodyEndFp);
+        drawEndFp = std::max(bodyStartFp, bodyEndFp);
+      } else if (isReverseHold) {
         drawStartFp = std::min(bodyStartFp, bodyEndFp);
         drawEndFp = std::max(bodyStartFp, bodyEndFp);
         drawEndFp = std::min(drawEndFp, 0.0F);
@@ -798,7 +839,8 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
       const float tailOffset = holdCompact ? tailHeight * 0.5F : tailHeight;
       float tailTipFp = drawTailFp + tailOffset;
       const float tailClamp = std::abs(tailOffset);
-      if (!isReverseHold) {
+      if (!params.officialFormat) {
+      } else if (!isReverseHold) {
         if (tailTipFp < tailClamp) tailTipFp = tailClamp;
       } else if (tailTipFp > -tailClamp) {
         tailTipFp = -tailClamp;

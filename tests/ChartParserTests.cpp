@@ -5,6 +5,7 @@
 #include "rechigros/chart/PlainChartParser.hpp"
 #include "rechigros/game/EventUtils.hpp"
 #include "rechigros/game/GameConstants.hpp"
+#include "rechigros/game/RpeTrajectory.hpp"
 
 #include <cmath>
 #include <cstdlib>
@@ -985,6 +986,127 @@ int main() {
           "the source is keyed by the authored shader name");
     }
     std::filesystem::remove_all(packDir, ignored);
+  }
+
+  // --- editor note controls, signed hold geometry and resources ----------------
+  {
+    const auto chart = rechigros::chart::RpeChartParser::parse(std::string_view{R"json(
+    {"META":{"RPEVersion":163},"BPMList":[{"bpm":120,"startTime":[0,0,1]}],
+     "judgeLineList":[
+       {"father":-1,"eventLayers":[{"rotateEvents":[{"startTime":[0,0,1],"endTime":[1,0,1],"start":45,"end":45}]}]},
+       {"father":0,"rotateWithFather":false,"skewControl":[{"x":0,"skew":0.5,"easing":1},{"x":900,"skew":0.5,"easing":1}],
+        "notes":[
+          {"type":2,"startTime":[2,0,1],"endTime":[1,0,1],"speed":1,"hitsound":"audio/cue.ogg"},
+          {"type":2,"startTime":[4,0,1],"endTime":[5,0,1],"speed":-2}
+        ]}
+     ]})json"}, "pack");
+    require(chart.judgeLineList[0]->notes.empty(), "the parent fixture has no notes");
+    require(chart.judgeLineList[1]->notes.size() == 2, "the child fixture owns both holds");
+    require(close(chart.judgeLineList[0]->fillState(0.0, 16.0F / 9.0F).rotateDeg, 45.0),
+        "RPE parent line rotation");
+    require(!chart.judgeLineList[1]->rotateWithFather,
+        "an explicit rotateWithFather=false is preserved");
+    require(close(chart.judgeLineList[1]->calcNoteControl(0.0, JudgeLine::NOTE_CTRL_SKEW, 0.0), 0.5),
+        "skewControl reads the skew property");
+    require(close(chart.judgeLineList[1]->notes[0].holdTime, -32.0),
+        "a negative hold keeps its signed duration");
+    require(chart.judgeLineList[1]->notes[0].holdLength < 0.0,
+        "a negative hold keeps a negative floor length");
+    require(chart.judgeLineList[1]->notes[1].holdLength < 0.0,
+        "a negative speed gives a negative floor length");
+    require(chart.judgeLineList[1]->notes[0].hitSound == "pack/audio/cue.ogg",
+        "a custom hit sound resolves against the chart directory");
+
+    const auto inherited = rechigros::chart::RpeChartParser::parse(std::string_view{R"json(
+    {"META":{"RPEVersion":163},"BPMList":[{"bpm":120,"startTime":[0,0,1]}],
+     "judgeLineList":[{"father":-1,"eventLayers":[{"rotateEvents":[{"startTime":[0,0,1],"endTime":[1,0,1],"start":45,"end":45}]}]},{"father":0}]})json"});
+    require(inherited.judgeLineList[1]->rotateWithFather,
+        "version 163 inherits the parent rotation by default");
+    require(close(inherited.judgeLineList[1]->fillState(0.0, 16.0F / 9.0F).rotateDeg, 45.0),
+        "the inherited parent rotation reaches line state");
+  }
+
+  // --- trajectory sampling ---------------------------------------------------
+  {
+    RpeTrajectoryOptions options;
+    options.tangentRotation = true;
+    RpeTrajectory trajectory(options);
+    const auto point = trajectory.sample(0.25);
+    require(std::abs(point.x) < 1e-8 && close(point.y, 200.0, 1e-8),
+        "a parametric circle evaluates both axes");
+    require(close(point.rotation, -180.0, 1e-7), "a tangent has the authored sign");
+    RpeTrajectoryOptions polarOptions;
+    polarOptions.mode = "polar";
+    polarOptions.radiusExpression = "100";
+    RpeTrajectory polar(polarOptions);
+    const auto polarPoint = polar.sample(0.25);
+    require(std::abs(polarPoint.x) < 1e-8 && close(polarPoint.y, 100.0, 1e-8),
+        "a polar circle evaluates radius and angle");
+    options.shape = "random-polygon";
+    options.randomness = 0.5;
+    options.parameters["points"] = 7.0;
+    RpeTrajectory randomA(options), randomB(options);
+    require(close(randomA.sample(0.37).x, randomB.sample(0.37).x, 1e-12)
+        && close(randomA.sample(0.37).y, randomB.sample(0.37).y, 1e-12),
+        "a seeded trajectory is reproducible");
+    options.seed = 2.0;
+    RpeTrajectory otherSeed(options);
+    require(std::abs(randomA.sample(0.37).x - otherSeed.sample(0.37).x) > 1e-5,
+        "the seed changes the random trajectory");
+
+    const auto chart = rechigros::chart::RpeChartParser::parse(std::string_view{R"json(
+    {"META":{"RPEVersion":210},"BPMList":[{"bpm":120,"startTime":[0,0,1]}],
+     "judgeLineList":[{"eventLayers":[{"moveXEvents":[{
+       "startTime":[0,0,1],"endTime":[1,0,1],"start":0,"end":0,
+       "trajectory":{"version":1,"options":{"tangentRotation":true}}
+     }],"alphaEvents":[{"startTime":[0,0,1],"endTime":[1,0,1],"start":255,"end":255}]}]}]})json"});
+    const auto state = chart.judgeLineList[0]->fillState(0.125, 16.0F / 9.0F);
+    require(close(state.xNorm, 0.5) && close(state.yNorm, 0.5 - 200.0 / 900.0, 1e-5)
+        && close(state.rotateDeg, -180.0, 1e-5),
+        "one trajectory drives line X, Y and rotation");
+  }
+
+  // --- independent noise areas ----------------------------------------------
+  {
+    const auto chart = rechigros::chart::RpeChartParser::parse(std::string_view{R"json(
+    {"META":{"RPEVersion":220},"BPMList":[{"bpm":120,"startTime":[0,0,1]}],
+     "blockAreaList":[{
+       "Name":"zone","bottomLeft":{"x":100,"y":-100},"topRight":{"x":-100,"y":100},
+       "appearTime":[0,0,1],"disappearTime":[2,0,1],"isInvert":false,
+       "activeIntervals":[{"startTime":[0,1,2],"endTime":[1,1,2],"readyFlash":0.25}],
+       "rotateEvents":[{"startTime":[0,0,1],"endTime":[1,0,1],"start":0,"end":90,"easingType":1}]
+     }],
+     "noiseAreaLayers":[{"id":"default","name":"base","skin":"shader/test",
+       "parameters":{"strength":[0.5,0.25],"rate":1.5}}],
+     "noiseAreaOptions":{"ignoreTripleInversion":true},
+     "globalEvents":{"version":1,"types":{"rpen/example":{"name":"Example","events":[]}}},
+     "judgeLineList":[]})json"});
+    require(chart.rpeNoiseAreas.size() == 1, "RPE noise area is parsed");
+    require(chart.rpeNoiseLayers.size() == 1 && chart.rpeNoiseLayers[0].skin == "shader/test",
+        "RPE noise skin layer is parsed");
+    require(chart.rpeNoiseLayers[0].parameters.at("strength").size() == 2
+        && close(chart.rpeNoiseLayers[0].parameters.at("rate")[0], 1.5),
+        "RPE noise parameters keep scalar and vector values");
+    require(chart.rpeNoiseIgnoreTripleInversion,
+        "the noise inversion option is preserved");
+    require(chart.rpeGlobalEventsJson.find("rpen/example") != std::string::npos,
+        "unknown global event definitions are preserved instead of discarded");
+    const auto& area = chart.rpeNoiseAreas.front();
+    require(close(area.left, -100.0) && close(area.right, 100.0),
+        "noise corners are normalised");
+    require(area.intervals.size() == 1 && close(area.intervals[0].start, 0.25)
+        && close(area.intervals[0].end, 0.75) && close(area.intervals[0].readyFlash, 0.25),
+        "noise activation interval keeps its clamped span and ready flash");
+    RpeNoiseRuntime runtime(area);
+    require(runtime.sample(0.1).state == RpeNoiseState::Ready,
+        "noise ready flash starts before activation");
+    const auto active = runtime.sample(0.5);
+    require(active.state == RpeNoiseState::Active && close(active.alpha, 0.667),
+        "noise activation raises its alpha");
+    require(close(active.points[0].x, -100.0, 1e-5) && close(active.points[0].y, 100.0, 1e-5),
+        "noise rotation transforms the corners around the area centre");
+    require(runtime.sample(1.0).state == RpeNoiseState::HiddenAfter,
+        "noise disappears at its lifetime end");
   }
 
   std::cout << "All ReChigros chart parser tests passed\n";

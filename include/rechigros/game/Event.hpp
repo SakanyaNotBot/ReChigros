@@ -1,5 +1,7 @@
 #pragma once
 
+#include "rechigros/game/RpeTrajectory.hpp"
+
 #include <array>
 #include <limits>
 #include <string>
@@ -23,6 +25,9 @@ struct LineEvent : EasingSpec {
   double endTime{0.0};
   double start{0.0};
   double end{0.0};
+  std::shared_ptr<RpeTrajectory> trajectory;
+  int trajectoryAxis{};
+  double trajectoryScale{1.0};
 };
 
 struct MoveEvent : EasingSpec {

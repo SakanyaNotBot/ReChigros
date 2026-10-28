@@ -19,11 +19,13 @@ in vec2 aRotation;
 in vec4 aUvRect;
 in vec4 aColor;
 in float aTextureSelect;
+in float aShear;
 out vec2 vUv;
 out vec4 vColor;
 out float vTextureSelect;
 void main() {
   vec2 scaled = aCorner * aCenterSize.zw;
+  scaled.x += scaled.y * aShear;
   vec2 position = aCenterSize.xy + vec2(
       scaled.x * aRotation.x - scaled.y * aRotation.y,
       scaled.x * aRotation.y + scaled.y * aRotation.x);
@@ -146,6 +148,13 @@ bool SpriteBatch::ensureBuffers() noexcept {
         offset(14 * sizeof(float)));
     glVertexAttribDivisor(static_cast<GLuint>(textureSelect), 1U);
   }
+  const int shear = program_->attribute("aShear");
+  if (shear >= 0) {
+    glEnableVertexAttribArray(static_cast<GLuint>(shear));
+    glVertexAttribPointer(static_cast<GLuint>(shear), 1, GL_FLOAT, GL_FALSE, stride,
+        offset(15 * sizeof(float)));
+    glVertexAttribDivisor(static_cast<GLuint>(shear), 1U);
+  }
 
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -211,6 +220,16 @@ bool SpriteBatch::addQuad(float centerX, float centerY, float width, float heigh
     float u0, float v0, float u1, float v1) {
   return addQuadSelect(centerX, centerY, width, height, rotationDeg, red, green, blue, alpha,
       u0, v0, u1, v1, 0.0F);
+}
+
+bool SpriteBatch::addQuadSheared(float centerX, float centerY, float width, float height,
+    float rotationDeg, float shear, float red, float green, float blue, float alpha,
+    float u0, float v0, float u1, float v1) {
+  const int previousCount = count_;
+  if (!addQuad(centerX, centerY, width, height, rotationDeg, red, green, blue, alpha,
+      u0, v0, u1, v1)) return false;
+  if (count_ > previousCount && std::isfinite(shear)) buffer_[count_ - 1].shear = shear;
+  return true;
 }
 
 bool SpriteBatch::addQuadAnchored(float x, float y, float width, float height, float rotationDeg,

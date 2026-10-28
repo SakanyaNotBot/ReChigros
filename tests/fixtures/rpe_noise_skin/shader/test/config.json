@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "targets": {
+    "masked": {"format": "rgba8", "filter": "linear", "scaleX": 0.5, "scaleY": 0.5, "noClear": false}
+  },
+  "passes": [
+    {"shader": "main.glsl", "output": "masked"},
+    {"shader": "second.glsl", "output": "$screen", "inputs": {"maskedTexture": "masked"},
+     "constants": {"gain": 1.0}}
+  ]
+}

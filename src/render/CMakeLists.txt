@@ -25,6 +25,7 @@ add_library(rechigros_render STATIC
   fx/KaleidoBackdropPass.cpp
   fx/PauseBackdropPass.cpp
   fx/PrprChain.cpp
+  fx/RpeNoisePass.cpp
   scene/BackgroundBlur.cpp
   scene/PauseHudBlur.cpp
   scene/StageLayout.cpp

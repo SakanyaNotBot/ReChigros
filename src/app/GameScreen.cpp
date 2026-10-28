@@ -1600,6 +1600,9 @@ bool beginRun(AppContext& context, std::unique_ptr<game::Chart> chart,
     context.audio->setPlaybackSpeed(game.musicSpeed);
     context.audio->setMusicVolume(context.settings.musicVolume);
     context.audio->setSoundEffectVolume(context.settings.soundEffectVolume);
+    for (const auto* note : game.chart->allNotesSorted) {
+      if (!note->hitSound.empty()) context.audio->loadHitSound(note->hitSound);
+    }
     // A run started through the loading screen already has its music decoded, so the frame
     // that starts it only swaps the buffer in. The synchronous path still decodes here.
     const bool musicReady = decodedMusic != nullptr
@@ -1954,8 +1957,8 @@ void gameUpdate(AppContext& context, float frameDeltaSec) {
   // so replay playback observes the same timing a live player did.
   dispatchRecordedTouches(context);
   game.session.update(game.chartTimeSec, delta);
-  for (const int type : game.session.takeSoundEvents()) {
-    if (context.audio != nullptr) context.audio->triggerSoundEffect(type);
+  for (const auto& event : game.session.takeDetailedSoundEvents()) {
+    if (context.audio != nullptr) context.audio->triggerSoundEffect(event.type, event.hitSound);
   }
   // The audio duck and the level-mod latch were already driven by the session during the update
   // above; the challenge counter still depends on this frame's judgement.

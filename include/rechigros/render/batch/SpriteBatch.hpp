@@ -29,8 +29,9 @@ struct SpriteInstance {
   float alpha{1.0F};
   // 0 selects the primary sampler, 1 the body sampler.
   float textureSelect{0.0F};
+  float shear{};
 };
-static_assert(sizeof(SpriteInstance) == 15 * sizeof(float), "instance layout must stay packed");
+static_assert(sizeof(SpriteInstance) == 16 * sizeof(float), "instance layout must stay packed");
 
 // Upper bound on sprites buffered between two flushes.
 inline constexpr int MAX_BATCH_SPRITES = 131072;
@@ -51,6 +52,11 @@ public:
   // Returns false when the batch is full and the caller must flush.
   bool addQuad(float centerX, float centerY, float width, float height, float rotationDeg,
       float red, float green, float blue, float alpha,
+      float u0, float v0, float u1, float v1);
+
+  // Shears along local X before rotating the quad; its centre stays fixed.
+  bool addQuadSheared(float centerX, float centerY, float width, float height,
+      float rotationDeg, float shear, float red, float green, float blue, float alpha,
       float u0, float v0, float u1, float v1);
 
   // Same as addQuad but with an explicit body-sampler selector.

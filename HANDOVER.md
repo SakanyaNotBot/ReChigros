@@ -2044,3 +2044,38 @@ build/desktop-release/src/render/rechigros_render_smoke.exe \
 **61/61**（`message-final-build.log`、`message-final-selftest.log`）。参考设备录制没有
 完成有效同刻对照，因此不声称设备端逐帧匹配；本轮证据来自完整参考函数和桌面真实出帧。
 
+### 6. RPE 渲染特性扩展
+
+完整逐项清单、源码行号和未测边界见 `docs/parity/rpe-features.md`。本轮完成的实际路径：
+
+- **音符语义**：负 Hold 时长不再钳零，负流速保留符号；`yOffset` 在非官方格式按
+  `offset * stageHeight * speed` 进入头尾位置，激活 Hold 固定到该偏移；`skewControl`
+  改为顶点剪切，角度使用原始 `positionX × skew`，Hold 不剪切；`sizeControl/yControl`
+  不再错误套到 Hold；父线旋转默认在 version ≥163 继承。
+- **轨迹**：新增 `RpeTrajectory`，实现参数/极坐标、X/Y 独立缓动、裁剪、缩放、旋转、
+  clamp/lerp/ease 表达式、切线解卷绕、star/random-polygon、seed 确定性。一个 moveX
+  轨迹同时生成 X、Y 和旋转事件，分别映射到 `/1350`、`/900` 和角度。
+- **独立噪域**：新增 `RpeNoiseArea`/`RpeNoiseRuntime` 与 `fx::RpeNoisePass`。生命周期、
+  readyFlash、激活区间、普通/反转覆盖、累计锚点旋转缩放、move、layer 与参数均独立于
+  官方红区。mask 使用 active/disabled/ready × normal/invert 六位；默认材质页面颜色为
+  `(160,80,80)`、边缘 `(255,84,84)`。两 Pass 皮肤 fixture 的 `masked` 命名目标被第二
+  Pass 采样，中心实测 `(25,229,76)`。
+- **shader 图**：`RpeChartParser` 合并根 `effects`、`shaderEvents`、`META.effects` 和
+  `paintEvents`，保留 order/line/global 与 vec2/vec4 时间线；`PrprChain` 增加 RPE
+  `CC_Texture0`/`v_texCoord`/`rpeSample` 兼容层。50 个内置名称均实际进入链，fixture
+  共 **51 个 effect（含 paintEvents）/ 0 编译失败**；GLSL ES 静态检查 **88/88 PASS**。
+- **自定义打击音**：Note 保存包内 hitsound 路径；实时事件和离线音轨使用独立解码缓冲，
+  解码失败回退类型音。1200Hz fixture 的产物首音实测 **1200.0 Hz / peak 22998**。
+- **全局扩展**：`globalEvents` 原始定义与值保存在 `Chart::rpeGlobalEventsJson`，未知类型
+  不丢弃。参考当前只有注册和占位类型，没有可复制的画面映射，不能凭空造 shader/几何效果。
+
+**门禁与设备**：桌面 ctest **8/8**、自检 **61/61**、渲染矩阵 **27/27**、应用循环
+**13 项**、字体 **245** 字符、GLSL ES **88/88**。Android Release 构建成功（30.1 MB），
+安装 `lastUpdateTime=2026-10-28 19:08:55`。蓝叠 2400×1080 上默认噪域中心
+`(154,74,73)`、边缘 `(255,84,84)`；两 Pass 皮肤中心 `(25,229,76)`。
+
+**未验证边界**：上述 shader 编译和噪域/皮肤是桌面 fixture 与蓝叠软件 GL；真实 RPE 整曲、
+真机驱动的多 Pass/低性能分支、`noClear` 与暂停/回退组合、单通道输出、外部纹理尚未逐项
+截图。RPE 音符的 yOffset/skew/负 Hold 有解析与数学断言，尚未与真实 RPE 整曲逐帧对齐。
+全局事件只保留原始定义；参考没有可复制的具体画面映射。
+

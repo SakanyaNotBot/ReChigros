@@ -29,6 +29,7 @@
 #include "rechigros/render/scene/BackgroundBlur.hpp"
 #include "rechigros/render/scene/PauseHudBlur.hpp"
 #include "rechigros/render/fx/PrprChain.hpp"
+#include "rechigros/render/fx/RpeNoisePass.hpp"
 #include "rechigros/render/math/Mat4.hpp"
 #include "rechigros/render/scene/HudPass.hpp"
 #include "rechigros/render/scene/LinePass.hpp"
@@ -108,6 +109,7 @@ struct GameRenderer::Impl {
   pauseHudBlur.release();
     dsGrid.release();
     kaleido.release();
+    rpeNoise.release();
     sceneFbo.reset();
     blockResultFbo.reset();
     pingFbo.reset();
@@ -212,6 +214,7 @@ struct GameRenderer::Impl {
   double blockUpdateLastSec{};
   fx::DsGridPass dsGrid;
   fx::KaleidoBackdropPass kaleido;
+  fx::RpeNoisePass rpeNoise;
   gl::Texture messageCubeTexture;
   gl::Texture* kaleidoNormal{};
   gl::Texture* kaleidoColour{};
@@ -575,6 +578,8 @@ void GameRenderer::Impl::prepareForChart(game::Chart* chart) {
     chain.prepare(assets, chart->prprShaderSources, chart->prprEffects);
   }
   chain.setAuxTextures(effectGlitchMap, effectGlitchDogMap, effectWireNoise, effectDisplaceMap);
+  rpeNoise.prepare(chart->packDir, chart->rpeNoiseLayers);
+  rpeNoise.resize(width, height);
   scene::buildLineDrawOrder(*chart, lineDrawOrder);
 }
 
@@ -1372,6 +1377,7 @@ void GameRenderer::resize(int width, int height) noexcept {
   impl_->aaFbo.resize(impl_->width, impl_->height);
   impl_->halfResFbo.resize(std::max(1, impl_->width / 2), std::max(1, impl_->height / 2));
   impl_->blockComposite.resize(impl_->width, impl_->height);
+  impl_->rpeNoise.resize(impl_->width, impl_->height);
   impl_->backgroundBlur.invalidate();
   // Allocate the pause backdrop's pyramid and its soft HUD target alongside the other frame
   // targets. Deferring them to the first pause makes that frame stall while the driver
@@ -1618,8 +1624,15 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
   // shader chain can process the whole play field. Zone composite precedes those effects;
   // the low-resolution fallback and direct scene follow, with antialias around the paths
   // that resolve through FXAA.
-  const bool useEffects = applyEffects && !input.disableChartShader && chart != nullptr &&
-      !chart->prprEffects.empty() && sceneFbo.valid();
+  const bool anyRpeNoiseVisible = applyEffects && chart != nullptr &&
+      !chart->rpeNoiseAreas.empty() && input.chartTimeSec >= 0.0 &&
+      std::any_of(chart->rpeNoiseAreas.begin(), chart->rpeNoiseAreas.end(),
+          [&](const game::RpeNoiseArea& area) {
+            return input.chartTimeSec >= area.appear && input.chartTimeSec < area.disappear;
+          });
+  const bool useRpeNoise = anyRpeNoiseVisible && rpeNoise.ready() && sceneFbo.valid();
+  const bool useEffects = applyEffects && chart != nullptr && sceneFbo.valid() &&
+      ((!input.disableChartShader && !chart->prprEffects.empty()) || useRpeNoise);
   const bool useLowRes = input.lowResolutionMode && !useEffects && !useBlockComposite &&
       halfResFbo.valid();
   // The pause overlay is resolved through the antialias pass while it is up.
@@ -1883,11 +1896,27 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
     //   2. global effects over the whole frame, with the HUD composited in first because a
     //      global pass is meant to affect the HUD too.
     // A chart with no global effect therefore leaves the HUD unshaded.
-    const bool hasGlobal = std::any_of(chart->prprEffects.begin(), chart->prprEffects.end(),
+    const bool hasGlobal = !input.disableChartShader && std::any_of(
+        chart->prprEffects.begin(), chart->prprEffects.end(),
         [](const game::PrprEffect& effect) { return effect.global; });
-    gl::Texture* result = applyStageScopedChain(*chart, &sceneFbo.color(),
-        sceneLayout.stage, input.chartTimeSec);
+    gl::Texture* result = !input.disableChartShader
+        ? applyStageScopedChain(*chart, &sceneFbo.color(), sceneLayout.stage, input.chartTimeSec)
+        : &sceneFbo.color();
     bool hudShaded = false;
+    const auto compositeRpeNoise = [&](gl::Texture* source) {
+      if (!useRpeNoise || source == nullptr) return source;
+      gl::Texture* composited = rpeNoise.draw(*source, chart->rpeNoiseAreas,
+          chart->rpeNoiseLayers, input.chartTimeSec, sceneLayout.stage.x, sceneLayout.stage.y,
+          sceneLayout.stage.width, sceneLayout.stage.height);
+      if (composited == nullptr || composited->id() == source->id()) return source;
+      glBindFramebuffer(GL_FRAMEBUFFER, sceneFbo.fbo());
+      glViewport(0, 0, width, height);
+      glDisable(GL_BLEND);
+      fx::BlitPass::instance().ensure();
+      fx::BlitPass::instance().draw(*composited, 1.0F, 1.0F, 1.0F, 1.0F, false);
+      bindDefaultBlend();
+      return &sceneFbo.color();
+    };
     if (hasGlobal) {
       // The HUD belongs to the frame a global pass processes; draw it into the scene before
       // handing the frame to the chain.
@@ -1900,10 +1929,24 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
         bindDefaultBlend();
       }
       if (hudVisible) drawHudPass(input, layout, chart, judgement);
+      result = compositeRpeNoise(&sceneFbo.color());
       result = chain.apply(collectGlobalEffects(*chart), &sceneFbo.color(), pingFbo, pongFbo,
           input.chartTimeSec);
       hudShaded = hudVisible;
       gl::logErrors("scene.effectChainGlobal");
+    } else if (useRpeNoise) {
+      glBindFramebuffer(GL_FRAMEBUFFER, sceneFbo.fbo());
+      glViewport(0, 0, width, height);
+      if (result != nullptr && result->id() != sceneFbo.color().id()) {
+        glDisable(GL_BLEND);
+        fx::BlitPass::instance().ensure();
+        fx::BlitPass::instance().draw(*result, 1.0F, 1.0F, 1.0F, 1.0F, false);
+        bindDefaultBlend();
+      }
+      if (hudVisible) drawHudPass(input, layout, chart, judgement);
+      hudShaded = hudVisible;
+      result = compositeRpeNoise(&sceneFbo.color());
+      gl::logErrors("scene.rpeNoise");
     }
     glBindFramebuffer(GL_FRAMEBUFFER, sceneTarget);
     glViewport(0, 0, width, height);
@@ -2078,6 +2121,7 @@ bool GameRenderer::renderOffscreen(const RenderFrameInput& input, game::Chart* c
   impl_->aaFbo.resize(width, height);
   impl_->halfResFbo.resize(std::max(1, width / 2), std::max(1, height / 2));
   impl_->blockComposite.resize(width, height);
+  impl_->rpeNoise.resize(width, height);
   impl_->disableChartShaderSetting = input.disableChartShader;
   impl_->chain.setFrozenNoiseClock(true);
   impl_->prepareForChart(chart);
@@ -2163,6 +2207,7 @@ void GameRenderer::applyCaptureSize(const RenderFrameInput& input, game::Chart* 
   impl_->aaFbo.resize(width, height);
   impl_->halfResFbo.resize(std::max(1, width / 2), std::max(1, height / 2));
   impl_->blockComposite.resize(width, height);
+  impl_->rpeNoise.resize(width, height);
   impl_->disableChartShaderSetting = input.disableChartShader;
   impl_->prepareForChart(chart);
 }
@@ -2280,6 +2325,7 @@ void GameRenderer::endCapture() noexcept {
   impl_->aaFbo.resize(impl_->width, impl_->height);
   impl_->halfResFbo.resize(std::max(1, impl_->width / 2), std::max(1, impl_->height / 2));
   impl_->blockComposite.resize(impl_->width, impl_->height);
+  impl_->rpeNoise.resize(impl_->width, impl_->height);
   glViewport(0, 0, impl_->width, impl_->height);
 }
 

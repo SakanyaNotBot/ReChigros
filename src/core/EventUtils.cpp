@@ -65,6 +65,22 @@ int findEvent(double time, const std::vector<SpeedEvent>& events) {
   return found;
 }
 
+double applyEasingImpl(double progress, const EasingSpec& event) noexcept;
+
+double evaluateLineEvent(double time, const LineEvent& event, double last) noexcept {
+  const double duration = event.endTime - event.startTime;
+  const double progress = duration <= 1e-9 ? 1.0 : (time - event.startTime) / duration;
+  if (event.trajectory) {
+    const auto value = event.trajectory->sample(progress);
+    if (event.trajectoryAxis == 1) return value.y * event.trajectoryScale;
+    if (event.trajectoryAxis == 2) return value.rotation * event.trajectoryScale;
+    return value.x * event.trajectoryScale;
+  }
+  const double start = std::isfinite(event.start) ? event.start : last;
+  const double end = std::isfinite(event.end) ? event.end : start;
+  return start + (end - start) * applyEasingImpl(progress, event);
+}
+
 double applyEasingImpl(double progress, const EasingSpec& event) noexcept {
   if (!std::isfinite(progress)) return 0.0;
   auto p = Easing::clamp01(progress);
@@ -259,12 +275,7 @@ double getEventVal(double time, const std::vector<LineEvent>& events) noexcept {
       continue;
     }
     if (containsEventTime(time, start, end, i == events.size() - 1)) {
-      const double a = std::isfinite(event.start) ? event.start : last;
-      const double b = std::isfinite(event.end) ? event.end : a;
-      const double duration = end - start;
-      if (duration <= 1e-9) return b;
-      const double p = applyEasingImpl((time - start) / duration, event);
-      return lerp(a, b, p);
+      return evaluateLineEvent(time, event, last);
     }
     const double b = std::isfinite(event.end) ? event.end : event.start;
     if (std::isfinite(b)) { last = b; hasLast = true; }
@@ -307,11 +318,7 @@ double getEventVal(double time, const std::vector<LineEvent>& events, EventCurso
       continue;
     }
     if (containsEventTime(time, start, end, i == size - 1)) {
-      const double a = std::isfinite(event.start) ? event.start : last;
-      const double b = std::isfinite(event.end) ? event.end : a;
-      const double duration = end - start;
-      if (duration <= 1e-9) return b;
-      return lerp(a, b, applyEasingImpl((time - start) / duration, event));
+      return evaluateLineEvent(time, event, last);
     }
     const double b = std::isfinite(event.end) ? event.end : event.start;
     if (std::isfinite(b)) { last = b; hasLast = true; }

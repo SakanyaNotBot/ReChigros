@@ -223,7 +223,7 @@ void GameplaySession::activateHold(Note& note, bool perfect, double chartTime, d
                                  : JudgementEngine::Judgement::Good;
   judgement_.recordOffset(note, judgement, diff, true);
   judgement_.recordIndicator(note, judgement, diff, true);
-  soundEvents_.push_back(NOTE_TAP);
+  soundEvents_.push_back({NOTE_TAP, note.hitSound});
   // The reference spawns the head burst at the moment and place the head was hit; the
   // renderer resolves that position from the line state of the judged frame.
   holdHeadBursts_.push_back({note.sortedIndex, chartTime, perfect});
@@ -235,7 +235,7 @@ bool GameplaySession::commitNote(Note& note, JudgementEngine::Judgement judgemen
   const auto committed = judgement_.commit(note, judgement, diff, time);
   if (committed) {
     if (emitSound && note.type != NOTE_HOLD && JudgementEngine::isHit(judgement)) {
-      soundEvents_.push_back(note.type);
+      soundEvents_.push_back({note.type, note.hitSound});
     }
     recordJudgement(note, judgement, diff, time);
   }
@@ -864,6 +864,12 @@ void GameplaySession::detectMisses(double time) {
 
 std::vector<int> GameplaySession::takeSoundEvents() {
   std::vector<int> events;
+  for (const auto& event : takeDetailedSoundEvents()) events.push_back(event.type);
+  return events;
+}
+
+std::vector<GameplaySession::SoundEvent> GameplaySession::takeDetailedSoundEvents() {
+  std::vector<SoundEvent> events;
   events.swap(soundEvents_);
   return events;
 }

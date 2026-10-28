@@ -5,6 +5,7 @@
 #include "rechigros/game/PrprEffect.hpp"
 #include "rechigros/game/ClickEffectItem.hpp"
 #include "rechigros/game/OfficialLevelEffects.hpp"
+#include "rechigros/game/RpeNoiseArea.hpp"
 
 #include <array>
 #include <filesystem>
@@ -32,6 +33,10 @@ public:
   // Active red-zone geometry. Empty for every format except official charts that ship
   // blockAreaList; GameplaySession evaluates it to suppress blocked touches.
   std::vector<OfficialBlock> blockAreaList;
+  std::vector<RpeNoiseArea> rpeNoiseAreas;
+  std::vector<RpeNoiseLayer> rpeNoiseLayers;
+  bool rpeNoiseIgnoreTripleInversion{};
+  std::string rpeGlobalEventsJson;
   double chartEndTimeSec{};
   // Chart identity used to match a level effect: the normalized chart digest and the
   // display song name. Both are optional; an empty value simply never matches.

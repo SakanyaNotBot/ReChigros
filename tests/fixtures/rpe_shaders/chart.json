@@ -1,0 +1,855 @@
+{
+ "META": {
+  "RPEVersion": 240,
+  "offset": 0
+ },
+ "BPMList": [
+  {
+   "bpm": 120,
+   "startTime": [
+    0,
+    0,
+    1
+   ]
+  }
+ ],
+ "judgeLineList": [
+  {
+   "bpmfactor": 1,
+   "eventLayers": [
+    {
+     "alphaEvents": [
+      {
+       "startTime": [
+        0,
+        0,
+        1
+       ],
+       "endTime": [
+        64,
+        0,
+        1
+       ],
+       "start": 255,
+       "end": 255
+      }
+     ]
+    }
+   ],
+   "extended": {
+    "paintEvents": [
+     {
+      "shader": "grayscale_2",
+      "startTime": [
+       0,
+       0,
+       1
+      ],
+      "endTime": [
+       64,
+       0,
+       1
+      ],
+      "order": 51
+     }
+    ]
+   }
+  }
+ ],
+ "effects": [
+  {
+   "shader": "chromatic",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 0,
+   "vars": {
+    "power": [
+     {
+      "startTime": [
+       0,
+       0,
+       1
+      ],
+      "endTime": [
+       64,
+       0,
+       1
+      ],
+      "start": [
+       0.1,
+       0.5
+      ],
+      "end": [
+       0.4,
+       0.9
+      ],
+      "easingType": 1
+     }
+    ]
+   }
+  },
+  {
+   "shader": "circle_blur",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 1
+  },
+  {
+   "shader": "fisheye",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 2
+  },
+  {
+   "shader": "glitch",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 3
+  },
+  {
+   "shader": "grayscale",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 4
+  },
+  {
+   "shader": "noise",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 5
+  },
+  {
+   "shader": "pixel",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 6
+  },
+  {
+   "shader": "radial_blur",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 7
+  },
+  {
+   "shader": "shockwave",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 8
+  },
+  {
+   "shader": "vignette",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 9
+  },
+  {
+   "shader": "chromatic_2",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 10
+  },
+  {
+   "shader": "circle_blur_2",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 11
+  },
+  {
+   "shader": "fisheye_2",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 12
+  },
+  {
+   "shader": "glitch_2",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 13
+  },
+  {
+   "shader": "grayscale_2",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 14
+  },
+  {
+   "shader": "noise_2",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 15
+  },
+  {
+   "shader": "pixel_2",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 16
+  },
+  {
+   "shader": "radial_blur_2",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 17
+  },
+  {
+   "shader": "shockwave_2",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 18
+  },
+  {
+   "shader": "vignette_2",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 19
+  },
+  {
+   "shader": "liquid",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 20
+  },
+  {
+   "shader": "flowing",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 21
+  },
+  {
+   "shader": "image_noise",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 22
+  },
+  {
+   "shader": "snow",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 23
+  },
+  {
+   "shader": "glow_effect",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 24
+  },
+  {
+   "shader": "flip",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 25
+  },
+  {
+   "shader": "night_vision",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 26
+  },
+  {
+   "shader": "scanline",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 27
+  },
+  {
+   "shader": "rain",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 28
+  },
+  {
+   "shader": "rainbow",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 29
+  },
+  {
+   "shader": "flare",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 30
+  },
+  {
+   "shader": "underwater",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 31
+  },
+  {
+   "shader": "fog",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 32
+  },
+  {
+   "shader": "kaleidoscope",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 33
+  },
+  {
+   "shader": "emboss",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 34
+  },
+  {
+   "shader": "sobel",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 35
+  },
+  {
+   "shader": "oil_painting",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 36
+  },
+  {
+   "shader": "distortion",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 37
+  },
+  {
+   "shader": "hologram",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 38
+  },
+  {
+   "shader": "burn",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 39
+  },
+  {
+   "shader": "camera",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 40
+  },
+  {
+   "shader": "lightning",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 41
+  },
+  {
+   "shader": "old_tv",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 42
+  },
+  {
+   "shader": "bokeh",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 43
+  },
+  {
+   "shader": "neon",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 44
+  },
+  {
+   "shader": "heat_distortion",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 45
+  },
+  {
+   "shader": "rays",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 46
+  },
+  {
+   "shader": "color_shift",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 47
+  },
+  {
+   "shader": "wave",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 48
+  },
+  {
+   "shader": "two_tone",
+   "startTime": [
+    0,
+    0,
+    1
+   ],
+   "endTime": [
+    64,
+    0,
+    1
+   ],
+   "line": 0,
+   "order": 49
+  }
+ ],
+ "globalEvents": {
+  "version": 1,
+  "types": {
+   "rpen/example": {
+    "name": "Example",
+    "source": {
+     "kind": "builtin",
+     "id": "rpen",
+     "name": "RPE"
+    },
+    "columns": {
+     "value": {
+      "name": "Value",
+      "events": []
+     }
+    }
+   }
+  }
+ }
+}

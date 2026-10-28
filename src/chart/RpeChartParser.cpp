@@ -314,6 +314,354 @@ std::vector<MoveEvent> parseMoveEvents(const json& source, const BpmConverter& b
   return result;
 }
 
+RpeTrajectoryOptions trajectoryOptions(const json& source) {
+  RpeTrajectoryOptions options;
+  options.mode = stringValue(source, {"mode"}, options.mode);
+  options.xExpression = stringValue(source, {"xExpression"}, options.xExpression);
+  options.yExpression = stringValue(source, {"yExpression"}, options.yExpression);
+  options.radiusExpression = stringValue(source, {"radiusExpression"}, options.radiusExpression);
+  options.rotationExpression = stringValue(source, {"rotationExpression"});
+  options.tangentRotation = boolean(source, {"tangentRotation"}, false);
+  options.parameterStart = stringValue(source, {"parameterStart"}, options.parameterStart);
+  options.parameterEnd = stringValue(source, {"parameterEnd"}, options.parameterEnd);
+  options.angleStart = stringValue(source, {"angleStart"}, options.angleStart);
+  options.angleEnd = stringValue(source, {"angleEnd"}, options.angleEnd);
+  options.trimStart = number(source, {"trimStart"}, 0.0);
+  options.trimEnd = number(source, {"trimEnd"}, 1.0);
+  options.rotation = number(source, {"rotation"}, 0.0);
+  options.scaleX = number(source, {"scaleX"}, 1.0);
+  options.scaleY = number(source, {"scaleY"}, 1.0);
+  options.alignStart = boolean(source, {"alignStart"}, false);
+  options.startX = number(source, {"startX"}, 0.0);
+  options.startY = number(source, {"startY"}, 0.0);
+  options.easingX = integer(source, {"easingX"}, 1);
+  options.easingY = integer(source, {"easingY"}, 1);
+  options.seed = number(source, {"seed"}, 1.0);
+  options.randomness = number(source, {"randomness"}, 0.0);
+  options.shape = stringValue(source, {"shape"});
+  if (!options.shape.empty() && options.shape != "star" && options.shape != "random-polygon") {
+    throw std::invalid_argument("unsupported trajectory shape");
+  }
+  if (const auto* parameters = object(source, {"parameters"})) {
+    for (const auto& [key, value] : parameters->items()) {
+      if (value.is_number()) options.parameters[key] = value.get<double>();
+    }
+  }
+  return options;
+}
+
+void attachTrajectories(const json& layerSource, JudgeLine::EventLayer& layer) {
+  const auto* source = array(layerSource, {"moveXEvents", "judgeLineMoveXEvents"});
+  if (source == nullptr) return;
+  std::size_t index = 0;
+  for (const auto& item : *source) {
+    if (!item.is_object()) continue;
+    if (index >= layer.judgeLineMoveXEvents.size()) break;
+    auto& x = layer.judgeLineMoveXEvents[index++];
+    const auto* trajectory = object(item, {"trajectory"});
+    if (trajectory == nullptr) continue;
+    if (integer(*trajectory, {"version"}, 1) != 1) {
+      throw std::invalid_argument("unsupported trajectory version");
+    }
+    const auto* rawOptions = object(*trajectory, {"options"});
+    if (rawOptions == nullptr) continue;
+    auto compiled = std::make_shared<RpeTrajectory>(trajectoryOptions(*rawOptions));
+    x.trajectory = compiled;
+    x.trajectoryScale = 1.0 / RPE_WIDTH;
+    layer.judgeLineMoveXEvents[index - 1] = x;
+    auto y = x;
+    y.trajectoryAxis = 1;
+    y.trajectoryScale = 1.0 / RPE_HEIGHT;
+    layer.judgeLineMoveYEvents.push_back(std::move(y));
+    if (compiled->hasRotation()) {
+      auto rotation = x;
+      rotation.trajectoryAxis = 2;
+      rotation.trajectoryScale = 1.0;
+      layer.judgeLineRotateEvents.push_back(std::move(rotation));
+    }
+  }
+}
+
+double readyFlash(const json& source) {
+  if (const auto* value = field(source, {"readyFlash"})) {
+    if (value->is_boolean()) return value->get<bool>() ? 0.5 : 0.0;
+    if (value->is_number()) return std::round(std::max(0.0, value->get<double>()) * 1000.0) / 1000.0;
+  }
+  return 0.5;
+}
+
+RpeNoiseTrack parseNoiseTrack(const json& source, const BpmConverter& bpm,
+    std::initializer_list<const char*> keys) {
+  RpeNoiseTrack track;
+  const auto* events = array(source, keys);
+  if (events == nullptr) return track;
+  for (const auto& item : *events) {
+    if (!item.is_object()) continue;
+    RpeNoiseEvent event;
+    event.startTime = bpm.beatToSec(parseBeat(eventTime(item, true)));
+    event.endTime = bpm.beatToSec(parseBeat(eventTime(item, false)));
+    event.start = number(item, {"start", "startValue", "v0"}, 0.0);
+    event.end = number(item, {"end", "endValue", "v1"}, event.start);
+    parseEasing(event, item);
+    if (const auto* anchor = object(item, {"anchor"})) {
+      event.hasAnchor = true;
+      event.anchorX = number(*anchor, {"x"}, 0.0);
+      event.anchorY = number(*anchor, {"y"}, 0.0);
+    }
+    if (const auto* transformStart = field(item, {"transformStart"})) {
+      event.hasTransformStart = transformStart->is_number();
+      event.transformStart = number(item, {"transformStart"}, 0.0);
+    }
+    if (const auto* transformEnd = field(item, {"transformEnd"})) {
+      event.hasTransformEnd = transformEnd->is_number();
+      event.transformEnd = number(item, {"transformEnd"}, 0.0);
+    }
+    event.transformStep = boolean(item, {"transformStep"}, false);
+    track.events.push_back(std::move(event));
+  }
+  std::stable_sort(track.events.begin(), track.events.end(),
+      [](const auto& a, const auto& b) { return a.startTime < b.startTime; });
+  return track;
+}
+
+RpeNoiseLayer parseNoiseLayer(const json& source) {
+  RpeNoiseLayer layer;
+  layer.id = stringValue(source, {"id"}, "default");
+  layer.name = stringValue(source, {"name"}, layer.id);
+  layer.skin = stringValue(source, {"skin"});
+  layer.channel = stringValue(source, {"channel"}, "normal");
+  if (const auto* parameters = object(source, {"parameters"})) {
+    for (const auto& [name, value] : parameters->items()) {
+      if (value.is_number()) layer.parameters[name] = {value.get<float>()};
+      else if (value.is_array()) {
+        std::vector<float> values;
+        for (const auto& component : value) {
+          if (!component.is_number()) { values.clear(); break; }
+          values.push_back(component.get<float>());
+        }
+        if (values.size() == 2 || values.size() == 4) layer.parameters[name] = std::move(values);
+      }
+    }
+  }
+  return layer;
+}
+
+constexpr std::array<const char*, 50> kShaderNames{
+    "chromatic", "circle_blur", "fisheye", "glitch", "grayscale", "noise", "pixel",
+    "radial_blur", "shockwave", "vignette", "chromatic_2", "circle_blur_2", "fisheye_2",
+    "glitch_2", "grayscale_2", "noise_2", "pixel_2", "radial_blur_2", "shockwave_2",
+    "vignette_2", "liquid", "flowing", "image_noise", "snow", "glow_effect", "flip",
+    "night_vision", "scanline", "rain", "rainbow", "flare", "underwater", "fog",
+    "kaleidoscope", "emboss", "sobel", "oil_painting", "distortion", "hologram", "burn",
+    "camera", "lightning", "old_tv", "bokeh", "neon", "heat_distortion", "rays",
+    "color_shift", "wave", "two_tone"};
+
+int shaderIndexByName(std::string name) {
+  if (name.size() > 1 && (name.front() == '/' || name.front() == '\\')) name.erase(name.begin());
+  const auto slash = name.find_last_of("/\\");
+  if (slash != std::string::npos) name.erase(0, slash + 1);
+  const auto dot = name.find_last_of('.');
+  if (dot != std::string::npos) name.resize(dot);
+  if (name.size() > 3 && name.compare(name.size() - 3, 3, "_pr") == 0) name.resize(name.size() - 3);
+  std::string normalized;
+  for (std::size_t index = 0; index < name.size(); ++index) {
+    const unsigned char c = static_cast<unsigned char>(name[index]);
+    if (std::isupper(c) && index > 0) normalized.push_back('_');
+    normalized.push_back(static_cast<char>(std::tolower(c)));
+  }
+  for (std::size_t index = 0; index < normalized.size(); ++index) {
+    if (normalized[index] == '-') normalized[index] = '_';
+  }
+  for (std::size_t index = 0; index < kShaderNames.size(); ++index) {
+    if (normalized == kShaderNames[index]) return static_cast<int>(index);
+  }
+  return -1;
+}
+
+double effectBeatSeconds(const json* value, const BpmConverter& bpm, double factor) {
+  if (value == nullptr || value->is_null()) return 0.0;
+  if (value->is_number()) return value->get<double>() / factor;
+  return bpm.beatToSec(parseBeat(value) / factor);
+}
+
+void parseEffectVariables(const json& vars, const BpmConverter& bpm, double factor,
+    PrprEffect& effect) {
+  for (const auto& [name, value] : vars.items()) {
+    PrprVariable variable;
+    if (value.is_number()) {
+      variable.values = {value.get<float>()};
+    } else if (value.is_array() && !value.empty() && value.front().is_number()) {
+      variable.values.clear();
+      for (const auto& component : value) {
+        if (component.is_number()) variable.values.push_back(component.get<float>());
+      }
+      if (variable.values.empty()) variable.values.push_back(0.0F);
+    } else if (value.is_array()) {
+      for (const auto& item : value) {
+        if (!item.is_object()) continue;
+        PrprVariableEvent event;
+        event.startTime = effectBeatSeconds(field(item, {"startTime"}), bpm, factor);
+        event.endTime = effectBeatSeconds(field(item, {"endTime"}), bpm, factor);
+        parseEasing(event, item);
+        const auto* start = field(item, {"start", "startValue"});
+        const auto* end = field(item, {"end", "endValue"});
+        if (start != nullptr && start->is_array()) {
+          event.count = static_cast<int>(std::min<std::size_t>(4, start->size()));
+          for (int index = 0; index < event.count; ++index) {
+            event.from[static_cast<std::size_t>(index)] = (*start)[static_cast<std::size_t>(index)].is_number()
+                ? (*start)[static_cast<std::size_t>(index)].get<float>() : 0.0F;
+            event.to[static_cast<std::size_t>(index)] = end != nullptr && end->is_array()
+                && static_cast<std::size_t>(index) < end->size()
+                && (*end)[static_cast<std::size_t>(index)].is_number()
+                ? (*end)[static_cast<std::size_t>(index)].get<float>()
+                : event.from[static_cast<std::size_t>(index)];
+          }
+        } else {
+          event.from[0] = start != nullptr && start->is_number() ? start->get<float>() : 0.0F;
+          event.to[0] = end != nullptr && end->is_number() ? end->get<float>() : event.from[0];
+        }
+        variable.vectorEvents.push_back(std::move(event));
+      }
+      std::stable_sort(variable.vectorEvents.begin(), variable.vectorEvents.end(),
+          [](const auto& a, const auto& b) { return a.startTime < b.startTime; });
+      if (!variable.vectorEvents.empty()) {
+        variable.values.assign(static_cast<std::size_t>(variable.vectorEvents.front().count), 0.0F);
+        for (int index = 0; index < variable.vectorEvents.front().count; ++index) {
+          variable.values[static_cast<std::size_t>(index)] =
+              variable.vectorEvents.front().from[static_cast<std::size_t>(index)];
+        }
+      }
+    }
+    effect.variables[name] = std::move(variable);
+  }
+}
+
+std::optional<PrprEffect> parseEffect(const json& source, const BpmConverter& bpm,
+    int defaultLine, double lineFactor) {
+  if (!source.is_object()) return std::nullopt;
+  PrprEffect effect;
+  effect.lineIndex = integer(source, {"line"}, defaultLine);
+  effect.order = integer(source, {"order"}, 0);
+  effect.global = boolean(source, {"global", "isGlobal"}, false);
+  const auto* shader = field(source, {"shader", "shaderType", "name"});
+  if (shader == nullptr) return std::nullopt;
+  std::string name;
+  if (shader->is_number()) {
+    const int index = shader->get<int>();
+    if (index < 0 || index >= static_cast<int>(kShaderNames.size())) return std::nullopt;
+    effect.sourceName = index >= 20 ? std::string(kShaderNames[static_cast<std::size_t>(index)]) + "_pr.glsl"
+                                   : kShaderNames[static_cast<std::size_t>(index)];
+    effect.shader = kShaderNames[static_cast<std::size_t>(index)];
+  } else if (shader->is_string()) {
+    effect.sourceName = shader->get<std::string>();
+    const int index = shaderIndexByName(effect.sourceName);
+    if (index < 0) {
+      effect.shader = effect.sourceName;
+    } else {
+      effect.shader = kShaderNames[static_cast<std::size_t>(index)];
+      if (index >= 20) effect.sourceName = effect.shader + "_pr.glsl";
+    }
+  } else return std::nullopt;
+  effect.startTime = effectBeatSeconds(field(source, {"startTime", "start", "time1"}), bpm, lineFactor);
+  effect.endTime = effectBeatSeconds(field(source, {"endTime", "end", "time2"}), bpm, lineFactor);
+  if (effect.endTime <= effect.startTime) effect.endTime = std::numeric_limits<double>::infinity();
+  if (const auto* vars = object(source, {"vars"})) parseEffectVariables(*vars, bpm, lineFactor, effect);
+  return effect;
+}
+
+void appendShaderEffects(const json& root, Chart& chart, const BpmConverter& bpm) {
+  const auto append = [&](const json& source, int defaultLine, double factor) {
+    if (auto effect = parseEffect(source, bpm, defaultLine, factor)) {
+      chart.prprEffects.push_back(std::move(*effect));
+    }
+  };
+  for (const char* key : {"effects", "shaderEvents"}) {
+    if (const auto* effects = array(root, {key})) {
+      for (const auto& item : *effects) {
+        const int line = integer(item, {"line"}, 0);
+        const double factor = line >= 0 && static_cast<std::size_t>(line) < chart.judgeLineList.size()
+            ? chart.judgeLineList[static_cast<std::size_t>(line)]->bpmfactor : 1.0;
+        append(item, line, factor);
+      }
+    }
+  }
+  if (const auto* meta = object(root, {"META", "meta"})) {
+    if (const auto* effects = array(*meta, {"effects"})) {
+      for (const auto& item : *effects) append(item, 0, 1.0);
+    }
+  }
+  for (std::size_t index = 0; index < chart.judgeLineList.size(); ++index) {
+    const auto* lines = array(root, {"judgeLineList", "JudgeLineList", "judgeLines", "judgeLinesList", "lines"});
+    if (lines == nullptr || index >= lines->size() || !(*lines)[index].is_object()) continue;
+    const auto* extended = object((*lines)[index], {"extended", "Extended"});
+    if (extended == nullptr) continue;
+    if (const auto* paints = array(*extended, {"paintEvents"})) {
+      for (const auto& item : *paints) {
+        append(item, static_cast<int>(index), chart.judgeLineList[index]->bpmfactor);
+      }
+    }
+  }
+  std::stable_sort(chart.prprEffects.begin(), chart.prprEffects.end(),
+      [](const PrprEffect& a, const PrprEffect& b) {
+        return a.order != b.order ? a.order < b.order : a.startTime < b.startTime;
+      });
+}
+
+std::vector<RpeNoiseArea> parseNoiseAreas(const json& root, const BpmConverter& bpm) {
+  std::vector<RpeNoiseArea> result;
+  const auto* list = array(root, {"blockAreaList", "BlockAreaList", "noiseAreas"});
+  if (list == nullptr) return result;
+  for (const auto& item : *list) {
+    if (!item.is_object()) continue;
+    const auto* bottomLeft = object(item, {"bottomLeft"});
+    const auto* topRight = object(item, {"topRight"});
+    if (bottomLeft == nullptr || topRight == nullptr) continue;
+    RpeNoiseArea area;
+    area.name = stringValue(item, {"Name", "name"});
+    area.layerId = stringValue(item, {"layerId"}, "default");
+    const double x0 = number(*bottomLeft, {"x"}, 0.0);
+    const double y0 = number(*bottomLeft, {"y"}, 0.0);
+    const double x1 = number(*topRight, {"x"}, 0.0);
+    const double y1 = number(*topRight, {"y"}, 0.0);
+    area.left = std::min(x0, x1);
+    area.right = std::max(x0, x1);
+    area.bottom = std::min(y0, y1);
+    area.top = std::max(y0, y1);
+    area.appear = bpm.beatToSec(parseBeat(field(item, {"appearTime"})));
+    area.disappear = bpm.beatToSec(parseBeat(field(item, {"disappearTime"})));
+    area.invert = boolean(item, {"isInvert"}, false);
+    if (const auto* intervals = array(item, {"activeIntervals"})) {
+      for (const auto& intervalSource : *intervals) {
+        if (!intervalSource.is_object()) continue;
+        const double originalStart = bpm.beatToSec(parseBeat(eventTime(intervalSource, true)));
+        const double originalEnd = bpm.beatToSec(parseBeat(eventTime(intervalSource, false)));
+        const double start = std::max(area.appear, originalStart);
+        const double end = std::min(area.disappear, originalEnd);
+        if (end > start || (originalStart == originalEnd && start == end)) {
+          area.intervals.push_back({start, end, readyFlash(intervalSource)});
+        }
+      }
+      std::stable_sort(area.intervals.begin(), area.intervals.end(),
+          [](const auto& a, const auto& b) { return a.start < b.start; });
+      std::vector<RpeNoiseInterval> merged;
+      for (const auto& interval : area.intervals) {
+        if (!merged.empty() && merged.back().start == interval.start) {
+          merged.back().end = std::max(merged.back().end, interval.end);
+          merged.back().readyFlash = std::max(merged.back().readyFlash, interval.readyFlash);
+        } else merged.push_back(interval);
+      }
+      area.intervals = std::move(merged);
+    }
+    area.moveX = parseNoiseTrack(item, bpm, {"moveXEvents"});
+    area.moveY = parseNoiseTrack(item, bpm, {"moveYEvents"});
+    area.rotate = parseNoiseTrack(item, bpm, {"rotateEvents"});
+    area.scaleX = parseNoiseTrack(item, bpm, {"scaleXEvents"});
+    area.scaleY = parseNoiseTrack(item, bpm, {"scaleYEvents"});
+    result.push_back(std::move(area));
+  }
+  return result;
+}
+
 void ensureSpeedCoverage(std::vector<SpeedEvent>& events) {
   std::stable_sort(events.begin(), events.end(),
       [](const auto& a, const auto& b) { return a.startTime < b.startTime; });
@@ -787,7 +1135,7 @@ std::optional<Note> parseNote(const json& source, const BpmConverter& bpm, doubl
     if (const auto* duration = field(source, {"holdTime"})) endBeat += parseBeat(duration);
     else if (const auto* end = field(source, {"endTime"})) endBeat = parseBeat(end);
     else endBeat += number(source, {"hold", "duration"}, 0.0) * 32.0;
-    note.holdTime = std::max(0.0, bpm.beatToSec(endBeat) - bpm.beatToSec(globalBeat))
+    note.holdTime = (bpm.beatToSec(endBeat) - bpm.beatToSec(globalBeat))
         / (PGR_BEAT / lineBpm);
   }
   note.speed = number(source, {"speed", "noteSpeed"}, 1.0);
@@ -810,6 +1158,7 @@ std::optional<Note> parseNote(const json& source, const BpmConverter& bpm, doubl
   if (!std::isfinite(note.visibleTime) || note.visibleTime >= 999999.0F) note.visibleTime = -1.0F;
   const auto offsetY = number(source, {"yOffset", "offsetY"}, 0.0);
   note.yOffset = static_cast<float>((std::isfinite(offsetY) ? offsetY : 0.0) / RPE_HEIGHT);
+  note.hitSound = stringValue(source, {"hitsound", "hitSound"});
   note.judgeArea = static_cast<float>(number(source,
       {"judgeArea", "judge_area", "JudgeArea", "judgementArea", "judgmentArea", "hitArea", "hitRange", "judgeRange"}, 1.0));
   if (!std::isfinite(note.judgeArea) || note.judgeArea <= 0.0F) note.judgeArea = 1.0F;
@@ -892,7 +1241,7 @@ std::unique_ptr<JudgeLine> parseJudgeLine(const json& source, const BpmConverter
   line->noteScaleControls = parseControls(source, {"sizeControl"}, {"size"}, 1.0F);
   line->noteXControls = parseControls(source, {"posControl"}, {"pos"}, 1.0F);
   line->noteYControls = parseControls(source, {"yControl"}, {"y"}, 1.0F);
-  line->noteSkewControls = parseControls(source, {"skewControl"}, {}, 0.0F);
+  line->noteSkewControls = parseControls(source, {"skewControl"}, {"skew"}, 0.0F);
   line->noteJudgeAreaControls = parseControls(source,
       {"judgeAreaControl", "judge_area_control", "judgementAreaControl", "judgmentAreaControl", "judgeRangeControl", "hitAreaControl", "areaControl"},
       {"judgeArea", "judge_area", "JudgeArea", "judgementArea", "judgmentArea", "hitArea", "hitRange", "judgeRange", "area"}, 1.0F);
@@ -912,6 +1261,7 @@ std::unique_ptr<JudgeLine> parseJudgeLine(const json& source, const BpmConverter
     for (auto& event : layer.judgeLineMoveYEvents) { event.start /= RPE_HEIGHT; event.end /= RPE_HEIGHT; }
     if (layer.judgeLineMoveXEvents.empty() && layer.judgeLineMoveYEvents.empty())
       layer.judgeLineMoveEvents = parseMoveEvents(layerSource, bpm, line->bpm);
+    attachTrajectories(layerSource, layer);
     ensureCoverage(layer.judgeLineRotateEvents, 0.0);
     ensureCoverage(layer.judgeLineDisappearEvents, 0.0, false);
     ensureCoverage(layer.judgeLineMoveXEvents, 0.0);
@@ -1038,12 +1388,40 @@ Chart parseRoot(const json& root, const std::filesystem::path& baseDirectory) {
     chart.judgeLineList.reserve(lines->size());
     for (const auto& item : *lines) if (item.is_object()) {
       auto line = parseJudgeLine(item, bpm, baseDirectory);
+      if (field(item, {"rotateWithFather", "rotWithFather", "rotateWithParent"}) == nullptr) {
+        line->rotateWithFather = chart.rpeVersion >= 163;
+      }
+      for (auto& note : line->notesAbove) {
+        if (!note.hitSound.empty()) note.hitSound = (baseDirectory / note.hitSound).generic_string();
+      }
+      for (auto& note : line->notesBelow) {
+        if (!note.hitSound.empty()) note.hitSound = (baseDirectory / note.hitSound).generic_string();
+      }
       const auto attach = line->attachUiElementId;
       chart.judgeLineList.push_back(std::move(line));
       if (attach >= 1 && attach <= 7) chart.attachUiLineIndex[static_cast<std::size_t>(attach)] =
           static_cast<int>(chart.judgeLineList.size() - 1);
     }
   }
+  chart.rpeNoiseAreas = parseNoiseAreas(root, bpm);
+  if (const auto* layers = array(root, {"noiseAreaLayers"})) {
+    for (const auto& item : *layers) {
+      if (item.is_object()) chart.rpeNoiseLayers.push_back(parseNoiseLayer(item));
+    }
+  }
+  if (chart.rpeNoiseLayers.empty()) {
+    RpeNoiseLayer layer;
+    layer.id = "default";
+    layer.name = "default";
+    chart.rpeNoiseLayers.push_back(std::move(layer));
+  }
+  if (const auto* options = object(root, {"noiseAreaOptions"})) {
+    chart.rpeNoiseIgnoreTripleInversion = boolean(*options, {"ignoreTripleInversion"}, false);
+  }
+  if (const auto* global = field(root, {"globalEvents"})) {
+    if (global->is_object()) chart.rpeGlobalEventsJson = global->dump();
+  }
+  appendShaderEffects(root, chart, bpm);
   chart.prepareRuntime();
   return chart;
 }

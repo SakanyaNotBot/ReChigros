@@ -13,7 +13,9 @@ add_library(rechigros_core STATIC
   OfficialEase.cpp
   OfficialLevelEffects.cpp
   PracticeJudgeWindows.cpp
-  PrprEffect.cpp)
+  PrprEffect.cpp
+  RpeNoiseArea.cpp
+  RpeTrajectory.cpp)
 
 target_include_directories(rechigros_core PUBLIC "${PROJECT_SOURCE_DIR}/include")
 target_link_libraries(rechigros_core PUBLIC nlohmann_json::nlohmann_json)

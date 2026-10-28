@@ -228,7 +228,7 @@ void Chart::prepareRuntime(){
       if(note.isHold){
         if(official){note.holdEndFloorPosition=note.floorPosition+note.holdTime*note.speed*PGR_HEIGHT;note.holdLength=note.holdTime*note.speed*PGR_HEIGHT*(PGR_BEAT/line.bpm);}
         else{const auto endFloor=EventUtils::floorPositionMonotonic(note.time+note.holdTime,line.speedEvents,line.speedEventLayers,holdEndIndex,holdEndLayerIndices);note.holdEndFloorPosition=endFloor;note.holdLength=(endFloor-note.floorPosition)*note.speed*PGR_HEIGHT*(PGR_BEAT/line.bpm);}
-        line.maxHoldDurationSec=std::max(line.maxHoldDurationSec,note.secht);
+        line.maxHoldDurationSec=std::max(line.maxHoldDurationSec,std::abs(note.secht));
       }else{note.holdEndFloorPosition=note.floorPosition;note.holdLength=0;}
       ++out.simultaneous[static_cast<long long>(std::llround(note.sect*1'000'000.0))];out.allNotes.push_back(&note);
       if(!note.isFake)out.visibleNotes.push_back(&note);

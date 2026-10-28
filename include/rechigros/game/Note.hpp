@@ -1,6 +1,7 @@
 #pragma once
 
 #include <limits>
+#include <string>
 #include <vector>
 
 namespace rechigros::game {
@@ -20,6 +21,7 @@ struct Note {
   float judgeArea{1.0F};
   float visibleTime{-1.0F};
   float yOffset{};
+  std::string hitSound;
   bool hasTint{false};
   float tintR{1.0F}, tintG{1.0F}, tintB{1.0F};
   bool hasHitEffectTint{false};

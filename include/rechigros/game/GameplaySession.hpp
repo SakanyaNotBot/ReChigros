@@ -48,7 +48,12 @@ public:
   [[nodiscard]] const JudgementEngine& judgement() const noexcept { return judgement_; }
   [[nodiscard]] JudgementEngine& judgement() noexcept { return judgement_; }
   [[nodiscard]] bool autoplay() const noexcept { return autoplay_; }
+  struct SoundEvent {
+    int type{};
+    std::string hitSound;
+  };
   std::vector<int> takeSoundEvents();
+  std::vector<SoundEvent> takeDetailedSoundEvents();
 
   [[nodiscard]] float touchPosition(const Note& note, float x, float y, double chartTimeSec) const noexcept;
   [[nodiscard]] float judgeDistance(const Note& note, float x, float y, double chartTimeSec) const noexcept;
@@ -184,7 +189,7 @@ private:
   // The challenge window is the mean of the last few frame durations, so the first frame
   // has nothing to average yet and only arms the measurement.
   bool challengeTimingStarted_{};
-  std::vector<int> soundEvents_;
+  std::vector<SoundEvent> soundEvents_;
   std::size_t frameTimeIndex_{}, frameTimeCount_{};
   std::size_t autoNoteIndex_{};
   std::vector<OfficialBlock> blocks_;
