@@ -2023,10 +2023,11 @@ kaleido 背景，背景把粒子全部覆盖。参考 `GameRenderer.java:4551-45
 
 修复位于 `GameRenderer.cpp`：先画不透明背景，再推进并绘制粒子场；只在
 `0 < delta <= 0.5` 时推进，开始前或 seek 回起点时重置。`MsgCube.png` 按
-`max(g, round(0.55*r))` 生成 alpha，保留硬边方块和软外晕。共享纹理缓存会预乘 RGB，
-而粒子批次还会再乘一次 alpha，所以改为专用上传并保留白色 RGB，避免 168 的核心 alpha
-被再次压成约 110。新增诊断参数 `--animate` 可让渲染器以 1/60 秒推进到指定时刻，
-直接写最终 PNG；这不是按录像拟合状态。
+`max(g, round(0.55*r))` 生成 alpha，保留硬边方块和软外晕。**该段旧结论有误**：
+专用上传保留 255 RGB 并不会避免二次压暗，反而绕过了纹理缓存已有的预乘；粒子批处理按
+预乘输出，RGB 必须先成为 `alpha` 才能得到 168 的硬核。保留 255 会让 256×256 贴图上
+任何非零 alpha 都显示为整块白方。正确写法与修复证据见第二十一节。新增诊断参数
+`--animate` 可让渲染器以 1/60 秒推进到指定时刻，直接写最终 PNG；这不是按录像拟合状态。
 
 **实测与反向对照**：原完整录像 `message-particles-before.mp4` 为 10272 帧；
 修复后 `message-particles-final.mp4` 也为 **10272/10272** 帧。定点捕获命令：
@@ -2258,3 +2259,94 @@ early 按理论位置偏移，符合源码。
 - RPE shader 的 50 种名称均真实编译运行，但没有逐种与参考截图做视觉比对；`noClear`、
   低性能双通道、单通道输出和外部纹理仍未逐项设备截帧。
 - `globalEvents` 仍只保存定义和值；参考目前没有可据以实现的具体画面映射。
+
+---
+
+## 二十一、Message 粒子、嵌套导入与输出目录（2026-10-29 续）
+
+### 1. Message 白色方块：alpha 公式与预乘 RGB 两处错误
+
+**世界参数不需要改**。参考的粒子场为 `startSize = 0.5` 世界单位、屏幕高 10 世界单位
+（`MessageParticleField.java:74-78`），所以 1080 px 画面上的最大四边形是
+`0.5 / 10 × 1080 = 54 px`。`MsgCube.png` 的绿色硬核为 72/256，最终硬核约
+`54 × 72 / 256 = 15.2 px`。这与参考 `GameRenderer.java:5037-5049` 的
+`sizeAt(p) * stageH` 一致，不能把 54 再乘经验系数。可见的“整块白方”来自着色路径，
+不是世界尺寸。
+
+**根因一（alpha 缩放分母错）**：参考纹理生成公式是
+`max(tex.g, round(tex.r * 0.55))`（`GameRenderer.java:4993-5009`）。移植写成
+`(r * 55 + 127) / 255`，实际得到约 `0.216r + 0.498`：背景不再是 0，硬核也从
+168/255 被整体抬高。正确整数四舍五入是 `(r * 55 + 50) / 100`。
+
+**根因二（预乘 RGB）**：粒子批次使用预乘输出，片段着色器只输出
+`tex.rgb * vertexColor.rgb * vertexColor.a`，不会再乘纹理 alpha。专用上传却把
+RGB 写成 255，于是任何非零 alpha texel 都显示为完整白方。正确上传必须写入
+`RGB = A = textureAlpha(...)`；共享缓存中的 `premultiply()` 做的正是这件事。
+
+**实测**：同一命令、同一谱面时刻
+（`--chart .../3c13f255e5a31893.json --assets assets --time 130 --frames 930
+--capture --animate --width 1920 --height 1080`）：
+
+| 版本 | 同帧目标区 | 结果 |
+|---|---|---|
+| 修复前 `message-alpha-probe-130.png` | 场粒子出现 35×35、40×40 纯白方块 | 整块白方 |
+| 修复后 `message-premult-fixed-130.png` | 35–40 px 方块消失，剩余硬核约 11×11 px | 与 15.2 px 最大值及年龄曲线一致 |
+
+新增 `MessageParticleField::textureAlpha` 的 5 条边界断言；恢复旧公式后
+`red=200` 得 43 而不是 110、`red=255` 得 55 而不是 140，测试实测 **2 项失败**。
+源码位于 `src/core/MessageParticleField.cpp:49-53`、
+`src/render/GameRenderer.cpp:1447-1458`。
+
+### 2. 安卓导入：`file://` 路径与单顶层目录
+
+**URI 根因**：平台选择器把选中的 `content://` 复制到应用缓存，再以
+`file:///...` 字符串交回原生层；`FileDialog` 把整段 URI 当成路径，随后
+`fileExists("file:///...")` 返回 false。设备实测修复前缓存里已有完整的
+**6,467,338 字节** ZIP，但谱面库没有新增记录；这正是“文件不存在”的实际来源。
+
+`pathFromDialogResult` 现在只对 `file://` 去掉协议并做百分号解码，普通路径不变。
+普通路径、空格/中文、无效 `%ZZ` 三类断言通过；恢复旧的直转行为时
+**2 项平台测试失败**。修复后同一设备真实导入得到
+`48584f192c9b50af0062af0a`，`lastUpdateTime=2026-10-29 13:06` 对应的运行库中可见。
+
+**嵌套目录**：解包后若根下只有一个目录且没有根文件，连续折叠该包装目录，直到
+谱面文件位于安装根。真实 `Wrapped Pack.zip` 夹具断言安装根直接存在
+`chart.json`，且不存在 `Wrapped Pack/`；移除折叠调用后该测试 **2 项失败**。
+设备上用应用内导入选择同一包装 ZIP，新增
+`878baae241f298180000037c`，目录内容为
+`chart.json / cover.png / info.json / info.yml / music.ogg`，`info.json` 的五条路径
+全部是根相对路径。这同时覆盖了 `content://` 选择、缓存复制和嵌套目录。
+
+源码：`src/platform/FileDialog.cpp` 的 `pathFromDialogResult`，
+`src/app/ChartLibrary.cpp` 的 `foldSingleWrapperDirectories` 与 `importZip`。
+
+### 3. 渲染输出目录显示
+
+**根因**：显示函数调用的是“解析可写工作目录”，每次都会向
+`/storage/emulated/0/Movies` 写探针文件并请求权限。在 SDK 36 上该写入被拒，
+一帧内会反复输出 `Operation not permitted`；旧截图显示
+`/data/data/com.wuying.chigros/files/recordings/`，与实际发布位置不一致。
+
+新增只读查询 `sharedStorageDisplayDirectory` / `publicVideoDisplayDirectory`：不建目录、
+不请求权限、不写探针。显示时把应用私有的 `staging` 与 `recordings` 都映射到公共
+`Movies/Chigros`，用户显式选择的外部目录保持原样。设备安装
+`lastUpdateTime=2026-10-29 13:42:32` 后截图
+`build/shots/render-output-display-final.png` 显示
+`/storage/emulated/0/Movies/Chigros`；启动日志仅一次真实工作目录探测，不再逐帧刷屏。
+
+**未验证边界**：该蓝叠镜像在系统选择器返回后偶发整屏黑截图，本次导入成功由
+私有库新增目录、`info.json` 内容和设备日志确认，而不是由黑截图推断。输出目录显示
+已用实际设备截图确认。真机本轮未接入。
+
+### 4. 最终门禁
+
+- 桌面 Release 单并发构建成功，`ctest` **8/8**（`build/final-gate-build.log`）。
+- 应用自检 **74/74**（`build/final-gate-selftest.log`）。
+- 渲染矩阵 **29 个比较用例及定向探针**通过（`build/final-gate-render.log`）。
+- 应用循环 **11 项**通过，界面 **245 个非 ASCII 字符全有字形**
+  （`build/final-gate-verify-app.log`）。
+- GLSL ES **78/78**（`build/final-gate-gles.log`）。
+- iOS 打包结构 **48 项、0 warning**（`build/final-gate-ios.log`）。
+- Android Release 构建成功，APK 30.1 MB；设备安装
+  `lastUpdateTime=2026-10-29 13:42:32`。
+- `git diff --check` 无空白错误。
