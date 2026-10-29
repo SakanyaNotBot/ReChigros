@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <cstdlib>
 #include <iostream>
+#include <string>
 #include <vector>
 
 namespace {
@@ -14,6 +15,14 @@ int g_failures = 0;
 void require(bool condition, const char* message) {
   if (!condition) {
     std::cerr << "FAIL: " << message << '\n';
+    ++g_failures;
+  }
+}
+
+// Same as `require`, but names the digest under test so a loop can tell which entry failed.
+void requireForDigest(bool condition, const std::string& digest, const char* message) {
+  if (!condition) {
+    std::cerr << "FAIL: " << message << " [" << digest << "]\n";
     ++g_failures;
   }
 }
@@ -265,6 +274,68 @@ int main() {
       require(OfficialLevelEffects::forChart(*table, "68d8b27ffc34007d6a01a4aa98faff1e",
                   "Desultory Signals", false) == nullptr,
           "story mode off suppresses a non-Message level effect");
+
+      // Hate ships several chart revisions: one per difficulty, and an earlier and a later
+      // revision of the IN and AT charts. Each is whitelisted separately, so every one is
+      // checked on its own rather than trusting a single representative.
+      {
+        const std::vector<const char*> hateDigests{
+            "a6d16947bc37ff769f080c3eab7585ce",  // EZ
+            "d51d9c8acc069db2e2119cd951785b20",  // HD
+            "26e295e34d33e93660c69fe09e2c48b4",  // IN, earlier revision
+            "08b9a461140cabd32f79a8bb66077ef2",  // IN, later revision
+            "989b0590a0f4e105ae3cbd81989b7a33",  // AT, earlier revision
+            "f3b89cfaaf87dd48c5db5bd6c14bc5a9",  // AT, later revision
+        };
+        // The chain order is the one the effect table authors for this level.
+        const std::vector<std::string> hateChain{"official_glitch", "official_rgb_shift",
+            "official_vignette_plus", "official_lens_distortion", "official_esc"};
+        for (const char* digest : hateDigests) {
+          const auto hate = OfficialLevelEffects::forChart(*table, digest, "\u30cf\u30c6", true);
+          requireForDigest(hate != nullptr, digest, "a Hate digest selects its level effect");
+          if (hate == nullptr) continue;
+          requireForDigest(hate->effectName() == "HateLevelEffects", digest,
+              "the selected effect is the Hate one");
+          // Every revision resolves to the same song entry; the effect table is joined to it.
+          requireForDigest(hate->songKey() == "\u30cf\u30c6", digest,
+              "every Hate digest maps to the Hate song entry");
+          requireForDigest(hate->hideHud(), digest, "the Hate level hides the HUD");
+
+          const auto hatePasses = hate->buildPrprEffects();
+          bool chainMatches = hatePasses.size() == hateChain.size();
+          for (std::size_t index = 0; chainMatches && index < hateChain.size(); ++index) {
+            chainMatches = hatePasses[index].shader == hateChain[index];
+          }
+          requireForDigest(chainMatches, digest, "the Hate chain is the shipped pass order");
+          for (const auto& pass : hatePasses) {
+            requireForDigest(pass.startTime == 0.0 && std::isinf(pass.endTime) && pass.global &&
+                    !pass.variables.empty(),
+                digest, "a Hate pass stays mounted for the whole chart");
+          }
+
+          // The anomaly belongs to the story flow, so the same chart plays plain without it.
+          requireForDigest(OfficialLevelEffects::forChart(*table, digest, "\u30cf\u30c6",
+                              false) == nullptr,
+              digest, "story mode off suppresses the Hate level effect");
+
+          // A digest one nibble away is a different chart and must select nothing, so the
+          // whitelist is matched exactly rather than by a prefix.
+          std::string nearMiss(digest);
+          nearMiss.back() = nearMiss.back() == '0' ? '1' : '0';
+          requireForDigest(OfficialLevelEffects::forChart(*table, nearMiss, "\u30cf\u30c6",
+                              true) == nullptr,
+              digest, "a digest differing in one nibble selects nothing");
+        }
+
+        // A known song name is still no substitute for a whitelisted digest.
+        require(OfficialLevelEffects::forChart(*table, "00000000000000000000000000000000",
+                    "\u30cf\u30c6", true) == nullptr,
+            "an unlisted digest selects nothing even with the Hate song name");
+        // Message stays the one level whose effect ignores the story-mode gate.
+        require(OfficialLevelEffects::forChart(*table, "8d5072369f4e120775a469e7541dd9e8",
+                    "Message", false) != nullptr,
+            "Message still plays its effect with story mode off");
+      }
     }
   }
 

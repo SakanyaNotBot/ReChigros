@@ -24,8 +24,13 @@ const std::unordered_map<std::string, std::string>& chartWhitelist() {
       // Ametrine: the HD and IN variants only; EZ carries block areas but no level mod.
       {"677a9fabbca76601c9396acead104998", "ametrine"},
       {"76c0b07d551279f2b1373826775355fb", "ametrine"},
-      // Hate: IN only.
-      {"26e295e34d33e93660c69fe09e2c48b4", "\u30cf\u30c6"},
+      // Hate: every difficulty, with both revisions of the IN and AT charts.
+      {"a6d16947bc37ff769f080c3eab7585ce", "\u30cf\u30c6"},  // EZ
+      {"d51d9c8acc069db2e2119cd951785b20", "\u30cf\u30c6"},  // HD
+      {"26e295e34d33e93660c69fe09e2c48b4", "\u30cf\u30c6"},  // IN, earlier revision
+      {"08b9a461140cabd32f79a8bb66077ef2", "\u30cf\u30c6"},  // IN, later revision
+      {"989b0590a0f4e105ae3cbd81989b7a33", "\u30cf\u30c6"},  // AT, earlier revision
+      {"f3b89cfaaf87dd48c5db5bd6c14bc5a9", "\u30cf\u30c6"},  // AT, later revision
       // Desultory Signals: EZ, HD, IN and AT.
       {"68d8b27ffc34007d6a01a4aa98faff1e", "desultorysignals"},
       {"d6d016913f5c54dbe781f1522cb5487e", "desultorysignals"},
