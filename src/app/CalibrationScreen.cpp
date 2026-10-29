@@ -164,7 +164,11 @@ struct StageState {
   bool wasBeforeHit{};
   double previousLoopTime{-1.0};
   float lastNoteY{};
-  bool noteVisible{};
+  // Height of the tap marker for this frame. It follows the marker progress alone, so it stays
+  // valid while the note itself is between draws, and input reads it instead of the note's
+  // visibility.
+  float markerY{};
+  bool markerVisible{};
   std::vector<HitEffect> hitEffects;
   std::vector<TouchMarker> touchMarkers;
   std::mt19937 random{0xC411B47EU};
@@ -186,7 +190,8 @@ void resetStage() {
   state.wasBeforeHit = false;
   state.previousLoopTime = -1.0;
   state.lastNoteY = 0.0F;
-  state.noteVisible = false;
+  state.markerY = 0.0F;
+  state.markerVisible = false;
   state.hitEffects.clear();
   state.touchMarkers.clear();
   state.random.seed(0xC411B47EU);
@@ -437,6 +442,17 @@ void drawStage(AppContext& context, const Metrics& m, const PanelLayout& panel, 
       wrapLoop(playhead - static_cast<double>(context.calibration.offsetMs) / 1000.0);
   const double progress = noteDrawProgress(loopTime);
 
+  // The tap marker sits at the position the note would occupy at the marker progress. That
+  // position is recorded every frame, before and independently of the drawing branch, so input
+  // still knows where the note is while it is not being drawn. The note's own visibility does not
+  // enter the decision; only the marker height against the stage does.
+  {
+    const double markerProgress = noteMarkerProgress(loopTime);
+    const float markerY = lineY * static_cast<float>(markerProgress);
+    state.markerY = markerY;
+    state.markerVisible = markerY >= 0.0F && markerY <= m.height;
+  }
+
   // Judgement line; the reference draws it in the AP indicator colour when that is enabled.
   const ImU32 lineColor = context.settings.apfcIndicator ? ui::argb(kApIndicatorColor)
                                                          : IM_COL32(255, 255, 255, 255);
@@ -446,7 +462,6 @@ void drawStage(AppContext& context, const Metrics& m, const PanelLayout& panel, 
   if (std::isfinite(progress)) {
     const float y = lineY * static_cast<float>(progress);
     state.lastNoteY = y;
-    state.noteVisible = y >= 0.0F && y <= m.height;
     if (state.noteTexture != 0) {
       drawList->AddImage(static_cast<ImTextureID>(state.noteTexture),
           ImVec2(centerX - noteWidth * 0.5F, y - noteHeight * 0.5F),
@@ -473,16 +488,15 @@ void drawStage(AppContext& context, const Metrics& m, const PanelLayout& panel, 
       state.hitEffects.push_back(effect);
     }
     state.wasBeforeHit = false;
-    state.noteVisible = false;
   }
 
-  // Touch input on the stage records an expanding marker at the note's current height.
+  // Touch input on the stage records an expanding marker at the theoretical note height. The
+  // recorded position is used as-is, so a tap still leaves a marker after the note has passed the
+  // judgement line and stopped being drawn.
   const PointerSnapshot snapshot = pointerSnapshot();
   if (snapshot.clicked && snapshot.position.x < m.width - panel.width) {
-    const double markerProgress = noteMarkerProgress(loopTime);
-    const float markerY = lineY * static_cast<float>(markerProgress);
-    if (state.noteVisible && markerY >= 0.0F && markerY <= m.height) {
-      state.touchMarkers.push_back(TouchMarker{nowSec, markerY});
+    if (state.markerVisible) {
+      state.touchMarkers.push_back(TouchMarker{nowSec, state.markerY});
     }
   }
 
@@ -620,11 +634,13 @@ void drawCalibrationScreen(AppContext& context) {
       const auto music =
           platform::AssetManager::materialize(platform::assetRoot(), "audio/calibration.wav");
       context.audio->stop();
-      context.audio->setMusicLooping(true);
       context.audio->setVolume(1.0F);
       context.audio->setSoundEffectVolume(1.0F);
       context.audio->setPlaybackSpeed(1.0F);
+      // Loading music replaces the buffer and turns looping off, so looping has to be enabled on
+      // the newly installed buffer rather than on the previous one.
       if (context.audio->loadMusic(music)) {
+        context.audio->setMusicLooping(true);
         context.audio->play();
         loaded = true;
       }
@@ -703,6 +719,16 @@ void exitCalibration(AppContext& context, bool apply) {
   }
   commitSettings(context);
   navigateTo(context, context.calibration.returnTo);
+}
+
+// Read-only view of the stage state the input path consumes. Verification runs use it to inspect
+// the tap marker after a synthetic press; querying it changes nothing.
+void calibrationTapMarkerDiagnostics(float& markerY, bool& markerVisible,
+    std::size_t& touchMarkerCount) {
+  const StageState& state = stageState();
+  markerY = state.markerY;
+  markerVisible = state.markerVisible;
+  touchMarkerCount = state.touchMarkers.size();
 }
 
 } // namespace rechigros::app

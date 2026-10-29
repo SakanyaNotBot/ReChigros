@@ -1,5 +1,9 @@
+#include "rechigros/audio/AudioEngine.hpp"
 #include "rechigros/audio/Decoder.hpp"
 #include "rechigros/audio/Mixer.hpp"
+#include "rechigros/audio/SkinSoundEffects.hpp"
+
+#include "rechigros/game/GameConstants.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -434,6 +438,134 @@ void testResampleStereo() {
 
   require(mixer::resampleStereo(nullptr, 0, 48000, 44100).empty(), "null input resamples to nothing");
 }
+
+constexpr std::uint32_t kEffectRate = 48000;
+
+void writeEffectWav(const std::filesystem::path& path, float frequencyHz, float seconds) {
+  const auto frameCount = static_cast<std::uint32_t>(
+      std::lround(static_cast<double>(seconds) * static_cast<double>(kEffectRate)));
+  const auto wav = makeWav(makeSine(frequencyHz, kEffectRate, frameCount, 0.4F), kEffectRate);
+  std::ofstream output{path, std::ios::binary | std::ios::trunc};
+  require(output.good(), "write effect WAV");
+  output.write(reinterpret_cast<const char*>(wav.data()),
+      static_cast<std::streamsize>(wav.size()));
+  require(output.good(), "flush effect WAV");
+}
+
+void writeDamagedEffect(const std::filesystem::path& path) {
+  std::ofstream output{path, std::ios::binary | std::ios::trunc};
+  require(output.good(), "write damaged effect file");
+  const char bytes[32] = {'n', 'o', 't', ' ', 'a', 'u', 'd', 'i', 'o'};
+  output.write(bytes, static_cast<std::streamsize>(sizeof(bytes)));
+  require(output.good(), "flush damaged effect file");
+}
+
+std::filesystem::path freshEffectDirectory(const char* name) {
+  auto path = rechigros::test::scratchDirectory(std::string("audio-effects/") + name);
+  std::error_code error;
+  std::filesystem::remove_all(path, error);
+  std::filesystem::create_directories(path, error);
+  return path;
+}
+
+void requireEffectFrequency(const rechigros::audio::AudioBuffer& buffer, double expected,
+    const char* message) {
+  require(!buffer.empty(), message);
+  const double measured =
+      measureFrequency(buffer.data(), buffer.frameCount(), buffer.sampleRate());
+  require(std::abs(measured - expected) < 6.0, message);
+}
+
+void testSkinSoundEffects() {
+  using namespace rechigros::audio;
+  using namespace rechigros::game;
+
+  const auto assetRoot = freshEffectDirectory("assets");
+  std::filesystem::create_directories(assetRoot / "audio");
+  writeEffectWav(assetRoot / "audio" / "tap.wav", 300.0F, 0.2F);
+  writeEffectWav(assetRoot / "audio" / "drag.wav", 400.0F, 0.2F);
+  writeEffectWav(assetRoot / "audio" / "flick.wav", 500.0F, 0.2F);
+
+  // Without a skin every bank comes from the shipped asset set.
+  const auto builtIn = resolveSoundEffects(assetRoot, {}, kEffectRate);
+  require(builtIn.anyLoaded(), "built-in effects resolve");
+  requireEffectFrequency(builtIn.bankFor(NOTE_TAP), 300.0, "built-in tap");
+  requireEffectFrequency(builtIn.bankFor(NOTE_DRAG), 400.0, "built-in drag");
+  requireEffectFrequency(builtIn.bankFor(NOTE_FLICK), 500.0, "built-in flick");
+  require(builtIn.statusFor(NOTE_TAP).source == SoundEffectSource::BuiltIn,
+      "built-in source is reported");
+  require(builtIn.statusFor(NOTE_TAP).label.rfind("built-in:", 0) == 0,
+      "built-in label names the asset");
+
+  // Hold reads the tap bank rather than carrying its own samples.
+  require(soundEffectBankFor(NOTE_HOLD) == soundEffectBankFor(NOTE_TAP), "hold maps to tap");
+  require(&builtIn.bankFor(NOTE_HOLD) == &builtIn.bankFor(NOTE_TAP),
+      "hold shares the tap samples");
+  require(builtIn.statusFor(NOTE_HOLD).label == builtIn.statusFor(NOTE_TAP).label,
+      "hold shares the tap label");
+
+  // A full skin overrides every bank with its own files.
+  const auto skin = freshEffectDirectory("skin-full");
+  writeEffectWav(skin / "click.wav", 900.0F, 0.2F);
+  writeEffectWav(skin / "click.ogg", 700.0F, 0.2F);
+  writeEffectWav(skin / "drag.wav", 950.0F, 0.2F);
+  writeEffectWav(skin / "flick.wav", 1000.0F, 0.2F);
+  const auto skinned = resolveSoundEffects(assetRoot, skin, kEffectRate);
+  requireEffectFrequency(skinned.bankFor(NOTE_TAP), 900.0, "skin click overrides tap");
+  requireEffectFrequency(skinned.bankFor(NOTE_DRAG), 950.0, "skin drag overrides drag");
+  requireEffectFrequency(skinned.bankFor(NOTE_FLICK), 1000.0, "skin flick overrides flick");
+  requireEffectFrequency(skinned.bankFor(NOTE_HOLD), 900.0, "hold follows the skin click");
+  require(skinned.statusFor(NOTE_TAP).source == SoundEffectSource::Skin, "skin source is reported");
+  require(skinned.statusFor(NOTE_TAP).label.rfind("skin:", 0) == 0,
+      "skin label names the file");
+  require(skinned.statusFor(NOTE_TAP).label.find("click.wav") != std::string::npos,
+      "skin label names the chosen extension");
+
+  // Resolving again without a skin returns to the built-in set: no skin survives a reload.
+  const auto restored = resolveSoundEffects(assetRoot, {}, kEffectRate);
+  requireEffectFrequency(restored.bankFor(NOTE_TAP), 300.0, "reload restores the built-in tap");
+  require(restored.statusFor(NOTE_DRAG).source == SoundEffectSource::BuiltIn,
+      "reload restores every built-in source");
+
+  // A damaged click falls through to the next extension while a missing drag falls back to
+  // the built-in bank, so one bad skin file cannot silence a whole run.
+  const auto partial = freshEffectDirectory("skin-partial");
+  writeDamagedEffect(partial / "click.wav");
+  writeEffectWav(partial / "click.ogg", 1200.0F, 0.2F);
+  writeEffectWav(partial / "flick.wav", 1300.0F, 0.2F);
+  const auto partialSet = resolveSoundEffects(assetRoot, partial, kEffectRate);
+  requireEffectFrequency(partialSet.bankFor(NOTE_TAP), 1200.0,
+      "damaged wav falls through to ogg");
+  requireEffectFrequency(partialSet.bankFor(NOTE_DRAG), 400.0, "missing skin drag falls back");
+  requireEffectFrequency(partialSet.bankFor(NOTE_FLICK), 1300.0, "skin flick still applies");
+
+  // With no decodable built-in file either, a synthesised tone keeps every bank audible.
+  const auto emptyAssets = freshEffectDirectory("assets-empty");
+  std::filesystem::create_directories(emptyAssets / "audio");
+  writeDamagedEffect(emptyAssets / "audio" / "tap.wav");
+  writeDamagedEffect(emptyAssets / "audio" / "drag.wav");
+  writeDamagedEffect(emptyAssets / "audio" / "flick.wav");
+  const auto synthesized = resolveSoundEffects(emptyAssets, {}, kEffectRate);
+  require(synthesized.statusFor(NOTE_TAP).source == SoundEffectSource::Synthesized,
+      "damaged built-in falls back to a synthesised tone");
+  require(synthesized.statusFor(NOTE_TAP).label.rfind("synthesized:", 0) == 0,
+      "synthesised label reports the tone");
+  require(!synthesized.bankFor(NOTE_TAP).empty(), "synthesised tap has samples");
+}
+
+void testSoundEffectDiagnostics() {
+  using namespace rechigros::audio;
+  using namespace rechigros::game;
+
+  AudioEngine engine;
+  require(engine.soundEffectSource(NOTE_TAP) == SoundEffectSource::None,
+      "unloaded tap source is none");
+  require(engine.soundEffectSource(NOTE_HOLD) == engine.soundEffectSource(NOTE_TAP),
+      "unloaded hold reports the tap source");
+  require(engine.soundEffectSourceLabel(NOTE_TAP) == "none", "unloaded tap label");
+  require(engine.soundEffectSourcesLabel() == "tap=none drag=none flick=none",
+      "unloaded batch label lists every bank");
+}
 } // namespace
 
 int main() {
@@ -448,6 +580,8 @@ int main() {
   testSynthesizedTone();
   testDecoderRejectsInvalidInput();
   testResampleStereo();
+  testSkinSoundEffects();
+  testSoundEffectDiagnostics();
 
   std::cout << "All ReChigros audio tests passed\n";
   return 0;

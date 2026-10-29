@@ -1,10 +1,12 @@
 #pragma once
 
 #include "rechigros/audio/Decoder.hpp"
+#include "rechigros/audio/SkinSoundEffects.hpp"
 
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <string>
 
 namespace rechigros::audio {
 
@@ -30,9 +32,13 @@ public:
   /// Releases the device and every decoded buffer.
   void shutdown();
 
-  /// Decodes the effect assets below `assetRoot`. Missing assets fall back to
-  /// synthesised tones so effects still trigger.
-  bool loadSoundEffects(const std::filesystem::path& assetRoot);
+  /// Decodes the effect assets below `assetRoot`, preferring files in `skinDirectory` when it
+  /// names a directory. For every bank the skin's click/drag/flick file replaces the built-in
+  /// asset; a missing or undecodable file falls back to the built-in asset and then to a
+  /// synthesised tone. Each call replaces every bank, so a skin choice never survives into the
+  /// next load. Missing assets fall back to synthesised tones so effects still trigger.
+  bool loadSoundEffects(const std::filesystem::path& assetRoot,
+      const std::filesystem::path& skinDirectory = {});
 
   /// Decodes `path` as the current music track. Replaces any previous track and
   /// rewinds the playhead.
@@ -87,6 +93,15 @@ public:
   bool loadHitSound(const std::filesystem::path& path);
   void triggerSoundEffect(int noteType, const std::string& hitSound);
 
+  /// Where the bank a note type reads came from. Hold notes report the tap bank; an unknown
+  /// type reports `SoundEffectSource::None`. Read-only and safe from any thread.
+  [[nodiscard]] SoundEffectSource soundEffectSource(int noteType) const;
+  /// Diagnostic label of that bank: `skin:<path>`, `built-in:<relative path>`,
+  /// `synthesized:<frequency>Hz` or `none`. Suitable for one start-up log entry.
+  [[nodiscard]] std::string soundEffectSourceLabel(int noteType) const;
+  /// Every bank's label on one line, for logging a run's effect setup once.
+  [[nodiscard]] std::string soundEffectSourcesLabel() const;
+
   /// Interpolated music position in seconds, for animation timing.
   [[nodiscard]] double cursorSeconds() const;
   /// Same as `cursorSeconds`.
@@ -97,6 +112,7 @@ public:
   [[nodiscard]] bool isPlaying() const;
   [[nodiscard]] bool isSuspended() const;
   [[nodiscard]] bool hasMusic() const;
+  [[nodiscard]] bool musicLooping() const;
 
   /// Device sample rate, or 0 before the device is opened.
   [[nodiscard]] std::uint32_t outputSampleRate() const;

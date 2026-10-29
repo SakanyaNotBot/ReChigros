@@ -127,6 +127,19 @@ Settlement settlementAt(float p) {
   return s;
 }
 
+// State of one visit to the settlement: when its entrance started, and whether the judgement
+// distribution overlay is open. Both are per-visit, so the page can be entered again cleanly.
+struct ResultPageState {
+  double lastDrawSec{-1.0};
+  double animationStartSec{-1.0};
+  bool histogramVisible{};
+};
+
+ResultPageState& resultPageState() {
+  static ResultPageState state;
+  return state;
+}
+
 // ---------------------------------------------------------------------------
 // small drawing helpers
 // ---------------------------------------------------------------------------
@@ -583,6 +596,8 @@ std::vector<ModeTag> modeTags(const AppContext& context) {
 
 } // namespace
 
+bool resultHistogramVisible() { return resultPageState().histogramVisible; }
+
 void drawResultScreen(AppContext& context) {
   const ImVec2 viewport = ImVec2(viewportSize().width, viewportSize().height);
   // The settlement is authored on a 960 x 540 canvas scaled uniformly into the window and
@@ -598,16 +613,18 @@ void drawResultScreen(AppContext& context) {
   ImDrawList* drawList = ImGui::GetWindowDrawList();
 
   // The settlement plays when the screen is entered from gameplay. A capture run opens the
-  // screen directly at application start and is expected to show the settled state.
-  static double lastDrawSec = -1.0;
-  static double animationStartSec = -1.0;
-  if (lastDrawSec < 0.0 || context.nowSec - lastDrawSec > 0.5) {
-    animationStartSec = context.nowSec <= 0.1 ? -1.0 : context.nowSec;
+  // screen directly at application start and is expected to show the settled state. The
+  // distribution overlay belongs to one visit: a new settlement starts with it closed, and
+  // leaving the page drops it.
+  ResultPageState& page = resultPageState();
+  if (page.lastDrawSec < 0.0 || context.nowSec - page.lastDrawSec > 0.5) {
+    page.animationStartSec = context.nowSec <= 0.1 ? -1.0 : context.nowSec;
+    page.histogramVisible = false;
   }
-  lastDrawSec = context.nowSec;
-  const bool staged = animationStartSec > 0.0;
+  page.lastDrawSec = context.nowSec;
+  const bool staged = page.animationStartSec > 0.0;
   const float sinceStart = staged
-      ? std::max(0.0F, static_cast<float>(context.nowSec - animationStartSec))
+      ? std::max(0.0F, static_cast<float>(context.nowSec - page.animationStartSec))
       : static_cast<float>(kSettlementSeconds);
   // The backdrop crossfades in first and holds on its own, exactly like the reference outro.
   const float backdropFade = staged
@@ -631,10 +648,14 @@ void drawResultScreen(AppContext& context) {
     drawList->AddRectFilled(ImVec2(0.0F, 0.0F), viewport,
         IM_COL32(0, 0, 0, static_cast<int>(std::lround(255.0F * (1.0F - backdropFade)))));
   }
-  // Until the hold ends only the blurred cover is on screen, as in the reference.
-  if (!contentVisible) {
-    ui::endFullscreenWindow();
-    return;
+  // Until the hold ends only the blurred cover is on screen, as in the reference. The content
+  // below is still laid out and its controls are still submitted: the settlement actions are
+  // bound when the page is created, so the entrance is never a dead window. While the cover
+  // holds, the content is clipped out of the frame instead of the layout being skipped, which
+  // is what keeps the same hit areas live from the first frame.
+  const bool contentHidden = !contentVisible;
+  if (contentHidden) {
+    drawList->PushClipRect(ImVec2(0.0F, 0.0F), ImVec2(0.0F, 0.0F), false);
   }
 
   // Everything below is authored in the 960 x 540 design space.
@@ -930,22 +951,23 @@ void drawResultScreen(AppContext& context) {
   }
 
   // ---- judgement distribution overlay ----
-  if (context.settings.judgementDetailDistribution) {
-    static bool histogramVisible = false;
+  // The overlay belongs to the settlement content, so it is offered as soon as that content is
+  // on screen instead of only after the slide has finished. Every target below is a complete
+  // press of its own plate, so the release that ends an entrance gesture cannot toggle it.
+  if (contentVisible && context.settings.judgementDetailDistribution) {
     const ui::Box histogramBox = shifted(cardBox, settlement.cardDx);
     ui::PanelStyle hitStyle = ui::glassPanel(ui::argb(0x00000000U), ui::argb(0x00000000U));
     hitStyle.strokeWidthDp = 0.0F;
-    if (histogramVisible) {
+    if (page.histogramVisible) {
       ui::Canvas plain = canvas;
       drawJudgementHistogram(context, drawList, plain, histogramBox, context.play.challenge, 1.0F,
           0.0F);
       ImGui::SetCursorScreenPos(content.point(histogramBox.x0, histogramBox.y0));
-      ImGui::InvisibleButton("##result_histogram",
-          ImVec2(content.units(histogramBox.width()), content.units(histogramBox.height())));
-      if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-        histogramVisible = false;
+      if (ImGui::InvisibleButton("##result_histogram",
+              ImVec2(content.units(histogramBox.width()), content.units(histogramBox.height())))) {
+        page.histogramVisible = false;
       }
-    } else if (settlement.progress >= 1.0F) {
+    } else {
       // Tapping the illustration or any of the three boards reveals the overlay.
       const ui::Box targets[] = {histogramBox,
           shifted(box(526.0F, 114.0F, 389.0F, 156.0F), settlement.upperDx),
@@ -954,7 +976,7 @@ void drawResultScreen(AppContext& context) {
       for (std::size_t index = 0; index < std::size(targets); ++index) {
         const std::string id = "##result_histogram_toggle" + std::to_string(index);
         if (ui::panelInteraction(id.c_str(), content, targets[index], hitStyle).pressed) {
-          histogramVisible = true;
+          page.histogramVisible = true;
           break;
         }
       }
@@ -964,6 +986,8 @@ void drawResultScreen(AppContext& context) {
 
   // The settlement content keeps its own staged reveals; the backdrop crossfade above already
   // handled the entrance, so no extra full-screen fade is drawn here.
+
+  if (contentHidden) drawList->PopClipRect();
 
   ui::endFullscreenWindow();
 

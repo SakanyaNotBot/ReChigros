@@ -7,9 +7,13 @@
 #include "rechigros/app/UiStyle.hpp"
 #include "rechigros/app/UiLayout.hpp"
 #include "rechigros/app/Settings.hpp"
+#include "rechigros/audio/AudioEngine.hpp"
+#include "rechigros/audio/Decoder.hpp"
+#include "rechigros/audio/Mixer.hpp"
 #include "rechigros/chart/ChartLoader.hpp"
 #include "rechigros/game/GameplaySession.hpp"
 #include "rechigros/platform/Archive.hpp"
+#include "rechigros/platform/AssetManager.hpp"
 #include "rechigros/platform/FileSystem.hpp"
 
 #include <imgui.h>
@@ -249,9 +253,11 @@ int replayRoundTrip(const std::filesystem::path& directory) {
 
 // Draws one screen into an off-screen frame and returns how many vertices it produced.
 // ImGui builds draw lists on the CPU, so a screen can be exercised without a window or a
-// graphics context.
+// graphics context. The page is announced exactly as the running loop does, so press ownership
+// behaves the same here as in the application.
 int drawScreenHeadless(AppContext& context, void (*draw)(AppContext&)) {
   ImGui::NewFrame();
+  ui::beginPage(static_cast<int>(context.screen));
   draw(context);
   ImGui::Render();
   const ImDrawData* data = ImGui::GetDrawData();
@@ -420,6 +426,85 @@ int runSelfTest() {
   }
   report(chartLoaded, "chart load", "notes=" + std::to_string(noteCount));
 
+  // Run entry owns the live effect selection. Starting again without a skin must replace the
+  // previous bank rather than leaving the selected skin installed.
+  {
+    bool sourcesChanged = false;
+    std::string sourceDetail;
+    if (chartLoaded) {
+      AppContext context(work / "live-effects");
+      audio::AudioEngine audio;
+      context.audio = &audio;
+      context.play.chartFile = chartPath;
+      context.play.autoplay = true;
+      const auto skin = context.dataRoot / "skins" / "source-probe";
+      error.clear();
+      std::filesystem::create_directories(skin, error);
+      const bool copied = !error && std::filesystem::copy_file(platform::assetRoot() / "audio" /
+          "tap.wav", skin / "click.wav", std::filesystem::copy_options::overwrite_existing, error);
+      context.settings.selectedSkin = "source-probe";
+      const bool skinRun = copied && gameEnter(context);
+      const std::string skinSources = audio.soundEffectSourcesLabel();
+      context.settings.selectedSkin.clear();
+      const bool builtInRun = skinRun && gameEnter(context);
+      const std::string builtInSources = audio.soundEffectSourcesLabel();
+      sourcesChanged = builtInRun && skinSources.rfind("tap=skin:", 0) == 0
+          && builtInSources.rfind("tap=built-in:audio/tap.wav", 0) == 0
+          && skinSources != builtInSources;
+      sourceDetail = "skin={" + skinSources + "} built-in={" + builtInSources + "}";
+      gameLeave(context);
+      context.audio = nullptr;
+      audio.shutdown();
+    }
+    report(sourcesChanged, "game start switches live effect sources", sourceDetail);
+  }
+
+  // Drive the same pointer and update entry points as the running loop. The opening must stay
+  // frozen while its menu is up, then resume the existing run after a manual Continue.
+  if (chartLoaded) {
+    AppContext context(work / "intro-pause");
+    context.play.chartFile = chartPath;
+    context.play.autoplay = true;
+    context.screen = Screen::Game;
+    context.settings.aspectRatio = 16.0F / 9.0F;
+    const bool started = gameEnter(context);
+    const auto step = [&](int frames) {
+      for (int frame = 0; frame < frames; ++frame) {
+        context.nowSec += 1.0 / 60.0;
+        gameUpdate(context, 1.0F / 60.0F);
+      }
+    };
+    step(12);
+    const game::Chart* const originalChart = context.game.chart.get();
+    const double frozenIntro = context.game.introElapsedSec;
+    gamePointerDown(context, 41, 40.0F, 40.0F);
+    gamePointerUp(context, 41);
+    gamePointerDown(context, 42, 40.0F, 40.0F);
+    gamePointerUp(context, 42);
+    const bool opened = context.game.pause == GameRuntime::Pause::Menu;
+    step(120);
+    const bool stayedFrozen = opened && context.game.pause == GameRuntime::Pause::Menu
+        && context.game.inIntro && context.game.introElapsedSec == frozenIntro
+        && context.game.playheadSec == 0.0;
+    report(started && stayedFrozen, "intro double tap holds a persistent frozen pause",
+        "opened=" + std::to_string(opened ? 1 : 0) + ", intro="
+            + std::to_string(context.game.introElapsedSec));
+
+    context.nowSec += 1.0;
+    gamePointerDown(context, 43, 773.0F, 360.0F);
+    gamePointerUp(context, 43);
+    const bool countdown = context.game.pause == GameRuntime::Pause::Countdown;
+    step(181);
+    const bool resumed = countdown && context.game.pause == GameRuntime::Pause::None
+        && !context.game.inIntro && context.game.loaded
+        && context.game.chart.get() == originalChart && context.game.playheadSec > 0.0
+        && !context.game.pauseResumesFromZero && !context.game.pausePlayheadValid;
+    report(resumed, "manual Continue releases the same run after its countdown",
+        "countdown=" + std::to_string(countdown ? 1 : 0) + ", playhead="
+            + std::to_string(context.game.playheadSec));
+    gameLeave(context);
+  }
+
   // Headless gameplay: autoplay and a miss-only manual run.
   if (chartLoaded) {
     bool gameplayOk = false;
@@ -584,6 +669,103 @@ int runSelfTest() {
       navigateTo(context, context.settingsReturn);
       report(context.screen == Screen::Library,
           "the settings page can still be left after a calibration attempt");
+    }
+
+    {
+      const Screen previousScreen = context.screen;
+      const CalibrationRuntime previousCalibration = context.calibration;
+      audio::AudioEngine* const previousAudio = context.audio;
+      const bool previousSettingsDirty = context.settingsDirty;
+      const ImVec2 previousDisplaySize = io.DisplaySize;
+      context.screen = Screen::Calibration;
+      context.audio = nullptr;
+      context.calibration.audioLoaded = true;
+      context.calibration.offsetMs = -1200.0F;
+      io.DisplaySize = ImVec2(1280.0F, 720.0F);
+      io.AddMousePosEvent(120.0F, 360.0F);
+      drawScreenHeadless(context, drawCalibrationScreen);
+
+      float markerY = 0.0F;
+      bool markerVisible = false;
+      std::size_t markersBefore = 0;
+      calibrationTapMarkerDiagnostics(markerY, markerVisible, markersBefore);
+      const float lineY = io.DisplaySize.y * 0.75F;
+      const bool theoreticalTapBelowLine = markerVisible && markerY > lineY
+          && markerY < io.DisplaySize.y;
+
+      // With a zero playhead and -1200 ms offset, loopTime is 1.2: the note has crossed the
+      // line and is not drawn again, but a real stage press must still record its marker.
+      io.AddMouseButtonEvent(0, true);
+      drawScreenHeadless(context, drawCalibrationScreen);
+      io.AddMouseButtonEvent(0, false);
+      drawScreenHeadless(context, drawCalibrationScreen);
+      std::size_t markersAfter = 0;
+      calibrationTapMarkerDiagnostics(markerY, markerVisible, markersAfter);
+      char detail[192];
+      std::snprintf(detail, sizeof(detail),
+          "markers=%zu->%zu, markerY=%.2f, lineY=%.2f, visible=%d", markersBefore,
+          markersAfter, markerY, lineY, markerVisible ? 1 : 0);
+      report(theoreticalTapBelowLine && markerVisible && markerY > lineY
+              && markersAfter == markersBefore + 1,
+          "calibration tap records a marker after the note crosses the line", detail);
+
+      io.AddMousePosEvent(-100.0F, -100.0F);
+      exitCalibration(context, false);
+      context.calibration = previousCalibration;
+      context.audio = previousAudio;
+      context.settingsDirty = previousSettingsDirty;
+      context.screen = previousScreen;
+      io.DisplaySize = previousDisplaySize;
+    }
+
+    {
+      AppContext loopContext(work / "calibration-loop");
+      audio::AudioEngine loopAudio;
+      loopContext.audio = &loopAudio;
+      loopContext.screen = Screen::Calibration;
+      drawScreenHeadless(loopContext, drawCalibrationScreen);
+
+      const bool deviceOpened = loopAudio.outputSampleRate() != 0;
+      const bool screenLooping = deviceOpened && loopContext.screen == Screen::Calibration
+          && loopContext.calibration.audioLoaded && loopAudio.hasMusic()
+          && loopAudio.musicLooping()
+          && std::abs(loopAudio.getMusicDurationSeconds() - 2.0) < 0.01;
+      bool verified = screenLooping;
+      std::string detail = "loaded=" + std::to_string(loopAudio.hasMusic() ? 1 : 0)
+          + ", looping=" + std::to_string(loopAudio.musicLooping() ? 1 : 0)
+          + ", duration=" + std::to_string(loopAudio.getMusicDurationSeconds());
+
+      if (!deviceOpened) {
+        const auto music = platform::AssetManager::materialize(
+            platform::assetRoot(), "audio/calibration.wav");
+        const auto buffer = audio::Decoder::decodeFile(music, 48000);
+        const auto rate = buffer.sampleRate();
+        const auto boundary = static_cast<std::int64_t>(rate) * 2;
+        bool repeats = rate != 0 && buffer.frameCount() >= boundary;
+        bool nonZeroAfterBoundary = false;
+        for (std::int64_t frame = 0; frame < boundary; ++frame) {
+          const auto first = audio::mixer::sampleMusic(
+              buffer.data(), buffer.frameCount(), static_cast<double>(frame), true);
+          const auto repeated = audio::mixer::sampleMusic(buffer.data(), buffer.frameCount(),
+              static_cast<double>(boundary + frame), true);
+          repeats &= std::abs(first.left - repeated.left) < 1.0e-6F
+              && std::abs(first.right - repeated.right) < 1.0e-6F;
+          nonZeroAfterBoundary |= std::abs(repeated.left) > 1.0e-4F
+              || std::abs(repeated.right) > 1.0e-4F;
+        }
+        verified = repeats && nonZeroAfterBoundary;
+        detail = "device=closed, mixer repeat=" + std::to_string(repeats ? 1 : 0)
+            + ", nonzero=" + std::to_string(nonZeroAfterBoundary ? 1 : 0)
+            + ", duration=" + std::to_string(buffer.durationSeconds());
+      }
+
+      report(verified,
+          deviceOpened ? "calibration screen loads music with looping enabled"
+                       : "calibration music buffer repeats across two seconds in mixer",
+          detail);
+      exitCalibration(loopContext, false);
+      loopContext.audio = nullptr;
+      loopAudio.shutdown();
     }
 
     // Settings owns its pointer state instead of using immediate-mode buttons. Exercise
@@ -1026,6 +1208,50 @@ int runSelfTest() {
       context.screen = Screen::Library;
       drawScreenHeadless(context, drawLibraryScreen);
 
+      // A press that began on the page before this one must not act on the list. The pause exit
+      // plate hands over to the list on the very press that opens it, so the first list frame
+      // can still see that click; it belongs to the page that received it, and the list must
+      // neither start a drag nor resolve a tap from it.
+      bool crossPagePressIgnored = false;
+      if (!tappedCardId.empty()) {
+        navigateTo(context, Screen::Library);
+        context.nowSec += 1.0;
+        context.manageMode = false;
+        context.selectedIds.clear();
+        io.AddMousePosEvent(cardProbeX, kCardProbeY);
+        context.screen = Screen::Settings;
+        drawScreenHeadless(context, drawSettingsScreen);
+        io.AddMouseButtonEvent(0, true);
+        context.screen = Screen::Library;
+        drawScreenHeadless(context, drawLibraryScreen);
+        io.AddMouseButtonEvent(0, false);
+        drawScreenHeadless(context, drawLibraryScreen);
+        drawScreenHeadless(context, drawLibraryScreen);
+        crossPagePressIgnored = context.screen == Screen::Library && !context.manageMode;
+      }
+      report(!tappedCardId.empty() && crossPagePressIgnored,
+          "a press carried over from the previous page does not open a card",
+          "screen=" + std::to_string(static_cast<int>(context.screen)) + ", manage="
+              + std::to_string(context.manageMode ? 1 : 0));
+
+      // Once that press is over, the page owns its gestures again: one complete press of the
+      // same card still opens it.
+      context.screen = Screen::Library;
+      context.nowSec += 1.0;
+      io.AddMousePosEvent(cardProbeX, kCardProbeY);
+      drawScreenHeadless(context, drawLibraryScreen);
+      drawScreenHeadless(context, drawLibraryScreen);
+      io.AddMouseButtonEvent(0, true);
+      drawScreenHeadless(context, drawLibraryScreen);
+      io.AddMouseButtonEvent(0, false);
+      drawScreenHeadless(context, drawLibraryScreen);
+      drawScreenHeadless(context, drawLibraryScreen);
+      report(context.screen == Screen::Detail,
+          "a complete press still opens a card after the page change",
+          "screen=" + std::to_string(static_cast<int>(context.screen)));
+      io.AddMousePosEvent(-100.0F, -100.0F);
+      openChartDetail(context, uiChartId);
+
       // The recording page renders the chart the detail page describes. Entering it has to load
       // that chart, because the page can only start a render for a loaded one; the failure this
       // covers is the page opening and then refusing to start with "no chart is loaded".
@@ -1065,6 +1291,46 @@ int runSelfTest() {
             "recording page can start a render for its chart",
             started ? std::string("started") : startError);
       }
+      // The press that opens the pause menu belongs to the field: the plates below it only
+      // answer a press made while the menu was already up, and the pause control itself still
+      // acts on the press, as does a later press of a plate.
+      if (renderPrepared) {
+        context.screen = Screen::Game;
+        context.nowSec += 1.0;
+        drawScreenHeadless(context, drawGameOverlay);
+        drawScreenHeadless(context, drawGameOverlay);
+        gameTogglePause(context);
+        // Centre of the continue plate for the default window and stage.
+        const float continueX = 773.0F;
+        const float continueY = 360.0F;
+        io.AddMousePosEvent(continueX, continueY);
+        drawScreenHeadless(context, drawGameOverlay);
+        io.AddMouseButtonEvent(0, true);
+        drawScreenHeadless(context, drawGameOverlay);
+        const bool openingPressIgnored = context.game.pause == GameRuntime::Pause::Menu;
+        io.AddMouseButtonEvent(0, false);
+        drawScreenHeadless(context, drawGameOverlay);
+        drawScreenHeadless(context, drawGameOverlay);
+        // A press made while the menu is up still acts on the press, before the release.
+        context.nowSec += 1.0;
+        io.AddMousePosEvent(continueX, continueY);
+        drawScreenHeadless(context, drawGameOverlay);
+        io.AddMouseButtonEvent(0, true);
+        drawScreenHeadless(context, drawGameOverlay);
+        const bool laterPressActs = context.game.pause == GameRuntime::Pause::Countdown;
+        io.AddMouseButtonEvent(0, false);
+        drawScreenHeadless(context, drawGameOverlay);
+        report(openingPressIgnored && laterPressActs,
+            "the press that opens the pause menu does not press its plates",
+            "opening=" + std::to_string(openingPressIgnored ? 1 : 0) + ", later="
+                + std::to_string(laterPressActs ? 1 : 0));
+        context.game.pause = GameRuntime::Pause::None;
+        context.game.pauseElapsedSec = 0.0;
+        io.AddMousePosEvent(-100.0F, -100.0F);
+        // Back to the page the recording checks were made from, so leaving the recording page
+        // still exercises its own release path rather than a gameplay exit.
+        context.screen = Screen::Detail;
+      }
       // Leaving the page must not leave a chart loaded for a screen that never started a run.
       navigateTo(context, Screen::Render);
       navigateTo(context, Screen::Detail);
@@ -1102,6 +1368,101 @@ int runSelfTest() {
     drawScreenHeadless(context, drawToast);
     const int toastVertices = drawScreenHeadless(context, drawToast);
     report(toastVertices > 0, "toast draws", "vertices=" + std::to_string(toastVertices));
+
+    // A drag that starts on the backdrop and ends on a menu plate is not a press of that plate:
+    // the plate answers a press made on it, and nothing else.
+    context.screen = Screen::Home;
+    io.DisplaySize = ImVec2(1280.0F, 720.0F);
+    io.AddMousePosEvent(60.0F, 660.0F);
+    drawScreenHeadless(context, drawHomeScreen);
+    drawScreenHeadless(context, drawHomeScreen);
+    io.AddMouseButtonEvent(0, true);
+    drawScreenHeadless(context, drawHomeScreen);
+    io.AddMousePosEvent(330.0F, 400.0F);
+    drawScreenHeadless(context, drawHomeScreen);
+    io.AddMouseButtonEvent(0, false);
+    drawScreenHeadless(context, drawHomeScreen);
+    drawScreenHeadless(context, drawHomeScreen);
+    report(context.screen == Screen::Home,
+        "dragging onto a menu plate does not press it",
+        "screen=" + std::to_string(static_cast<int>(context.screen)));
+    io.AddMousePosEvent(-100.0F, -100.0F);
+
+    // The settlement binds its actions when the page is created, so its entrance is not a dead
+    // window: the corner plate answers a press made while the content is still revealing.
+    context.settings.judgementDetailDistribution = true;
+    context.play = PlaySetup{};
+    context.screen = Screen::Result;
+    context.nowSec = 50.0;
+    drawScreenHeadless(context, drawResultScreen);
+    // The entrance runs for 3.5 s and the cover holds for the first 2.4 s. Stepping the clock
+    // in small draws keeps the page inside one entrance instead of restarting it.
+    const auto advanceSettlement = [&](float seconds) {
+      while (seconds > 0.0F) {
+        const float step = std::min(0.25F, seconds);
+        context.nowSec += static_cast<double>(step);
+        drawScreenHeadless(context, drawResultScreen);
+        seconds -= step;
+      }
+    };
+    advanceSettlement(1.4F);
+    io.AddMousePosEvent(1220.0F, 647.0F);
+    drawScreenHeadless(context, drawResultScreen);
+    io.AddMouseButtonEvent(0, true);
+    drawScreenHeadless(context, drawResultScreen);
+    io.AddMouseButtonEvent(0, false);
+    drawScreenHeadless(context, drawResultScreen);
+    drawScreenHeadless(context, drawResultScreen);
+    report(context.screen == Screen::Library,
+        "the settlement answers a press made during its entrance",
+        "screen=" + std::to_string(static_cast<int>(context.screen)));
+
+    // A press that was already down when the settlement appeared belongs to the page that was
+    // up at the time: even released over a corner plate after the reveal, it must not act here.
+    context.screen = Screen::Library;
+    context.nowSec = 70.0;
+    drawScreenHeadless(context, drawLibraryScreen);
+    io.AddMousePosEvent(1220.0F, 647.0F);
+    io.AddMouseButtonEvent(0, true);
+    drawScreenHeadless(context, drawLibraryScreen);
+    context.screen = Screen::Result;
+    context.nowSec = 70.2;
+    drawScreenHeadless(context, drawResultScreen);
+    advanceSettlement(2.6F);
+    io.AddMouseButtonEvent(0, false);
+    drawScreenHeadless(context, drawResultScreen);
+    drawScreenHeadless(context, drawResultScreen);
+    report(context.screen == Screen::Result,
+        "a press held from the previous page does not press the settlement",
+        "screen=" + std::to_string(static_cast<int>(context.screen)));
+
+    // A new settlement starts closed, and the distribution overlay is offered as soon as the
+    // content is on screen rather than only after the 3.5 s slide has finished.
+    context.screen = Screen::Result;
+    context.nowSec = 80.0;
+    drawScreenHeadless(context, drawResultScreen);
+    advanceSettlement(2.6F);
+    const bool overlayClosedOnEntry = !resultHistogramVisible();
+    io.AddMousePosEvent(404.0F, 360.0F);
+    drawScreenHeadless(context, drawResultScreen);
+    io.AddMouseButtonEvent(0, true);
+    drawScreenHeadless(context, drawResultScreen);
+    io.AddMouseButtonEvent(0, false);
+    drawScreenHeadless(context, drawResultScreen);
+    drawScreenHeadless(context, drawResultScreen);
+    report(overlayClosedOnEntry && resultHistogramVisible(),
+        "the distribution overlay opens before the settlement slide ends",
+        "closedOnEntry=" + std::to_string(overlayClosedOnEntry ? 1 : 0) + ", open="
+            + std::to_string(resultHistogramVisible() ? 1 : 0));
+
+    // Leaving the page and coming back is a fresh visit: the overlay starts closed again.
+    context.screen = Screen::Library;
+    context.nowSec += 1.0;
+    drawScreenHeadless(context, drawLibraryScreen);
+    context.screen = Screen::Result;
+    context.nowSec += 1.0;
+    drawScreenHeadless(context, drawResultScreen);
+    report(!resultHistogramVisible(), "a new settlement starts with the overlay closed");
 
     // Navigating between screens must not need a renderer either.
     navigateTo(context, Screen::Library);

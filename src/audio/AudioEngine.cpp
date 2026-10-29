@@ -3,7 +3,6 @@
 #include "rechigros/audio/Decoder.hpp"
 #include "rechigros/audio/Mixer.hpp"
 #include "rechigros/game/GameConstants.hpp"
-#include "rechigros/platform/AssetManager.hpp"
 
 #include <miniaudio.h>
 
@@ -31,8 +30,7 @@ constexpr std::uint32_t kMaxVoices = 32;
 /// registers are 32-bit, so the capacity matches them and the ring arithmetic stays in one
 /// type.
 constexpr std::uint32_t kSfxQueueCapacity = 1024;
-/// Indexed by note type, so index 0 stays unused.
-constexpr std::size_t kBankCount = 5;
+/// Sentinel for "no seek is pending".
 constexpr double kNoSeek = -1.0;
 /// How long buffer replacement waits for the audio thread to stand down.
 constexpr std::int64_t kQuiesceTimeoutNs = 200'000'000;
@@ -485,18 +483,6 @@ struct AudioEngine::Impl final {
     return estimate / static_cast<double>(rate);
   }
 
-  void setBank(int noteType, AudioBuffer buffer) {
-    if (noteType <= 0 || static_cast<std::size_t>(noteType) >= banks_.size()) return;
-    banks_[static_cast<std::size_t>(noteType)] = std::move(buffer);
-  }
-
-  bool anyBankLoaded() const noexcept {
-    for (const auto& bank : banks_) {
-      if (!bank.empty()) return true;
-    }
-    return false;
-  }
-
   // -- members ---------------------------------------------------------
 
   mutable std::mutex deviceMutex_;
@@ -522,9 +508,13 @@ struct AudioEngine::Impl final {
 
   // Decoded audio, replaced only while the audio thread is standing down.
   AudioBuffer music_;
-  std::array<AudioBuffer, kBankCount> banks_;
+  std::array<AudioBuffer, kSoundEffectBankCount> banks_;
   std::unordered_map<std::string, std::shared_ptr<AudioBuffer>> customBanks_;
   std::mutex customMutex_;
+
+  // Provenance of each bank, read by diagnostic queries from any thread.
+  std::array<SoundEffectStatus, kSoundEffectBankCount> effectStatus_;
+  std::mutex effectStatusMutex_;
 
   // Owned by the audio thread.
   std::array<Voice, kMaxVoices> voices_{};
@@ -564,6 +554,10 @@ void AudioEngine::shutdown() {
   impl_->music_.clear();
   for (auto& bank : impl_->banks_) bank.clear();
   impl_->customBanks_.clear();
+  {
+    std::lock_guard<std::mutex> lock{impl_->effectStatusMutex_};
+    impl_->effectStatus_.fill(SoundEffectStatus{});
+  }
   impl_->flushVoices();
   impl_->queue_.clear();
   impl_->playheadFrames_.store(0.0, std::memory_order_release);
@@ -576,46 +570,23 @@ void AudioEngine::shutdown() {
   impl_->closeDevice();
 }
 
-bool AudioEngine::loadSoundEffects(const std::filesystem::path& assetRoot) {
+bool AudioEngine::loadSoundEffects(const std::filesystem::path& assetRoot,
+    const std::filesystem::path& skinDirectory) {
   if (!initialize()) return false;
 
-  struct Entry {
-    int noteType;
-    const char* relativePath;
-    float fallbackHz;
-    float fallbackSeconds;
-    float fallbackAmplitude;
-  };
-  static constexpr std::array<Entry, 3> entries{{
-      {game::NOTE_TAP, "audio/tap.wav", 880.0F, 0.030F, 0.35F},
-      {game::NOTE_DRAG, "audio/drag.wav", 660.0F, 0.035F, 0.30F},
-      {game::NOTE_FLICK, "audio/flick.wav", 1100.0F, 0.025F, 0.35F},
-  }};
-
   const auto rate = impl_->sampleRate_.load(std::memory_order_acquire);
-  std::array<AudioBuffer, entries.size()> decoded;
-  for (std::size_t index = 0; index < entries.size(); ++index) {
-    const auto path = platform::AssetManager::materialize(assetRoot, entries[index].relativePath);
-    if (!path.empty()) decoded[index] = Decoder::decodeFile(path, rate);
-  }
-
-  // Synthesised tones keep hit feedback audible when an asset is missing.
-  for (std::size_t index = 0; index < entries.size(); ++index) {
-    if (decoded[index].empty()) {
-      decoded[index].assign(
-          synthesizeTone(entries[index].fallbackHz, entries[index].fallbackSeconds, rate,
-              entries[index].fallbackAmplitude),
-          rate);
-    }
-  }
+  auto resolved = resolveSoundEffects(assetRoot, skinDirectory, rate);
+  const bool loaded = resolved.anyLoaded();
 
   {
+    // The whole bank set is swapped inside one window: every call replaces the previous skin
+    // completely, and the audio thread never sees a bank from two different loads.
     Impl::ExclusiveScope scope{*impl_};
-    for (std::size_t index = 0; index < entries.size(); ++index) {
-      impl_->setBank(entries[index].noteType, std::move(decoded[index]));
-    }
+    impl_->banks_ = std::move(resolved.banks);
+    std::lock_guard<std::mutex> lock{impl_->effectStatusMutex_};
+    impl_->effectStatus_ = std::move(resolved.status);
   }
-  return impl_->anyBankLoaded();
+  return loaded;
 }
 
 bool AudioEngine::loadHitSound(const std::filesystem::path& path) {
@@ -773,6 +744,30 @@ void AudioEngine::triggerSoundEffect(int noteType, const std::string& hitSound) 
   impl_->queue_.push(event);
 }
 
+SoundEffectSource AudioEngine::soundEffectSource(int noteType) const {
+  const auto slot = static_cast<std::size_t>(soundEffectBankFor(noteType));
+  std::lock_guard<std::mutex> lock{impl_->effectStatusMutex_};
+  return impl_->effectStatus_[slot].source;
+}
+
+std::string AudioEngine::soundEffectSourceLabel(int noteType) const {
+  const auto slot = static_cast<std::size_t>(soundEffectBankFor(noteType));
+  std::lock_guard<std::mutex> lock{impl_->effectStatusMutex_};
+  const auto& label = impl_->effectStatus_[slot].label;
+  return label.empty() ? "none" : label;
+}
+
+std::string AudioEngine::soundEffectSourcesLabel() const {
+  std::lock_guard<std::mutex> lock{impl_->effectStatusMutex_};
+  const auto& status = impl_->effectStatus_;
+  const auto name = [&status](int noteType) {
+    const auto& text = status[static_cast<std::size_t>(noteType)].label;
+    return text.empty() ? std::string{"none"} : text;
+  };
+  return "tap=" + name(game::NOTE_TAP) + " drag=" + name(game::NOTE_DRAG)
+      + " flick=" + name(game::NOTE_FLICK);
+}
+
 double AudioEngine::cursorSeconds() const { return impl_->playheadSeconds(); }
 
 double AudioEngine::getPlayheadSeconds() const { return impl_->playheadSeconds(); }
@@ -788,6 +783,10 @@ bool AudioEngine::isPlaying() const {
 bool AudioEngine::isSuspended() const { return impl_->suspended_.load(std::memory_order_acquire); }
 
 bool AudioEngine::hasMusic() const { return !impl_->music_.empty(); }
+
+bool AudioEngine::musicLooping() const {
+  return impl_->musicLooping_.load(std::memory_order_acquire);
+}
 
 std::uint32_t AudioEngine::outputSampleRate() const {
   return impl_->sampleRate_.load(std::memory_order_acquire);

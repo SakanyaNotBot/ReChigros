@@ -199,6 +199,9 @@ void navigateTo(AppContext& context, Screen screen) {
     // library, which is the one thing this port must not do that the reference does not.
   }
   context.screen = screen;
+  // A page change drops the gesture that was in flight: the page that appears is not the one
+  // the finger went down on, so nothing of that press may act on it.
+  ui::cancelPagePress();
 }
 
 bool prepareRenderChart(AppContext& context, std::string& error) {
@@ -256,6 +259,9 @@ void openChartDetail(AppContext& context, const std::string& chartId) {
     context.detailReturn = Screen::Library;
   }
   context.screen = Screen::Detail;
+  // The release that opened the card ends the list's gesture; the detail page starts with
+  // nothing pressed.
+  ui::cancelPagePress();
 }
 
 void startChart(AppContext& context, bool practice) {

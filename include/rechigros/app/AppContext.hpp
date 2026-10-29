@@ -104,10 +104,10 @@ struct GameRuntime {
   Pause pause{Pause::None};
   double pauseElapsedSec{};
   double pausePlayheadSec{};
-  // Set while the frozen playhead is meaningful. A pause that restarts the run freezes it at
-  // zero, and the resume then rewinds instead of seeking to a stale position.
+  // Set while the frozen playhead is meaningful. A pause before gameplay freezes it at zero,
+  // and the resume releases there instead of seeking to a stale position.
   bool pausePlayheadValid{};
-  // True when the paused run resumes from the beginning rather than from its frozen playhead.
+  // True when the paused run releases at zero rather than at its frozen playhead.
   bool pauseResumesFromZero{};
   int countdown{};
   double countdownElapsedSec{};

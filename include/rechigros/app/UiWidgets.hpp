@@ -197,12 +197,14 @@ inline int tabStrip(const char* id, ImVec2 topLeft, float width, float height, i
         clipMin, clipMax, textSize, color, labels[index]);
   }
 
-  // Hit areas are computed from the same slice geometry, so labels and taps agree.
+  // Hit areas are computed from the same slice geometry, so labels and taps agree. The slice is
+  // resolved from where the press started, which is the slice the control was pressed on even
+  // when the finger is released over a neighbouring one.
   ImGui::SetCursorScreenPos(topLeft);
-  ImGui::InvisibleButton(id, ImVec2(width, height));
   int pressed = -1;
-  if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-    const float local = (ImGui::GetIO().MousePos.x - topLeft.x) / std::max(1.0F, width);
+  if (ImGui::InvisibleButton(id, ImVec2(width, height))) {
+    const float pressedX = ImGui::GetIO().MouseClickedPos[ImGuiMouseButton_Left].x;
+    const float local = (pressedX - topLeft.x) / std::max(1.0F, width);
     pressed = std::clamp(static_cast<int>(local * static_cast<float>(count)), 0, count - 1);
   }
   return pressed;

@@ -130,9 +130,10 @@ struct RectInteraction {
   RectInteraction result;
   if (x1 <= x0 || y1 <= y0) return result;
   ImGui::SetCursorScreenPos(ImVec2(x0, y0));
-  ImGui::InvisibleButton(id, ImVec2(x1 - x0, y1 - y0));
+  // The button only reports a release after a press of its own, so a gesture that started on
+  // another control or on the page before this one never reaches the handler.
+  result.pressed = ImGui::InvisibleButton(id, ImVec2(x1 - x0, y1 - y0));
   result.hovered = ImGui::IsItemHovered();
-  result.pressed = result.hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Left);
   return result;
 }
 
@@ -577,7 +578,10 @@ int drawTabStrip(const ScreenMap& map, AppContext& context, bool interactive) {
         static_cast<float>(x0), static_cast<float>(y0), static_cast<float>(x0 + width),
         static_cast<float>(y0 + height));
     if (interaction.pressed) {
-      clicked = ui::hitTabBar(map.canvas, box, ImGui::GetIO().MousePos,
+      // The slice comes from the press position, so a finger that slides from one tab to the
+      // next before lifting selects the tab it was pressed on.
+      clicked = ui::hitTabBar(map.canvas, box,
+          ImGui::GetIO().MouseClickedPos[ImGuiMouseButton_Left],
           static_cast<int>(std::size(kChartTabs)));
     }
   }
@@ -726,9 +730,10 @@ struct GridInputResult {
 };
 
 // Handles wheel and drag scrolling, the press-and-hold that claims a card, and the tap that
-// selects or opens one.
+// selects or opens one. `gestureOwned` is false when the press in flight began on another
+// page; such a press may not start a drag or resolve as a tap here.
 GridInputResult updateGridInput(const ScreenMap& map, const GridGeometry& grid, int rows,
-    const std::vector<const ChartRecord*>& visible, double nowSec) {
+    const std::vector<const ChartRecord*>& visible, double nowSec, bool gestureOwned) {
   GridInputResult result;
   ListState& current = state();
   ImGuiIO& io = ImGui::GetIO();
@@ -741,7 +746,7 @@ GridInputResult updateGridInput(const ScreenMap& map, const GridGeometry& grid, 
   if (hovered && io.MouseWheel != 0.0F) {
     current.grid.scroll -= static_cast<int>(std::lround(io.MouseWheel * map.px(80.0F)));
   }
-  if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+  if (hovered && gestureOwned && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
     current.grid.dragging = true;
     current.grid.armed = true;
     current.grid.dragStart = io.MousePos;
@@ -1084,17 +1089,22 @@ void drawDialog(const ScreenMap& map, AppContext& context, int pageCount) {
   const float labelPad = stripSlant + map.px(22.0F);
   int pressedButton = -1;
   const bool interactionsAllowed = !justOpened && eased > 0.0F;
+  // A dialog belongs to the page under it: a press that arrived while another page was up
+  // cannot press its actions.
+  const bool pageOwned = ui::pagePressOwned();
   for (int index = 0; index < buttonCount; ++index) {
     const float cellLeft = panelLeft + static_cast<float>(std::lround(static_cast<float>(index)
         * (stripBase / static_cast<float>(buttonCount))));
     const float cellTop = contentBottom;
     const float cellRight = cellLeft + cellWidth;
     const float cellBottom = cellTop + static_cast<float>(stripHeight);
+    const float cellL = centerX + (cellLeft - centerX) * zoom;
+    const float cellT = centerY + (cellTop - centerY) * zoom;
+    const float cellR = centerX + (cellRight - centerX) * zoom;
+    const float cellB = centerY + (cellBottom - centerY) * zoom;
     bool hovered = false;
     if (interactionsAllowed) {
-      hovered = insideRect(centerX + (cellLeft - centerX) * zoom,
-          centerY + (cellTop - centerY) * zoom, centerX + (cellRight - centerX) * zoom,
-          centerY + (cellBottom - centerY) * zoom, io.MousePos);
+      hovered = insideRect(cellL, cellT, cellR, cellB, io.MousePos);
       if (hovered && io.MouseDown[0]) {
         ImVec2 points[4];
         points[0] = point(cellLeft + stripSlant, cellTop);
@@ -1103,7 +1113,14 @@ void drawDialog(const ScreenMap& map, AppContext& context, int pageCount) {
         points[3] = point(cellLeft, cellBottom);
         drawList->AddConvexPolyFilled(points, 4, fadeColor(0x33FFFFFFU));
       }
-      if (hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) pressedButton = index;
+      // Both ends of the gesture have to sit in this cell: releasing over a button after
+      // pressing the dimmed backdrop is not a press of the button.
+      if (pageOwned && hovered
+          && insideRect(cellL, cellT, cellR, cellB,
+              io.MouseClickedPos[ImGuiMouseButton_Left])
+          && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+        pressedButton = index;
+      }
     }
     ui::HAlign align = ui::HAlign::Center;
     if (buttonCount == 1) {
@@ -1169,12 +1186,21 @@ void drawDialog(const ScreenMap& map, AppContext& context, int pageCount) {
     }
   }
   if (!cancelRequested) {
-    // A tap outside the panel dismisses the dialog, like the reference modal.
-    const bool outside = !insideRect(
-        centerX + (panelLeft - centerX) * zoom, centerY + (panelTop - centerY) * zoom,
-        centerX + (panelLeft + static_cast<float>(panelWidth) - centerX) * zoom,
-        centerY + (panelTop + static_cast<float>(totalHeight) - centerY) * zoom, io.MousePos);
-    if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) && outside) cancelRequested = true;
+    // A tap outside the panel dismisses the dialog, like the reference modal. The press has to
+    // start outside as well, so dragging out of a dialog button does not count as a backdrop
+    // tap, and a press left over from the page before this one is ignored.
+    const auto outsidePanel = [&](ImVec2 point) {
+      return !insideRect(centerX + (panelLeft - centerX) * zoom,
+          centerY + (panelTop - centerY) * zoom,
+          centerX + (panelLeft + static_cast<float>(panelWidth) - centerX) * zoom,
+          centerY + (panelTop + static_cast<float>(totalHeight) - centerY) * zoom, point);
+    };
+    const bool pressedOutside =
+        outsidePanel(io.MouseClickedPos[ImGuiMouseButton_Left]);
+    if (pageOwned && pressedOutside && outsidePanel(io.MousePos)
+        && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+      cancelRequested = true;
+    }
     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) cancelRequested = true;
   }
   if (cancelRequested) closeDialog(dialog);
@@ -1256,7 +1282,8 @@ void drawLibraryScreen(AppContext& context) {
   int clickedCard = -1;
   int heldCard = -1;
   if (interactive) {
-    const GridInputResult input = updateGridInput(map, grid, rows, visible, nowSec);
+    const GridInputResult input =
+        updateGridInput(map, grid, rows, visible, nowSec, ui::pagePressOwned());
     clickedCard = input.tappedCard;
     heldCard = input.heldCard;
   }

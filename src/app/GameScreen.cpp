@@ -47,6 +47,9 @@ double gPauseRingStartSec{-1.0};
 double gLastPauseTapMs{0.0};
 float gLastPauseTapX{};
 float gLastPauseTapY{};
+// When the pause menu came up. The press that opened it belongs to the field, so the plates
+// under it only answer a press made after the menu was already on screen.
+double gPauseMenuOpenSec{-1.0};
 
 // Wall-clock length of the hover disc's grow and shrink. The disc is not toggled: it eases in
 // while the finger is swallowed and eases out once the press ends, so a fast tap does not flash.
@@ -986,8 +989,10 @@ void drawPracticeButton(ImDrawList* drawList, const GameStagePixels& stage,
 }
 
 // Drives the pointer interactions of the pause menu. Returns true when the press was
-// consumed by a control so the caller stops forwarding it.
-bool updatePracticeInteractions(AppContext& context, const PracticeLayout& layout) {
+// consumed by a control so the caller stops forwarding it. `pressAllowed` is false for a press
+// that opened the menu or that belongs to another page.
+bool updatePracticeInteractions(AppContext& context, const PracticeLayout& layout,
+    bool pressAllowed) {
   auto& io = ImGui::GetIO();
   const ImVec2 mouse = io.MousePos;
   bool consumed = false;
@@ -995,8 +1000,8 @@ bool updatePracticeInteractions(AppContext& context, const PracticeLayout& layou
   // Buttons are placed on a grid and hit-tested directly, matching the reference's
   // touch-down activation instead of ImGui's press/release cycle.
   const auto pressButton = [&](float x, float y, float width, float height) {
-    return ImGui::IsMouseClicked(ImGuiMouseButton_Left) && mouse.x >= x && mouse.x <= x + width &&
-        mouse.y >= y && mouse.y <= y + height;
+    return pressAllowed && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && mouse.x >= x
+        && mouse.x <= x + width && mouse.y >= y && mouse.y <= y + height;
   };
   const float gap = layout.dp * 10.0F;
   const float buttonY = layout.buttonsTop;
@@ -1029,7 +1034,7 @@ bool updatePracticeInteractions(AppContext& context, const PracticeLayout& layou
   }
 
   // The three sliders activate on press and keep following the pointer while held.
-  if (gPractice.dragMode == 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+  if (pressAllowed && gPractice.dragMode == 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
     if (mouse.x >= layout.speedTrackLeft && mouse.x <= layout.speedRight &&
         mouse.y >= layout.speedTop && mouse.y <= layout.speedBottom) {
       gPractice.dragMode = 1;
@@ -1383,9 +1388,13 @@ void drawPauseOverlay(AppContext& context) {
   float buttonAlpha = 0.0F;
   if (menu) {
     buttonAlpha = pauseButtonIntroAlpha(game.pauseElapsedSec);
+    // The press that opened the menu was aimed at the field, and a press carried over from the
+    // page before this one belongs to that page. Only a fresh press made while the menu is up
+    // may act on it, which is also what keeps the opening press from pressing a plate below it.
+    const bool pressOnMenu = context.nowSec > gPauseMenuOpenSec && ui::pagePressOwned();
     const PracticeLayout layout = computePracticeLayout(context, stage);
     if (game.practice) {
-      updatePracticeInteractions(context, layout);
+      updatePracticeInteractions(context, layout, pressOnMenu);
       drawPracticePanel(context, drawList, stage, layout);
       drawJudgePanel(context, drawList, stage, layout);
     }
@@ -1399,7 +1408,7 @@ void drawPauseOverlay(AppContext& context) {
 
     // Pause actions activate on the press, like the reference's touch handling.
     const ImVec2 mouse = ImGui::GetIO().MousePos;
-    const bool clicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+    const bool clicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left) && pressOnMenu;
     const auto inside = [&](const ImVec2& origin) {
       return mouse.x >= origin.x && mouse.x <= origin.x + buttons.size && mouse.y >= origin.y &&
           mouse.y <= origin.y + buttons.size;
@@ -1538,15 +1547,15 @@ bool beginRun(AppContext& context, std::unique_ptr<game::Chart> chart,
   }
   context.loadError.clear();
 
-  // Resolve the selected skin to a directory and hand it to the renderer; a skin only
-  // overrides the material settings it actually specifies.
+  // Resolve once so the scene and the mixer use the same selection. A skin only overrides
+  // the resources it actually provides.
+  std::filesystem::path skinDirectory;
+  if (!context.settings.selectedSkin.empty()) {
+    const auto candidate = context.dataRoot / "skins" / context.settings.selectedSkin;
+    std::error_code error;
+    if (std::filesystem::is_directory(candidate, error)) skinDirectory = candidate;
+  }
   if (context.renderer != nullptr) {
-    std::filesystem::path skinDirectory;
-    if (!context.settings.selectedSkin.empty()) {
-      const auto candidate = context.dataRoot / "skins" / context.settings.selectedSkin;
-      std::error_code error;
-      if (std::filesystem::is_directory(candidate, error)) skinDirectory = candidate;
-    }
     context.renderer->setSkinDirectory(skinDirectory);
     // The play field uses the chart's own illustration as its (blurred) backdrop.
     context.renderer->setBackgroundImage(context.play.bgFile);
@@ -1595,6 +1604,7 @@ bool beginRun(AppContext& context, std::unique_ptr<game::Chart> chart,
 
   if (context.audio != nullptr) {
     context.audio->stop();
+    context.audio->loadSoundEffects(platform::assetRoot(), skinDirectory);
     context.audio->setLowPassEnabled(false);
     context.audio->setMusicLooping(false);
     context.audio->setPlaybackSpeed(game.musicSpeed);
@@ -1802,15 +1812,21 @@ void updateSmoothedClock(AppContext& context) {
       static_cast<double>(game.musicSpeed));
 }
 
-// Restores a run that was paused before gameplay became stable. The music never reached a
-// playhead worth returning to, so the run starts over: reloading rebuilds the session and
-// playback state, and the fresh entry replays the opening transition from its first frame.
-void restartRunFromZero(AppContext& context) {
-  if (!gameEnter(context)) {
-    notify(context, context.loadError.empty() ? "谱面加载失败" : context.loadError);
-    return;
+// A pause before the first stable playhead resumes at zero without replacing the run. The
+// opening release is simply late: the same chart, judgement session and attempt continue.
+void releaseRunFromZero(AppContext& context) {
+  auto& game = context.game;
+  game.inIntro = false;
+  game.playheadSec = 0.0;
+  game.chartTimeSec = -game.chartOffsetSec - game.userOffsetSec;
+  game.visualTimeSec = 0.0;
+  game.smoothClock.reset(0.0, context.nowSec);
+  game.smoothClockValid = true;
+  game.smoothedPlayheadSec = 0.0;
+  if (context.audio != nullptr && game.musicLoaded) {
+    context.audio->restartPaused();
+    startAudio(context, true);
   }
-  context.screen = Screen::Game;
 }
 
 void gameUpdate(AppContext& context, float frameDeltaSec) {
@@ -1853,7 +1869,7 @@ void gameUpdate(AppContext& context, float frameDeltaSec) {
           if (game.pauseResumesFromZero) {
             game.pauseResumesFromZero = false;
             game.pausePlayheadValid = false;
-            restartRunFromZero(context);
+            releaseRunFromZero(context);
             return;
           }
           // Resuming rewinds to the playhead captured when the pause began. The audio stream
@@ -2186,19 +2202,26 @@ void drawGameOverlay(AppContext& context) {
 void gameTogglePause(AppContext& context) {
   auto& game = context.game;
   if (!game.loaded || game.finished || game.inOutro) return;
-  // A pause taken before gameplay starts, or while the opening transition is still running,
-  // cannot resume from where it stopped: the music has no stable playhead yet. Such a run
-  // restarts from the beginning when it resumes, so the frozen playhead is forced to zero here
-  // instead of being captured from the audio engine.
-  const bool beforeGameplay = game.inIntro || game.chartTimeSec < 0.0;
+  // Before the first stable playhead the resume releases at zero. Only the audio position is
+  // reset here; the run itself and its opening state stay alive throughout the pause. A
+  // negative chart time alone is not this state: a chart offset can keep it negative after the
+  // music has started, and such a pause must resume from its captured playhead.
+  const bool beforeGameplay = game.inIntro;
   if (game.pause == GameRuntime::Pause::None) {
     game.pause = GameRuntime::Pause::Menu;
     game.pauseElapsedSec = 0.0;
     game.pausePlayheadSec = beforeGameplay ? 0.0 : game.playheadSec;
     game.pausePlayheadValid = true;
     game.pauseResumesFromZero = beforeGameplay;
+    gPauseMenuOpenSec = context.nowSec;
     game.session.cancelTouches();
-    if (context.audio != nullptr && game.musicLoaded) context.audio->pause();
+    if (context.audio != nullptr && game.musicLoaded) {
+      if (beforeGameplay) {
+        context.audio->restartPaused();
+      } else {
+        context.audio->pause();
+      }
+    }
   } else if (game.pause == GameRuntime::Pause::Menu) {
     game.pause = GameRuntime::Pause::Countdown;
     game.countdown = 3;
@@ -2247,7 +2270,6 @@ bool gamePointerDown(AppContext& context, std::int64_t pointerId, float x, float
     return true;  // The menu owns every press while it is up.
   }
   if (game.pause != GameRuntime::Pause::None) return false;
-  if (game.inIntro) return false;
 
   // The pause control reacts to a double tap inside its expanded hit area; a single tap
   // only flashes the ring feedback (the reference keeps the ring even when the tap lands

@@ -793,7 +793,10 @@ PointerSnapshot pointerSnapshot() {
   PointerSnapshot snapshot;
   snapshot.position = io.MousePos;
   snapshot.down = ImGui::IsMouseDown(ImGuiMouseButton_Left);
-  snapshot.clicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+  // A press belongs to the page it started on: a gesture carried over from the page that
+  // opened this one may not latch a row here.
+  snapshot.clicked =
+      ImGui::IsMouseClicked(ImGuiMouseButton_Left) && ui::pagePressOwned();
   snapshot.released = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
   return snapshot;
 }

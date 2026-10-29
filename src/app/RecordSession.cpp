@@ -7,16 +7,14 @@
 #include "rechigros/app/AppContext.hpp"
 #include "rechigros/audio/Decoder.hpp"
 #include "rechigros/audio/Mixer.hpp"
+#include "rechigros/audio/SkinSoundEffects.hpp"
 #include "rechigros/game/Chart.hpp"
 #include "rechigros/game/GameConstants.hpp"
 #include "rechigros/game/GameplaySession.hpp"
-#include "rechigros/platform/AssetManager.hpp"
 #include "rechigros/platform/FileSystem.hpp"
 #include "rechigros/render/scene/Transition.hpp"
-#include "rechigros/render/skin/SkinConfig.hpp"
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <cmath>
 #include <ctime>
@@ -97,48 +95,6 @@ std::filesystem::path recordingSkinDirectory(const AppContext& context) {
   const auto directory = context.dataRoot / "skins" / context.settings.selectedSkin;
   std::error_code error;
   return std::filesystem::is_directory(directory, error) ? directory : std::filesystem::path{};
-}
-
-audio::AudioBuffer recordingHitSound(const AppContext& context, int noteType) {
-  using game::NOTE_DRAG;
-  using game::NOTE_FLICK;
-  using game::NOTE_HOLD;
-  using game::NOTE_TAP;
-  struct SoundSpec {
-    int type;
-    const char* skinName;
-    const char* assetPath;
-    float frequency;
-    float seconds;
-    float amplitude;
-  };
-  static constexpr std::array<SoundSpec, 3> specs{{
-      {NOTE_TAP, "click", "audio/tap.wav", 880.0F, 0.030F, 0.35F},
-      {NOTE_DRAG, "drag", "audio/drag.wav", 660.0F, 0.035F, 0.30F},
-      {NOTE_FLICK, "flick", "audio/flick.wav", 1100.0F, 0.025F, 0.35F},
-  }};
-  if (noteType == NOTE_HOLD) noteType = NOTE_TAP;
-  const auto found = std::find_if(specs.begin(), specs.end(),
-      [noteType](const SoundSpec& spec) { return spec.type == noteType; });
-  if (found == specs.end()) return {};
-  const auto skinDirectory = recordingSkinDirectory(context);
-  static constexpr std::array<const char*, 3> extensions{{".wav", ".ogg", ".mp3"}};
-  for (const char* extension : extensions) {
-    const auto candidate = render::skin::resolveSkinFile(
-        skinDirectory, std::string(found->skinName) + extension);
-    if (candidate.empty()) continue;
-    auto decoded = audio::Decoder::decodeFile(candidate, kAudioSampleRate);
-    if (!decoded.empty()) return decoded;
-  }
-  const auto fallback = platform::AssetManager::materialize(
-      platform::assetRoot(), found->assetPath);
-  if (!fallback.empty()) {
-    auto decoded = audio::Decoder::decodeFile(fallback, kAudioSampleRate);
-    if (!decoded.empty()) return decoded;
-  }
-  return audio::AudioBuffer(
-      audio::synthesizeTone(found->frequency, found->seconds, kAudioSampleRate, found->amplitude),
-      kAudioSampleRate);
 }
 
 } // namespace
@@ -755,17 +711,19 @@ void RecordSession::mixHitSounds(AppContext& context, std::vector<float>& mix,
   if (totalFrames <= 0) return;
   const float gain = recordingGain(context.settings.soundEffectVolume);
   if (gain <= 0.0F) return;
-  std::array<audio::AudioBuffer, 3> banks{recordingHitSound(context, game::NOTE_TAP),
-      recordingHitSound(context, game::NOTE_DRAG), recordingHitSound(context, game::NOTE_FLICK)};
+  // The same bank resolution the interactive mixer uses, so a skin effect is heard in a
+  // recording exactly as it is heard while playing.
+  const auto sounds = audio::resolveSoundEffects(
+      platform::assetRoot(), recordingSkinDirectory(context), kAudioSampleRate);
   std::unordered_map<std::string, audio::AudioBuffer> customBanks;
   for (const auto* note : context.game.chart->allNotesSorted) {
     if (note == nullptr) continue;
     if (note->isFake) continue;
-    const int type = note->type == game::NOTE_HOLD ? game::NOTE_TAP : note->type;
-    const std::size_t bank = type == game::NOTE_DRAG    ? 1U
-        : type == game::NOTE_FLICK                       ? 2U
-                                                         : 0U;
-    const audio::AudioBuffer* sound = &banks[bank];
+    // Hold notes and any type without its own bank reuse the tap sound.
+    const int type = note->type == game::NOTE_DRAG || note->type == game::NOTE_FLICK
+        ? note->type
+        : game::NOTE_TAP;
+    const audio::AudioBuffer* sound = &sounds.bankFor(type);
     if (!note->hitSound.empty()) {
       auto [entry, inserted] = customBanks.try_emplace(note->hitSound);
       if (inserted) entry->second = audio::Decoder::decodeFile(note->hitSound, kAudioSampleRate);

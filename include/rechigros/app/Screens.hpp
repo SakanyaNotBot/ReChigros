@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <vector>
 
 #include "rechigros/app/AppContext.hpp"
@@ -51,12 +52,18 @@ void drawCalibrationScreen(AppContext& context);
 // Leaves the calibration page, optionally keeping the adjusted offset, and returns to the page it
 // was opened from. Exposed so the exit path can be exercised without a pointer.
 void exitCalibration(AppContext& context, bool apply);
+// Read-only stage diagnostics for exercising taps while the falling note is between draws.
+void calibrationTapMarkerDiagnostics(float& markerY, bool& markerVisible,
+    std::size_t& touchMarkerCount);
 
 // Pressable rectangles the settings page registered while drawing, as {x0, y0, x1, y1} in view
 // pixels. The page reports them so a test can press a row without hard-coding coordinates that
 // shift whenever a row is added above it.
 [[nodiscard]] std::vector<std::array<float, 4>> registeredSettingsControlRects();
 void drawResultScreen(AppContext& context);
+// Whether the settlement's judgement distribution overlay is open. The page keeps it as
+// per-visit state, so the entrance and a re-entry can be checked without a pointer.
+[[nodiscard]] bool resultHistogramVisible();
 void drawGameOverlay(AppContext& context);
 void drawToast(AppContext& context);
 

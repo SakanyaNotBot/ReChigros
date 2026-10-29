@@ -671,7 +671,12 @@ int Application::run() {
 
     if (app_->screen == Screen::Game && !commandLineRecording_) {
       gameRender(*app_);
-      if (imguiFrame) drawGameOverlay(*app_);
+      if (imguiFrame) {
+        // Gameplay draws its own scene, so the page announcement the other screens get from
+        // the screen dispatch is made here, before the overlay lays out its controls.
+        ui::beginPage(static_cast<int>(Screen::Game));
+        drawGameOverlay(*app_);
+      }
     } else {      glBindFramebuffer(GL_FRAMEBUFFER, 0);
       glViewport(0, 0, app_->drawableWidth, app_->drawableHeight);
       if (backdrop_ != nullptr && backdrop_->ready()) {
@@ -969,6 +974,9 @@ void Application::printBatchSummary() {
             << " requested=" << frameLimit_ << " fps=" << smoothedFps_;
   if (audio_ != nullptr) std::cout << " audioHz=" << audio_->outputSampleRate();
   std::cout << " pointerEvents=" << app_->forwardedPointerEvents << '\n';
+  if (audio_ != nullptr) {
+    std::cout << "sound-effects: " << audio_->soundEffectSourcesLabel() << '\n';
+  }
   std::cout << "backdrop: module=" << (backdrop_ != nullptr && backdrop_->ready() ? 1 : 0)
             << " captured=" << (captureDone_ && !captureFailed_ ? 1 : 0) << '\n';
   std::cout << "screens:";
@@ -1313,6 +1321,10 @@ void Application::captureFramebufferIfRequested() {
 }
 
 void Application::drawCurrentScreen() {
+  // A press belongs to the page that was on screen when it went down. Announcing the page here,
+  // before any screen lays out a control, keeps that rule in one place for every page, including
+  // the ones whose only state is their own draw code.
+  ui::beginPage(static_cast<int>(app_->screen));
   switch (app_->screen) {
     case Screen::Home: drawHomeScreen(*app_); break;
     case Screen::Library: drawLibraryScreen(*app_); break;

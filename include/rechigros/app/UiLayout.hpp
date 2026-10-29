@@ -106,13 +106,30 @@ void drawPanelShape(ImDrawList* drawList, const Canvas& c, const Box& designBox,
 [[nodiscard]] bool panelContains(const Canvas& c, const Box& designBox, const PanelStyle& style,
     ImVec2 screenPoint);
 
-// Invisible interactive area shaped like the panel. Returns true once per release inside.
+// Invisible interactive area shaped like the panel. Returns true once per release inside after
+// a press that started inside the same shape.
 struct Interaction {
   bool pressed{};
   bool hovered{};
 };
 Interaction panelInteraction(const char* id, const Canvas& c, const Box& designBox,
     const PanelStyle& style);
+
+// ---------------------------------------------------------------------------
+// Page gesture ownership
+// ---------------------------------------------------------------------------
+
+// Every frame announces the page it draws, before any control is laid out. A press belongs to
+// the page that was on screen when it went down, so a page that appears under a finger that is
+// already down (the settlement of a run that just ended, the page a pause plate opens) never
+// receives that leftover gesture, and neither does a page that was left while the finger was
+// still held. `pagePressOwned` answers for the gesture in progress, including on the frame it
+// ends, so a control can require a complete press of its own page before acting.
+void beginPage(int pageId);
+[[nodiscard]] bool pagePressOwned();
+// Drops the gesture in progress. A page change uses this when it must not wait for the next
+// frame's announcement.
+void cancelPagePress();
 
 // ---------------------------------------------------------------------------
 // Text

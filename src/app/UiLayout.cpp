@@ -198,6 +198,45 @@ void setInterfaceScale(float scale) {
 
 float interfaceScale() { return gInterfaceScale; }
 
+namespace {
+// Page announced by the frame being drawn, and what became of the press seen on it. The press
+// keeps its verdict across the release frame so the control that ends the gesture can ask
+// whether the gesture started here.
+enum class PageGesture { Idle, Owned, Foreign };
+int gPageId = -1;
+PageGesture gPageGesture = PageGesture::Idle;
+} // namespace
+
+void beginPage(int pageId) {
+  const bool switched = pageId != gPageId;
+  gPageId = pageId;
+  if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    // A click that arrives on the very frame the page appears was aimed at whatever was on
+    // screen when the finger went down, which is not this page.
+    gPageGesture = switched ? PageGesture::Foreign : PageGesture::Owned;
+    return;
+  }
+  if (switched
+      && (ImGui::IsMouseDown(ImGuiMouseButton_Left)
+          || ImGui::IsMouseReleased(ImGuiMouseButton_Left))) {
+    gPageGesture = PageGesture::Foreign;
+    return;
+  }
+  if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)
+      && !ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+    gPageGesture = PageGesture::Idle;
+  }
+}
+
+bool pagePressOwned() { return gPageGesture == PageGesture::Owned; }
+
+void cancelPagePress() {
+  gPageGesture = PageGesture::Foreign;
+  // The next frame always counts as a page change, so the foreign verdict survives until the
+  // pointer is released even if the page keeps its identity.
+  gPageId = -1;
+}
+
 Canvas canvas() {
   Canvas result;
   const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -262,10 +301,16 @@ Interaction panelInteraction(const char* id, const Canvas& c, const Box& designB
   Interaction result;
   const PxRect rect = toPixels(c, designBox);
   ImGui::SetCursorScreenPos(rect.min);
-  ImGui::InvisibleButton(id, ImVec2(rect.max.x - rect.min.x, rect.max.y - rect.min.y));
+  const bool released = ImGui::InvisibleButton(id, ImVec2(rect.max.x - rect.min.x,
+      rect.max.y - rect.min.y));
+  const ImGuiIO& io = ImGui::GetIO();
   result.hovered = ImGui::IsItemHovered()
-      && panelContains(c, designBox, style, ImGui::GetIO().MousePos);
-  result.pressed = result.hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+      && panelContains(c, designBox, style, io.MousePos);
+  // The release only counts when the press that preceded it started on this plate as well, so
+  // a gesture that began on the backdrop, on another control, or on the page that was up
+  // before this one cannot press it.
+  result.pressed = released && result.hovered
+      && panelContains(c, designBox, style, io.MouseClickedPos[ImGuiMouseButton_Left]);
   return result;
 }
 
