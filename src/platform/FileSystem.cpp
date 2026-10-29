@@ -96,7 +96,7 @@ namespace {
 // Asks the platform for one of its shared media folders. A packaged build reaches them through
 // the platform's own storage service, because they are not paths the app may assume; every other
 // build asks the desktop environment, which reports them directly.
-std::filesystem::path sharedMediaDirectory(const char* category) {
+std::filesystem::path sharedMediaDirectory(const char* category, bool displayOnly = false) {
 #if defined(__ANDROID__)
   JNIEnv* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
   if (env == nullptr) return {};
@@ -108,17 +108,20 @@ std::filesystem::path sharedMediaDirectory(const char* category) {
   // Releases that predate scoped storage refuse a write to the shared folders until the grant is
   // held, so it is requested once here rather than failing the write much later. The answer
   // arrives asynchronously; until then the per-user folder is used.
-  if (const jmethodID ensure =
-          env->GetStaticMethodID(cls, "ensureSharedStoragePermission", "()Z");
-      ensure != nullptr) {
-    (void)env->CallStaticBooleanMethod(cls, ensure);
-    if (env->ExceptionCheck()) env->ExceptionClear();
-  } else {
-    env->ExceptionClear();
+  if (!displayOnly) {
+    if (const jmethodID ensure =
+            env->GetStaticMethodID(cls, "ensureSharedStoragePermission", "()Z");
+        ensure != nullptr) {
+      (void)env->CallStaticBooleanMethod(cls, ensure);
+      if (env->ExceptionCheck()) env->ExceptionClear();
+    } else {
+      env->ExceptionClear();
+    }
   }
   std::filesystem::path result;
-  const jmethodID method =
-      env->GetStaticMethodID(cls, "sharedStorageDirectory", "(Ljava/lang/String;)Ljava/lang/String;");
+  const jmethodID method = env->GetStaticMethodID(cls,
+      displayOnly ? "sharedStorageDisplayDirectory" : "sharedStorageDirectory",
+      "(Ljava/lang/String;)Ljava/lang/String;");
   if (method != nullptr) {
     jstring name = env->NewStringUTF(category);
     auto text = static_cast<jstring>(
@@ -165,6 +168,12 @@ std::filesystem::path publicVideoDirectory() {
   const auto fallback = userDataRoot() / "recordings";
   std::filesystem::create_directories(fallback, error);
   return fallback;
+}
+
+std::filesystem::path publicVideoDisplayDirectory() {
+  auto directory = sharedMediaDirectory("Movies", true);
+  if (!directory.empty()) return directory / "Chigros";
+  return publicVideoDirectory();
 }
 
 std::filesystem::path recordingWorkspace() {

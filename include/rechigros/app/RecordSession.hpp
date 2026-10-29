@@ -48,6 +48,9 @@ public:
 
   // The public video directory of the device, where a recording goes by default.
   [[nodiscard]] static std::filesystem::path defaultOutputDirectory();
+  // The location shown to the player. The default may be staged privately during encoding and
+  // published afterwards, so it need not equal the writable workspace.
+  [[nodiscard]] static std::filesystem::path displayOutputDirectory(const Settings& settings);
 
   // A default file name for the moment the interface is opened: the wall-clock time, so two
   // recordings of the same chart do not overwrite each other.

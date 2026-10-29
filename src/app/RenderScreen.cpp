@@ -176,7 +176,7 @@ void drawRenderScreen(AppContext& context) {
   // The file name and the directory are typed values, so they are edited elsewhere; here the row
   // shows the current choice and accepts a press to raise the picker.
   if (valueCell("##render_output_dir", canvas, layout, row,
-          platform::pathToUtf8(settings.outputDirectory), false)
+          platform::pathToUtf8(RecordSession::displayOutputDirectory(settings)), false)
           .pressed
       && !busy) {
     const auto chosen = platform::FileDialog::pickDirectory();

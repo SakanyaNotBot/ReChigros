@@ -660,6 +660,44 @@ void testImportPersistsAcrossReload() {
   require(matches == 1, "the local list holds the imported chart exactly once");
 }
 
+void testNestedArchiveImport() {
+  using namespace rechigros::app;
+  const auto root = rechigros::test::scratchDirectory("app-data-import-nested");
+  std::filesystem::remove_all(root);
+  const auto packs = root / "packs";
+  std::filesystem::create_directories(packs);
+  const auto archive = root / "Wrapped Pack.zip";
+  const std::string nested = "Wrapped Pack/";
+  require(writeZipArchive(archive,
+              {{nested + "info.yml",
+                   "name: Wrapped Song\n"
+                   "level: IN Lv.12\n"
+                   "chart: chart.json\n"
+                   "music: music.ogg\n"
+                   "illustration: cover.png\n"},
+                  {nested + "chart.json",
+                      chartJson("Wrapped Song", "IN Lv.12", "cover.png", "music.ogg")},
+                  {nested + "music.ogg", "OggS"},
+                  {nested + "cover.png", "PNG"}}),
+      "a wrapped archive is written");
+
+  ChartLibrary library(packs, root / "library.txt");
+  const auto imported = library.importZip(archive, false);
+  require(imported.imported, "a chart archive with one top-level folder imports");
+  require(imported.record.complete(), "the wrapped chart has every required file");
+  require(imported.record.chartFile.filename() == "chart.json",
+      "the wrapped chart keeps its chart document");
+  require(imported.record.musicFile.filename() == "music.ogg",
+      "the wrapped chart keeps its music track");
+  require(imported.record.bgFile.filename() == "cover.png",
+      "the wrapped chart keeps its illustration");
+  const auto installed = packs / imported.record.id;
+  require(std::filesystem::exists(installed / "chart.json"),
+      "the wrapper folder is folded into the installed pack root");
+  require(!std::filesystem::is_directory(installed / "Wrapped Pack"),
+      "the installed pack keeps no redundant wrapper folder");
+}
+
 void requireNear(float actual, float expected, const char* what) {
   require(std::abs(actual - expected) < 1.0e-4F,
       std::string(what) + " (got " + std::to_string(actual) + ", want " + std::to_string(expected)
@@ -1071,6 +1109,7 @@ int main() {
   testInfoFileFormats();
   testChartLibraryPackDetection();
   testImportPersistsAcrossReload();
+  testNestedArchiveImport();
   testSettingsDefaultsPersistenceAndClamps();
   testSidecarDiscovery();
   testReplayStoreRows();

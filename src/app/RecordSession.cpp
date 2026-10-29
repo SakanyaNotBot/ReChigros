@@ -118,6 +118,20 @@ std::filesystem::path RecordSession::defaultOutputDirectory() {
   return platform::recordingWorkspace();
 }
 
+std::filesystem::path RecordSession::displayOutputDirectory(const Settings& settings) {
+  const auto displayed = platform::publicVideoDisplayDirectory();
+  if (settings.outputDirectory.empty() || settings.outputDirectory == displayed) return displayed;
+#if defined(__ANDROID__)
+  if (settings.outputDirectory == platform::userDataRoot() / "staging" ||
+      settings.outputDirectory == platform::userDataRoot() / "recordings") {
+    return displayed;
+  }
+#else
+  if (settings.outputDirectory == defaultOutputDirectory()) return displayed;
+#endif
+  return settings.outputDirectory;
+}
+
 std::string RecordSession::defaultFileName() { return timestampName(); }
 
 float RecordSession::progress() const noexcept {

@@ -35,11 +35,18 @@ void pickCallback(void* userdata, const char* const* filelist, int filter) {
         // An entry that is not a path is the platform reporting why it could not show the dialog,
         // which is not a selection and must not be handed back as one.
         if (**entry == 0) continue;
-        request->paths.emplace_back(std::filesystem::u8path(*entry));
+        request->paths.emplace_back(pathFromDialogResult(*entry));
       }
     }
   }
   request->done.store(true, std::memory_order_release);
+}
+
+int hexDigit(char value) {
+  if (value >= '0' && value <= '9') return value - '0';
+  if (value >= 'a' && value <= 'f') return value - 'a' + 10;
+  if (value >= 'A' && value <= 'F') return value - 'A' + 10;
+  return -1;
 }
 
 // Filters are extension lists, not glob patterns: the shared validator accepts only letters,
@@ -68,6 +75,29 @@ std::filesystem::path firstOf(std::vector<std::filesystem::path> paths) {
 }
 
 } // namespace
+
+std::filesystem::path pathFromDialogResult(std::string_view result) {
+  constexpr std::string_view fileScheme = "file://";
+  if (result.substr(0, fileScheme.size()) != fileScheme) {
+    return std::filesystem::u8path(result);
+  }
+  result.remove_prefix(fileScheme.size());
+  std::string decoded;
+  decoded.reserve(result.size());
+  for (std::size_t index = 0; index < result.size(); ++index) {
+    if (result[index] == '%' && index + 2 < result.size()) {
+      const int high = hexDigit(result[index + 1]);
+      const int low = hexDigit(result[index + 2]);
+      if (high >= 0 && low >= 0) {
+        decoded.push_back(static_cast<char>((high << 4) | low));
+        index += 2;
+        continue;
+      }
+    }
+    decoded.push_back(result[index]);
+  }
+  return std::filesystem::u8path(decoded);
+}
 
 std::filesystem::path FileDialog::openChartFile() {
   return firstOf(runDialog([](SDL_DialogFileCallback callback, void* userdata) {

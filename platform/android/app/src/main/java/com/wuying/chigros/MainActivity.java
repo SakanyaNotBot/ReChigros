@@ -1,5 +1,6 @@
 package com.wuying.chigros;
 
+import android.content.ClipData;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
@@ -328,6 +329,17 @@ public final class MainActivity extends SDLActivity {
      * names differs per release, so the platform is asked for it here. The folder's own
      * subdirectory for this application is created by the caller.
      */
+    public static String sharedStorageDisplayDirectory(String category) {
+        try {
+            String kind = category != null ? category : "Movies";
+            java.io.File dir = android.os.Environment.getExternalStoragePublicDirectory(kind);
+            return dir != null ? dir.getAbsolutePath() : null;
+        } catch (RuntimeException error) {
+            Log.e(TAG, "cannot resolve public directory " + category, error);
+            return null;
+        }
+    }
+
     public static String sharedStorageDirectory(String category) {
         try {
             String kind = category != null ? category : "Movies";
@@ -517,6 +529,48 @@ public final class MainActivity extends SDLActivity {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode != REQUEST_PICKER && resultCode == RESULT_OK && data != null) {
+            final boolean contentDocument = data.getData() != null
+                    && "content".equalsIgnoreCase(data.getData().getScheme());
+            final boolean contentClip = data.getClipData() != null
+                    && data.getClipData().getItemCount() > 0
+                    && "content".equalsIgnoreCase(
+                            data.getClipData().getItemAt(0).getUri().getScheme());
+            if (contentDocument || contentClip) {
+                new Thread(() -> {
+                    try {
+                        final Intent rewritten = new Intent(data);
+                        if (contentDocument) {
+                            rewritten.setData(Uri.fromFile(copyContentUri(data.getData())));
+                        }
+                        if (contentClip) {
+                            final android.content.ClipData original = data.getClipData();
+                            ClipData copied = null;
+                            for (int index = 0; index < original.getItemCount(); ++index) {
+                                final ClipData.Item item = new ClipData.Item(
+                                        Uri.fromFile(copyContentUri(original.getItemAt(index).getUri())));
+                                if (copied == null) {
+                                    copied = new ClipData(original.getDescription(), item);
+                                } else {
+                                    copied.addItem(item);
+                                }
+                            }
+                            rewritten.setClipData(copied);
+                        }
+                        runOnUiThread(() -> MainActivity.super.onActivityResult(
+                                requestCode, resultCode, rewritten));
+                    } catch (IOException | RuntimeException error) {
+                        Log.e(TAG, "Unable to read the selected document", error);
+                        runOnUiThread(() -> {
+                            Toast.makeText(this, "Cannot import chart: " + error.getMessage(),
+                                    Toast.LENGTH_LONG).show();
+                            MainActivity.super.onActivityResult(requestCode, RESULT_CANCELED, null);
+                        });
+                    }
+                }, "ReChigrosImport").start();
+                return;
+            }
+        }
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != REQUEST_PICKER) return;
         final int pickerMode = pendingPickerMode;

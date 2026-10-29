@@ -1,5 +1,6 @@
 #include "rechigros/platform/Archive.hpp"
 #include "rechigros/platform/Gif.hpp"
+#include "rechigros/platform/FileDialog.hpp"
 #include "rechigros/platform/FileSystem.hpp"
 
 #include <algorithm>
@@ -243,6 +244,17 @@ void runChecks() {
   require(joinPortable(scratch, "sub/dir/file.txt") == scratch / "sub" / "dir" / "file.txt",
       "portable join");
   require(joinPortable(scratch, "single.txt") == scratch / "single.txt", "portable join single");
+
+  require(pathFromDialogResult("/storage/emulated/0/Download/a.zip") ==
+      std::filesystem::u8path("/storage/emulated/0/Download/a.zip"),
+      "plain dialog path unchanged");
+  require(pathFromDialogResult(
+      "file:///data/user/0/pkg/cache/a%20b/%E6%B5%8B%E8%AF%95.zip") ==
+      std::filesystem::u8path("/data/user/0/pkg/cache/a b/\xe6\xb5\x8b\xe8\xaf\x95.zip"),
+      "file URI decoded to a local UTF-8 path");
+  require(pathFromDialogResult("file:///tmp/a%ZZb%2.zip") ==
+      std::filesystem::u8path("/tmp/a%ZZb%2.zip"),
+      "invalid URI escapes preserved");
 
   // Legacy encodings: valid UTF-8 passes through untouched, while a byte string that is not
   // UTF-8 is treated as the legacy Chinese code page (bytes "测试" in GBK).

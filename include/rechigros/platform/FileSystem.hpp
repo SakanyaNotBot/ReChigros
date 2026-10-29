@@ -22,6 +22,10 @@ void setAssetRootOverride(const std::filesystem::path& root);
 // exposes no such location.
 [[nodiscard]] std::filesystem::path publicVideoDirectory();
 
+// User-facing form of the default video destination. Unlike resolving the writable workspace,
+// this does not create directories, request access or probe the filesystem.
+[[nodiscard]] std::filesystem::path publicVideoDisplayDirectory();
+
 // Directory where an exported replay is expected to end up. Same fallback rule as above.
 [[nodiscard]] std::filesystem::path publicDownloadDirectory();
 

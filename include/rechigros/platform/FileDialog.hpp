@@ -1,9 +1,12 @@
 #pragma once
 
 #include <filesystem>
+#include <string_view>
 #include <vector>
 
 namespace rechigros::platform {
+
+[[nodiscard]] std::filesystem::path pathFromDialogResult(std::string_view result);
 
 // Native file and folder pickers.
 //

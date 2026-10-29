@@ -30,6 +30,42 @@ std::string readHead(const std::filesystem::path& file, std::size_t maximum) {
   return head;
 }
 
+bool foldSingleWrapperDirectory(const std::filesystem::path& root) {
+  std::error_code error;
+  std::vector<std::filesystem::path> directories;
+  bool hasFile = false;
+  for (std::filesystem::directory_iterator entry(root, error), end; !error && entry != end;
+       entry.increment(error)) {
+    if (entry->is_directory(error)) {
+      directories.push_back(entry->path());
+    } else {
+      hasFile = true;
+    }
+  }
+  if (error || hasFile || directories.size() != 1) return false;
+  const auto wrapper = directories.front();
+  std::vector<std::filesystem::path> children;
+  for (std::filesystem::directory_iterator entry(wrapper, error), end; !error && entry != end;
+       entry.increment(error)) {
+    children.push_back(entry->path());
+  }
+  if (error || children.empty()) return false;
+  for (const auto& child : children) {
+    if (std::filesystem::exists(root / child.filename(), error)) return false;
+  }
+  for (const auto& child : children) {
+    std::filesystem::rename(child, root / child.filename(), error);
+    if (error) return false;
+  }
+  std::filesystem::remove(wrapper, error);
+  return !error;
+}
+
+void foldSingleWrapperDirectories(const std::filesystem::path& root) {
+  for (int depth = 0; depth < 32 && foldSingleWrapperDirectory(root); ++depth) {
+  }
+}
+
 std::string relativize(const std::filesystem::path& base, const std::filesystem::path& file) {
   std::error_code error;
   const auto relative = std::filesystem::relative(file, base, error);
@@ -631,6 +667,7 @@ ChartLibrary::ImportResult ChartLibrary::importZip(const std::filesystem::path& 
   if (error) throw std::runtime_error("Cannot create import directory");
   try {
     platform::extractArchive(archive, temporary);
+    foldSingleWrapperDirectories(temporary);
     return installDirectory(temporary, id, archive.stem().string(), requireComplete);
   } catch (...) {
     platform::removeRecursively(temporary);
@@ -653,6 +690,7 @@ ChartLibrary::ImportResult ChartLibrary::importDirectory(const std::filesystem::
         std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing,
         error);
     if (error) throw std::runtime_error("Cannot copy chart directory");
+    foldSingleWrapperDirectories(temporary);
     return installDirectory(temporary, id, absolute.filename().string(), false);
   } catch (...) {
     platform::removeRecursively(temporary);
