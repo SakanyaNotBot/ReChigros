@@ -19,18 +19,24 @@ struct StageLayout {
   // Reflects the play field about its centre for demo mode. Only geometry that
   // belongs to the field is reflected; the HUD and the side bands are not.
   bool mirror{false};
+  // Uniform reveal transform applied after chart geometry has been evaluated in stage space.
+  float fieldScale{1.0F};
 
   [[nodiscard]] float centerX() const noexcept { return stage.x + stage.width * 0.5F; }
   [[nodiscard]] float centerY() const noexcept { return stage.y + stage.height * 0.5F; }
   [[nodiscard]] math::Mat4 projection() const noexcept {
     return math::Mat4::orthoTopLeft(viewWidth, viewHeight);
   }
-  // Projection for play-field geometry: `projection()` plus the mirror reflection.
-  // Notes, judge lines and hit effects all go through it, so they reflect together,
-  // while the HUD keeps `projection()` and therefore stays unmirrored.
+  // Projection for play-field geometry: `projection()` plus mirror and reveal transforms.
+  // Notes, judge lines and hit effects all go through it, so they move together,
+  // while the HUD keeps `projection()` and applies its own camera transform.
   [[nodiscard]] math::Mat4 stageProjection() const noexcept {
-    const math::Mat4 base = projection();
-    return mirror ? base * math::Mat4::mirrorX(centerX()) : base;
+    math::Mat4 transform = mirror ? math::Mat4::mirrorX(centerX()) : math::Mat4::identity();
+    if (std::isfinite(fieldScale) && fieldScale > 1.0e-6F && fieldScale < 0.999999F) {
+      transform = transform * math::Mat4::translation(centerX(), centerY()) *
+          math::Mat4::scaling(fieldScale, fieldScale) * math::Mat4::translation(-centerX(), -centerY());
+    }
+    return projection() * transform;
   }
 };
 

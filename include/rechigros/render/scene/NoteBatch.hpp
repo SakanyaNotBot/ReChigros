@@ -94,6 +94,30 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
 // same size as its normal variant. Returns 1 when either sheet is unusable.
 [[nodiscard]] float highlightWidthScale(int normalWidth, int highlightWidth) noexcept;
 
+// Whether a hold has reached the judge line and therefore collapses onto it. RPE documents
+// switch at the exact start instant, so a head drawn at its own start time is still the
+// travelling head; the official format keeps the older inclusive boundary.
+[[nodiscard]] bool holdHasStarted(double noteStartSec, double chartTimeSec,
+    bool officialFormat) noexcept;
+
+// The line's cover rule hides a note once it has passed the line. A hold compares the part
+// of it that is furthest along -- its tail, not its head -- and does so in floor space, so
+// a negative note speed does not flip the verdict. Every other note keeps the drawn-distance
+// test, which `headFp` carries.
+[[nodiscard]] bool noteCoveredByLine(const game::Note& note, const LineFrame& frame,
+    double chartTimeSec, bool officialFormat, float headFp) noexcept;
+
+// Centre of the hold's end cap relative to the hold's tail, along the head-to-tail
+// direction. The cap is always drawn clear of the body, so a tail that sits behind the
+// head puts it on that side instead. A compact skin centres the cap on the tail.
+[[nodiscard]] float holdTailCapOffset(float headFp, float tailFp, float tailHeightPx,
+    bool compact) noexcept;
+
+// Lowest head-sprite centre the hold pass draws, relative to the judge line. The official
+// format pins a head that has fallen behind the line onto the line edge; the RPE format
+// draws it where the note actually is, so there is no floor at all.
+[[nodiscard]] float holdHeadClampMin(float headHeightPx, bool compact, bool clampToLine) noexcept;
+
 // Ascending, stable draw order of line indices by z-order.
 void buildLineDrawOrder(const game::Chart& chart, std::vector<int>& out);
 

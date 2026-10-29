@@ -217,6 +217,100 @@ int main() {
     require(close(EventUtils::speedAt(rampLayer, 16.0), 1.5), "RPE linear speed ramp midpoint");
     require(close(EventUtils::getFloorPosition(32.0, rampLayer), 48.0),
         "RPE linear ramp integral is mean rate * span");
+
+    // A rate ramp through zero. Halfway through the segment the rate is exactly zero, and the
+    // floor position is the integral of the negative half only: -1 * 16 + 0.5 * (2/32) * 16^2
+    // = -8. Ending at the mean rate of zero brings it back to zero.
+    const auto crossZero = rechigros::chart::RpeChartParser::parse(std::string_view{R"json(
+    {"META":{"offset":0,"RPEVersion":160},"BPMList":[{"bpm":120,"startTime":[0,0,1]}],
+     "judgeLineList":[{"bpmfactor":1,"eventLayers":[{"speedEvents":[
+       {"startTime":[0,0,1],"endTime":[1,0,1],"start":-4.5,"end":4.5,"easingType":1}]}]}]})json"});
+    const auto& crossZeroLayer = crossZero.judgeLineList.at(0)->speedEventLayers.at(0);
+    require(close(EventUtils::speedAt(crossZeroLayer, 8.0), -0.5),
+        "RPE speed ramp keeps its negative half");
+    require(close(EventUtils::speedAt(crossZeroLayer, 16.0), 0.0),
+        "RPE speed ramp reaches zero at its midpoint");
+    require(close(EventUtils::getFloorPosition(16.0, crossZeroLayer), -8.0),
+        "RPE cross-zero ramp integrates the negative half");
+    require(close(EventUtils::getFloorPosition(32.0, crossZeroLayer), 0.0),
+        "RPE cross-zero ramp returns to zero at the segment end");
+    // Past the segment the last rate keeps running, so the floor keeps falling away from zero.
+    require(close(EventUtils::getFloorPosition(40.0, crossZeroLayer), 8.0),
+        "RPE cross-zero ramp extrapolates with its end rate");
+
+    // A ramp that stays negative keeps negative values in both the rate and the integral.
+    const auto negative = rechigros::chart::RpeChartParser::parse(std::string_view{R"json(
+    {"META":{"offset":0,"RPEVersion":160},"BPMList":[{"bpm":120,"startTime":[0,0,1]}],
+     "judgeLineList":[{"bpmfactor":1,"eventLayers":[{"speedEvents":[
+       {"startTime":[0,0,1],"endTime":[1,0,1],"start":-9,"end":-4.5,"easingType":1}]}]}]})json"});
+    const auto& negativeLayer = negative.judgeLineList.at(0)->speedEventLayers.at(0);
+    require(close(EventUtils::speedAt(negativeLayer, 16.0), -1.5), "RPE negative speed ramp midpoint");
+    require(close(EventUtils::getFloorPosition(32.0, negativeLayer), -48.0),
+        "RPE negative speed ramp integrates to a negative floor");
+
+    // easingType 2 is the sine-out curve. Its mean is 2/pi, so the integral over 32 normalised
+    // beats of a 1 -> 2 rate ramp is 32 * (1 + 2/pi), and the midpoint rate is 1 + sin(pi/4).
+    const auto curved = rechigros::chart::RpeChartParser::parse(std::string_view{R"json(
+    {"META":{"offset":0,"RPEVersion":160},"BPMList":[{"bpm":120,"startTime":[0,0,1]}],
+     "judgeLineList":[{"bpmfactor":1,"eventLayers":[{"speedEvents":[
+       {"startTime":[0,0,1],"endTime":[1,0,1],"start":4.5,"end":9,"easingType":2}]}]}]})json"});
+    const auto& curvedLayer = curved.judgeLineList.at(0)->speedEventLayers.at(0);
+    require(close(EventUtils::speedAt(curvedLayer, 16.0), 1.0 + std::sin(3.14159265358979323846 / 4.0), 1e-4),
+        "RPE nonlinear speed ramp follows its easing curve");
+    require(close(EventUtils::getFloorPosition(32.0, curvedLayer),
+              32.0 * (1.0 + 2.0 / 3.14159265358979323846), 1e-3),
+        "RPE nonlinear ramp integral uses the eased mean rate");
+  }
+
+  // ---------------- RPE bpmfactor ----------------
+  {
+    // A line's bpmfactor stretches its local timeline: every authored time on the line is
+    // played factor-times later in chart time, holds included. The line's own bpm stays
+    // base/factor, which is what performs the stretch.
+    const auto plain = rechigros::chart::RpeChartParser::parse(std::string_view{R"json(
+    {"META":{"offset":0,"RPEVersion":160},"BPMList":[{"bpm":120,"startTime":[0,0,1]}],
+     "judgeLineList":[{"bpmfactor":1,"eventLayers":[{"moveXEvents":[
+       {"startTime":[0,0,1],"endTime":[1,0,1],"start":0,"end":675}]}],
+       "notes":[{"type":2,"startTime":[1,0,1],"endTime":[2,0,1],"positionX":0}]}]})json"});
+    const auto& plainNote = *plain.allNotesSorted.at(0);
+    require(close(plainNote.sect, 0.5), "bpmfactor 1 keeps the authored note time");
+    require(close(plainNote.secht, 0.5), "bpmfactor 1 keeps the authored hold duration");
+    require(close(plain.judgeLineList.at(0)->fillState(0.5, 16.0F / 9.0F).xNorm, 1.0),
+        "bpmfactor 1 finishes the authored line animation on time");
+
+    const auto stretched = rechigros::chart::RpeChartParser::parse(std::string_view{R"json(
+    {"META":{"offset":0,"RPEVersion":160},"BPMList":[{"bpm":120,"startTime":[0,0,1]}],
+     "judgeLineList":[{"bpmfactor":2,"eventLayers":[{"moveXEvents":[
+       {"startTime":[0,0,1],"endTime":[1,0,1],"start":0,"end":675}]}],
+       "notes":[{"type":2,"startTime":[1,0,1],"endTime":[2,0,1],"positionX":0}]}]})json"});
+    auto& stretchedLine = *stretched.judgeLineList.at(0);
+    const auto& stretchedNote = *stretched.allNotesSorted.at(0);
+    require(close(stretchedNote.sect, 1.0), "bpmfactor 2 plays the note twice as late");
+    require(close(stretchedNote.secht, 1.0), "bpmfactor 2 doubles the hold duration");
+    require(close(stretched.chartEndTimeSec, 2.0), "bpmfactor 2 stretches the chart end");
+    // The same animation is still halfway at the chart second the factor-1 line finished it.
+    const auto midState = stretchedLine.fillState(0.5, 16.0F / 9.0F);
+    require(close(midState.xNorm, 0.75), "bpmfactor 2 stretches the line animation");
+
+    const auto effects = rechigros::chart::RpeChartParser::parse(std::string_view{R"json(
+    {"META":{"offset":0,"RPEVersion":160},"BPMList":[{"bpm":120,"startTime":[0,0,1]}],
+     "judgeLineList":[{"bpmfactor":2,"extended":{"paintEvents":[
+       {"shader":"chromatic","startTime":[1,0,1],"endTime":[2,0,1],
+        "vars":{"k":[{"startTime":1,"endTime":2,"start":0,"end":1}]}},
+       {"shader":"chromatic","startTime":1,"endTime":2}
+     ]}}]})json"});
+    require(effects.prprEffects.size() == 2, "bpmfactor effect fixture count");
+    require(close(effects.prprEffects[0].startTime, 1.0)
+        && close(effects.prprEffects[0].endTime, 2.0),
+        "bpmfactor 2 stretches beat-array effect times");
+    require(close(effects.prprEffects[1].startTime, 1.0)
+        && close(effects.prprEffects[1].endTime, 2.0),
+        "bpmfactor 2 converts numeric effect times as beats");
+    const auto& variable = effects.prprEffects[0].variables.at("k");
+    require(variable.vectorEvents.size() == 1
+        && close(variable.vectorEvents[0].startTime, 1.0)
+        && close(variable.vectorEvents[0].endTime, 2.0),
+        "bpmfactor 2 stretches effect variable times");
   }
 
   // ---------------- PEC parity ----------------

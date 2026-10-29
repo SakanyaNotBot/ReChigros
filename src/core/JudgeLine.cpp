@@ -232,7 +232,8 @@ void Chart::prepareRuntime(){
       }else{note.holdEndFloorPosition=note.floorPosition;note.holdLength=0;}
       ++out.simultaneous[static_cast<long long>(std::llround(note.sect*1'000'000.0))];out.allNotes.push_back(&note);
       if(!note.isFake)out.visibleNotes.push_back(&note);
-      out.maxEndSec=std::max(out.maxEndSec,note.isHold?note.holdEndTime:note.sect);
+      // A hold whose tail precedes its head still ends at the later of the two instants.
+      out.maxEndSec=std::max(out.maxEndSec,note.isHold?std::max(note.holdEndTime,note.sect):note.sect);
     }
   };
   std::size_t noteCount=0;

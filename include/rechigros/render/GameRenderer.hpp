@@ -126,8 +126,7 @@ struct RenderFrameInput {
     // Wall clock and the age of the last pause-button touch (negative when idle).
     double visualTimeSec{0.0};
     double pauseRingAgeSec{-1.0};
-    // Chart-reveal camera state: texture HUD elements and the pause hit area follow the
-    // shrunk play field, like the reference reveal transform.
+    // Caller-side mirrors for hit testing. Rendering resolves the authoritative state above.
     bool revealCameraActive{false};
     float revealScale{1.0F};
     // Optional catch-up animation of the score and accuracy readouts.

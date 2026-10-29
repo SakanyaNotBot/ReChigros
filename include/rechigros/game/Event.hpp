@@ -39,6 +39,9 @@ struct MoveEvent : EasingSpec {
   double end2{0.0};
 };
 
+// `type` keeps the authored one-based easing index: 1 is the linear curve and 0 marks a
+// constant-speed segment. The other event types store a zero-based index instead, so the
+// two conventions are not interchangeable.
 struct SpeedEvent : EasingSpec {
   double startTime{0.0};
   double endTime{0.0};

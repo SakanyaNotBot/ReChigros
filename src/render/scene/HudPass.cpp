@@ -188,6 +188,7 @@ struct HudCanvas {
   float halfUiW{500.0F};
   float rootY{0.0F};
   float rootScale{1.0F};
+  HudRevealTransform reveal;
 
   [[nodiscard]] float x(float uiX) const noexcept { return layout.centerX() + uiX * unit; }
   [[nodiscard]] float y(float uiY) const noexcept { return layout.centerY() - uiY * unit; }
@@ -243,6 +244,10 @@ void drawElementQuad(batch::SpriteBatch& batch, const gl::Texture& texture,
   // field centre; the horizontal axis is untouched.
   cy = canvas.rootY + (cy - canvas.rootY) * canvas.rootScale;
   h *= canvas.rootScale;
+  cx = canvas.reveal.x(cx);
+  cy = canvas.reveal.y(cy);
+  w = canvas.reveal.size(w);
+  h = canvas.reveal.size(h);
   if (!(a > 0.002F) || !(w > 0.0F) || !(h > 0.0F)) return;
 
   batch.begin();
@@ -344,16 +349,20 @@ void drawComposedLabel(batch::SpriteBatch& batch, const HudCanvas& canvas, HudEl
     const auto& placement = metrics.placements[static_cast<std::size_t>(index)];
     const float glyphLeft = baseLeft + static_cast<float>(placement.targetX);
     const float glyphTop = baseTop + static_cast<float>(placement.targetY);
-    const float width = static_cast<float>(placement.width) * scaleX;
+    float width = static_cast<float>(placement.width) * scaleX;
     const float height = static_cast<float>(placement.height) * scaleY;
-    const float centerX = wholeCenterX
+    float centerX = wholeCenterX
         + (glyphLeft + static_cast<float>(placement.width) * 0.5F - wholeCenterX) * scaleX
         + translateX;
     float centerY = wholeCenterY
         + (glyphTop + static_cast<float>(placement.height) * 0.5F - wholeCenterY) * scaleY
         + translateY;
     centerY = canvas.rootY + (centerY - canvas.rootY) * canvas.rootScale;
-    const float scaledHeight = height * canvas.rootScale;
+    float scaledHeight = height * canvas.rootScale;
+    centerX = canvas.reveal.x(centerX);
+    centerY = canvas.reveal.y(centerY);
+    width = canvas.reveal.size(width);
+    scaledHeight = canvas.reveal.size(scaledHeight);
     if (!(width > 0.0F) || !(scaledHeight > 0.0F)) continue;
     batch.addQuad(centerX, centerY, width, scaledHeight, 0.0F, std::clamp(r, 0.0F, 1.0F),
         std::clamp(g, 0.0F, 1.0F), std::clamp(b, 0.0F, 1.0F), std::clamp(a, 0.0F, 1.0F),
@@ -824,6 +833,18 @@ float hudY(const StageLayout& layout, float uiY) noexcept {
   return layout.centerY() - uiY * hudUnit(layout);
 }
 
+HudRevealTransform hudRevealTransform(const StageLayout& layout, bool active, float scale) noexcept {
+  HudRevealTransform transform;
+  transform.centerX = layout.centerX();
+  transform.centerY = layout.centerY();
+  if (active) transform.scale = std::clamp(std::isfinite(scale) ? scale : 1.0F, 0.30F, 1.0F);
+  return transform;
+}
+
+bool hudNeedsStageClip(bool revealActive, bool fullscreen) noexcept {
+  return !revealActive && !fullscreen;
+}
+
 void updateHudDisplayValuesForTest(HudValues& values, int& scoreOut,
     int& accuracyHundredthsOut) {
   updateHudDisplayValues(values, scoreOut, accuracyHundredthsOut);
@@ -842,26 +863,19 @@ void drawHud(batch::SpriteBatch& batch, text::TextRenderer& text, const StageLay
   const float hudAspect = layout.stage.height > 1.0e-6F
       ? layout.stage.width / layout.stage.height
       : 16.0F / 9.0F;
-  // The reference clamps the HUD half-width to a 16:9 stage: on a wider stage its score,
-  // combo and song text stay on the 16:9 box instead of spreading toward the wider edges. An
-  // unclamped aspect pushed those elements outward on an ultrawide viewport.
-  canvas.halfUiW = std::min(hudAspect, 16.0F / 9.0F) * 500.0F;
+  // The HUD follows the full stage aspect. On a wider viewport its edge widgets reach into the
+  // side blanks, where the stage clip or the side-column overlay hides them.
+  canvas.halfUiW = hudAspect * 500.0F;
   canvas.rootY = layout.centerY();
   canvas.rootScale = computeRootScale(values.introProgress, values.outroProgress);
+  canvas.reveal = hudRevealTransform(layout, values.revealCameraActive, values.revealScale);
   const float comboAlpha = comboLabelOutroAlpha(values.outroProgress);
 
-  // Pause button and its touch feedback ring. The reveal camera scales texture HUD
-  // elements with the shrunken play field (reference transform).
+  // Pause button and its touch feedback ring share the same camera path as every other widget.
   {
-    const float stageCenterX = layout.stage.x + layout.stage.width * 0.5F;
-    const float stageCenterY = layout.stage.y + layout.stage.height * 0.5F;
-    const float revealScale = (values.revealCameraActive
-        ? std::clamp(values.revealScale, 0.3F, 1.0F)
-        : 1.0F);
-    const float centerX = stageCenterX +
-        (canvas.x(kPauseXOffset - canvas.halfUiW) - stageCenterX) * revealScale;
-    const float centerY = stageCenterY + (canvas.y(kPauseY) - stageCenterY) * revealScale;
-    const float drawHeight = canvas.size(kPauseH) * revealScale;
+    const float centerX = canvas.x(kPauseXOffset - canvas.halfUiW);
+    const float centerY = canvas.y(kPauseY);
+    const float drawHeight = canvas.size(kPauseH);
     const float drawWidth = drawHeight * kPauseVisualAspect;
 
     if (textures.noteRing != nullptr && textures.noteRing->valid()
@@ -869,10 +883,10 @@ void drawHud(batch::SpriteBatch& batch, text::TextRenderer& text, const StageLay
       const float progress =
           std::clamp(static_cast<float>(values.pauseRingAgeSec) / kPauseRingFadeInSec, 0.0F, 1.0F);
       const float ringAlpha = alpha * kPauseRingAlphaMax * progress;
-      const float ringSize = canvas.size(kPauseRingSizeUi) * revealScale;
+      const float ringSize = canvas.size(kPauseRingSizeUi);
       drawElementQuad(batch, *textures.noteRing, canvas, HudElement::Pause, transforms,
-          centerX + canvas.size(kPauseRingOffsetXUi) * revealScale,
-          centerY - canvas.size(kPauseRingOffsetYUi) * revealScale, ringSize, ringSize, 0.0F,
+          centerX + canvas.size(kPauseRingOffsetXUi),
+          centerY - canvas.size(kPauseRingOffsetYUi), ringSize, ringSize, 0.0F,
           1.0F, 1.0F, 1.0F, ringAlpha, 0.0F, 0.0F, 1.0F, 1.0F, projection);
     }
 

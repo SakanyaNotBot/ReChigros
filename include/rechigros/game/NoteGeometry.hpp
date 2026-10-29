@@ -1,10 +1,9 @@
 #pragma once
 
+#include "rechigros/game/JudgeLine.hpp"
 #include "rechigros/game/Note.hpp"
 
 namespace rechigros::game {
-
-class JudgeLine;
 
 // Note placement along the judge line. Every helper reproduces the reference renderer's
 // pixel-space maths exactly, including its float32 rounding points, because the drawn
@@ -63,5 +62,18 @@ struct NoteGeometry {
 NoteGeometry resolveNoteGeometry(const Note& note, const JudgeLine& line, float stateInclineSinr,
     double lineFloorPosition, double lineBpm, double scrollSpeed,
     float stageWidth, float stageHeight);
+
+struct HoldHeadEffectPose {
+  bool valid{false};
+  float x{};
+  float y{};
+  float rotationDeg{};
+};
+
+// Resolves a hold-head burst at its event time. A late event removes only the floor-distance
+// term, retaining the lane and vertical offsets; an early event uses the full control curves.
+HoldHeadEffectPose resolveHoldHeadEffectPose(const Note& note, const JudgeLine& line,
+    const JudgeLine::State& state, double timeSec, double scrollSpeed,
+    float stageX, float stageY, float stageWidth, float stageHeight) noexcept;
 
 } // namespace rechigros::game

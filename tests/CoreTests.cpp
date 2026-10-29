@@ -51,6 +51,12 @@ int main(){
   const auto state=line.fillState(0.25,16.0F/9.0F);require(close(state.xNorm,0.75),"line X interpolation");require(close(state.yNorm,0.75),"line Y interpolation");require(close(state.alpha,0.5),"line alpha interpolation");
   JudgeLine hidden;hidden.invertRotation=false;LineEvent alpha;alpha.startTime=0;alpha.endTime=100;alpha.start=-1;alpha.end=-1;hidden.judgeLineDisappearEvents.push_back(alpha);hidden.normalize();const auto hiddenState=hidden.fillState(0,16.0F/9.0F);require(hiddenState.hideLine&&hiddenState.hideNotes,"negative alpha extension");
   std::vector<SpeedEvent> speed(1);speed[0].startTime=0;speed[0].endTime=10;speed[0].value=1;speed[0].endValue=1;EventUtils::initSpeedEvents(speed);require(close(EventUtils::getFloorPosition(4,speed),4),"constant speed integral");
+  // A linear speed ramp integrates straight through zero: the rate is zero at the midpoint
+  // while the floor position still carries the area of the negative half.
+  {SpeedEvent ramp;ramp.startTime=0;ramp.endTime=32;ramp.value=-1;ramp.endValue=1;ramp.type=1;std::vector<SpeedEvent> rampList{ramp};EventUtils::initSpeedEvents(rampList);require(close(EventUtils::speedAt(rampList,8),-0.5),"cross-zero ramp rate before the crossing");require(close(EventUtils::speedAt(rampList,16),0),"cross-zero ramp rate at the crossing");require(close(EventUtils::getFloorPosition(16,rampList),-8),"cross-zero ramp integral at the crossing");require(close(EventUtils::getFloorPosition(32,rampList),0),"cross-zero ramp integral over the whole segment");require(close(EventUtils::getFloorPosition(40,rampList),8),"cross-zero ramp extrapolates at its end rate");}
+  // A hold authored with a negative duration keeps it: the tail sits before the head, the
+  // drawn length is negative, and the chart still ends at the later of the two instants.
+  {Chart chart;chart.formatVersion=0;auto holdLine=std::make_unique<JudgeLine>();holdLine->bpm=120;SpeedEvent holdSpeed;holdSpeed.endTime=1e9;holdSpeed.value=holdSpeed.endValue=1;holdLine->speedEvents.push_back(holdSpeed);Note holdNote;holdNote.type=NOTE_HOLD;holdNote.time=64;holdNote.holdTime=-32;holdNote.positionX=0;holdLine->notesAbove.push_back(holdNote);chart.judgeLineList.push_back(std::move(holdLine));chart.prepareRuntime();const auto* hold=chart.allNotesSorted.at(0);require(close(hold->sect,1)&&close(hold->secht,-0.5),"negative hold keeps its negative duration");require(close(hold->holdEndTime,0.5),"negative hold ends before it starts");require(close(hold->holdLength,-0.3),"negative hold length stays negative");require(close(chart.chartEndTimeSec,1),"chart end covers the later hold instant");}
   const auto pec=rechigros::chart::PecChartParser::parse("0\nbp 0 120\nn1 0 1 128 1 0\n# 2\n& 1.5\nn2 0 2 3 0 0 0\ncv 0 0 7\ncp 0 0 1024 700\nca 0 0 255\n");
   require(close(pec.offset,-0.15),"PEC offset");require(pec.judgeLineList.size()==1,"PEC line count");require(pec.allNotesSorted.size()==2,"PEC note count");require(pec.allNotesSorted[0]->type==NOTE_TAP&&close(pec.allNotesSorted[0]->speed,2),"PEC note modifier");require(close(pec.allNotesSorted[0]->xScale,1.5),"PEC X scale modifier");require(close(pec.judgeLineList[0]->speedEvents[0].value,1),"PEC speed normalization");
   const auto pecVisible=rechigros::chart::PecChartParser::parse("0\nbp 0 120\nn1 0 1.125 0 1 0\ncf 0 1 1.125 -120\n");require(pecVisible.allNotesSorted.size()==1&&close(pecVisible.allNotesSorted[0]->visibleTime,1),"PEC visibleTime encoding");
@@ -234,6 +240,49 @@ int main(){
   // yOffsetToTransYPx ignores speed entirely.
   require(close(yOffsetToTransYPx(0.25F,1.0,900.0F),225.0F)&&close(yOffsetToTransYPx(0.25F,7.0,900.0F),225.0F),"yOffset to pixels");
   require(close(sanitizeJudgeArea(0.0F),1.0F)&&close(sanitizeJudgeArea(-2.0F),1.0F)&&close(sanitizeJudgeArea(2.5F),2.5F),"judge area sanitize");
+
+  // Hold-head bursts use the event-time state. Both chart formats share this geometry.
+  for (const int format : {0, 3}) {
+    (void)format;
+    JudgeLine effectLine;
+    effectLine.bpm = 120.0;
+    effectLine.noteYControls.push_back(JudgeLine::NoteControlPoint{0.0F, 0.5F, 1});
+    Note effectNote;
+    effectNote.isHold = true;
+    effectNote.isAbove = true;
+    effectNote.sect = 1.0;
+    effectNote.floorPosition = 64.0;
+    effectNote.speed = 2.0;
+    effectNote.positionX = 0.2;
+    effectNote.yOffset = 0.1F;
+    const auto poseAt = [&](double timeSec) {
+      JudgeLine::State state;
+      state.xNorm = 0.5F;
+      state.yNorm = 0.5F;
+      state.floorPosition = timeSec * 64.0;
+      return resolveHoldHeadEffectPose(effectNote, effectLine, state, timeSec, 1.0,
+          0.0F, 0.0F, 1600.0F, 900.0F);
+    };
+    const auto early = poseAt(0.9);
+    const auto exact = poseAt(1.0);
+    const auto late = poseAt(1.05);
+    require(early.valid && exact.valid && late.valid, "hold effect poses resolve at every event time");
+    require(close(early.x,818.0)&&close(exact.x,818.0)&&close(late.x,818.0),
+        "hold effect keeps the original lane offset");
+    require(close(early.y,306.0,1e-3),"early hold effect keeps Y control and unscaled yOffset");
+    require(close(exact.y,360.0)&&close(late.y,360.0),"exact and late hold effects stay on the line");
+    effectNote.useOfficialSpeed = true;
+    const auto flagged = poseAt(0.9);
+    require(close(flagged.y,333.0,1e-3),"official-speed hold effect uses the base rate only for distance");
+    require(close(poseAt(1.05).y,360.0),"official-speed late effect remains pinned");
+  }
+  {
+    JudgeLine effectLine;
+    Note effectNote;
+    JudgeLine::State state;
+    require(!resolveHoldHeadEffectPose(effectNote,effectLine,state,0.0,1.0,
+        0.0F,0.0F,1600.0F,0.0F).valid,"hold effect rejects a degenerate stage");
+  }
 
   // --- replay model: recording, playback and hold body feedback ---------------
   {

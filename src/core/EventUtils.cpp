@@ -168,13 +168,6 @@ double computeFpInEvent(SpeedEvent& event, double time) {
 
   if (event.type == 0 || std::abs(v0 - v1) < 1e-6) return event.floorPosition + v0 * elapsed;
 
-  if (event.type <= 1 && event.speedK == 0.0 && event.speedB == 0.0) {
-    const double y = event.isClamped
-        ? Easing::clampedTween(event.tweenId, p, static_cast<double>(event.left), static_cast<double>(event.right))
-        : Easing::applyTween(event.tweenId, p);
-    return event.floorPosition + y * event.totalHeight * duration;
-  }
-
   if (event.speedK == 0.0 && event.speedB == 0.0) {
     const double acceleration = (v1 - v0) / duration;
     return event.floorPosition + v0 * elapsed + 0.5 * acceleration * elapsed * elapsed;
@@ -768,7 +761,8 @@ double speedAt(const std::vector<SpeedEvent>& events, double time) noexcept {
   const double v0 = event.value;
   const double v1 = std::isfinite(event.endValue) ? event.endValue : event.value;
   if (event.type == 0) return v0;
-  if (event.type <= 1) return v0 + (v1 - v0) * p;
+  const bool bezier = event.bezier && (hasBezierLut(event) || hasBezierPoints(event));
+  if (event.type <= 1 && !bezier) return v0 + (v1 - v0) * p;
   return v0 + (v1 - v0) * applyRawRpeEasingImpl(p, event);
 }
 
@@ -797,22 +791,12 @@ void initSpeedEvents(std::vector<SpeedEvent>& events) {
       event.speedK = 0.0;
       event.speedB = v0;
       event.totalHeight = v0;
-    } else if (event.type <= 1) {
-      event.speedK = 0.0;
-      event.speedB = 0.0;
-      if (std::abs(v0) > std::abs(v1)) {
-        const double right = 1.0 - v1 / v0;
-        event.tweenId = 7;
-        event.isClamped = true;
-        event.left = 0.0F;
-        event.right = static_cast<float>(right);
-      } else {
-        const double left = v0 / v1;
-        event.tweenId = 6;
-        event.isClamped = true;
-        event.left = static_cast<float>(left);
-        event.right = 1.0F;
-      }
+    } else if (event.type <= 1 && !event.isBezier) {
+      // A linear ramp has a closed-form integral that stays valid across zero. Expressing
+      // it as a normalised easing curve needs the mean speed as a divisor, which is zero
+      // for a symmetric ramp, so the ramp is integrated directly instead.
+      event.speedK = v1 - v0;
+      event.speedB = v0;
       event.totalHeight = (v0 + v1) * 0.5;
     } else {
       event.speedK = v1 - v0;
@@ -827,7 +811,9 @@ void initSpeedEvents(std::vector<SpeedEvent>& events) {
         integralEnd = Easing::applyTweenInt(event.tweenId, 1.0);
       }
       const double total = integralEnd * event.speedK + event.speedB;
-      if (!std::isfinite(total) || std::abs(total) < 1e-8) {
+      if (!std::isfinite(total)) {
+        // An unusable curve falls back to the straight-line average; with both coefficients
+        // cleared the per-instant integral uses the quadratic form of that same ramp.
         event.speedK = 0.0;
         event.speedB = 0.0;
         event.totalHeight = (v0 + v1) * 0.5;

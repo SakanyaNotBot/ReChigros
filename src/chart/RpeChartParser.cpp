@@ -174,8 +174,8 @@ public:
 
   [[nodiscard]] double baseBpm() const noexcept { return points_.front().bpm; }
   [[nodiscard]] double beatToSec(double beat) const noexcept { return timeline_->beatToSec(beat); }
-  [[nodiscard]] double normBeat(double beat, double lineBpm) const noexcept {
-    const auto bpm = lineBpm > 0.0 ? lineBpm : baseBpm();
+  [[nodiscard]] double normBeat(double beat, double timeBaseBpm) const noexcept {
+    const auto bpm = timeBaseBpm > 0.0 ? timeBaseBpm : baseBpm();
     return beatToSec(beat) / (PGR_BEAT / bpm);
   }
   [[nodiscard]] const std::shared_ptr<BpmTimeline>& timeline() const noexcept { return timeline_; }
@@ -186,8 +186,13 @@ private:
   std::shared_ptr<BpmTimeline> timeline_;
 };
 
-void parseEasing(EasingSpec& target, const json& source) {
-  target.type = std::max(0, integer(source, {"easingType", "easing", "ease"}, 1) - 1);
+// Line, move, colour and text tracks store the zero-based tween index their evaluator
+// expects. Speed tracks evaluate against the authored one-based index instead, so their
+// caller asks for the raw value; collapsing it here would turn a linear ramp into the
+// constant-speed sentinel.
+void parseEasing(EasingSpec& target, const json& source, bool oneBasedType = false) {
+  const auto easingType = std::max(0, integer(source, {"easingType", "easing", "ease"}, 1));
+  target.type = oneBasedType ? easingType : std::max(0, easingType - 1);
   target.left = static_cast<float>(number(source, {"easingLeft", "left", "clipStart"}, 0.0));
   target.right = static_cast<float>(number(source, {"easingRight", "right", "clipEnd"}, 1.0));
   target.bezier = boolean(source, {"bezier", "useBezier"}, false);
@@ -232,7 +237,7 @@ void ensureMoveCoverage(std::vector<MoveEvent>& events, double x = 0.0, double y
 }
 
 std::vector<LineEvent> parseLineEvents(const json& source, const BpmConverter& bpm,
-    double lineBpm, std::initializer_list<const char*> keys, bool alpha = false) {
+    double timeBaseBpm, std::initializer_list<const char*> keys, bool alpha = false) {
   std::vector<LineEvent> result;
   const auto* events = array(source, keys);
   if (!events) return result;
@@ -240,8 +245,8 @@ std::vector<LineEvent> parseLineEvents(const json& source, const BpmConverter& b
   for (const auto& item : *events) {
     if (!item.is_object()) continue;
     LineEvent event;
-    event.startTime = bpm.normBeat(parseBeat(eventTime(item, true)), lineBpm);
-    event.endTime = bpm.normBeat(parseBeat(eventTime(item, false)), lineBpm);
+    event.startTime = bpm.normBeat(parseBeat(eventTime(item, true)), timeBaseBpm);
+    event.endTime = bpm.normBeat(parseBeat(eventTime(item, false)), timeBaseBpm);
     if (event.endTime < event.startTime) event.endTime = event.startTime;
     event.start = number(item, {"start", "startValue", "value", "v0"}, 0.0);
     event.end = number(item, {"end", "endValue", "v1"}, event.start);
@@ -260,10 +265,10 @@ std::vector<LineEvent> parseLineEvents(const json& source, const BpmConverter& b
   return result;
 }
 
-std::vector<LineEvent> parseAlphaEvents(const json& source, const BpmConverter& bpm, double lineBpm) {
-  auto events = parseLineEvents(source, bpm, lineBpm, {"alphaEvents", "opacityEvents"}, true);
+std::vector<LineEvent> parseAlphaEvents(const json& source, const BpmConverter& bpm, double timeBaseBpm) {
+  auto events = parseLineEvents(source, bpm, timeBaseBpm, {"alphaEvents", "opacityEvents"}, true);
   if (!events.empty()) return events;
-  events = parseLineEvents(source, bpm, lineBpm,
+  events = parseLineEvents(source, bpm, timeBaseBpm,
       {"judgeLineDisappearEvents", "disappearEvents"}, true);
   for (auto& event : events) { event.start = 1.0 - event.start; event.end = 1.0 - event.end; }
   return events;
@@ -275,7 +280,7 @@ std::array<double, 2> vec2(const json* value, std::array<double, 2> fallback) {
   catch (const json::exception&) { return fallback; }
 }
 
-std::vector<MoveEvent> parseMoveEvents(const json& source, const BpmConverter& bpm, double lineBpm) {
+std::vector<MoveEvent> parseMoveEvents(const json& source, const BpmConverter& bpm, double timeBaseBpm) {
   std::vector<MoveEvent> result;
   const auto* events = array(source, {"moveEvents", "judgeLineMoveEvents"});
   if (!events) return result;
@@ -283,8 +288,8 @@ std::vector<MoveEvent> parseMoveEvents(const json& source, const BpmConverter& b
   for (const auto& item : *events) {
     if (!item.is_object()) continue;
     MoveEvent event;
-    event.startTime = bpm.normBeat(parseBeat(eventTime(item, true)), lineBpm);
-    event.endTime = bpm.normBeat(parseBeat(eventTime(item, false)), lineBpm);
+    event.startTime = bpm.normBeat(parseBeat(eventTime(item, true)), timeBaseBpm);
+    event.endTime = bpm.normBeat(parseBeat(eventTime(item, false)), timeBaseBpm);
     if (event.endTime < event.startTime) event.endTime = event.startTime;
     // The vector form is taken only when both ends are arrays; otherwise every component is
     // read as a scalar, with the stage centre as the implicit start.
@@ -480,8 +485,7 @@ int shaderIndexByName(std::string name) {
 
 double effectBeatSeconds(const json* value, const BpmConverter& bpm, double factor) {
   if (value == nullptr || value->is_null()) return 0.0;
-  if (value->is_number()) return value->get<double>() / factor;
-  return bpm.beatToSec(parseBeat(value) / factor);
+  return bpm.beatToSec(parseBeat(value)) * factor;
 }
 
 void parseEffectVariables(const json& vars, const BpmConverter& bpm, double factor,
@@ -1019,7 +1023,7 @@ void applyLegacySpeedHeightMode(std::vector<std::vector<SpeedEvent>>& speedLayer
     layer = buildLegacySpeedHeightLayer(layer, maxTime);
   }
 }
-std::vector<SpeedEvent> parseSpeedEvents(const json& source, const BpmConverter& bpm, double lineBpm) {
+std::vector<SpeedEvent> parseSpeedEvents(const json& source, const BpmConverter& bpm, double timeBaseBpm) {
   std::vector<SpeedEvent> result;
   const auto* events = array(source, {"speedEvents", "judgeLineSpeedEvents", "speed"});
   if (!events) return result;
@@ -1027,13 +1031,13 @@ std::vector<SpeedEvent> parseSpeedEvents(const json& source, const BpmConverter&
   for (const auto& item : *events) {
     if (!item.is_object()) continue;
     SpeedEvent event;
-    event.startTime = bpm.normBeat(parseBeat(eventTime(item, true)), lineBpm);
+    event.startTime = bpm.normBeat(parseBeat(eventTime(item, true)), timeBaseBpm);
     const auto* end = eventTime(item, false);
-    event.endTime = end ? bpm.normBeat(parseBeat(end), lineBpm)
+    event.endTime = end ? bpm.normBeat(parseBeat(end), timeBaseBpm)
                         : std::numeric_limits<double>::quiet_NaN();
     event.value = number(item, {"start", "startValue", "value", "speed", "v0", "s"}, 1.0) / 4.5;
     event.endValue = number(item, {"end", "endValue", "endSpeed", "v1"}, event.value * 4.5) / 4.5;
-    parseEasing(event, item); result.push_back(std::move(event));
+    parseEasing(event, item, true); result.push_back(std::move(event));
   }
   std::stable_sort(result.begin(), result.end(),
       [](const auto& a, const auto& b) { return a.startTime < b.startTime; });
@@ -1112,7 +1116,7 @@ std::array<float, 3> rgb(const json* value, bool& valid) {
 
 // Zero-based type values shift into the one-based range; other values outside it are
 // discarded rather than silently turned into a tap.
-std::optional<Note> parseNote(const json& source, const BpmConverter& bpm, double lineBpm) {
+std::optional<Note> parseNote(const json& source, const BpmConverter& bpm, double timeBaseBpm) {
   Note note;
   auto type = integer(source, {"type", "noteType", "note"}, 0);
   // A zero-based spelling is only reinterpreted when the value is not already a valid
@@ -1129,14 +1133,14 @@ std::optional<Note> parseNote(const json& source, const BpmConverter& bpm, doubl
     default: return std::nullopt;
   }
   const auto globalBeat = parseBeat(field(source, {"time", "startTime", "t"}));
-  note.rpeGlobalBeat = globalBeat; note.time = bpm.normBeat(globalBeat, lineBpm);
+  note.rpeGlobalBeat = globalBeat; note.time = bpm.normBeat(globalBeat, timeBaseBpm);
   if (note.type == NOTE_HOLD) {
     auto endBeat = globalBeat;
     if (const auto* duration = field(source, {"holdTime"})) endBeat += parseBeat(duration);
     else if (const auto* end = field(source, {"endTime"})) endBeat = parseBeat(end);
     else endBeat += number(source, {"hold", "duration"}, 0.0) * 32.0;
     note.holdTime = (bpm.beatToSec(endBeat) - bpm.beatToSec(globalBeat))
-        / (PGR_BEAT / lineBpm);
+        / (PGR_BEAT / timeBaseBpm);
   }
   note.speed = number(source, {"speed", "noteSpeed"}, 1.0);
   if (!std::isfinite(note.speed)) note.speed = 1.0;
@@ -1187,7 +1191,7 @@ bool noteAbove(const json& source, bool fallback) {
   return boolean(source, {"above", "aboveLine"}, fallback);
 }
 
-void parseNotes(const json& source, const BpmConverter& bpm, double lineBpm, JudgeLine& line) {
+void parseNotes(const json& source, const BpmConverter& bpm, double timeBaseBpm, JudgeLine& line) {
   // Presence of either explicit array selects the split form, even when it is empty: the
   // combined `notes` form below is only consulted when neither key exists at all.
   const auto* above = array(source, {"notesAbove", "NotesAbove"});
@@ -1195,18 +1199,18 @@ void parseNotes(const json& source, const BpmConverter& bpm, double lineBpm, Jud
   if (above != nullptr || below != nullptr) {
     if (above) for (const auto& item : *above) {
       if (!item.is_object()) continue;
-      if (auto note = parseNote(item, bpm, lineBpm)) line.notesAbove.push_back(std::move(*note));
+      if (auto note = parseNote(item, bpm, timeBaseBpm)) line.notesAbove.push_back(std::move(*note));
     }
     if (below) for (const auto& item : *below) {
       if (!item.is_object()) continue;
-      if (auto note = parseNote(item, bpm, lineBpm)) line.notesBelow.push_back(std::move(*note));
+      if (auto note = parseNote(item, bpm, timeBaseBpm)) line.notesBelow.push_back(std::move(*note));
     }
     return;
   }
   if (const auto* notes = array(source, {"notes", "noteList", "Notes"})) {
     for (const auto& item : *notes) {
       if (!item.is_object()) continue;
-      auto note = parseNote(item, bpm, lineBpm);
+      auto note = parseNote(item, bpm, timeBaseBpm);
       if (!note) continue;
       if (noteAbove(item, true)) line.notesAbove.push_back(std::move(*note));
       else line.notesBelow.push_back(std::move(*note));
@@ -1229,6 +1233,11 @@ std::unique_ptr<JudgeLine> parseJudgeLine(const json& source, const BpmConverter
   line->bpmfactor = number(source, {"bpmfactor", "bpmFactor", "BPMFactor"}, 1.0);
   if (!std::isfinite(line->bpmfactor) || line->bpmfactor <= 0.0) line->bpmfactor = 1.0;
   line->bpm = bpm.baseBpm() / line->bpmfactor; line->bpmTimeline = bpm.timeline(); line->invertRotation = false;
+  // Authored event and note times stay on the chart's time base. `line.bpm` only maps that
+  // base onto chart seconds at runtime, so dividing it by the factor is what stretches the
+  // whole line -- animations, notes and holds alike -- by that factor instead of cancelling
+  // it out of both conversions.
+  const double timeBase = bpm.baseBpm();
   line->zOrder = integer(source, {"zOrder", "z", "order"}, 0);
   line->isCover = boolean(source, {"isCover", "cover", "isCoverLine", "coverLine"}, false);
   line->father = integer(source, {"father", "parent", "fatherLine", "parentLine"}, -1);
@@ -1250,17 +1259,17 @@ std::unique_ptr<JudgeLine> parseJudgeLine(const json& source, const BpmConverter
 
   const auto parseLayer = [&](const json& layerSource) {
     JudgeLine::EventLayer layer;
-    layer.judgeLineRotateEvents = parseLineEvents(layerSource, bpm, line->bpm,
+    layer.judgeLineRotateEvents = parseLineEvents(layerSource, bpm, timeBase,
         {"rotateEvents", "judgeLineRotateEvents", "rotationEvents", "rotEvents"});
-    layer.judgeLineDisappearEvents = parseAlphaEvents(layerSource, bpm, line->bpm);
-    layer.judgeLineMoveXEvents = parseLineEvents(layerSource, bpm, line->bpm,
+    layer.judgeLineDisappearEvents = parseAlphaEvents(layerSource, bpm, timeBase);
+    layer.judgeLineMoveXEvents = parseLineEvents(layerSource, bpm, timeBase,
         {"moveXEvents", "judgeLineMoveXEvents", "xEvents", "moveX"});
-    layer.judgeLineMoveYEvents = parseLineEvents(layerSource, bpm, line->bpm,
+    layer.judgeLineMoveYEvents = parseLineEvents(layerSource, bpm, timeBase,
         {"moveYEvents", "judgeLineMoveYEvents", "yEvents", "moveY"});
     for (auto& event : layer.judgeLineMoveXEvents) { event.start /= RPE_WIDTH; event.end /= RPE_WIDTH; }
     for (auto& event : layer.judgeLineMoveYEvents) { event.start /= RPE_HEIGHT; event.end /= RPE_HEIGHT; }
     if (layer.judgeLineMoveXEvents.empty() && layer.judgeLineMoveYEvents.empty())
-      layer.judgeLineMoveEvents = parseMoveEvents(layerSource, bpm, line->bpm);
+      layer.judgeLineMoveEvents = parseMoveEvents(layerSource, bpm, timeBase);
     attachTrajectories(layerSource, layer);
     ensureCoverage(layer.judgeLineRotateEvents, 0.0);
     ensureCoverage(layer.judgeLineDisappearEvents, 0.0, false);
@@ -1268,17 +1277,13 @@ std::unique_ptr<JudgeLine> parseJudgeLine(const json& source, const BpmConverter
     ensureCoverage(layer.judgeLineMoveYEvents, 0.0);
     if (!layer.judgeLineMoveEvents.empty()) ensureMoveCoverage(layer.judgeLineMoveEvents);
     line->eventLayers.push_back(std::move(layer));
-    auto speeds = parseSpeedEvents(layerSource, bpm, line->bpm);
+    auto speeds = parseSpeedEvents(layerSource, bpm, timeBase);
     if (!speeds.empty()) line->speedEventLayers.push_back(std::move(speeds));
   };
   if (const auto* layers = array(source, {"eventLayers", "EventLayers", "layers"}); layers && !layers->empty()) {
     for (const auto& layer : *layers) if (layer.is_object()) parseLayer(layer);
   }
   if (line->eventLayers.empty()) parseLayer(source);
-
-  // Legacy speed-height mode re-samples each speed layer into an equivalent rate curve
-  // before anything consumes it, so floor positions come from the rewritten layers.
-  applyLegacySpeedHeightMode(line->speedEventLayers, 1e9);
 
   // The per-layer lists stay on the line so the runtime can integrate them exactly, but a
   // single combined curve is also built: consumers that only read one speed list then see
@@ -1292,8 +1297,8 @@ std::unique_ptr<JudgeLine> parseJudgeLine(const json& source, const BpmConverter
   }
 
   if (const auto* extended = object(source, {"extended", "Extended"})) {
-    line->judgeLineScaleXEvents = parseLineEvents(*extended, bpm, line->bpm, {"scaleXEvents", "sxEvents"});
-    line->judgeLineScaleYEvents = parseLineEvents(*extended, bpm, line->bpm, {"scaleYEvents", "syEvents"});
+    line->judgeLineScaleXEvents = parseLineEvents(*extended, bpm, timeBase, {"scaleXEvents", "sxEvents"});
+    line->judgeLineScaleYEvents = parseLineEvents(*extended, bpm, timeBase, {"scaleYEvents", "syEvents"});
     if (!line->judgeLineScaleXEvents.empty() || !line->judgeLineScaleYEvents.empty()) {
       ensureCoverage(line->judgeLineScaleXEvents, 1.0);
       ensureCoverage(line->judgeLineScaleYEvents, 1.0);
@@ -1301,8 +1306,8 @@ std::unique_ptr<JudgeLine> parseJudgeLine(const json& source, const BpmConverter
       // Combined 2D scale track; only used when the per-axis lists are absent.
       for (const auto& item : *scales) if (item.is_object()) {
         MoveEvent event;
-        event.startTime = bpm.normBeat(parseBeat(eventTime(item, true)), line->bpm);
-        event.endTime = bpm.normBeat(parseBeat(eventTime(item, false)), line->bpm);
+        event.startTime = bpm.normBeat(parseBeat(eventTime(item, true)), timeBase);
+        event.endTime = bpm.normBeat(parseBeat(eventTime(item, false)), timeBase);
         const auto start = vec2(field(item, {"start", "startValue"}), {1.0, 1.0});
         const auto end = vec2(field(item, {"end", "endValue"}), start);
         event.start = start[0];
@@ -1314,7 +1319,7 @@ std::unique_ptr<JudgeLine> parseJudgeLine(const json& source, const BpmConverter
       }
       if (!line->judgeLineScaleEvents.empty()) ensureMoveCoverage(line->judgeLineScaleEvents, 1.0, 1.0);
     }
-    line->judgeLineInclineEvents = parseLineEvents(*extended, bpm, line->bpm,
+    line->judgeLineInclineEvents = parseLineEvents(*extended, bpm, timeBase,
         {"inclineEvents", "tiltEvents", "skewEvents"});
     for (auto& event : line->judgeLineInclineEvents) {
       event.start *= 3.14159265358979323846 / 180.0; event.end *= 3.14159265358979323846 / 180.0;
@@ -1325,8 +1330,8 @@ std::unique_ptr<JudgeLine> parseJudgeLine(const json& source, const BpmConverter
       for (const auto& item : *colors) if (item.is_object()) {
         bool valid{}; auto startColor = rgb(field(item, {"start", "startValue", "rgb", "color"}), valid);
         if (!valid) continue; bool endValid{}; auto endColor = rgb(field(item, {"end", "endValue"}), endValid);
-        ColorEvent event; event.startTime = bpm.normBeat(parseBeat(eventTime(item, true)), line->bpm);
-        event.endTime = bpm.normBeat(parseBeat(eventTime(item, false)), line->bpm);
+        ColorEvent event; event.startTime = bpm.normBeat(parseBeat(eventTime(item, true)), timeBase);
+        event.endTime = bpm.normBeat(parseBeat(eventTime(item, false)), timeBase);
         const auto resolvedEnd = endValid ? endColor : startColor;
         event.startR = startColor[0]; event.startG = startColor[1]; event.startB = startColor[2];
         event.endR = resolvedEnd[0]; event.endG = resolvedEnd[1]; event.endB = resolvedEnd[2];
@@ -1337,16 +1342,16 @@ std::unique_ptr<JudgeLine> parseJudgeLine(const json& source, const BpmConverter
     if (const auto* texts = array(*extended, {"textEvents", "labelEvents"})) {
       for (const auto& item : *texts) if (item.is_object()) {
         const auto start = stringValue(item, {"start", "startValue", "startText", "text", "value", "label"});
-        if (start.empty()) continue; TextEvent event; event.startTime = bpm.normBeat(parseBeat(eventTime(item, true)), line->bpm);
-        event.endTime = bpm.normBeat(parseBeat(eventTime(item, false)), line->bpm);
+        if (start.empty()) continue; TextEvent event; event.startTime = bpm.normBeat(parseBeat(eventTime(item, true)), timeBase);
+        event.endTime = bpm.normBeat(parseBeat(eventTime(item, false)), timeBase);
         event.text = start; event.endText = stringValue(item, {"end", "endValue", "endText"}, start);
         parseEasing(event, item); line->judgeLineTextEvents.push_back(std::move(event));
       }
     }
     if (const auto* gifs = array(*extended, {"gifEvents"})) {
       for (const auto& item : *gifs) if (item.is_object()) {
-        GifEvent event; event.startTime = bpm.normBeat(parseBeat(eventTime(item, true)), line->bpm);
-        event.endTime = bpm.normBeat(parseBeat(eventTime(item, false)), line->bpm);
+        GifEvent event; event.startTime = bpm.normBeat(parseBeat(eventTime(item, true)), timeBase);
+        event.endTime = bpm.normBeat(parseBeat(eventTime(item, false)), timeBase);
         event.start = number(item, {"start", "startValue"}, 0.0);
         event.end = number(item, {"end", "endValue"}, 1.0); parseEasing(event, item);
         line->gifEvents.push_back(std::move(event));
@@ -1362,7 +1367,7 @@ std::unique_ptr<JudgeLine> parseJudgeLine(const json& source, const BpmConverter
   }
   line->textureIsGif = line->texture.size() >= 4
       && line->texture.substr(line->texture.size() - 4) == ".gif";
-  parseNotes(source, bpm, line->bpm, *line);
+  parseNotes(source, bpm, timeBase, *line);
   return line;
 }
 

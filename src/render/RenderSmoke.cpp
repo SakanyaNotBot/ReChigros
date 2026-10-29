@@ -16,11 +16,13 @@
 #include <vector>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <string>
 
 #ifdef RECHIGROS_GLES
@@ -43,6 +45,7 @@ struct Options {
   int height{720};
   double chartTime{4.0};
   std::string songName;
+  std::string levelName;
   std::string skinDirectory;
   // When set, the rendered frame is compared against this PNG and the difference is
   // printed, so a renderer input that silently has no effect is caught.
@@ -68,6 +71,7 @@ struct Options {
   bool showFps{false};
   // Drops the hold-body bursts so a frame can be compared with and without them.
   bool holdBodyBursts{true};
+  double holdHitTime{std::numeric_limits<double>::quiet_NaN()};
   bool capture{false};
   bool captureYuv{false};
   bool animate{false};
@@ -100,6 +104,8 @@ Options parseOptions(int argc, char** argv) {
       options.skinDirectory = next();
     } else if (flag == "--song") {
       options.songName = next();
+    } else if (flag == "--level") {
+      options.levelName = next();
     } else if (flag == "--compare") {
       options.comparePath = next();
     } else if (flag == "--force-bad") {
@@ -122,6 +128,8 @@ Options parseOptions(int argc, char** argv) {
       options.showFps = true;
     } else if (flag == "--no-hold-bursts") {
       options.holdBodyBursts = false;
+    } else if (flag == "--hold-hit-time") {
+      options.holdHitTime = std::atof(next().c_str());
     } else if (flag == "--judge-line-width") {
       options.judgeLineWidth = static_cast<float>(std::atof(next().c_str()));
     } else if (flag == "--low-res") {
@@ -270,40 +278,36 @@ int main(int argc, char** argv) {
       input.keyScale = options.keyScale;
       input.mirrorX = options.mirrorX;
       input.scrollSpeed = options.scrollSpeed;
-  input.judgeLineWidth = options.judgeLineWidth;
-  input.lowResolutionMode = options.lowResolutionMode;
-  input.antialias = options.antialias;
-  input.disableChartShader = options.disableChartShader;
-  input.multiPressHighlight = options.multiPressHighlight;
-  input.storyMode = options.storyMode;
-  input.chartReveal = options.chartReveal;
-  // The app resolves the reveal camera for the HUD transforms too; mirror it here so the
-  // headless frame shows the same HUD as a gameplay frame.
-  if (options.chartReveal) {
-    const float total = static_cast<float>(input.hud.totalDurationSec);
-    const float playhead = static_cast<float>(input.chartTimeSec);
-    const float transition = 1.0F;
-    const float target = 0.30F;
-    const auto smooth = [](float value) {
-      value = std::clamp(value, 0.0F, 1.0F);
-      return value * value * (3.0F - 2.0F * value);
-    };
-    input.hud.revealCameraActive = true;
-    if (total > 0.0F && playhead >= std::max(0.0F, total - transition)) {
-      const float start = std::max(0.0F, total - transition);
-      input.hud.revealScale = target + (1.0F - target) * smooth((playhead - start) / transition);
-    } else {
-      input.hud.revealScale = 1.0F + (target - 1.0F) * smooth(playhead / transition);
-    }
-  }
+      input.judgeLineWidth = options.judgeLineWidth;
+      input.lowResolutionMode = options.lowResolutionMode;
+      input.antialias = options.antialias;
+      input.disableChartShader = options.disableChartShader;
+      input.multiPressHighlight = options.multiPressHighlight;
+      input.storyMode = options.storyMode;
+      input.chartReveal = options.chartReveal;
+      input.songName = options.songName;
+      input.levelName = options.levelName;
       // Hold-body bursts produced while the session was driven to this chart time. The
       // renderer draws one burst per entry, so a hold frame can be inspected headlessly.
       input.holdBodyBursts = session.takeHoldBodyBursts();
-  input.holdHeadBursts = session.takeHoldHeadBursts();
+      input.holdHeadBursts = session.takeHoldHeadBursts();
       if (!options.holdBodyBursts) {
-    input.holdBodyBursts.clear();
-    input.holdHeadBursts.clear();
-  }
+        input.holdBodyBursts.clear();
+        input.holdHeadBursts.clear();
+      }
+      if (std::isfinite(options.holdHitTime)) {
+        input.holdBodyBursts.clear();
+        input.holdHeadBursts.clear();
+        for (std::size_t index = 0; index < chart->allNotesSorted.size(); ++index) {
+          if (!chart->allNotesSorted[index]->isHold) continue;
+          rechigros::game::HoldHeadBurst burst;
+          burst.noteIndex = static_cast<int>(index);
+          burst.timeSec = options.holdHitTime;
+          burst.perfect = true;
+          input.holdHeadBursts.push_back(burst);
+          break;
+        }
+      }
       if (options.pauseMenu) {
         input.pause.mode = rechigros::render::PauseMode::Menu;
         input.pause.elapsedSec = options.pauseElapsedSec;

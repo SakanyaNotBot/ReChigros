@@ -1,4 +1,8 @@
 #include "rechigros/game/OfficialBlock.hpp"
+#include "rechigros/game/Chart.hpp"
+#include "rechigros/game/GameConstants.hpp"
+#include "rechigros/game/JudgeLine.hpp"
+#include "rechigros/game/Note.hpp"
 #include "rechigros/render/fx/BadEffectField.hpp"
 #include "rechigros/render/fx/BlockCompositePass.hpp"
 #include "rechigros/render/fx/BlockOverlay.hpp"
@@ -7,11 +11,14 @@
 #include "rechigros/render/fx/PrprChain.hpp"
 #include "rechigros/render/scene/HudPass.hpp"
 #include "rechigros/render/scene/PauseBackdrop.hpp"
+#include "rechigros/render/scene/RevealCamera.hpp"
 #include "rechigros/render/scene/Transition.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <vector>
 
 namespace {
@@ -294,6 +301,176 @@ int main() {
     require(close(highlightWidthScale(0, 100), 1.0F), "a zero normal width needs no correction");
     require(close(highlightWidthScale(100, 0), 1.0F), "a zero highlight width needs no correction");
     require(close(highlightWidthScale(-5, 100), 1.0F), "a negative width needs no correction");
+  }
+
+  // --- reveal camera, HUD transform and hidden-line alpha ----------------------
+  {
+    require(!resolveRevealCamera(false,false,false,2.0,2.0,10.0).active,
+        "reveal stays off when disabled");
+    require(!resolveRevealCamera(true,true,false,2.0,2.0,10.0).active,
+        "reveal stays off during the opening");
+    require(!resolveRevealCamera(true,false,true,2.0,2.0,10.0).active,
+        "reveal stays off during the exit");
+    require(!resolveRevealCamera(true,false,false,-0.1,-0.1,10.0).active,
+        "reveal stays off before the chart starts");
+    const auto start = resolveRevealCamera(true,false,false,0.0,0.0,10.0);
+    require(start.active && close(start.scale,1.0F) && start.hiddenObjects &&
+        close(start.hiddenFloorAlpha,0.0F),"reveal starts at the full stage");
+    const auto middle = resolveRevealCamera(true,false,false,0.5,0.5,10.0);
+    require(close(middle.scale,0.65F) && close(middle.hiddenFloorAlpha,0.10F),
+        "reveal shrink and hidden fade share their ease");
+    const auto settled = resolveRevealCamera(true,false,false,2.0,2.0,10.0);
+    require(close(settled.scale,0.30F) && close(settled.hiddenFloorAlpha,0.20F),
+        "reveal settles at its target");
+    const auto returning = resolveRevealCamera(true,false,false,9.5,9.5,10.0);
+    require(returning.active && !returning.hiddenObjects && close(returning.scale,0.65F) &&
+        close(returning.hiddenFloorAlpha,0.0F),"reveal return hides the hidden layer");
+    require(close(resolveRevealCamera(true,false,false,10.0,10.0,10.0).scale,1.0F),
+        "reveal return reaches the full stage");
+
+    const StageLayout layout = computeStageLayout(1280.0F,720.0F,16.0F/9.0F,false);
+    const auto inner = revealStageRect(layout,true,0.30F);
+    require(close(inner.x,448.0F) && close(inner.y,252.0F) &&
+        close(inner.width,384.0F) && close(inner.height,216.0F),
+        "reveal inner stage scales about the centre");
+    const auto world = revealViewportWorldBounds(layout,true,0.30F);
+    require(close(world.x,-1493.3333F,1e-3F) && close(world.y,-840.0F) &&
+        close(world.right(),2773.3333F,1e-3F) && close(world.bottom(),1560.0F),
+        "reveal culling inverse-projects the whole viewport");
+    const auto ordinary = revealViewportWorldBounds(layout,false,0.30F);
+    require(close(ordinary.x,layout.stage.x) && close(ordinary.width,layout.stage.width),
+        "ordinary culling keeps stage bounds");
+    StageLayout projectedLayout = layout;
+    projectedLayout.fieldScale = 0.30F;
+    const auto projected = projectedLayout.stageProjection();
+    const float projectedX = projected.m[0] * 100.0F + projected.m[12];
+    const float projectedY = projected.m[5] * 60.0F + projected.m[13];
+    require(close(projectedX,2.0F*478.0F/1280.0F-1.0F) &&
+        close(projectedY,1.0F-2.0F*270.0F/720.0F),
+        "stage projection applies the reveal scale to chart points");
+
+    const auto hud = hudRevealTransform(layout,true,0.30F);
+    require(close(hud.x(100.0F),478.0F) && close(hud.y(60.0F),270.0F) &&
+        close(hud.size(100.0F),30.0F),"HUD widgets shrink about the stage centre");
+    const auto fixed = hudRevealTransform(layout,false,0.30F);
+    require(close(fixed.x(100.0F),100.0F) && close(fixed.size(100.0F),100.0F),
+        "inactive camera leaves fixed HUD elements untouched");
+    require(hudNeedsStageClip(false,false),"ordinary letterboxed HUD clips to the stage");
+    require(!hudNeedsStageClip(true,false),"revealed HUD is not stage clipped");
+    require(!hudNeedsStageClip(false,true),"fullscreen HUD is not stage clipped");
+
+    require(close(revealLineAlpha(0.0F,false,true,0.20F),0.20F),
+        "zero-alpha line receives the reveal floor");
+    require(close(revealLineAlpha(-2.0F,true,true,0.20F),0.20F),
+        "negative-alpha hidden line receives the reveal floor");
+    require(close(revealLineAlpha(0.10F,false,true,0.20F),0.10F),
+        "visible low-alpha line keeps its authored alpha");
+    require(close(revealLineAlpha(128.0F,false,true,0.20F),128.0F/255.0F),
+        "byte alpha normalizes before the floor comparison");
+    require(close(revealLineAlpha(0.0F,true,false,0.20F),0.0F),
+        "hidden line stays transparent without reveal");
+  }
+
+  // --- hold geometry: negative length, negative speed and the cover rule ------
+  {
+    using rechigros::render::scene::holdHasStarted;
+    using rechigros::render::scene::holdHeadClampMin;
+    using rechigros::render::scene::holdTailCapOffset;
+    using rechigros::render::scene::noteCoveredByLine;
+
+    // RPE holds collapse onto the line strictly after their start instant, so the head is
+    // still a travelling head exactly at its own time; the official format is unchanged.
+    require(!holdHasStarted(1.0, 1.0, false), "an RPE hold is still travelling at its start instant");
+    require(holdHasStarted(1.0, 1.0, true), "the official format collapses the body at the start instant");
+    require(holdHasStarted(1.0, 1.25, false), "a hold collapses once its instant has passed");
+
+    // The end cap closes the body from the outside, on whichever side the tail fell.
+    require(close(holdTailCapOffset(40.0F, 120.0F, 20.0F, false), 10.0F),
+        "a tail ahead of the head keeps the cap beyond it");
+    require(close(holdTailCapOffset(40.0F, -60.0F, 20.0F, false), -10.0F),
+        "a tail behind the head draws the cap on that side");
+    require(close(holdTailCapOffset(40.0F, 40.0F, 20.0F, false), 10.0F),
+        "a zero-length hold keeps the historical side");
+    require(close(holdTailCapOffset(40.0F, -60.0F, 20.0F, true), 0.0F),
+        "a compact skin centres the cap on the tail");
+
+    // Only the official format pins a head that fell behind the line onto the line edge.
+    const float behindLine = -80.0F;
+    require(close(std::max(holdHeadClampMin(20.0F, false, false), behindLine), behindLine),
+        "the RPE format draws a head that is behind the line where it is");
+    require(close(std::max(holdHeadClampMin(20.0F, false, true), behindLine), -10.0F),
+        "the official format pins the head half a height behind the line");
+    require(close(std::max(holdHeadClampMin(20.0F, true, true), behindLine), 0.0F),
+        "a compact official hold pins the head on the line");
+
+    // The cover rule follows the far end of a hold. A negative note speed draws the head
+    // behind the line long before the tail arrives, which must not hide the hold.
+    rechigros::game::Note held;
+    held.isHold = true;
+    held.sect = 0.5;
+    held.floorPosition = 8.0;
+    held.holdEndFloorPosition = 4.0;
+    rechigros::render::scene::LineFrame coverFrame;
+    coverFrame.cover = true;
+    coverFrame.floorPosition = 0.0;
+    require(!noteCoveredByLine(held, coverFrame, 0.0, false, -5.0F),
+        "a hold whose tail is still ahead of the line stays visible");
+    held.holdEndFloorPosition = -1.0;
+    require(noteCoveredByLine(held, coverFrame, 0.0, false, 5.0F),
+        "a hold is covered once its tail has passed the line");
+    held.yOffset = 2.0F;
+    require(!noteCoveredByLine(held, coverFrame, 0.0, false, 5.0F),
+        "a positive y offset keeps the shifted tail ahead of the cover line");
+    held.yOffset = 0.0F;
+    // Taps keep the drawn-distance test they have always used.
+    rechigros::game::Note tap;
+    tap.isHold = false;
+    tap.sect = 0.5;
+    tap.floorPosition = 8.0;
+    require(noteCoveredByLine(tap, coverFrame, 0.0, false, -5.0F),
+        "a tap keeps the drawn-distance cover test");
+    require(noteCoveredByLine(held, coverFrame, 0.0, true, -5.0F),
+        "the official cover test keeps comparing the drawn head");
+
+    // An active hold head keeps its speed-scaled y offset. The hit effect deliberately does
+    // not scale that offset, so the two paths must not be folded together.
+    rechigros::game::Chart chart;
+    chart.formatVersion = 0;
+    auto line = std::make_unique<rechigros::game::JudgeLine>();
+    line->bpm = 120.0;
+    rechigros::game::SpeedEvent speed;
+    speed.endTime = 1.0e9;
+    speed.value = speed.endValue = 1.0;
+    line->speedEvents.push_back(speed);
+    rechigros::game::Note activeHold;
+    activeHold.type = rechigros::game::NOTE_HOLD;
+    activeHold.time = 32.0;
+    activeHold.holdTime = 32.0;
+    activeHold.positionX = 0.0;
+    activeHold.speed = 2.0;
+    activeHold.yOffset = 0.1F;
+    line->notesAbove.push_back(activeHold);
+    chart.judgeLineList.push_back(std::move(line));
+    chart.prepareRuntime();
+
+    rechigros::render::scene::LineFrame poseFrame;
+    poseFrame.valid = true;
+    poseFrame.renderable = true;
+    poseFrame.noteValid = true;
+    poseFrame.cosLine = 1.0F;
+    poseFrame.sinLine = 0.0F;
+    poseFrame.bpm = 120.0;
+    rechigros::render::scene::NotePassParams poseParams;
+    poseParams.stageWidth = 1350.0F;
+    poseParams.stageHeight = 1080.0F;
+    poseParams.noteWidthBase = 100.0F;
+    poseParams.chartTimeSec = 0.6;
+    poseParams.chartGlobalBeat = 64.0;
+    const auto pose = rechigros::render::scene::noteHeadPose(
+        *chart.allNotesSorted.at(0), poseFrame, poseParams);
+    require(pose.valid, "the active hold head resolves");
+    require(close(pose.y, -0.1F * 1080.0F * 2.0F, 1.0e-2F),
+        "an active hold head keeps its speed-scaled y offset");
   }
 
   // --- bad effect lifetime ----------------------------------------------------

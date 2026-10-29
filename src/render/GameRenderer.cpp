@@ -6,6 +6,7 @@
 #include "rechigros/game/JudgementEngine.hpp"
 #include "rechigros/game/MessageParticleField.hpp"
 #include "rechigros/game/Note.hpp"
+#include "rechigros/game/NoteGeometry.hpp"
 #include "rechigros/render/asset/TextureCache.hpp"
 #include "rechigros/render/batch/SpriteBatch.hpp"
 #include "rechigros/render/fx/Yuv420Pass.hpp"
@@ -35,6 +36,7 @@
 #include "rechigros/render/scene/LinePass.hpp"
 #include "rechigros/render/scene/ChartDebugOverlay.hpp"
 #include "rechigros/render/scene/NoteBatch.hpp"
+#include "rechigros/render/scene/RevealCamera.hpp"
 #include "rechigros/render/scene/StageLayout.hpp"
 #include "rechigros/render/scene/Transition.hpp"
 #include "rechigros/render/skin/SkinConfig.hpp"
@@ -289,8 +291,7 @@ struct GameRenderer::Impl {
   void drawNotePasses(const scene::StageLayout& layout, const RenderFrameInput& input,
       game::Chart* chart);
   void drawHitEffects(const scene::StageLayout& layout, const RenderFrameInput& input, game::Chart* chart);
-  // Chart reveal: paints the fixed blurred backdrop in the ring between the shrunken play
-  // field and the normal stage rect, covering anything that overflows the reveal mask.
+  // Paints the backdrop ring before chart objects, leaving their scaled overflow visible.
   void drawRevealPanels(const scene::StageLayout& inner, const scene::StageLayout& outer,
       float dimAlpha);
   // Draws the pulse disc and ring at every finger held inside an active red zone.
@@ -746,8 +747,7 @@ void GameRenderer::Impl::drawBackgroundPass(const scene::StageLayout& layout, fl
   if (!deferSideColumns) drawSideColumns(layout, artworkTexture, sideArtworkAlpha, sideDimAlpha);
 
   // Play field backdrop: the artwork is drawn with the intro/outro transmission over the
-  // black clear, then the stage dim overlay covers it. The chart-reveal ring is painted
-  // after the scene content instead (drawRevealPanels), so it can cover the overflow.
+  // black clear, then the stage dim overlay covers it. The caller paints the reveal ring next.
   if (artworkTexture != nullptr) {
     drawCover(*artworkTexture, 0.0F, stage.y, layout.viewWidth, stage.height, artworkAlpha,
         stage);
@@ -796,14 +796,9 @@ void GameRenderer::Impl::drawLinePass(const RenderFrameInput& input, game::Chart
     const auto& line = *chart->judgeLineList[static_cast<std::size_t>(lineIndex)];
     if (line.attachUiElementId != 0) continue;
     const auto& frame = lineFrames[static_cast<std::size_t>(lineIndex)];
-    // The chart-reveal camera lifts hidden lines to a low alpha floor instead of hiding
-    // them, so the authored geometry becomes visible while the camera is settled.
-    const bool revealHiddenLine =
-        input.revealHiddenObjects && input.revealHiddenFloorAlpha > 0.001F;
-    if (!frame.valid || (frame.hideLine && !revealHiddenLine)) continue;
-    const float alpha = frame.hideLine
-        ? input.revealHiddenFloorAlpha
-        : std::clamp(frame.alphaRaw, 0.0F, 1.0F);
+    if (!frame.valid || (frame.hideLine && !input.revealHiddenObjects)) continue;
+    const float alpha = scene::revealLineAlpha(frame.alphaRaw, frame.hideLine,
+        input.revealHiddenObjects, input.revealHiddenFloorAlpha);
     if (alpha <= 0.0F) continue;
 
     const float halfLength = official
@@ -930,11 +925,13 @@ void GameRenderer::Impl::drawNotePasses(const scene::StageLayout& layout,
   // artwork has to be un-mirrored again or the notes would show flipped, so the note and
   // hold batches swap their horizontal UVs when the field is mirrored.
   params.flipU = layout.mirror;
-  // Notes are culled against the play field expanded by a twelfth on each side.
-  const float marginW = layout.stage.width / 12.0F;
-  const float marginH = layout.stage.height / 12.0F;
-  params.cullBounds = {layout.stage.x - marginW, layout.stage.y - marginH,
-      layout.stage.width + marginW * 2.0F, layout.stage.height + marginH * 2.0F};
+  const float cullScale = input.revealCameraActive ? input.revealScale : 1.0F;
+  const math::Rect worldBounds = scene::revealViewportWorldBounds(
+      layout, input.revealCameraActive, input.revealScale);
+  const float marginW = layout.stage.width / cullScale / 12.0F;
+  const float marginH = layout.stage.height / cullScale / 12.0F;
+  params.cullBounds = {worldBounds.x - marginW, worldBounds.y - marginH,
+      worldBounds.width + marginW * 2.0F, worldBounds.height + marginH * 2.0F};
 
   // Hold bodies and heads share one pass so the body never paints over its head.
   for (int highlight = 0; highlight < 2; ++highlight) {
@@ -1024,7 +1021,6 @@ void GameRenderer::Impl::drawHitEffects(const scene::StageLayout& layout,
         ? chart->allNotesSorted[static_cast<std::size_t>(burst.noteIndex)]
         : nullptr;
     if (note == nullptr) continue;
-    // Resolve the judged frame's line state, then the head pose on that line.
     int lineIndex = -1;
     for (std::size_t index = 0; index < chart->judgeLineList.size(); ++index) {
       if (chart->judgeLineList[index].get() == note->master) {
@@ -1033,32 +1029,11 @@ void GameRenderer::Impl::drawHitEffects(const scene::StageLayout& layout,
       }
     }
     if (lineIndex < 0 || static_cast<std::size_t>(lineIndex) >= lineFrames.size()) continue;
-    // The burst has to be placed where the head was when it was hit, not where it is by the
-    // time the frame is drawn; an autoplay hit can be noticed a frame after the note's own time,
-    // and using the frame's state would slide the effect past the head.
-    scene::LineFrame judgedFrame = lineFrames[static_cast<std::size_t>(lineIndex)];
-    if (note->master != nullptr && burst.timeSec != input.chartTimeSec) {
-      const float stageAspect =
-          layout.stage.height > 1.0e-6F ? layout.stage.width / layout.stage.height : 16.0F / 9.0F;
-      const auto state = note->master->fillState(burst.timeSec, stageAspect);
-      judgedFrame.x = layout.stage.x + state.xNorm * layout.stage.width;
-      judgedFrame.y = layout.stage.y + state.yNorm * layout.stage.height;
-      judgedFrame.rotateDeg = state.rotateDeg;
-      const double radians = static_cast<double>(state.rotateDeg) * 3.14159265358979323846 / 180.0;
-      judgedFrame.cosLine = static_cast<float>(std::cos(radians));
-      judgedFrame.sinLine = static_cast<float>(std::sin(radians));
-      judgedFrame.floorPosition = state.floorPosition;
-      judgedFrame.bpm = note->master->bpm > 0.0 ? note->master->bpm : 120.0;
-      judgedFrame.valid = true;
-      judgedFrame.renderable = true;
-    }
-    scene::NotePassParams poseParams;
-    poseParams.chartTimeSec = burst.timeSec;
-    poseParams.stageWidth = layout.stage.width;
-    poseParams.stageHeight = layout.stage.height;
-    poseParams.scrollSpeed = input.scrollSpeed;
-    poseParams.officialFormat = chart->formatVersion > 0;
-    const scene::NoteHeadPose pose = scene::noteHeadPose(*note, judgedFrame, poseParams);
+    const float stageAspect =
+        layout.stage.height > 1.0e-6F ? layout.stage.width / layout.stage.height : 16.0F / 9.0F;
+    const auto state = note->master->fillState(burst.timeSec, stageAspect);
+    const auto pose = game::resolveHoldHeadEffectPose(*note, *note->master, state, burst.timeSec,
+        input.scrollSpeed, layout.stage.x, layout.stage.y, layout.stage.width, layout.stage.height);
     if (!pose.valid) continue;
     hitEffects.spawnHoldHead(*chart, burst, input.chartTimeSec, input.visualTimeSec, pose.x,
         pose.y, pose.rotationDeg, noteWidth, musicSpeed);
@@ -1118,13 +1093,11 @@ void GameRenderer::Impl::drawBlockedTouchPulses(const RenderFrameInput& input,
 
 void GameRenderer::Impl::drawRevealPanels(const scene::StageLayout& inner,
     const scene::StageLayout& outer, float dimAlpha) {
-  // The ring is drawn after the scene content, because judge lines and notes overflow the
-  // play field and must be covered outside the reveal mask. It reuses the side-column
-  // treatment: the fixed blurred artwork at full strength under the fixed dark overlay.
+  // The ring is a backdrop layer: chart objects remain visible when their scaled geometry
+  // extends beyond the inner stage.
   const gl::Texture* blurTexture =
       background != nullptr ? backgroundBlur.ensure(width, height, background) : nullptr;
   const gl::Texture* artworkTexture = blurTexture != nullptr ? blurTexture : background;
-  if (artworkTexture == nullptr) return;
   const auto projection = outer.projection();
   const auto& full = outer.stage;
   const auto& shown = inner.stage;
@@ -1133,30 +1106,36 @@ void GameRenderer::Impl::drawRevealPanels(const scene::StageLayout& inner,
       {full.x, shown.bottom(), full.width, std::max(0.0F, full.bottom() - shown.bottom())},
       {full.x, shown.y, std::max(0.0F, shown.x - full.x), shown.height},
       {shown.right(), shown.y, std::max(0.0F, full.right() - shown.right()), shown.height}};
-  const float textureAspect = static_cast<float>(artworkTexture->width()) /
-      std::max(1.0F, static_cast<float>(artworkTexture->height()));
-  const float destinationAspect = full.width / std::max(1.0F, full.height);
-  float drawWidth = full.width;
+  float drawWidth = outer.viewWidth;
   float drawHeight = full.height;
-  if (textureAspect > destinationAspect) {
-    drawWidth = full.height * textureAspect;
-  } else {
-    drawHeight = full.width / textureAspect;
+  float drawX = 0.0F;
+  float drawY = full.y;
+  if (artworkTexture != nullptr) {
+    const float textureAspect = static_cast<float>(artworkTexture->width()) /
+        std::max(1.0F, static_cast<float>(artworkTexture->height()));
+    const float destinationAspect = outer.viewWidth / std::max(1.0F, full.height);
+    if (textureAspect > destinationAspect) {
+      drawWidth = full.height * textureAspect;
+    } else {
+      drawHeight = outer.viewWidth / textureAspect;
+    }
+    drawX = (outer.viewWidth - drawWidth) * 0.5F;
+    drawY = full.y + (full.height - drawHeight) * 0.5F;
   }
-  const float drawX = full.x + (full.width - drawWidth) * 0.5F;
-  const float drawY = full.y + (full.height - drawHeight) * 0.5F;
   for (const math::Rect& panel : panels) {
     if (panel.empty()) continue;
-    const float left = std::max(drawX, panel.left());
-    const float top = std::max(drawY, panel.top());
-    const float right = std::min(drawX + drawWidth, panel.right());
-    const float bottom = std::min(drawY + drawHeight, panel.bottom());
-    if (right > left + 0.5F && bottom > top + 0.5F) {
-      batch.begin();
-      batch.addQuadTopLeft(left, top, right - left, bottom - top, 1.0F, 1.0F, 1.0F, 1.0F,
-          (left - drawX) / drawWidth, (top - drawY) / drawHeight, (right - drawX) / drawWidth,
-          (bottom - drawY) / drawHeight);
-      batch.flush(projection, *artworkTexture, nullptr);
+    if (artworkTexture != nullptr) {
+      const float left = std::max(drawX, panel.left());
+      const float top = std::max(drawY, panel.top());
+      const float right = std::min(drawX + drawWidth, panel.right());
+      const float bottom = std::min(drawY + drawHeight, panel.bottom());
+      if (right > left + 0.5F && bottom > top + 0.5F) {
+        batch.begin();
+        batch.addQuadTopLeft(left, top, right - left, bottom - top, 1.0F, 1.0F, 1.0F, 1.0F,
+            (left - drawX) / drawWidth, (top - drawY) / drawHeight, (right - drawX) / drawWidth,
+            (bottom - drawY) / drawHeight);
+        batch.flush(projection, *artworkTexture, nullptr);
+      }
     }
     batch.begin();
     batch.addQuadTopLeft(panel.x, panel.y, panel.width, panel.height, 0.0F, 0.0F, 0.0F, dimAlpha,
@@ -1184,8 +1163,8 @@ void GameRenderer::Impl::drawHudPass(const RenderFrameInput& input,
   values.outroProgress = input.hud.outroProgress;
   values.visualTimeSec = input.hud.visualTimeSec;
   values.pauseRingAgeSec = input.hud.pauseRingAgeSec;
-  values.revealCameraActive = input.hud.revealCameraActive;
-  values.revealScale = input.hud.revealScale;
+  values.revealCameraActive = input.revealCameraActive;
+  values.revealScale = input.revealScale;
   values.fps = input.hud.fps;
   values.showFps = input.hud.showFps;
   // The catch-up readout carries over between frames, so the state lives here rather than in
@@ -1273,9 +1252,13 @@ void GameRenderer::Impl::drawHudPass(const RenderFrameInput& input,
     hudAlpha *= fx::AmetrineVignette::hudDimFactor(
         chart->levelEffects->ametrineVignette());
   }
+  const bool clipHud = scene::hudNeedsStageClip(input.revealCameraActive, layout.fullscreen);
+  if (clipHud) {
+    batch.setScissor(true, layout.stage.x, layout.stage.y,
+        layout.stage.right(), layout.stage.bottom());
+  }
   scene::drawHud(batch, text, layout, values, colors, hudTextures, transforms, hitOffset,
-      hudAlpha,
-      layout.projection());
+      hudAlpha, layout.projection());
   // The pass advanced the readout; keep the state for the next frame.
   hudDisplayScore = values.displayScore;
   hudDisplayAccuracy = values.displayAccuracy;
@@ -1286,10 +1269,13 @@ void GameRenderer::Impl::drawHudPass(const RenderFrameInput& input,
   // the same anchor the number would occupy.
   if (chart != nullptr && chart->levelEffects != nullptr
       && chart->levelEffects->isChallengeFailed() && values.combo >= 3) {
-    const float unit = scene::hudUnit(layout);
+    const auto reveal = scene::hudRevealTransform(
+        layout, input.revealCameraActive, input.revealScale);
+    const float unit = reveal.size(scene::hudUnit(layout));
     blockedComboNumber.prepare(assets, std::to_string(values.combo), unit * 70.0F);
     blockedComboNumber.draw(batch, layout.projection(), textures.white(),
-        scene::hudX(layout, 0.0F), scene::hudY(layout, scene::kComboNumberUiY),
+        reveal.x(scene::hudX(layout, 0.0F)),
+        reveal.y(scene::hudY(layout, scene::kComboNumberUiY)),
         hudAlpha * 0.92F, input.visualTimeSec, static_cast<float>(width),
         static_cast<float>(height));
     // The label clears with its own shorter fade, so it leaves slightly ahead of the number.
@@ -1297,9 +1283,11 @@ void GameRenderer::Impl::drawHudPass(const RenderFrameInput& input,
         hudAlpha * scene::comboLabelOutroAlpha(input.hud.outroProgress);
     blockedComboLabel.prepare(assets, values.comboLabel, unit * 24.0F);
     blockedComboLabel.draw(batch, layout.projection(), textures.white(),
-        scene::hudX(layout, 0.0F), scene::hudY(layout, scene::kComboLabelUiY), labelAlpha,
+        reveal.x(scene::hudX(layout, 0.0F)),
+        reveal.y(scene::hudY(layout, scene::kComboLabelUiY)), labelAlpha,
         input.visualTimeSec, static_cast<float>(width), static_cast<float>(height));
   }
+  if (clipHud) batch.setScissor(false, 0.0F, 0.0F, 0.0F, 0.0F);
 }
 
 GameRenderer::GameRenderer() : impl_(std::make_unique<Impl>()) {}
@@ -1568,46 +1556,21 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
   // (projected with `projection()`) keeps its unmirrored layout.
   layout.mirror = input.mirrorX;
 
-  // Chart-reveal camera: the play field shrinks towards the stage centre at the start of
-  // the music and again before the exit, and hidden chart objects become visible while the
-  // camera is settled (reference CHART_REVEAL_* curves).
   RenderFrameInput revealInput = input;
-  if (input.chartReveal && !input.transition.inIntro && !input.transition.inOutro &&
-      input.chartTimeSec >= 0.0) {
-    const float total = static_cast<float>(input.hud.totalDurationSec);
-    const float playhead = static_cast<float>(input.playheadSec);
-    constexpr float kRevealTransitionSec = 1.0F;
-    constexpr float kRevealTargetScale = 0.30F;
-    constexpr float kRevealHiddenAlpha = 0.20F;
-    const auto smooth = [](float value) {
-      value = std::clamp(value, 0.0F, 1.0F);
-      return value * value * (3.0F - 2.0F * value);
-    };
-    const bool preOutro = total > 0.0F && playhead >= std::max(0.0F, total - kRevealTransitionSec);
-    revealInput.revealCameraActive = true;
-    if (preOutro) {
-      const float start = std::max(0.0F, total - kRevealTransitionSec);
-      const float elapsed = (playhead - start) / kRevealTransitionSec;
-      revealInput.revealScale = kRevealTargetScale +
-          (1.0F - kRevealTargetScale) * smooth(elapsed);
-      revealInput.revealHiddenObjects = false;
-    } else {
-      const float elapsed = playhead / kRevealTransitionSec;
-      const float settled = smooth(elapsed);
-      revealInput.revealScale = 1.0F + (kRevealTargetScale - 1.0F) * settled;
-      revealInput.revealHiddenObjects = true;
-      revealInput.revealHiddenFloorAlpha = kRevealHiddenAlpha * settled;
-    }
-    revealInput.revealScale = std::clamp(revealInput.revealScale, kRevealTargetScale, 1.0F);
-  }
-  // The revealed play field uses a shrunk stage rect; the HUD keeps the normal layout.
+  const scene::RevealCameraState reveal = scene::resolveRevealCamera(input.chartReveal,
+      input.transition.inIntro, input.transition.inOutro, input.chartTimeSec, input.playheadSec,
+      input.hud.totalDurationSec);
+  revealInput.revealCameraActive = reveal.active;
+  revealInput.revealScale = reveal.scale;
+  revealInput.revealHiddenObjects = reveal.hiddenObjects;
+  revealInput.revealHiddenFloorAlpha = reveal.hiddenFloorAlpha;
+  revealInput.hud.revealCameraActive = reveal.active;
+  revealInput.hud.revealScale = reveal.scale;
+
   scene::StageLayout sceneLayout = layout;
-  if (revealInput.revealCameraActive && revealInput.revealScale < 0.999F) {
-    const float shownWidth = layout.stage.width * revealInput.revealScale;
-    const float shownHeight = layout.stage.height * revealInput.revealScale;
-    sceneLayout.stage = math::Rect{layout.stage.x + (layout.stage.width - shownWidth) * 0.5F,
-        layout.stage.y + (layout.stage.height - shownHeight) * 0.5F, shownWidth, shownHeight};
-  }
+  sceneLayout.fieldScale = reveal.active ? reveal.scale : 1.0F;
+  scene::StageLayout maskLayout = layout;
+  maskLayout.stage = scene::revealStageRect(layout, reveal.active, reveal.scale);
 
   // The screen-space composite resamples the finished frame inside a red zone, so it
   // needs that frame as a texture while it writes into the caller's target. Any frame
@@ -1678,31 +1641,39 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
   const bool opening = !introStarted || input.transition.introLineScale < 0.999F;
   // A level whose canvas covers more than the play field has to have the fixed side columns
   // painted on top of it, so the backdrop leaves them for after the level's own objects.
-  const bool deferSideColumns = sceneLayout.hasSideBlanks && dsGridCanvasVisible(revealInput, chart);
-  drawBackgroundPass(sceneLayout, artworkAlpha, dimAlpha, sideArtworkAlpha, sideDimAlpha, opening,
+  const bool needBars = !reveal.active && !layout.fullscreen;
+  const bool deferSideColumns = needBars && dsGridCanvasVisible(revealInput, chart);
+  drawBackgroundPass(layout, artworkAlpha, dimAlpha, sideArtworkAlpha, sideDimAlpha, opening,
       deferSideColumns);
   gl::logErrors("scene.background");
+  if (reveal.active && reveal.scale < 0.999F) {
+    drawRevealPanels(maskLayout, layout, sideDimAlpha);
+    gl::logErrors("scene.revealPanels");
+  }
 
   // A level effect may draw its own objects between the backdrop and the play field.
   drawLevelEffectObjects(chart, revealInput, sceneLayout);
   gl::logErrors("scene.levelObjects");
   if (deferSideColumns) {
     // The same blurred copy the backdrop uses, so the band keeps matching the play field.
-    drawSideColumns(sceneLayout, backgroundBlur.ensure(width, height, background),
+    drawSideColumns(layout, backgroundBlur.ensure(width, height, background),
         sideArtworkAlpha, sideDimAlpha);
     gl::logErrors("scene.sideColumns");
   }
 
   if (chart != nullptr) {
     lineFrames.clear();
-    math::Rect worldBounds{layout.stage.x, layout.stage.y, layout.stage.width,
-        layout.stage.height};
+    const math::Rect worldBounds = scene::revealViewportWorldBounds(
+        layout, reveal.active, reveal.scale);
     scene::LinePassParams lineParams;
     lineParams.chartTimeSec = input.chartTimeSec;
     lineParams.officialFormat = chart->formatVersion > 0;
+    lineParams.revealHiddenObjects = reveal.hiddenObjects;
+    lineParams.revealFloorAlpha = reveal.hiddenFloorAlpha;
     const bool blockNotes = input.transition.inIntro || input.chartTimeSec < 0.0;
-    scene::evaluateLines(*chart, sceneLayout, input.chartTimeSec, input.scrollSpeed, blockNotes, revealInput.revealHiddenObjects,
-        1.0F, worldBounds, layout.stage.width * 2.0F, lineParams, lineFrames);
+    scene::evaluateLines(*chart, sceneLayout, input.chartTimeSec, input.scrollSpeed, blockNotes,
+        revealInput.revealHiddenObjects, reveal.scale, worldBounds, layout.stage.width * 2.0F,
+        lineParams, lineFrames);
     if (lineDrawOrder.size() != chart->judgeLineList.size()) {
       scene::buildLineDrawOrder(*chart, lineDrawOrder);
     }
@@ -1766,12 +1737,6 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
     if (confineToStage) batch.setScissor(false, 0.0F, 0.0F, 0.0F, 0.0F);
   }
 
-  // The chart-reveal ring covers whatever the scene drew outside the shrunken play field.
-  if (revealInput.revealCameraActive && revealInput.revealScale < 0.999F) {
-    drawRevealPanels(sceneLayout, layout, sideDimAlpha);
-    gl::logErrors("scene.revealPanels");
-  }
-
   // The Ametrine failure vignette closes in over the finished play field, before the HUD
   // and before the storyboard chain, so the level's own post passes still process it.
   // Every other level leaves the ramp at zero, which costs one comparison per frame.
@@ -1798,7 +1763,7 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
     // Without a shader chain the HUD is part of the frame that the composite resamples.
     // With one, it is added only for the global passes, after the zone and stage effects.
     if (!useEffects && hudVisible) {
-      drawHudPass(input, layout, chart, judgement);
+      drawHudPass(revealInput, layout, chart, judgement);
       hudInsideScene = true;
       gl::logErrors("scene.hud");
     }
@@ -1835,8 +1800,8 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
     const unsigned int blockTarget = useEffects ? blockResultFbo.fbo() : sceneTarget;
     glBindFramebuffer(GL_FRAMEBUFFER, blockTarget);
     glViewport(0, 0, width, height);
-    blockComposite.setStageRect(sceneLayout.stage.x, sceneLayout.stage.y,
-        sceneLayout.stage.right(), sceneLayout.stage.bottom());
+    blockComposite.setStageRect(maskLayout.stage.x, maskLayout.stage.y,
+        maskLayout.stage.right(), maskLayout.stage.bottom());
     {
       // Held points reach the composite in the shader's own space: a fraction of the width,
       // and a fraction of the height measured from the bottom.
@@ -1861,7 +1826,7 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       // The composite owns a separate target: sampling the scene and writing it back into the
       // same texture would be a framebuffer feedback loop. Shader stages consume that result.
       gl::Texture* result = applyStageScopedChain(*chart, &blockResultFbo.color(),
-          sceneLayout.stage, input.chartTimeSec);
+          maskLayout.stage, input.chartTimeSec);
       if (hasGlobal) {
         sceneFbo.bind();
         glViewport(0, 0, width, height);
@@ -1872,7 +1837,7 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
           bindDefaultBlend();
         }
         if (hudVisible) {
-          drawHudPass(input, layout, chart, judgement);
+          drawHudPass(revealInput, layout, chart, judgement);
           hudInsideScene = true;
         }
         result = chain.apply(collectGlobalEffects(*chart), &sceneFbo.color(), pingFbo, pongFbo,
@@ -1900,14 +1865,14 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
         chart->prprEffects.begin(), chart->prprEffects.end(),
         [](const game::PrprEffect& effect) { return effect.global; });
     gl::Texture* result = !input.disableChartShader
-        ? applyStageScopedChain(*chart, &sceneFbo.color(), sceneLayout.stage, input.chartTimeSec)
+        ? applyStageScopedChain(*chart, &sceneFbo.color(), maskLayout.stage, input.chartTimeSec)
         : &sceneFbo.color();
     bool hudShaded = false;
     const auto compositeRpeNoise = [&](gl::Texture* source) {
       if (!useRpeNoise || source == nullptr) return source;
       gl::Texture* composited = rpeNoise.draw(*source, chart->rpeNoiseAreas,
-          chart->rpeNoiseLayers, input.chartTimeSec, sceneLayout.stage.x, sceneLayout.stage.y,
-          sceneLayout.stage.width, sceneLayout.stage.height);
+          chart->rpeNoiseLayers, input.chartTimeSec, maskLayout.stage.x, maskLayout.stage.y,
+          maskLayout.stage.width, maskLayout.stage.height);
       if (composited == nullptr || composited->id() == source->id()) return source;
       glBindFramebuffer(GL_FRAMEBUFFER, sceneFbo.fbo());
       glViewport(0, 0, width, height);
@@ -1928,7 +1893,7 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
         fx::BlitPass::instance().draw(*result, 1.0F, 1.0F, 1.0F, 1.0F, false);
         bindDefaultBlend();
       }
-      if (hudVisible) drawHudPass(input, layout, chart, judgement);
+      if (hudVisible) drawHudPass(revealInput, layout, chart, judgement);
       result = compositeRpeNoise(&sceneFbo.color());
       result = chain.apply(collectGlobalEffects(*chart), &sceneFbo.color(), pingFbo, pongFbo,
           input.chartTimeSec);
@@ -1943,7 +1908,7 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
         fx::BlitPass::instance().draw(*result, 1.0F, 1.0F, 1.0F, 1.0F, false);
         bindDefaultBlend();
       }
-      if (hudVisible) drawHudPass(input, layout, chart, judgement);
+      if (hudVisible) drawHudPass(revealInput, layout, chart, judgement);
       hudShaded = hudVisible;
       result = compositeRpeNoise(&sceneFbo.color());
       gl::logErrors("scene.rpeNoise");
@@ -1965,7 +1930,7 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
   // effects; without a shader chain the zone composite already resampled it. The low-resolution
   // fallback renders the HUD together with the scene before upscaling the finished frame.
   if (hudVisible && !hudInsideScene) {
-    drawHudPass(input, layout, chart, judgement);
+    drawHudPass(revealInput, layout, chart, judgement);
   }
   gl::logErrors("scene.hud");
   if (useLowRes) {
@@ -2030,7 +1995,7 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
         const scene::StageLayout hudLayout = scene::computeStageLayout(
             static_cast<float>(pauseHudBlur.width()),
             static_cast<float>(pauseHudBlur.height()), hudAspect, false);
-        RenderFrameInput dimmed = input;
+        RenderFrameInput dimmed = revealInput;
         dimmed.hud.alpha = input.hud.alpha * scene::PAUSE_HUD_DIM;
         // begin() bound the reduced HUD target, so the HUD pass flushes into it directly.
         bindDefaultBlend();

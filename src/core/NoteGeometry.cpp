@@ -113,4 +113,56 @@ NoteGeometry resolveNoteGeometry(const Note& note, const JudgeLine& line, float 
   geometry.alongLineOffsetPx = offset;
   return geometry;
 }
+
+HoldHeadEffectPose resolveHoldHeadEffectPose(const Note& note, const JudgeLine& line,
+    const JudgeLine::State& state, double timeSec, double scrollSpeed,
+    float stageX, float stageY, float stageWidth, float stageHeight) noexcept {
+  HoldHeadEffectPose pose;
+  if (!(stageHeight > 1e-6F)) return pose;
+
+  const float stageAspect = stageWidth / stageHeight;
+  const double bpm = line.bpm > 0.0 ? line.bpm : 120.0;
+  const double speed = static_cast<double>(renderSpeed(note, scrollSpeed));
+  const float transYPx = yOffsetToTransYPx(note.yOffset, speed, stageHeight);
+  const bool onLine = timeSec > note.sect;
+  float visualFp = transYPx;
+  float offsetX = static_cast<float>(note.positionX * PGR_WIDTH * stageWidth);
+
+  if (!onLine) {
+    const float baseFp = static_cast<float>((note.floorPosition - state.floorPosition) * PGR_HEIGHT
+        * (PGR_BEAT / bpm) * stageHeight * speed);
+    const float controlHeight = rpeControlHeightFromBasePx(
+        baseFp, note.yOffset, speed, stageAspect, stageHeight);
+    const float yControl = line.calcNoteControl(controlHeight, JudgeLine::NOTE_CTRL_Y, 1.0F);
+    const float baseWithControl = applyYControlScale(baseFp, yControl);
+    visualFp = baseWithControl + transYPx;
+
+    if (!note.isHold) {
+      const float skewControl =
+          line.calcNoteControl(controlHeight, JudgeLine::NOTE_CTRL_SKEW, 0.0F);
+      const float inclineSin = combineInclineSinr(state.inclineSinr, skewControl);
+      if (std::isfinite(inclineSin)) {
+        offsetX *= calcInclineValue(inclineSin, baseWithControl, transYPx, stageAspect, stageHeight);
+      }
+      const float xControl = line.calcNoteControl(controlHeight, JudgeLine::NOTE_CTRL_X, 1.0F);
+      if (std::isfinite(xControl) && xControl != 0.0F) offsetX *= xControl;
+    }
+  }
+
+  const float lineX = stageX + state.xNorm * stageWidth;
+  const float lineY = stageY + state.yNorm * stageHeight;
+  const double radians = static_cast<double>(state.rotateDeg) * PI / 180.0;
+  const float cosLine = static_cast<float>(std::cos(radians));
+  const float sinLine = static_cast<float>(std::sin(radians));
+  const float noteX = lineX + offsetX * cosLine;
+  const float noteY = lineY + offsetX * sinLine;
+  const float dirX = note.isAbove ? sinLine : -sinLine;
+  const float dirY = note.isAbove ? -cosLine : cosLine;
+
+  pose.valid = true;
+  pose.x = noteX + visualFp * dirX;
+  pose.y = noteY + visualFp * dirY;
+  pose.rotationDeg = state.rotateDeg + (note.isAbove ? 0.0F : 180.0F);
+  return pose;
+}
 } // namespace rechigros::game

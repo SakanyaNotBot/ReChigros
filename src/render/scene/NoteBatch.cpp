@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace rechigros::render::scene {
 namespace {
@@ -279,6 +280,38 @@ float highlightWidthScale(int normalWidth, int highlightWidth) noexcept {
   return (std::isfinite(ratio) && ratio > 0.0F) ? ratio : 1.0F;
 }
 
+bool holdHasStarted(double noteStartSec, double chartTimeSec, bool officialFormat) noexcept {
+  return officialFormat ? noteStartSec <= chartTimeSec : noteStartSec < chartTimeSec;
+}
+
+bool noteCoveredByLine(const game::Note& note, const LineFrame& frame, double chartTimeSec,
+    bool officialFormat, float headFp) noexcept {
+  if (!frame.cover) return false;
+  if (officialFormat || !note.isHold) {
+    return note.sect > chartTimeSec && headFp < 0.0F;
+  }
+  // The reference compares the far end of the hold with the line's own floor position. Doing
+  // it in floor space keeps the verdict independent of the note speed's sign, which a drawn
+  // distance would flip.
+  const double tailFloor = std::isfinite(note.holdEndFloorPosition)
+      ? note.holdEndFloorPosition : note.floorPosition;
+  // The authored y offset moves the whole hold in floor space, tail included.
+  return tailFloor + static_cast<double>(note.yOffset) < frame.floorPosition;
+}
+
+float holdTailCapOffset(float headFp, float tailFp, float tailHeightPx, bool compact) noexcept {
+  if (compact) return 0.0F;
+  const float half = 0.5F * tailHeightPx;
+  // A tail at or beyond the head keeps the historical outward offset; a tail that ended up
+  // behind the head mirrors it so the cap still closes the body from the outside.
+  return tailFp >= headFp ? half : -half;
+}
+
+float holdHeadClampMin(float headHeightPx, bool compact, bool clampToLine) noexcept {
+  if (!clampToLine) return -std::numeric_limits<float>::infinity();
+  return compact ? 0.0F : -headHeightPx * 0.5F;
+}
+
 void buildLineDrawOrder(const game::Chart& chart, std::vector<int>& out) {
   const auto& lines = chart.judgeLineList;
   const auto count = static_cast<int>(lines.size());
@@ -487,7 +520,7 @@ void buildHeadBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
       const float dirX = above ? frame.sinLine : -frame.sinLine;
       const float dirY = above ? -frame.cosLine : frame.cosLine;
 
-      if (frame.cover && note.sect > params.chartTimeSec && visualFp < 0.0F) continue;
+      if (noteCoveredByLine(note, frame, params.chartTimeSec, params.officialFormat, visualFp)) continue;
 
       const float headX = noteAtX + visualFp * dirX;
       const float headY = noteAtY + visualFp * dirY;
@@ -668,7 +701,7 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
       }
 
       // Once the head is reached the body collapses towards the judge line.
-      const bool headPassedLine = note.sect <= params.chartTimeSec;
+      const bool headPassedLine = holdHasStarted(note.sect, params.chartTimeSec, params.officialFormat);
       float drawHeadFp;
       float drawTailFp;
       if (headPassedLine) {
@@ -743,7 +776,7 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
       const float dirX = above ? frame.sinLine : -frame.sinLine;
       const float dirY = above ? -frame.cosLine : frame.cosLine;
 
-      if (frame.cover && note.sect > params.chartTimeSec && visualFp < 0.0F) continue;
+      if (noteCoveredByLine(note, frame, params.chartTimeSec, params.officialFormat, visualFp)) continue;
 
       if (params.officialFormat && !headPassedLine && drawTailFp < drawHeadFp) {
         if (drawHeadFp >= 0.0F && drawTailFp < 0.0F) {
@@ -775,7 +808,7 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
       if (!headPassedLine || keepHead) {
         float headCenterFp = visualFp - noteHeadHeight * kHeadOffset;
         if (holdCompact) headCenterFp += noteHeadHeight * 0.5F;
-        const float headClampMin = holdCompact ? 0.0F : -noteHeadHeight * 0.5F;
+        const float headClampMin = holdHeadClampMin(noteHeadHeight, holdCompact, params.officialFormat);
         const float headDrawFp = std::max(headClampMin, headCenterFp);
         const float headX = noteAtX + headDrawFp * dirX;
         const float headY = noteAtY + headDrawFp * dirY;
@@ -836,7 +869,9 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
       }
 
       // Tail.
-      const float tailOffset = holdCompact ? tailHeight * 0.5F : tailHeight;
+      const float tailOffset = params.officialFormat
+          ? (holdCompact ? tailHeight * 0.5F : tailHeight)
+          : holdTailCapOffset(drawHeadFp, drawTailFp, tailHeight, holdCompact) + tailHeight * 0.5F;
       float tailTipFp = drawTailFp + tailOffset;
       const float tailClamp = std::abs(tailOffset);
       if (!params.officialFormat) {

@@ -19,6 +19,20 @@ namespace rechigros::render::scene {
 [[nodiscard]] float hudX(const StageLayout& layout, float uiX) noexcept;
 [[nodiscard]] float hudY(const StageLayout& layout, float uiY) noexcept;
 
+struct HudRevealTransform {
+  float centerX{};
+  float centerY{};
+  float scale{1.0F};
+
+  [[nodiscard]] float x(float value) const noexcept { return centerX + (value - centerX) * scale; }
+  [[nodiscard]] float y(float value) const noexcept { return centerY + (value - centerY) * scale; }
+  [[nodiscard]] float size(float value) const noexcept { return value * scale; }
+};
+
+[[nodiscard]] HudRevealTransform hudRevealTransform(const StageLayout& layout, bool active,
+    float scale) noexcept;
+[[nodiscard]] bool hudNeedsStageClip(bool revealActive, bool fullscreen) noexcept;
+
 // Element ids of the attach-UI mapping. They are the ids the chart format uses to
 // connect a judge line's animation state to one HUD widget.
 enum class HudElement : int {
@@ -90,8 +104,7 @@ struct HudValues {
   double visualTimeSec{};
   // Seconds since the pause button was last touched; negative when idle.
   double pauseRingAgeSec{-1.0F};
-  // Chart-reveal camera state: texture HUD elements that belong to the play field are
-  // transformed with the revealed stage, like the reference reveal pass.
+  // Reveal state for the ordinary widgets. The frame-rate readout and offset dial opt out.
   bool revealCameraActive{false};
   float revealScale{1.0F};
   // Frame-rate readout (reference: bottom-left "N FPS" plate).

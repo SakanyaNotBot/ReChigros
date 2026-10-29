@@ -28,6 +28,7 @@ add_library(rechigros_render STATIC
   fx/RpeNoisePass.cpp
   scene/BackgroundBlur.cpp
   scene/PauseHudBlur.cpp
+  scene/RevealCamera.cpp
   scene/StageLayout.cpp
   scene/LinePass.cpp
   scene/NoteBatch.cpp
