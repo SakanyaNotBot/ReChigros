@@ -494,6 +494,17 @@ int main() {
         "a particle well outside the band is fully visible");
     require(MessageParticleField::bandAlpha(inside, 0.3F) < 0.1F,
         "a particle inside the band is hidden");
+
+    require(MessageParticleField::textureAlpha(0, 0) == 0,
+        "the empty texture background stays transparent");
+    require(MessageParticleField::textureAlpha(0, 168) == 168,
+        "the green core keeps its own alpha");
+    require(MessageParticleField::textureAlpha(200, 0) == 110,
+        "the red halo is rounded to 55 percent");
+    require(MessageParticleField::textureAlpha(255, 0) == 140,
+        "the strongest halo stays below the hard core");
+    require(MessageParticleField::textureAlpha(255, 255) == 255,
+        "the centre remains fully opaque");
   }
 
   if (g_failures != 0) {

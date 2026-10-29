@@ -114,9 +114,10 @@ NoteGeometry resolveNoteGeometry(const Note& note, const JudgeLine& line, float 
   return geometry;
 }
 
-HoldHeadEffectPose resolveHoldHeadEffectPose(const Note& note, const JudgeLine& line,
+namespace {
+HoldHeadEffectPose resolveHeadEffectPose(const Note& note, const JudgeLine& line,
     const JudgeLine::State& state, double timeSec, double scrollSpeed,
-    float stageX, float stageY, float stageWidth, float stageHeight) noexcept {
+    float stageX, float stageY, float stageWidth, float stageHeight, bool pinLate) noexcept {
   HoldHeadEffectPose pose;
   if (!(stageHeight > 1e-6F)) return pose;
 
@@ -124,7 +125,7 @@ HoldHeadEffectPose resolveHoldHeadEffectPose(const Note& note, const JudgeLine& 
   const double bpm = line.bpm > 0.0 ? line.bpm : 120.0;
   const double speed = static_cast<double>(renderSpeed(note, scrollSpeed));
   const float transYPx = yOffsetToTransYPx(note.yOffset, speed, stageHeight);
-  const bool onLine = timeSec > note.sect;
+  const bool onLine = pinLate && timeSec > note.sect;
   float visualFp = transYPx;
   float offsetX = static_cast<float>(note.positionX * PGR_WIDTH * stageWidth);
 
@@ -164,5 +165,20 @@ HoldHeadEffectPose resolveHoldHeadEffectPose(const Note& note, const JudgeLine& 
   pose.y = noteY + visualFp * dirY;
   pose.rotationDeg = state.rotateDeg + (note.isAbove ? 0.0F : 180.0F);
   return pose;
+}
+} // namespace
+
+HoldHeadEffectPose resolveHoldHeadEffectPose(const Note& note, const JudgeLine& line,
+    const JudgeLine::State& state, double timeSec, double scrollSpeed,
+    float stageX, float stageY, float stageWidth, float stageHeight) noexcept {
+  return resolveHeadEffectPose(note, line, state, timeSec, scrollSpeed,
+      stageX, stageY, stageWidth, stageHeight, true);
+}
+
+HoldHeadEffectPose resolveNoteHeadEffectPose(const Note& note, const JudgeLine& line,
+    const JudgeLine::State& state, double timeSec, double scrollSpeed,
+    float stageX, float stageY, float stageWidth, float stageHeight) noexcept {
+  return resolveHeadEffectPose(note, line, state, timeSec, scrollSpeed,
+      stageX, stageY, stageWidth, stageHeight, false);
 }
 } // namespace rechigros::game

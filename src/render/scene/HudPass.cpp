@@ -452,6 +452,10 @@ float comboLabelOutroAlpha(float outroProgress) noexcept {
   return 1.0F - smoothStep01(progress);
 }
 
+float accuracyIntroAlpha(float introProgress) noexcept {
+  return comboLabelOutroAlpha(1.0F - std::clamp(introProgress, 0.0F, 1.0F));
+}
+
 namespace {
 
 // The reference advances the displayed values by the elapsed wall time divided by a fixed
@@ -1007,7 +1011,7 @@ void drawHud(batch::SpriteBatch& batch, text::TextRenderer& text, const StageLay
       drawLabel(batch, canvas, HudElement::Score, transforms, text, label, sizePx, metrics,
           rectRight - contentWidth + std::floor(metrics.values.inkLeft),
           baseline + metrics.values.inkTop, colors.textR, colors.textG, colors.textB,
-          textAlpha * comboAlpha, projection);
+          textAlpha * comboAlpha * accuracyIntroAlpha(values.introProgress), projection);
     }
   }
 

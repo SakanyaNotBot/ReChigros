@@ -46,6 +46,12 @@ float MessageParticleField::sizeCurve(float progress) noexcept {
   return clamp01(value);
 }
 
+int MessageParticleField::textureAlpha(int red, int green) noexcept {
+  const int core = std::clamp(green, 0, 255);
+  const int halo = std::clamp((red * 55 + 50) / 100, 0, 255);
+  return std::max(core, halo);
+}
+
 float MessageParticleField::bandAlpha(const Particle& particle, float bandWidth) noexcept {
   const float hidePosition = 0.5F + bandWidth * 0.5F;
   const float screenYUp = 1.0F - particle.y;

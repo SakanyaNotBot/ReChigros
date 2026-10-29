@@ -25,14 +25,14 @@ struct HitEffectAtlas {
 // Judgement colours used by the burst. These are the skin's note colours, not the
 // HUD palette, and each judgement carries its own alpha.
 struct HitEffectSkin {
-  float perfectRed{255.0F / 255.0F};
-  float perfectGreen{236.0F / 255.0F};
-  float perfectBlue{160.0F / 255.0F};
-  float perfectAlpha{225.0F / 255.0F};
-  float goodRed{180.0F / 255.0F};
-  float goodGreen{225.0F / 255.0F};
-  float goodBlue{255.0F / 255.0F};
-  float goodAlpha{235.0F / 255.0F};
+  float perfectRed{1.0F};
+  float perfectGreen{164.0F / 255.0F};
+  float perfectBlue{107.0F / 255.0F};
+  float perfectAlpha{1.0F};
+  float goodRed{107.0F / 255.0F};
+  float goodGreen{188.0F / 255.0F};
+  float goodBlue{1.0F};
+  float goodAlpha{1.0F};
 };
 
 // Tuning values that come from the skin configuration.

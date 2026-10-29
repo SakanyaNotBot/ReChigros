@@ -1203,6 +1203,25 @@ int main() {
         "noise disappears at its lifetime end");
   }
 
+  {
+    const auto variants = rechigros::chart::RpeChartParser::parse(std::string_view{R"json(
+      {"META":{"RPEVersion":240},"BPMList":[{"bpm":120,"startTime":[0,0,1]}],
+       "effects":[
+         {"shader":"rainbow.glsl","startTime":[0,0,1],"endTime":[1,0,1]},
+         {"shader":"/rainbow_pr.glsl","startTime":[0,0,1],"endTime":[1,0,1]},
+         {"shader":29,"startTime":[0,0,1],"endTime":[1,0,1]}
+       ],"judgeLineList":[]})json"});
+    require(variants.prprEffects.size() == 3, "shader variant fixture count");
+    if (variants.prprEffects.size() == 3) {
+      require(variants.prprEffects[0].sourceName == "rainbow.glsl",
+          "an explicit standard shader keeps its source name");
+      require(variants.prprEffects[1].sourceName == "/rainbow_pr.glsl",
+          "an explicit portable shader keeps its source name");
+      require(variants.prprEffects[2].sourceName == "rainbow_pr.glsl",
+          "an integer portable shader index gets its portable source name");
+    }
+  }
+
   std::cout << "All ReChigros chart parser tests passed\n";
   return 0;
 }

@@ -44,6 +44,8 @@ public:
   // Band clip used by the shipped fragment: top particles fade in above the band, bottom
   // particles below it.
   [[nodiscard]] static float bandAlpha(const Particle& particle, float bandWidth) noexcept;
+  // Alpha of one texel: the hard green square, or the softer red halo at 55% brightness.
+  [[nodiscard]] static int textureAlpha(int red, int green) noexcept;
 
   void reset() noexcept;
   // Advances by a chart-clock delta. A non-positive delta is ignored.

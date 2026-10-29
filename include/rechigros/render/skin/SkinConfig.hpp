@@ -96,8 +96,8 @@ struct ResolvedMaterials {
   bool holdKeepHead{false};
   bool holdRepeat{false};
   // Judgement colours, defaults from the reference constants.
-  SkinColour perfect{1.0F, 236.0F / 255.0F, 160.0F / 255.0F, 225.0F / 255.0F};
-  SkinColour good{180.0F / 255.0F, 225.0F / 255.0F, 1.0F, 235.0F / 255.0F};
+  SkinColour perfect{1.0F, 164.0F / 255.0F, 107.0F / 255.0F, 1.0F};
+  SkinColour good{107.0F / 255.0F, 188.0F / 255.0F, 1.0F, 1.0F};
   // True when the selected skin itself declared the colour field (the reference gates the
   // judge-line colour override on this, not on whether the text parsed).
   bool perfectFromSkin{false};

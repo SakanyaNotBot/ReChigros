@@ -167,6 +167,13 @@ int BlockCompositePass::reducedSize(int screenPixels, int divisor) noexcept {
   return std::max(1, screenPixels / divisor);
 }
 
+int BlockCompositePass::reducedSizeForScale(int screenPixels, int divisor, float scale) noexcept {
+  const float clamped = std::clamp(std::isfinite(scale) ? scale : 1.0F, 0.05F, 1.0F);
+  const float quantized = std::max(0.05F, std::round(clamped * 20.0F) / 20.0F);
+  const int effectiveDivisor = std::max(1, static_cast<int>(std::lround(divisor * quantized)));
+  return reducedSize(screenPixels, effectiveDivisor);
+}
+
 bool BlockCompositePass::prepare(
     const std::filesystem::path& assetRoot, gl::Texture* displace, gl::Texture* spark,
     gl::Texture* noise) noexcept {
@@ -245,24 +252,35 @@ void BlockCompositePass::resize(int width, int height) noexcept {
   height_ = std::max(1, height);
   // Every mask and the coverage target are screen/8 with point filtering: that reduced
   // resolution is what turns the zone outline into the staircase the material shows.
-  const int maskWidth = reducedSize(width_, MASK_DIVISOR);
-  const int maskHeight = reducedSize(height_, MASK_DIVISOR);
+  const int maskWidth = reducedSizeForScale(width_, MASK_DIVISOR, geometryScale_);
+  const int maskHeight = reducedSizeForScale(height_, MASK_DIVISOR, geometryScale_);
   for (auto& target : maskFbo_) {
     target.resize(maskWidth, maskHeight);
     target.color().setFilter(false);
   }
-  compose_.resize(reducedSize(width_, COMPOSE_DIVISOR), reducedSize(height_, COMPOSE_DIVISOR));
+  compose_.resize(reducedSizeForScale(width_, COMPOSE_DIVISOR, geometryScale_),
+      reducedSizeForScale(height_, COMPOSE_DIVISOR, geometryScale_));
   compose_.color().setFilter(false);
   for (auto& target : ping_) {
-    target.resize(reducedSize(width_, EFFECT_DIVISOR), reducedSize(height_, EFFECT_DIVISOR));
+    target.resize(reducedSizeForScale(width_, EFFECT_DIVISOR, geometryScale_),
+        reducedSizeForScale(height_, EFFECT_DIVISOR, geometryScale_));
     target.color().setFilter(false);
   }
-  effect_.resize(reducedSize(width_, EFFECT_DIVISOR), reducedSize(height_, EFFECT_DIVISOR));
+  effect_.resize(reducedSizeForScale(width_, EFFECT_DIVISOR, geometryScale_),
+      reducedSizeForScale(height_, EFFECT_DIVISOR, geometryScale_));
   effect_.color().setFilter(true);
   setStageRect(0.0F, 0.0F, static_cast<float>(width_), static_cast<float>(height_));
   glBindFramebuffer(GL_FRAMEBUFFER, static_cast<unsigned int>(previousFbo));
   glViewport(previousViewport[0], previousViewport[1], previousViewport[2],
       previousViewport[3]);
+}
+
+void BlockCompositePass::setGeometryScale(float scale) noexcept {
+  const float clamped = std::clamp(std::isfinite(scale) ? scale : 1.0F, 0.05F, 1.0F);
+  const float quantized = std::max(0.05F, std::round(clamped * 20.0F) / 20.0F);
+  if (std::abs(quantized - geometryScale_) < 1.0e-5F) return;
+  geometryScale_ = quantized;
+  if (width_ > 0 && height_ > 0) resize(width_, height_);
 }
 
 void BlockCompositePass::setStageRect(float left, float top, float right, float bottom) noexcept {

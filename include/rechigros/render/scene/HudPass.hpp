@@ -165,6 +165,8 @@ inline constexpr float kComboNumberUiY = 452.0F;
 inline constexpr float kComboLabelUiY = 405.0F;
 // The combo label fades out ahead of the rest of the HUD during the exit animation.
 [[nodiscard]] float comboLabelOutroAlpha(float outroProgress) noexcept;
+// Accuracy uses the time-reversed form of that fade during the entrance.
+[[nodiscard]] float accuracyIntroAlpha(float introProgress) noexcept;
 
 // How far the exit animation has stretched the HUD about the play field centre. The HUD leaves the
 // screen by growing past the edges, not by fading: everything above the centre travels up, and

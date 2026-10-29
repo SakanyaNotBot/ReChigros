@@ -309,7 +309,7 @@ function Assert-RpeHoldFrame($Case) {
   }
   $wrongDirection = ($Case.TailSide -eq 'above' -and $tail.CenterY -ge $head.CenterY - 20.0) -or
     ($Case.TailSide -eq 'below' -and $tail.CenterY -le $head.CenterY + 20.0)
-  if ($wrongDirection -or [Math]::Abs($head.CenterY - 360.0) -lt 60.0) {
+  if ($wrongDirection -or (-not $Case.Clamped -and [Math]::Abs($head.CenterY - 360.0) -lt 60.0)) {
     Write-Host ("[FAIL] {0}: head centre={1:N1}, tail centre={2:N1}, expected tail {3} and an unclamped head" -f `
         $id, $head.CenterY, $tail.CenterY, $Case.TailSide)
     return 1
@@ -351,11 +351,11 @@ $rpeHoldCases = @(
   @{ Id = 'hold-rpe-negative-length'; Chart = Join-Path $Fixtures 'rpe_hold_negative_length.json';
      After = '1.05'; Top = 89; Bottom = 317; Head = @(89, 100); Tail = @(306, 317); TailSide = 'below' }
   @{ Id = 'hold-rpe-negative-flow'; Chart = Join-Path $Fixtures 'rpe_hold_negative_flow.json';
-     After = '3.05'; Top = 494; Bottom = 614; Head = @(494, 505); Tail = @(603, 614); TailSide = 'below' }
+     After = '3.05'; Top = 366; Bottom = 614; Head = @(366, 372); Tail = @(603, 614); TailSide = 'below'; Clamped = $true }
   @{ Id = 'hold-rpe-cross-zero-ramp'; Chart = Join-Path $Fixtures 'rpe_hold_cross_zero_ramp.json';
-     After = '4.05'; Top = 416; Bottom = 644; Head = @(416, 427); Tail = @(633, 644); TailSide = 'below' }
+     After = '4.05'; Top = 366; Bottom = 644; Head = @(366, 372); Tail = @(633, 644); TailSide = 'below'; Clamped = $true }
   @{ Id = 'hold-rpe-negative-note-speed'; Chart = Join-Path $Fixtures 'rpe_hold_negative_note_speed.json';
-     After = '2.55'; Top = 449; Bottom = 569; Head = @(449, 460); Tail = @(558, 569); TailSide = 'below' }
+     After = '2.55'; Top = 366; Bottom = 569; Head = @(366, 372); Tail = @(558, 569); TailSide = 'below'; Clamped = $true }
   @{ Id = 'hold-rpe-normal'; Chart = Join-Path $Fixtures 'rpe_hold_normal.json';
      After = '2.55'; Top = 24; Bottom = 100; Head = @(89, 100); Tail = @(24, 36); TailSide = 'above' }
 )

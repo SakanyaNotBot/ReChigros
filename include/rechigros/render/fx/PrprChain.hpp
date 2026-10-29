@@ -62,7 +62,7 @@ private:
     bool valid{};
   };
 
-  Program* resolve(const std::string& shaderKey);
+  Program* resolve(const game::PrprEffect& effect);
   // Runs the multi-stage bloom chain for one `official_bloom` effect. Returns the
   // texture holding the result, or nullptr when the chain could not run.
   gl::Texture* applyBloom(const game::PrprEffect& effect, gl::Texture* input,

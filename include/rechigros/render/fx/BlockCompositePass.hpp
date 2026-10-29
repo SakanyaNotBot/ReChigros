@@ -60,6 +60,9 @@ public:
   [[nodiscard]] static float gate(float value) noexcept;
   // Size of a reduced target for a screen dimension, never below one texel.
   [[nodiscard]] static int reducedSize(int screenPixels, int divisor) noexcept;
+  // Size after adapting a reduced target to a scaled play field, quantized to avoid
+  // reallocating every frame during a transition.
+  [[nodiscard]] static int reducedSizeForScale(int screenPixels, int divisor, float scale) noexcept;
 
   // Loads both shaders. The three noise textures are owned by the caller's texture cache.
   [[nodiscard]] bool prepare(
@@ -75,6 +78,9 @@ public:
 
   // Allocates the masks and the reduced targets for a viewport of this size.
   void resize(int width, int height) noexcept;
+  // Reallocates reduced targets when the play field changes scale, so a smaller field keeps
+  // more texels per displayed zone instead of magnifying a coarse mask.
+  void setGeometryScale(float scale) noexcept;
 
   // Rows the composite may treat as the play field, in screen pixels. Pixels outside it
   // are left untouched, which keeps the composite from distorting a letterbox. Defaults
@@ -161,6 +167,7 @@ private:
   unsigned int hoverVao_{};
   int width_{};
   int height_{};
+  float geometryScale_{1.0F};
   float stageLeft_{};
   float stageTop_{};
   float stageRight_{};

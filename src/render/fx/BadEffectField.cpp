@@ -11,7 +11,12 @@ float BadEffectField::alphaAt(double elapsedSec) noexcept {
   const double progress = elapsedSec / LIFETIME_SEC;
   if (progress <= 0.0) return 1.0F;
   if (progress >= 1.0) return 0.0F;
-  return static_cast<float>(1.0 - progress);
+  // Hermite keys: alpha 1 with zero outgoing slope, then alpha 0 with incoming slope
+  // -6.6625743 over 25/60 seconds.
+  const double squared = progress * progress;
+  const double cubic = squared * progress;
+  return static_cast<float>(1.0 - 0.223927433333333 * squared
+      - 0.776072566666667 * cubic);
 }
 
 void BadEffectField::clear() noexcept { effects_.clear(); }

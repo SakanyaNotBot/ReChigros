@@ -287,16 +287,8 @@ bool holdHasStarted(double noteStartSec, double chartTimeSec, bool officialForma
 bool noteCoveredByLine(const game::Note& note, const LineFrame& frame, double chartTimeSec,
     bool officialFormat, float headFp) noexcept {
   if (!frame.cover) return false;
-  if (officialFormat || !note.isHold) {
-    return note.sect > chartTimeSec && headFp < 0.0F;
-  }
-  // The reference compares the far end of the hold with the line's own floor position. Doing
-  // it in floor space keeps the verdict independent of the note speed's sign, which a drawn
-  // distance would flip.
-  const double tailFloor = std::isfinite(note.holdEndFloorPosition)
-      ? note.holdEndFloorPosition : note.floorPosition;
-  // The authored y offset moves the whole hold in floor space, tail included.
-  return tailFloor + static_cast<double>(note.yOffset) < frame.floorPosition;
+  (void)officialFormat;
+  return note.sect > chartTimeSec && headFp < 0.0F;
 }
 
 float holdTailCapOffset(float headFp, float tailFp, float tailHeightPx, bool compact) noexcept {
@@ -778,7 +770,7 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
 
       if (noteCoveredByLine(note, frame, params.chartTimeSec, params.officialFormat, visualFp)) continue;
 
-      if (params.officialFormat && !headPassedLine && drawTailFp < drawHeadFp) {
+      if (!headPassedLine && drawTailFp < drawHeadFp) {
         if (drawHeadFp >= 0.0F && drawTailFp < 0.0F) {
           drawTailFp = 0.0F;
         } else if (drawHeadFp <= 0.0F && drawTailFp > 0.0F) {
@@ -786,14 +778,14 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
         }
       }
       const float unclampedTailFp = drawTailFp;
-      if (params.officialFormat && headPassedLine && drawTailFp < drawHeadFp) {
+      if (headPassedLine && drawTailFp < drawHeadFp) {
         drawTailFp = std::max(drawTailFp, 0.0F);
       }
-      const bool hideKeptHeadDuringTailClamp = params.officialFormat &&
+      const bool hideKeptHeadDuringTailClamp =
           note.clicked && headPassedLine && unclampedTailFp < drawHeadFp;
-      const bool tailClampedToJudgeLine = params.officialFormat &&
+      const bool tailClampedToJudgeLine =
           headPassedLine && unclampedTailFp < 0.0F && drawTailFp == 0.0F;
-      const bool reverseHoldLocked = params.officialFormat &&
+      const bool reverseHoldLocked =
           headPassedLine && speed < 0.0 && drawTailFp >= drawHeadFp && !tailClampedToJudgeLine;
       if (reverseHoldLocked) continue;
 
@@ -808,7 +800,7 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
       if (!headPassedLine || keepHead) {
         float headCenterFp = visualFp - noteHeadHeight * kHeadOffset;
         if (holdCompact) headCenterFp += noteHeadHeight * 0.5F;
-        const float headClampMin = holdHeadClampMin(noteHeadHeight, holdCompact, params.officialFormat);
+        const float headClampMin = holdHeadClampMin(noteHeadHeight, holdCompact, true);
         const float headDrawFp = std::max(headClampMin, headCenterFp);
         const float headX = noteAtX + headDrawFp * dirX;
         const float headY = noteAtY + headDrawFp * dirY;
@@ -831,14 +823,10 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
         bodyStartFp = visualFp + bodyHeadAdjust;
         bodyEndFp = drawTailFp;
       }
-      const bool isReverseHold = params.officialFormat && headPassedLine &&
-          (drawTailFp < drawHeadFp);
+      const bool isReverseHold = headPassedLine && (drawTailFp < drawHeadFp);
       float drawStartFp;
       float drawEndFp;
-      if (!params.officialFormat) {
-        drawStartFp = std::min(bodyStartFp, bodyEndFp);
-        drawEndFp = std::max(bodyStartFp, bodyEndFp);
-      } else if (isReverseHold) {
+      if (isReverseHold) {
         drawStartFp = std::min(bodyStartFp, bodyEndFp);
         drawEndFp = std::max(bodyStartFp, bodyEndFp);
         drawEndFp = std::min(drawEndFp, 0.0F);

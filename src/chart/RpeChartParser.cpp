@@ -563,7 +563,6 @@ std::optional<PrprEffect> parseEffect(const json& source, const BpmConverter& bp
       effect.shader = effect.sourceName;
     } else {
       effect.shader = kShaderNames[static_cast<std::size_t>(index)];
-      if (index >= 20) effect.sourceName = effect.shader + "_pr.glsl";
     }
   } else return std::nullopt;
   effect.startTime = effectBeatSeconds(field(source, {"startTime", "start", "time1"}), bpm, lineFactor);

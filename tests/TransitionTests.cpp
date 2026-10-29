@@ -394,17 +394,17 @@ int main() {
     require(close(holdTailCapOffset(40.0F, -60.0F, 20.0F, true), 0.0F),
         "a compact skin centres the cap on the tail");
 
-    // Only the official format pins a head that fell behind the line onto the line edge.
+    // Both chart formats pin a head that fell behind the line onto the line edge.
     const float behindLine = -80.0F;
-    require(close(std::max(holdHeadClampMin(20.0F, false, false), behindLine), behindLine),
-        "the RPE format draws a head that is behind the line where it is");
+    require(close(std::max(holdHeadClampMin(20.0F, false, true), behindLine), -10.0F),
+        "the RPE format pins the head half a height behind the line");
     require(close(std::max(holdHeadClampMin(20.0F, false, true), behindLine), -10.0F),
         "the official format pins the head half a height behind the line");
     require(close(std::max(holdHeadClampMin(20.0F, true, true), behindLine), 0.0F),
         "a compact official hold pins the head on the line");
 
-    // The cover rule follows the far end of a hold. A negative note speed draws the head
-    // behind the line long before the tail arrives, which must not hide the hold.
+    // Cover only rejects an upcoming note whose head is already behind the line. Once the head
+    // time arrives, the hold's reverse-body clamp decides what remains visible.
     rechigros::game::Note held;
     held.isHold = true;
     held.sect = 0.5;
@@ -413,15 +413,12 @@ int main() {
     rechigros::render::scene::LineFrame coverFrame;
     coverFrame.cover = true;
     coverFrame.floorPosition = 0.0;
-    require(!noteCoveredByLine(held, coverFrame, 0.0, false, -5.0F),
-        "a hold whose tail is still ahead of the line stays visible");
-    held.holdEndFloorPosition = -1.0;
-    require(noteCoveredByLine(held, coverFrame, 0.0, false, 5.0F),
-        "a hold is covered once its tail has passed the line");
-    held.yOffset = 2.0F;
+    require(noteCoveredByLine(held, coverFrame, 0.0, false, -5.0F),
+        "an upcoming hold is covered when its head is behind the line");
     require(!noteCoveredByLine(held, coverFrame, 0.0, false, 5.0F),
-        "a positive y offset keeps the shifted tail ahead of the cover line");
-    held.yOffset = 0.0F;
+        "an upcoming hold stays visible while its head is ahead of the line");
+    require(!noteCoveredByLine(held, coverFrame, 0.6, false, -5.0F),
+        "a hold is not rejected by the cover test after its head time");
     // Taps keep the drawn-distance test they have always used.
     rechigros::game::Note tap;
     tap.isHold = false;
@@ -479,8 +476,8 @@ int main() {
     require(close(BadEffectField::alphaAt(0.0), 1.0F), "a bad effect starts fully opaque");
     require(close(BadEffectField::alphaAt(BadEffectField::LIFETIME_SEC), 0.0F),
         "a bad effect is gone at the end of its lifetime");
-    require(close(BadEffectField::alphaAt(BadEffectField::LIFETIME_SEC * 0.5), 0.5F),
-        "a bad effect fades linearly");
+    require(close(BadEffectField::alphaAt(BadEffectField::LIFETIME_SEC * 0.5), 0.8470084667F),
+        "a bad effect follows the authored Hermite fade");
     require(close(BadEffectField::alphaAt(-1.0), 1.0F),
         "a bad effect is opaque before it starts");
     require(close(BadEffectField::alphaAt(BadEffectField::LIFETIME_SEC * 3.0), 0.0F),
@@ -571,6 +568,12 @@ int main() {
         "the edge and glow target is a quarter of the screen");
     require(BlockCompositePass::reducedSize(4, BlockCompositePass::MASK_DIVISOR) == 1,
         "a reduced target never drops below one texel");
+    require(BlockCompositePass::reducedSizeForScale(1280, BlockCompositePass::MASK_DIVISOR, 0.3F) == 640,
+        "a thirty-percent field gets four times the mask texels");
+    require(BlockCompositePass::reducedSizeForScale(720, BlockCompositePass::MASK_DIVISOR, 0.3F) == 360,
+        "the mask height scales with the field too");
+    require(BlockCompositePass::reducedSizeForScale(1280, BlockCompositePass::MASK_DIVISOR, 1.0F) == 160,
+        "an unscaled field keeps the original mask resolution");
     require(BlockCompositePass::MASK_DIVISOR == BlockCompositePass::COMPOSE_DIVISOR,
         "the coverage target matches the mask resolution it samples");
     require(BlockCompositePass::gate(BlockCompositePass::MASK_WRITE_ALPHA) > 0.0F,
@@ -782,6 +785,16 @@ int main() {
         "the label fades progressively through the exit");
     // It clears before the travel finishes, which is why it is not drawn on the last frames.
     require(comboLabelOutroAlpha(0.95F) < 0.02F, "the label clears ahead of the travel");
+
+    using rechigros::render::scene::accuracyIntroAlpha;
+    require(close(accuracyIntroAlpha(0.0F), 0.0F, 1e-6), "accuracy starts transparent");
+    require(close(accuracyIntroAlpha(1.0F), 1.0F, 1e-6), "accuracy finishes opaque");
+    require(close(accuracyIntroAlpha(0.5F), comboLabelOutroAlpha(0.5F), 1e-6),
+        "accuracy uses the same eased midpoint as the exit fade");
+    require(close(accuracyIntroAlpha(0.25F), comboLabelOutroAlpha(0.75F), 1e-6),
+        "accuracy entrance is the time-reversed exit fade");
+    require(accuracyIntroAlpha(0.75F) > accuracyIntroAlpha(0.25F),
+        "accuracy fades in progressively");
   }
 
   if (g_failures != 0) {

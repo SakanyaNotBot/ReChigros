@@ -272,7 +272,7 @@ void testResolveMaterials() {
   require(!layered.holdCompact, "skin layer replaces the pack hold compact value");
   require(!layered.perfectFromSkin, "a colour the skin omits is not a skin override");
   requireNear(layered.perfect.red, 1.0F, "an omitted skin colour keeps the default colour");
-  requireNear(layered.perfect.alpha, 225.0F / 255.0F,
+  requireNear(layered.perfect.alpha, 1.0F,
       "an omitted skin colour keeps the default alpha");
 
   // Non-positive tuning values behave as "not specified".
@@ -296,7 +296,7 @@ void testResolveMaterials() {
   requireNear(colourMaterials.perfect.green, 0.0F, "8 digit hex green");
   requireNear(colourMaterials.perfect.alpha, 128.0F / 255.0F, "8 digit hex alpha");
   requireNear(colourMaterials.good.green, 1.0F, "6 digit hex green");
-  requireNear(colourMaterials.good.alpha, 235.0F / 255.0F, "6 digit hex keeps the default alpha");
+  requireNear(colourMaterials.good.alpha, 1.0F, "6 digit hex keeps the default alpha");
 }
 
 void testColourParsing() {

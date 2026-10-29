@@ -979,7 +979,7 @@ void GameRenderer::Impl::drawNotePasses(const scene::StageLayout& layout,
     }
     if (lineIndex < 0 || static_cast<std::size_t>(lineIndex) >= lineFrames.size()) continue;
     const auto& frame = lineFrames[static_cast<std::size_t>(lineIndex)];
-    if (!frame.valid) continue;
+    if (!frame.valid || judged.master == nullptr) continue;
     gl::Texture* texture = noteHeads[judged.type][(judged.morebets == 1 && input.multiPressHighlight) ? 1 : 0];
     if (texture == nullptr) continue;
     const int type = std::clamp(judged.type, 0, 4);
@@ -991,11 +991,14 @@ void GameRenderer::Impl::drawNotePasses(const scene::StageLayout& layout,
     const float noteWidth = baseWidth * xScale;
     const float noteHeight =
         (baseWidth / static_cast<float>(texture->width())) * static_cast<float>(texture->height());
-    const float offsetX = static_cast<float>(judged.positionX * game::PGR_WIDTH * params.stageWidth);
-    const float noteX = frame.x + offsetX * frame.cosLine;
-    const float noteY = frame.y + offsetX * frame.sinLine;
-    const float rotation = frame.rotateDeg + (judged.isAbove ? 0.0F : 180.0F);
-    badEffects.spawn(input.visualTimeSec, noteX, noteY, noteWidth, noteHeight, rotation,
+    const double judgedAt = std::isfinite(judged.judgeTimeSec) ? judged.judgeTimeSec : judged.sect;
+    const float stageAspect = params.stageHeight > 1.0e-6F
+        ? params.stageWidth / params.stageHeight : 16.0F / 9.0F;
+    const auto state = judged.master->fillState(judgedAt, stageAspect);
+    const auto pose = game::resolveNoteHeadEffectPose(judged, *judged.master, state, judgedAt,
+        input.scrollSpeed, layout.stage.x, layout.stage.y, params.stageWidth, params.stageHeight);
+    if (!pose.valid) continue;
+    badEffects.spawn(input.visualTimeSec, pose.x, pose.y, noteWidth, noteHeight, pose.rotationDeg,
         0.0F, 0.0F, 1.0F, 1.0F, texture);
   }
   batch.begin();
@@ -1444,12 +1447,13 @@ void GameRenderer::Impl::drawLevelEffectObjects(game::Chart* chart,
         const auto bytes = platform::AssetManager::readBinary(assets, "official_textures/MsgCube.png");
         auto image = asset::decodeImageMemory(bytes.data(), bytes.size());
         for (std::size_t index = 0; index + 3 < image.pixels.size(); index += 4) {
-          const auto halo = static_cast<unsigned int>(image.pixels[index]) * 55U + 127U;
-          image.pixels[index + 3] = static_cast<std::uint8_t>(std::max<unsigned int>(
-              image.pixels[index + 1], halo / 255U));
-          image.pixels[index] = 255;
-          image.pixels[index + 1] = 255;
-          image.pixels[index + 2] = 255;
+          const auto alpha = static_cast<std::uint8_t>(
+              game::MessageParticleField::textureAlpha(
+                  image.pixels[index], image.pixels[index + 1]));
+          image.pixels[index] = alpha;
+          image.pixels[index + 1] = alpha;
+          image.pixels[index + 2] = alpha;
+          image.pixels[index + 3] = alpha;
         }
         messageCubeTexture.uploadRgba(image.width, image.height, image.pixels.data());
       }
@@ -1777,6 +1781,19 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
     maskB.clear();
     blockOverlay.collectMaskQuads(chart->blockAreaList, static_cast<float>(input.chartTimeSec),
         maskA, maskB);
+    if (reveal.active) {
+      const float centerX = layout.centerX();
+      const float centerY = layout.centerY();
+      const auto transform = [centerX, centerY, scale = reveal.scale](fx::BlockMaskQuad& quad) {
+        quad.centerX = centerX + (quad.centerX - centerX) * scale;
+        quad.centerY = centerY + (quad.centerY - centerY) * scale;
+        quad.width *= scale;
+        quad.height *= scale;
+      };
+      std::for_each(maskA.begin(), maskA.end(), transform);
+      std::for_each(maskB.begin(), maskB.end(), transform);
+    }
+    blockComposite.setGeometryScale(reveal.active ? reveal.scale : 1.0F);
     // Held points write the composite's hover channel: the touched spot is rasterised into the
     // second mask's alpha with the shipped sprite, and the composite reads it back as a soft
     // union. Without this quads list the hover term can never be non-zero, however many fingers

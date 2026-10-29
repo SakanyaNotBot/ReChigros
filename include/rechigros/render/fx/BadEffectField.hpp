@@ -12,16 +12,16 @@ namespace rechigros::render::fx {
 // The fading copy of a note head that appears when a note is judged bad.
 //
 // A bad note leaves its head behind at the position and size it had when it was judged,
-// tinted dark red, and fades out over half a second of visual time. Misses do not produce
-// one: only a bad judgement does.
+// tinted dark red, and fades out over 25 frames at 60 Hz. Misses do not produce one:
+// only a bad judgement does.
 class BadEffectField final {
 public:
   // How long one copy lives, in visual seconds.
-  static constexpr double LIFETIME_SEC = 0.5;
+  static constexpr double LIFETIME_SEC = 25.0 / 60.0;
   // Tint of the fading copy.
-  static constexpr float TINT_RED = 0.423529F;
-  static constexpr float TINT_GREEN = 0.262745F;
-  static constexpr float TINT_BLUE = 0.262745F;
+  static constexpr float TINT_RED = 0.4245283F;
+  static constexpr float TINT_GREEN = 0.26232645F;
+  static constexpr float TINT_BLUE = 0.26232645F;
   // Upper bound on live copies; the oldest are dropped first.
   static constexpr int MAX_EFFECTS = 256;
 

@@ -36,6 +36,17 @@ std::string lowercase(std::string text) {
   return text;
 }
 
+bool portablePrSource(const game::PrprEffect& effect) {
+  const std::string source = lowercase(effect.sourceName);
+  return source.find("_pr.glsl") != std::string::npos
+      || source.find("/pr/") != std::string::npos
+      || source.find("\\pr\\") != std::string::npos;
+}
+
+std::string effectProgramKey(const game::PrprEffect& effect) {
+  return effect.shader + (portablePrSource(effect) ? ":pr" : "");
+}
+
 void replaceAllText(std::string& text, const std::string& from, const std::string& to) {
   if (from.empty()) return;
   for (std::size_t position = 0; (position = text.find(from, position)) != std::string::npos;) {
@@ -169,6 +180,16 @@ const char* presetFileForKey(const std::string& key) noexcept {
       {"radial_blur", "radial_blur.glsl"},
       {"shockwave", "shockwave.glsl"},
       {"vignette", "vignette.glsl"},
+      {"chromatic_2", "chromatic.glsl"},
+      {"circle_blur_2", "circle_blur.glsl"},
+      {"fisheye_2", "fisheye.glsl"},
+      {"glitch_2", "glitch.glsl"},
+      {"grayscale_2", "grayscale.glsl"},
+      {"noise_2", "noise.glsl"},
+      {"pixel_2", "pixel.glsl"},
+      {"radial_blur_2", "radial_blur.glsl"},
+      {"shockwave_2", "shockwave.glsl"},
+      {"vignette_2", "vignette.glsl"},
       {"official_glitch", "official_glitch.glsl"},
       {"official_glitch_dog", "official_glitch_dog.glsl"},
       {"official_rgb_shift", "official_rgb_shift.glsl"},
@@ -423,7 +444,7 @@ void PrprChain::prepare(const std::filesystem::path& assetRoot,
 
   std::vector<std::string> keys;
   for (const auto& effect : effects) {
-    const std::string key = trim(effect.shader);
+    const std::string key = effectProgramKey(effect);
     if (key.empty()) continue;
     if (std::find(keys.begin(), keys.end(), key) == keys.end()) keys.push_back(key);
   }
@@ -450,39 +471,47 @@ void PrprChain::prepare(const std::filesystem::path& assetRoot,
   }
 
   for (const auto& key : keys) {
+    const bool portable = key.size() > 3 && key.compare(key.size() - 3, 3, ":pr") == 0;
+    const std::string shaderKey = portable ? key.substr(0, key.size() - 3) : key;
     std::string source;
     // A pack may reference its own shader with or without the leading slash the format
     // allows, so both spellings are tried before falling back to the bundled presets.
-    if (const auto it = chartSources.find(key); it != chartSources.end()) {
+    if (const auto it = chartSources.find(shaderKey); it != chartSources.end()) {
       source = it->second;
-    } else if (key.size() > 1 && key.front() == '/') {
-      if (const auto it = chartSources.find(key.substr(1)); it != chartSources.end()) {
+    } else if (shaderKey.size() > 1 && shaderKey.front() == '/') {
+      if (const auto it = chartSources.find(shaderKey.substr(1)); it != chartSources.end()) {
         source = it->second;
       }
     }
+    if (source.empty() && portable) {
+      const auto bytes = platform::AssetManager::readBinary(assetRoot_,
+          "prpr_shaders/pr/" + shaderKey + "_pr.glsl");
+      if (!bytes.empty()) source.assign(bytes.begin(), bytes.end());
+    }
     if (source.empty()) {
-      if (const char* fileName = presetFileForKey(key); fileName != nullptr) {
+      if (const char* fileName = presetFileForKey(shaderKey); fileName != nullptr) {
         const auto bytes = platform::AssetManager::readBinary(assetRoot_, "prpr_shaders/" +
             std::string(fileName));
         if (!bytes.empty()) source.assign(bytes.begin(), bytes.end());
       }
     }
-    if (source.empty() && key.front() != '/') {
-      const auto bytes = platform::AssetManager::readBinary(assetRoot_, "prpr_shaders/" + key + ".glsl");
-      if (!bytes.empty()) source.assign(bytes.begin(), bytes.end());
-    }
-    if (source.empty() && key.front() != '/') {
-      const auto bytes = platform::AssetManager::readBinary(assetRoot_, "prpr_shaders/pr/" + key + ".glsl");
+    if (source.empty() && shaderKey.front() != '/') {
+      const auto bytes = platform::AssetManager::readBinary(assetRoot_, "prpr_shaders/" + shaderKey + ".glsl");
       if (!bytes.empty()) source.assign(bytes.begin(), bytes.end());
     }
     // A key that is itself a shader file name is also tried directly against the presets,
     // which is how a chart can name "vignette.glsl" rather than the preset key "vignette".
-    if (source.empty() && !key.empty() && key.front() != '/' &&
-        key.find(".glsl") != std::string::npos) {
-      const auto bytes = platform::AssetManager::readBinary(assetRoot_, "prpr_shaders/" + key);
+    if (source.empty() && !shaderKey.empty() && shaderKey.front() != '/' &&
+        shaderKey.find(".glsl") != std::string::npos) {
+      const auto bytes = platform::AssetManager::readBinary(assetRoot_, "prpr_shaders/" + shaderKey);
       if (!bytes.empty()) source.assign(bytes.begin(), bytes.end());
     }
-    if (source.empty()) continue;
+    if (source.empty()) {
+      if (std::getenv("RECHIGROS_SHADER_REPORT") != nullptr) {
+        std::fprintf(stderr, "[chain] %s source missing\n", key.c_str());
+      }
+      continue;
+    }
 
     auto program = std::make_unique<Program>();
     program->defaults = parseUniformDefaults(source);
@@ -494,17 +523,26 @@ void PrprChain::prepare(const std::filesystem::path& assetRoot,
       program->pass.program().set2f("UVScale", 1.0F, 1.0F);
     }
     if (!program->valid) std::fprintf(stderr, "[chain] %s compile failed: %s\n", key.c_str(), program->pass.program().log().c_str());
+    if (program->valid && std::getenv("RECHIGROS_SHADER_REPORT") != nullptr) {
+      std::fprintf(stderr, "[chain] %s ready\n", key.c_str());
+    }
     programs_.emplace(key, std::move(program));
+  }
+  if (std::getenv("RECHIGROS_SHADER_REPORT") != nullptr) {
+    for (const auto& [key, program] : programs_) {
+      std::fprintf(stderr, "[chain] cached %s valid=%d\n", key.c_str(), program->valid ? 1 : 0);
+    }
   }
 }
 
-PrprChain::Program* PrprChain::resolve(const std::string& shaderKey) {
-  auto it = programs_.find(trim(shaderKey));
+PrprChain::Program* PrprChain::resolve(const game::PrprEffect& effect) {
+  auto it = programs_.find(effectProgramKey(effect));
   if (it != programs_.end() && it->second->valid) return it->second.get();
   // Preset names may be spelled with or without their file extension.
-  std::string normalized = trim(shaderKey);
+  std::string normalized = trim(effect.shader);
   const auto dot = normalized.find_last_of('.');
   if (dot != std::string::npos) normalized.resize(dot);
+  if (portablePrSource(effect)) normalized += ":pr";
   it = programs_.find(normalized);
   if (it != programs_.end() && it->second->valid) return it->second.get();
   return nullptr;
@@ -677,7 +715,7 @@ gl::Texture* PrprChain::apply(const std::vector<game::PrprEffect>& effects, gl::
       continue;
     }
 
-    Program* program = resolve(effect.shader);
+    Program* program = resolve(effect);
     if (program == nullptr) continue;
     applyPass(effect, *program, current, target, chartTimeSec);
     current = &target.color();
@@ -721,7 +759,7 @@ gl::Texture* PrprChain::applyStageViewport(const std::vector<game::PrprEffect>& 
       continue;
     }
 
-    Program* program = resolve(effect.shader);
+    Program* program = resolve(effect);
     if (program == nullptr) continue;
     applyPassScissored(effect, *program, current, target, chartTimeSec, viewportX, viewportY,
         viewportWidth, viewportHeight);

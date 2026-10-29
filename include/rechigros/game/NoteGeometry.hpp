@@ -76,4 +76,10 @@ HoldHeadEffectPose resolveHoldHeadEffectPose(const Note& note, const JudgeLine& 
     const JudgeLine::State& state, double timeSec, double scrollSpeed,
     float stageX, float stageY, float stageWidth, float stageHeight) noexcept;
 
+// Resolves the note's actual head position at an arbitrary judgement time, including after the
+// head has crossed the line. Unlike a hold burst, this never pins the position back to the line.
+HoldHeadEffectPose resolveNoteHeadEffectPose(const Note& note, const JudgeLine& line,
+    const JudgeLine::State& state, double timeSec, double scrollSpeed,
+    float stageX, float stageY, float stageWidth, float stageHeight) noexcept;
+
 } // namespace rechigros::game
