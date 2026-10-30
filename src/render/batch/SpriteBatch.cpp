@@ -199,9 +199,15 @@ bool SpriteBatch::addQuadSelect(float centerX, float centerY, float width, float
     instance.rotationCos = 1.0F;
     instance.rotationSin = 0.0F;
   } else {
-    const float radians = rotationDeg * kDegToRad;
-    instance.rotationCos = std::cos(radians);
-    instance.rotationSin = std::sin(radians);
+    if (!rotationCached_ || cachedRotationDeg_ != rotationDeg) {
+      const float radians = rotationDeg * kDegToRad;
+      cachedRotationCos_ = std::cos(radians);
+      cachedRotationSin_ = std::sin(radians);
+      cachedRotationDeg_ = rotationDeg;
+      rotationCached_ = true;
+    }
+    instance.rotationCos = cachedRotationCos_;
+    instance.rotationSin = cachedRotationSin_;
   }
   instance.u0 = u0;
   instance.v0 = v0;

@@ -238,9 +238,12 @@ int main(int argc, char** argv) {
           16.0F / 9.0F, 1.0F, 380.0F});
       session.setChart(chart.get());
       session.setAutoplay(true);
+      std::vector<rechigros::game::JudgementEvent> judgementEvents;
       const double startTime = std::max(0.0, options.chartTime - 2.0);
       for (double step = startTime; step <= options.chartTime; step += 1.0 / 60.0) {
         session.update(step, 1.0F / 60.0F);
+        const auto frameEvents = session.takeJudgementEvents();
+        judgementEvents.insert(judgementEvents.end(), frameEvents.begin(), frameEvents.end());
       }
       std::cout << "Autoplay drove " << chart->allNotesSorted.size() << " notes, "
                 << session.judgement().counts()[0] << " perfect\n";
@@ -253,6 +256,8 @@ int main(int argc, char** argv) {
       }
 
       rechigros::render::RenderFrameInput input;
+      input.judgementEvents = std::move(judgementEvents);
+      input.judgementEventsAuthoritative = !options.forceBad;
       input.chartTimeSec = options.chartTime;
       input.playheadSec = options.chartTime;
       input.visualTimeSec = options.chartTime;

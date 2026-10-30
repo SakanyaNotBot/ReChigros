@@ -39,7 +39,7 @@ public:
       const HitEffectSkin& skin, bool mirrorU);
 
   // Drops the bookkeeping so a seek or a restart replays the bursts from scratch.
-  void reset() noexcept { cursor_ = 0; }
+  void reset(game::Chart& chart) noexcept;
 
 private:
   // Index of the first burst that can still be on screen. Entries are time-sorted.

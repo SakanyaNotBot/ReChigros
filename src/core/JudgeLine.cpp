@@ -25,9 +25,15 @@ double JudgeLine::beat2sec(double beat)const noexcept{return beat*(PGR_BEAT/std:
 double JudgeLine::globalBeat2sec(double beat)const noexcept{return bpmTimeline?bpmTimeline->beatToSec(beat):beat2sec(beat);}
 void JudgeLine::resolveFather(std::vector<std::unique_ptr<JudgeLine>>& lines)noexcept{fatherLine=father>=0&&static_cast<std::size_t>(father)<lines.size()?lines[static_cast<std::size_t>(father)].get():nullptr;}
 void JudgeLine::mergeNotes(){
-  notes.clear(); notes.reserve(notesAbove.size()+notesBelow.size());
-  for(auto& note:notesAbove){note.isAbove=true;note.master=this;notes.push_back(note);}
-  for(auto& note:notesBelow){note.isAbove=false;note.master=this;notes.push_back(note);}
+  if(notes.empty()){
+    const std::size_t count=notesAbove.size()+notesBelow.size();
+    const bool compact=count>=65536;
+    notes.reserve(count);
+    for(auto& note:notesAbove){note.isAbove=true;notes.push_back(compact?std::move(note):note);}
+    for(auto& note:notesBelow){note.isAbove=false;notes.push_back(compact?std::move(note):note);}
+    if(compact){std::vector<Note>().swap(notesAbove);std::vector<Note>().swap(notesBelow);}
+  }
+  for(auto& note:notes)note.master=this;
   std::stable_sort(notes.begin(),notes.end(),[](const Note&a,const Note&b){return a.time<b.time;});
 }
 void JudgeLine::normalize(){
@@ -196,29 +202,51 @@ float JudgeLine::calcNoteControl(float height,int type,float fallback)const noex
 }
 
 void Chart::updateUiTransform(int id,float x,float y,float r,float sx,float sy,float alpha){uiTransforms[id]={x,y,r,sx,sy,alpha};}
+void NearNoteRange::Iterator::skip(){
+  if(group_==nullptr)return;
+  const auto& group=*group_;
+  const Note* owner=group[ownerIndex_];
+  const bool flick=owner->type==NOTE_FLICK;
+  const bool tapHold=owner->type==NOTE_TAP||owner->type==NOTE_HOLD;
+  while(index_<group.size()){
+    const Note* candidate=group[index_];
+    if(candidate->sect-owner->sect>0.01){index_=group.size();return;}
+    const bool matches=flick?candidate->type==NOTE_FLICK:
+        tapHold&&(candidate->type==NOTE_TAP||candidate->type==NOTE_HOLD);
+    if(matches)return;
+    ++index_;
+  }
+}
+NearNoteRange::Iterator NearNoteRange::begin()const{
+  Iterator iterator;
+  if(group_==nullptr)return iterator;
+  iterator.group_=group_;iterator.ownerIndex_=ownerIndex_;iterator.index_=ownerIndex_+1;
+  iterator.skip();return iterator;
+}
+NearNoteRange::Iterator NearNoteRange::end()const{
+  Iterator iterator;iterator.group_=group_;iterator.ownerIndex_=ownerIndex_;
+  iterator.index_=group_==nullptr?0:group_->size();return iterator;
+}
+std::size_t NearNoteRange::size()const{
+  std::size_t count=0;for(auto iterator=begin();iterator!=end();++iterator)++count;return count;
+}
+
 void Chart::prepareRuntime(){
-  allNotesSorted.clear();clickEffectsSorted.clear();chartEndTimeSec=0;
-  // The block runtime is part of the authored chart and may have been replaced since the
-  // last preparation, so the lazily built window index restarts here.
+  allNotesSorted.clear();clickEffectsSorted.clear();nearNoteGroups_.clear();chartEndTimeSec=0;
   blockWindowOrder_.clear();blockWindowActive_.clear();blockWindowCursor_=0;
   blockWindowTimeSec_=-1.0e300;blockWindowReady_=false;
   const bool official=formatVersion>0;
   for(std::size_t i=0;i<judgeLineList.size();++i){auto& line=*judgeLineList[i];line.index=static_cast<int>(i);line.bpmTimeline=bpmTimeline;line.resolveFather(judgeLineList);}
-  // Per-line runtime data, assembled on a worker thread and merged afterwards in chart order
-  // so the final note order does not depend on scheduling.
   struct LineRuntimeData{
     std::vector<Note*> allNotes;
     std::vector<Note*> visibleNotes;
-    std::unordered_map<long long,int> simultaneous;
     double maxEndSec{};
   };
   const auto prepareLine=[](JudgeLine& line,bool official,LineRuntimeData& out){
     line.normalize();line.mergeNotes();
-    // Note times are sorted, so the floor-position lookup walks the speed events forward with
-    // one cursor instead of binary-searching on every note. This is the incremental form the
-    // reference uses for its runtime preparation.
+    out.allNotes.reserve(line.notes.size());out.visibleNotes.reserve(line.notes.size());
     int speedIndex=0,holdEndIndex=0;std::vector<int> speedLayerIndices,holdEndLayerIndices;
-    line.notesByType.assign(8,{});
+    line.notesByType.assign(8,{});line.noteVariantMasks.fill(0);
     line.maxHoldDurationSec=0.0;
     for(auto& note:line.notes){
       note.master=&line;note.isHold=note.type==NOTE_HOLD;note.clicked=false;
@@ -230,14 +258,13 @@ void Chart::prepareRuntime(){
         else{const auto endFloor=EventUtils::floorPositionMonotonic(note.time+note.holdTime,line.speedEvents,line.speedEventLayers,holdEndIndex,holdEndLayerIndices);note.holdEndFloorPosition=endFloor;note.holdLength=(endFloor-note.floorPosition)*note.speed*PGR_HEIGHT*(PGR_BEAT/line.bpm);}
         line.maxHoldDurationSec=std::max(line.maxHoldDurationSec,std::abs(note.secht));
       }else{note.holdEndFloorPosition=note.floorPosition;note.holdLength=0;}
-      ++out.simultaneous[static_cast<long long>(std::llround(note.sect*1'000'000.0))];out.allNotes.push_back(&note);
+      out.allNotes.push_back(&note);
       if(!note.isFake)out.visibleNotes.push_back(&note);
-      // A hold whose tail precedes its head still ends at the later of the two instants.
       out.maxEndSec=std::max(out.maxEndSec,note.isHold?std::max(note.holdEndTime,note.sect):note.sect);
     }
   };
   std::size_t noteCount=0;
-  for(const auto& line:judgeLineList)if(line)noteCount+=line->notesAbove.size()+line->notesBelow.size();
+  for(const auto& line:judgeLineList)if(line)noteCount+=line->notes.empty()?line->notesAbove.size()+line->notesBelow.size():line->notes.size();
   std::vector<LineRuntimeData> results(judgeLineList.size());
   const unsigned cores=std::max(1U,std::thread::hardware_concurrency());
   const bool parallel=cores>=2&&judgeLineList.size()>=2&&noteCount>=800;
@@ -250,8 +277,7 @@ void Chart::prepareRuntime(){
         for(;;){
           const auto index=nextLine.fetch_add(1);
           if(index>=judgeLineList.size())break;
-          auto& line=*judgeLineList[index];
-          prepareLine(line,official,results[index]);
+          prepareLine(*judgeLineList[index],official,results[index]);
         }
       });
     }
@@ -260,18 +286,41 @@ void Chart::prepareRuntime(){
     for(std::size_t index=0;index<judgeLineList.size();++index)prepareLine(*judgeLineList[index],official,results[index]);
   }
   std::vector<Note*> allNotes;
-  std::unordered_map<long long,int> simultaneous;
+  allNotes.reserve(noteCount);allNotesSorted.reserve(noteCount);
   for(auto& result:results){
     allNotes.insert(allNotes.end(),result.allNotes.begin(),result.allNotes.end());
     allNotesSorted.insert(allNotesSorted.end(),result.visibleNotes.begin(),result.visibleNotes.end());
     chartEndTimeSec=std::max(chartEndTimeSec,result.maxEndSec);
-    for(const auto& entry:result.simultaneous)simultaneous[entry.first]+=entry.second;
   }
-  for(auto* note:allNotes)note->morebets=simultaneous[static_cast<long long>(std::llround(note->sect*1'000'000.0))]>1?1:0;
-  std::stable_sort(allNotesSorted.begin(),allNotesSorted.end(),[](const Note*a,const Note*b){return a->sect<b->sect;});for(std::size_t i=0;i<allNotesSorted.size();++i)allNotesSorted[i]->sortedIndex=static_cast<int>(i);
-  std::mt19937 random(std::random_device{}());clickEffectsSorted.reserve(allNotesSorted.size());for(auto* note:allNotesSorted)clickEffectsSorted.emplace_back(note,note->sect,random);std::stable_sort(clickEffectsSorted.begin(),clickEffectsSorted.end(),[](const auto&a,const auto&b){return a.timeSec<b.timeSec;});
-  std::vector<Note*> flicks,tapHolds;for(auto* note:allNotes){note->nearNotes.clear();if(note->isFake)continue;if(note->type==NOTE_FLICK)flicks.push_back(note);else if(note->type==NOTE_TAP||note->type==NOTE_HOLD)tapHolds.push_back(note);}
-  const auto connectNear=[](std::vector<Note*>& notes){std::stable_sort(notes.begin(),notes.end(),[](const Note*a,const Note*b){return a->sect<b->sect;});for(std::size_t i=0;i<notes.size();++i)for(std::size_t j=i+1;j<notes.size()&&notes[j]->sect-notes[i]->sect<=0.01;++j)notes[i]->nearNotes.push_back(notes[j]);};connectNear(flicks);connectNear(tapHolds);
+  const auto byTime=[](const Note* first,const Note* second){return first->sect<second->sect;};
+  std::stable_sort(allNotes.begin(),allNotes.end(),byTime);
+  std::stable_sort(allNotesSorted.begin(),allNotesSorted.end(),byTime);
+  for(std::size_t first=0;first<allNotes.size();){
+    std::size_t last=first+1;
+    const auto key=static_cast<long long>(std::llround(allNotes[first]->sect*1'000'000.0));
+    while(last<allNotes.size()&&static_cast<long long>(std::llround(allNotes[last]->sect*1'000'000.0))==key)++last;
+    const int highlighted=last-first>1?1:0;
+    for(std::size_t index=first;index<last;++index){
+      Note* note=allNotes[index];note->morebets=highlighted;
+      if(note->master!=nullptr&&note->type>=0&&note->type<8){
+        note->master->noteVariantMasks[static_cast<std::size_t>(note->type)]|=static_cast<std::uint8_t>(1U<<highlighted);
+      }
+    }
+    first=last;
+  }
+  for(std::size_t i=0;i<allNotesSorted.size();++i)allNotesSorted[i]->sortedIndex=static_cast<int>(i);
+  std::mt19937 random(std::random_device{}());clickEffectsSorted.reserve(allNotesSorted.size());for(auto* note:allNotesSorted)clickEffectsSorted.emplace_back(note,note->sect,random);
+  for(auto* note:allNotes)note->nearNotes.clear();
+  for(std::size_t first=0;first<allNotesSorted.size();){
+    std::size_t last=first+1;
+    while(last<allNotesSorted.size()&&allNotesSorted[last]->sect-allNotesSorted[last-1]->sect<=0.01)++last;
+    if(last-first>1){
+      nearNoteGroups_.emplace_back(allNotesSorted.begin()+static_cast<std::ptrdiff_t>(first),allNotesSorted.begin()+static_cast<std::ptrdiff_t>(last));
+      auto& group=nearNoteGroups_.back();
+      for(std::size_t index=0;index<group.size();++index){group[index]->nearNotes.group_=&group;group[index]->nearNotes.ownerIndex_=index;}
+    }
+    first=last;
+  }
 }
 void Chart::resetRuntime()noexcept{for(auto& line:judgeLineList){line->resetCursors();for(auto& note:line->notes){note.clicked=false;note.judgeResult=-1;note.judgeDiffSec=0;note.judgeTimeSec=std::numeric_limits<double>::quiet_NaN();note.preJudge=false;note.dragPrimed=false;note.holdActive=false;note.holdPerfect=false;note.holdPreJudge=false;note.holdFxActive=false;note.holdUpTimeSec=std::numeric_limits<double>::infinity();note.holdDiffSec=0;note.holdFxTimerSec=0.0;note.holdStatus=0;note.holdBroken=false;note.safeFrame=0;note.isJudged=false;note.badTimeMs=0;note.scored=false;note.statOffset=0;note.offsetIndicatorShown=false;note.judgementDetailOffsetRecorded=false;note.frameCount=0;}}}
 

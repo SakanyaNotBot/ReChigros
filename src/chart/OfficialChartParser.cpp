@@ -42,9 +42,12 @@ std::vector<game::LineEvent> parseMoveEvents(const json& object,bool x,int forma
     event.start=start-0.5;event.end=end-0.5;if(event.endTime<event.startTime)event.endTime=event.startTime;result.push_back(event);
   }return result;
 }
+game::Note parseNote(const json& item,bool above){
+  game::Note note;note.type=value<int>(item,{"type","Type"},1);note.isAbove=above;note.time=value<double>(item,{"time","Time"},0);note.holdTime=value<double>(item,{"holdTime","HoldTime"},0);note.positionX=value<double>(item,{"positionX","PositionX"},0);note.speed=value<double>(item,{"speed","Speed"},1);note.isFake=value<bool>(item,{"isFake","IsFake","fake","Fake"},false);note.alpha=value<float>(item,{"alpha","Alpha"},1);note.size=value<float>(item,{"size","Size"},1);note.xScale=value<float>(item,{"xScale","XScale"},1);note.yOffset=value<float>(item,{"yOffset","YOffset","offsetY"},0);note.visibleTime=value<float>(item,{"visibleTime","VisibleTime"},-1);note.judgeArea=value<float>(item,{"judgeArea","JudgeArea"},1);return note;
+}
 std::vector<game::Note> parseNotes(const json& object,bool above){
   std::vector<game::Note> result;const auto* source=array(object,{above?"notesAbove":"notesBelow"});if(!source)return result;result.reserve(source->size());
-  for(const auto& item:*source){if(!item.is_object())continue;game::Note note;note.type=value<int>(item,{"type","Type"},1);note.isAbove=above;note.time=value<double>(item,{"time","Time"},0);note.holdTime=value<double>(item,{"holdTime","HoldTime"},0);note.positionX=value<double>(item,{"positionX","PositionX"},0);note.speed=value<double>(item,{"speed","Speed"},1);note.isFake=value<bool>(item,{"isFake","IsFake","fake","Fake"},false);note.alpha=value<float>(item,{"alpha","Alpha"},1);note.size=value<float>(item,{"size","Size"},1);note.xScale=value<float>(item,{"xScale","XScale"},1);note.yOffset=value<float>(item,{"yOffset","YOffset","offsetY"},0);note.visibleTime=value<float>(item,{"visibleTime","VisibleTime"},-1);note.judgeArea=value<float>(item,{"judgeArea","JudgeArea"},1);result.push_back(note);}
+  for(const auto& item:*source)if(item.is_object())result.push_back(parseNote(item,above));
   return result;
 }
 std::unique_ptr<game::JudgeLine> parseLine(const json& object,int format,int index){
@@ -340,6 +343,111 @@ void parseElementChunks(std::string_view text,
   for (auto& thread : workers) thread.join();
 }
 
+struct StreamingLine {
+  std::pair<std::size_t, std::size_t> aboveRange{};
+  std::pair<std::size_t, std::size_t> belowRange{};
+};
+
+void parseLinesStreaming(std::string_view text,
+    const std::vector<std::pair<std::size_t, std::size_t>>& elements, int format,
+    unsigned workerCount, std::vector<std::unique_ptr<game::JudgeLine>>& lines,
+    std::vector<unsigned char>& state, std::atomic<bool>& failed) {
+  std::vector<StreamingLine> ranges(elements.size());
+  std::atomic<std::size_t> nextLine{0};
+  const auto metadataWork = [&]() {
+    for (;;) {
+      const std::size_t index = nextLine.fetch_add(1);
+      if (index >= elements.size()) return;
+      if (failed.load(std::memory_order_relaxed)) return;
+      const auto [lineBegin, lineEnd] = elements[index];
+      const std::string_view lineText = text.substr(lineBegin, lineEnd - lineBegin);
+      if (lineText.empty() || lineText.front() != '{') continue;
+      std::size_t aboveBegin = 0, aboveEnd = 0, belowBegin = 0, belowEnd = 0;
+      const bool hasAbove = findTopLevelValue(lineText, {"notesAbove"}, aboveBegin, aboveEnd)
+          && aboveEnd > aboveBegin && lineText[aboveBegin] == '[';
+      const bool hasBelow = findTopLevelValue(lineText, {"notesBelow"}, belowBegin, belowEnd)
+          && belowEnd > belowBegin && lineText[belowBegin] == '[';
+      std::vector<std::pair<std::size_t, std::size_t>> replacements;
+      if (hasAbove) replacements.emplace_back(aboveBegin, aboveEnd);
+      if (hasBelow) replacements.emplace_back(belowBegin, belowEnd);
+      const auto root = json::parse(buildSkeleton(lineText, std::move(replacements)), nullptr, false);
+      if (root.is_discarded() || !root.is_object()) {
+        failed.store(true, std::memory_order_relaxed);
+        return;
+      }
+      lines[index] = parseLine(root, format, static_cast<int>(index));
+      if (hasAbove) ranges[index].aboveRange = {lineBegin + aboveBegin, lineBegin + aboveEnd};
+      if (hasBelow) ranges[index].belowRange = {lineBegin + belowBegin, lineBegin + belowEnd};
+      state[index] = 1;
+    }
+  };
+  const unsigned metadataThreads = std::max(2U, std::min<unsigned>(workerCount,
+      static_cast<unsigned>(std::max<std::size_t>(1, elements.size()))));
+  std::vector<std::thread> metadataWorkers;
+  metadataWorkers.reserve(metadataThreads);
+  for (unsigned worker = 0; worker < metadataThreads; ++worker) {
+    metadataWorkers.emplace_back(metadataWork);
+  }
+  for (auto& worker : metadataWorkers) worker.join();
+  if (failed.load(std::memory_order_relaxed)) return;
+
+  struct NoteSlice { game::Note* output{}; std::size_t begin{}, end{}; bool above{}; };
+  std::vector<NoteSlice> notes;
+  for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
+    if (state[lineIndex] == 0) continue;
+    const auto append = [&](const std::pair<std::size_t, std::size_t> range, bool above) {
+      if (range.first == range.second) return;
+      std::vector<std::pair<std::size_t, std::size_t>> elements;
+      if (!splitJsonArray(text, range.first, range.second, elements)) {
+        failed.store(true, std::memory_order_relaxed);
+        return;
+      }
+      std::size_t count = 0;
+      for (const auto& [begin, end] : elements) {
+        if (begin < end && text[begin] == '{') ++count;
+      }
+      auto& destination = above ? lines[lineIndex]->notesAbove : lines[lineIndex]->notesBelow;
+      destination.resize(count);
+      std::size_t output = 0;
+      for (const auto& [begin, end] : elements) {
+        if (begin >= end || text[begin] != '{') continue;
+        notes.push_back({&destination[output++], begin, end, above});
+      }
+    };
+    append(ranges[lineIndex].aboveRange, true);
+    append(ranges[lineIndex].belowRange, false);
+  }
+  if (failed.load(std::memory_order_relaxed) || notes.empty()) return;
+
+  const std::size_t wantedChunks = static_cast<std::size_t>(workerCount) * 4;
+  const std::size_t chunkSize = (notes.size() + wantedChunks - 1) / wantedChunks;
+  const std::size_t chunkCount = (notes.size() + chunkSize - 1) / chunkSize;
+  std::atomic<std::size_t> nextChunk{0};
+  const auto noteWork = [&]() {
+    for (;;) {
+      const std::size_t chunk = nextChunk.fetch_add(1);
+      if (chunk >= chunkCount) return;
+      const std::size_t first = chunk * chunkSize;
+      const std::size_t last = std::min(notes.size(), first + chunkSize);
+      for (std::size_t index = first; index < last; ++index) {
+        if (failed.load(std::memory_order_relaxed)) return;
+        const auto& slice = notes[index];
+        const auto root = json::parse(text.substr(slice.begin, slice.end - slice.begin), nullptr, false);
+        if (root.is_discarded() || !root.is_object()) {
+          failed.store(true, std::memory_order_relaxed);
+          return;
+        }
+        *slice.output = parseNote(root, slice.above);
+      }
+    }
+  };
+  std::vector<std::thread> noteWorkers;
+  const unsigned noteThreads = static_cast<unsigned>(std::min<std::size_t>(
+      std::max(2U, workerCount), notes.size()));
+  noteWorkers.reserve(noteThreads);
+  for (unsigned worker = 0; worker < noteThreads; ++worker) noteWorkers.emplace_back(noteWork);
+  for (auto& worker : noteWorkers) worker.join();
+}
 
 game::Chart parseRoot(const json& root){
   if(!root.is_object())throw std::invalid_argument("Official chart root must be an object");game::Chart chart;chart.formatVersion=value<int>(root,{"formatVersion","FormatVersion"},3);if(chart.formatVersion!=1&&chart.formatVersion!=3)chart.formatVersion=3;chart.offset=value<double>(root,{"offset","Offset"},0);chart.blockAreaList=parseBlockAreas(root);const auto* lines=array(root,{"judgeLineList"});if(!lines){chart.prepareRuntime();return chart;}chart.judgeLineList.reserve(lines->size());int sourceIndex=0;for(const auto& item:*lines){if(item.is_object()){auto line=parseLine(item,chart.formatVersion,sourceIndex);const auto ui=line->attachUiElementId;chart.judgeLineList.push_back(std::move(line));// An attached UI element records the authored line index, not the index after any
@@ -396,11 +504,7 @@ game::Chart OfficialChartParser::parseParallel(std::string_view text, unsigned w
   std::atomic<bool> failed{false};
   std::vector<std::unique_ptr<game::JudgeLine>> lines(lineElements.size());
   std::vector<unsigned char> lineState(lineElements.size(), 0);
-  parseElementChunks(body, lineElements, workers, lines, lineState,
-      [&chart](const json& item, int index) {
-        return parseLine(item, chart.formatVersion, index);
-      },
-      failed);
+  parseLinesStreaming(body, lineElements, chart.formatVersion, workers, lines, lineState, failed);
   std::vector<game::OfficialBlock> blocks(blockElements.size());
   std::vector<unsigned char> blockState(blockElements.size(), 0);
   if (!blockElements.empty()) {

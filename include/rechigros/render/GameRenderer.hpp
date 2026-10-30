@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rechigros/game/HoldBodyBurst.hpp"
+#include "rechigros/game/JudgementEvent.hpp"
 
 #include <array>
 #include <cstdint>
@@ -152,6 +153,8 @@ struct RenderFrameInput {
   // while a replay draws the ones its recorded judgements produce, so the two never run
   // together.
   bool replayPlayback{false};
+  std::vector<game::JudgementEvent> judgementEvents;
+  bool judgementEventsAuthoritative{};
 
   // Hold-body hit bursts produced since the previous frame. The gameplay session owns the
   // timing (one burst every half beat while a hold is active); the hit-effect pass draws one
@@ -187,6 +190,8 @@ public:
   // replaces the run's position outright, so the displayed value has to follow it instead of
   // sliding toward it from wherever the previous position left it.
   void resetHudDisplay();
+  // Restarts note judgement feedback after a seek or a new attempt, without changing materials.
+  void resetJudgementEffects();
   // Selects the chart illustration used as the play-field backdrop (and for the fixed side
   // panels). An empty or unreadable path keeps the built-in backdrop.
   void setBackgroundImage(const std::filesystem::path& image);

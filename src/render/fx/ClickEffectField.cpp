@@ -56,6 +56,15 @@ float ClickEffectField::particleSize(float p) noexcept {
   return ((0.2078F * p - 1.6524F) * p + 1.6399F) * p + 0.4988F;
 }
 
+void ClickEffectField::reset(game::Chart& chart) noexcept {
+  cursor_ = 0;
+  for (auto& item : chart.clickEffectsSorted) {
+    item.animStartCached = false;
+    item.animStartSec = 0.0F;
+    item.positionCached = false;
+  }
+}
+
 void ClickEffectField::draw(game::Chart& chart, batch::SpriteBatch& out,
     const math::Mat4& projection, gl::Texture& sheet, const gl::Texture& whiteTexture,
     double chartTimeSec, double visualTimeSec, float stageX, float stageY, float stageWidth,
@@ -91,7 +100,8 @@ void ClickEffectField::draw(game::Chart& chart, batch::SpriteBatch& out,
     ++cursor_;
   }
 
-  // Spritesheet frames. One flush per burst keeps the drawn order identical to the list.
+  // Instances retain the authored order inside one submission.
+  out.begin();
   for (int index = cursor_; index < static_cast<int>(effects.size()); ++index) {
     game::ClickEffectItem& item = effects[static_cast<std::size_t>(index)];
     if (item.timeSec > chartTimeSec) break;
@@ -151,11 +161,10 @@ void ClickEffectField::draw(game::Chart& chart, batch::SpriteBatch& out,
     const float rotation = style.rotateSheet ? item.cachedLineRotDeg : 0.0F;
 
     // The sheet is uploaded top-down, so the mirror is undone in the horizontal axis only.
-    out.begin();
     out.addQuad(item.cachedScreenX, item.cachedScreenY, effectSize, effectSize, rotation, tintR,
         tintG, tintB, alpha, mirrorU ? u1 : u0, v0, mirrorU ? u0 : u1, v1);
-    out.flush(projection, sheet, nullptr);
   }
+  if (!out.empty()) out.flush(projection, sheet, nullptr);
 
   if (!style.showParticles) return;
   const float worldPx = noteWidth * kPrefabToNoteWidth;

@@ -228,6 +228,7 @@ bool RecordSession::start(AppContext& context, const Settings& settings, std::st
   context.game.scrollSpeed = context.settings.scrollSpeed;
   context.game.session.setChart(context.game.chart.get(), context.game.challenge);
   context.game.session.setAutoplay(true);
+  context.renderer->resetJudgementEffects();
   context.game.session.setMusicSpeed(context.game.musicSpeed);
   context.game.session.judgement().setJudgementDetailDistribution(
       context.settings.judgementDetailDistribution);
@@ -343,6 +344,8 @@ bool RecordSession::step(AppContext& context) {
       context.game.session.update(chartTime, static_cast<float>(frameDuration * speed));
       (void)context.game.session.takeSoundEvents();
     }
+    input.judgementEvents = context.game.session.takeJudgementEvents();
+    input.judgementEventsAuthoritative = true;
     const auto& judgement = context.game.session.judgement();
 
     input.hud.visible = true;

@@ -36,6 +36,7 @@ void GameplaySession::setChart(Chart* chart, bool challengeMode) {
   challengeTimingStarted_ = false;
   frameTimes_.fill(0.0);
   soundEvents_.clear();
+  judgementEvents_.clear();
   cancelTouches();
   if (chart_) chart_->resetRuntime();
   blocks_ = chart_ ? chart_->blockAreaList : std::vector<OfficialBlock>{};
@@ -48,6 +49,7 @@ void GameplaySession::setChart(Chart* chart, bool challengeMode) {
   replayCursor_ = 0;
   recordedHoldPressNotes_.clear();
   holdFxNotes_.clear();
+  activeHolds_.clear();
   holdBodyBursts_.clear();
   holdHeadBursts_.clear();
   if (replayRecording_) recordedReplay_.clear();
@@ -219,6 +221,11 @@ void GameplaySession::activateHold(Note& note, bool perfect, double chartTime, d
   if (std::find(holdFxNotes_.begin(), holdFxNotes_.end(), &note) == holdFxNotes_.end()) {
     holdFxNotes_.push_back(&note);
   }
+  const auto activePosition = std::lower_bound(activeHolds_.begin(), activeHolds_.end(), &note,
+      [](const Note* first, const Note* second) { return first->sortedIndex < second->sortedIndex; });
+  if (activePosition == activeHolds_.end() || *activePosition != &note) {
+    activeHolds_.insert(activePosition, &note);
+  }
   const auto judgement = perfect ? JudgementEngine::Judgement::Perfect
                                  : JudgementEngine::Judgement::Good;
   judgement_.recordOffset(note, judgement, diff, true);
@@ -234,6 +241,7 @@ bool GameplaySession::commitNote(Note& note, JudgementEngine::Judgement judgemen
     double diff, double time, bool emitSound) noexcept {
   const auto committed = judgement_.commit(note, judgement, diff, time);
   if (committed) {
+    judgementEvents_.push_back({note.sortedIndex, static_cast<int>(judgement)});
     if (emitSound && note.type != NOTE_HOLD && JudgementEngine::isHit(judgement)) {
       soundEvents_.push_back({note.type, note.hitSound});
     }
@@ -280,7 +288,7 @@ void GameplaySession::recordHoldPress(const Note& note, bool perfect, double dif
 
 void GameplaySession::recordMissingHoldPresses() {
   if (!replayRecording_ || chart_ == nullptr) return;
-  for (auto* note : chart_->allNotesSorted) {
+  for (auto* note : activeHolds_) {
     if (note->type != NOTE_HOLD || !note->holdActive) continue;
     recordHoldPress(*note, note->holdPerfect, note->holdDiffSec);
   }
@@ -531,38 +539,29 @@ double GameplaySession::realFrameDeltaSec(float frameDeltaSec) const noexcept {
 void GameplaySession::updateHoldBodyBursts(double time, float frameDeltaSec) {
   if (holdFxNotes_.empty()) return;
   const double realDelta = realFrameDeltaSec(frameDeltaSec);
-  for (std::size_t index = 0; index < holdFxNotes_.size();) {
+  std::size_t retained = 0;
+  for (std::size_t index = 0; index < holdFxNotes_.size(); ++index) {
     Note* note = holdFxNotes_[index];
-    // A judged or released hold stops producing body feedback; the note is dropped from the
-    // active set instead of being tested every frame.
     if (note == nullptr || !note->holdFxActive
         || note->judgeResult == static_cast<int>(JudgementEngine::Judgement::Miss)
         || note->holdBroken || time >= note->holdEndTime) {
       if (note != nullptr) note->holdFxActive = false;
-      holdFxNotes_.erase(holdFxNotes_.begin() + static_cast<std::ptrdiff_t>(index));
       continue;
     }
     if (time <= note->sect) {
-      // The timer is cleared every frame while the hold has not started, so the first burst
-      // lands one interval after max(note time, head hit).
       note->holdFxTimerSec = 0.0;
-      ++index;
+      holdFxNotes_[retained++] = note;
       continue;
     }
     const double interval = holdBodyIntervalSec(*note);
     if (!std::isfinite(interval) || interval <= 0.0) {
       note->holdFxActive = false;
-      holdFxNotes_.erase(holdFxNotes_.begin() + static_cast<std::ptrdiff_t>(index));
       continue;
     }
     note->holdFxTimerSec += realDelta;
     if (note->holdFxTimerSec >= interval - 1.0e-5) {
-      // One burst per crossing: the timer restarts from zero, so a long frame never emits
-      // more than a single burst however many intervals it covered.
       holdBodyBursts_.push_back({note->sortedIndex, time, note->holdPerfect});
       note->holdFxTimerSec = 0.0;
-      // The queue is drained by the renderer each frame; keep a bound so a build that does
-      // not consume bursts yet cannot grow it without limit.
       constexpr std::size_t kMaxPendingHoldBursts = 64;
       if (holdBodyBursts_.size() > kMaxPendingHoldBursts) {
         holdBodyBursts_.erase(holdBodyBursts_.begin(),
@@ -570,8 +569,9 @@ void GameplaySession::updateHoldBodyBursts(double time, float frameDeltaSec) {
                 + static_cast<std::ptrdiff_t>(holdBodyBursts_.size() - kMaxPendingHoldBursts));
       }
     }
-    ++index;
+    holdFxNotes_[retained++] = note;
   }
+  holdFxNotes_.resize(retained);
 }
 
 void GameplaySession::judgeNewTouches(double time, const Stage& view) {
@@ -827,13 +827,12 @@ void GameplaySession::judgeTapHold(double time, const Stage& view) {
 }
 
 void GameplaySession::settleHoldTails(double time) {
-  for (auto* note : chart_->allNotesSorted) {
+  for (auto* note : activeHolds_) {
     if (!note->holdActive || note->judgeResult >= 0) continue;
     if (!note->clicked && time >= note->sect) note->clicked = true;
-    // Settlement lands slightly before the nominal tail so a release is never late.
     if (time > note->holdEndTime - HOLD_TAIL_EARLY_SETTLE) note->holdPreJudge = true;
   }
-  for (auto* note : chart_->allNotesSorted) {
+  for (auto* note : activeHolds_) {
     if (!note->holdActive || !note->holdPreJudge || note->judgeResult >= 0) continue;
     if (time > note->holdEndTime - HOLD_TAIL_EARLY_SETTLE) {
       const auto judgement = note->holdPerfect ? JudgementEngine::Judgement::Perfect
@@ -843,6 +842,9 @@ void GameplaySession::settleHoldTails(double time) {
       commitNote(*note, judgement, note->holdDiffSec, time);
     }
   }
+  std::erase_if(activeHolds_, [](const Note* note) {
+    return !note->holdActive || note->judgeResult >= 0;
+  });
 }
 
 void GameplaySession::detectMisses(double time) {
@@ -871,6 +873,12 @@ std::vector<int> GameplaySession::takeSoundEvents() {
 std::vector<GameplaySession::SoundEvent> GameplaySession::takeDetailedSoundEvents() {
   std::vector<SoundEvent> events;
   events.swap(soundEvents_);
+  return events;
+}
+
+std::vector<JudgementEvent> GameplaySession::takeJudgementEvents() {
+  std::vector<JudgementEvent> events;
+  events.swap(judgementEvents_);
   return events;
 }
 } // namespace rechigros::game

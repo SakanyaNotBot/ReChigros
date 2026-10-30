@@ -6,6 +6,7 @@
 #include "rechigros/game/Note.hpp"
 
 #include <array>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <string>
@@ -56,6 +57,7 @@ public:
   // frame. `maxHoldDurationSec` bounds how early a hold can have started and still reach
   // beyond the current chart time.
   std::vector<std::vector<Note*>> notesByType;
+  std::array<std::uint8_t, 8> noteVariantMasks{};
   double maxHoldDurationSec{};
   int zOrder{}, attachUiElementId{}, father{-1};
   bool isCover{}, rotateWithFather{}, invertRotation{true};

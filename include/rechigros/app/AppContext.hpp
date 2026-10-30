@@ -118,6 +118,7 @@ struct GameRuntime {
   bool replayPlayback{};
   std::size_t replayCursor{};
   ReplayData playback;
+  std::vector<game::JudgementEvent> judgementEvents;
   bool recording{};
   ReplayData recorded;
   // Judgement popup driven by HUD count changes.

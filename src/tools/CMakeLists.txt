@@ -11,6 +11,9 @@ endif()
 # Frame-time profile: drives a chart through the real renderer and reports the per-frame
 # distribution, so performance work has a repeatable before/after gate.
 add_executable(rechigros_frame_profile frame_profile.cpp)
+add_executable(rechigros_session_probe session_probe.cpp)
+target_include_directories(rechigros_session_probe PRIVATE "${PROJECT_SOURCE_DIR}/include")
+target_link_libraries(rechigros_session_probe PRIVATE rechigros_core)
 target_include_directories(rechigros_frame_profile PRIVATE "${PROJECT_SOURCE_DIR}/include")
 target_link_libraries(rechigros_frame_profile PRIVATE
   rechigros_render rechigros_chart rechigros_core rechigros_platform ${RECHIGROS_SDL_TARGET})

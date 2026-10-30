@@ -76,6 +76,15 @@ Invoke-Run 'mode-practice' @('--frames', '900', '--practice') `
 # The practice window must reach the judgement engine, not just the menu.
 Invoke-Run 'practice-window' @('--frames', '900', '--practice', '--practice-perfect', '40') 
   'practice: enabled=1 perfectMs=40 active=1'
+$practiceMusicDir = Join-Path $Work 'practice-music'
+New-Item -ItemType Directory -Force $practiceMusicDir | Out-Null
+Copy-Item $Chart (Join-Path $practiceMusicDir 'plain.json') -Force
+Copy-Item 'assets/sample/chart.wav' (Join-Path $practiceMusicDir 'music.wav') -Force
+$chartWithoutMusic = $Chart
+$Chart = Join-Path $practiceMusicDir 'plain.json'
+Invoke-Run 'practice-seek' @('--frames', '900', '--fixed-delta', '--practice-seek', '1.0') `
+  'practice-seek: first=1\.[0-9]+ second=0\.[0-9]+ verified=2'
+$Chart = $chartWithoutMusic
 # A harness that presses late must produce a different judgement than one that does not.
 Invoke-Run 'mistimed-press' @('--frames', '900', '--mistime', '170') 'good=[1-9]'
 # Mirroring only reflects input, so it must not change the rendered picture; the run has

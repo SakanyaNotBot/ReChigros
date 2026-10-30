@@ -120,6 +120,10 @@ private:
   // top-left origin space the geometry uses and converted to GL's bottom-left origin on use.
   bool scissorEnabled_{};
   float scissorLeft_{}, scissorTop_{}, scissorRight_{}, scissorBottom_{};
+  float cachedRotationDeg_{};
+  float cachedRotationCos_{1.0F};
+  float cachedRotationSin_{};
+  bool rotationCached_{};
 };
 
 } // namespace rechigros::render::batch

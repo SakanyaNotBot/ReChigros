@@ -55,7 +55,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <unordered_set>
 #include <vector>
 
 #include <stb_image_write.h>
@@ -197,7 +196,7 @@ struct GameRenderer::Impl {
   fx::BlockCompositePass blockComposite;
   fx::BadEffectField badEffects;
   // Notes that already produced their bad effect, so each note produces one copy.
-  std::unordered_set<const game::Note*> badSpawned;
+  std::vector<unsigned char> badSpawned;
   game::MessageParticleField messageParticles;
   double messageParticleLastSec{-1.0};
   // Material settings resolved from the built-in pack and then the selected skin layer.
@@ -561,9 +560,9 @@ void GameRenderer::Impl::prepareForChart(game::Chart* chart) {
   if (chart == loadedChart) return;
   loadedChart = chart;
   badEffects.clear();
-  badSpawned.clear();
+  badSpawned.assign(chart->allNotesSorted.size(), 0);
   hitEffects.clear();
-  clickEffects.reset();
+  clickEffects.reset(*chart);
   // A new chart starts the readout from zero rather than from the previous chart's value.
   hudDisplayScore = std::numeric_limits<double>::quiet_NaN();
   hudDisplayAccuracy = std::numeric_limits<double>::quiet_NaN();
@@ -962,26 +961,19 @@ void GameRenderer::Impl::drawNotePasses(const scene::StageLayout& layout,
   }
   // Fading copies of notes that were just judged bad. A note is spawned once, the first
   // frame it is seen judged, so a note never produces two copies.
-  for (const game::Note* note : chart->allNotesSorted) {
-    if (note == nullptr || note->judgeResult != static_cast<int>(game::JudgementEngine::Judgement::Bad)) {
-      continue;
-    }
-    if (badSpawned.find(note) != badSpawned.end()) continue;
-    badSpawned.insert(note);
+  const auto processBad = [&](const game::Note* note) {
+    if (note == nullptr || note->judgeResult != static_cast<int>(game::JudgementEngine::Judgement::Bad)) return;
+    if (note->sortedIndex < 0 || static_cast<std::size_t>(note->sortedIndex) >= badSpawned.size()) return;
+    auto& spawned = badSpawned[static_cast<std::size_t>(note->sortedIndex)];
+    if (spawned != 0) return;
+    spawned = 1;
     const game::Note& judged = *note;
-    // Locate the note's line by identity; the frame list is indexed like the line list.
-    int lineIndex = -1;
-    for (std::size_t index = 0; index < chart->judgeLineList.size(); ++index) {
-      if (chart->judgeLineList[index].get() == judged.master) {
-        lineIndex = static_cast<int>(index);
-        break;
-      }
-    }
-    if (lineIndex < 0 || static_cast<std::size_t>(lineIndex) >= lineFrames.size()) continue;
+    const int lineIndex = judged.master != nullptr ? judged.master->index : -1;
+    if (lineIndex < 0 || static_cast<std::size_t>(lineIndex) >= lineFrames.size()) return;
     const auto& frame = lineFrames[static_cast<std::size_t>(lineIndex)];
-    if (!frame.valid || judged.master == nullptr) continue;
+    if (!frame.valid || judged.master == nullptr) return;
     gl::Texture* texture = noteHeads[judged.type][(judged.morebets == 1 && input.multiPressHighlight) ? 1 : 0];
-    if (texture == nullptr) continue;
+    if (texture == nullptr) return;
     const int type = std::clamp(judged.type, 0, 4);
     const float widthScale = params.widthScaleFor(type, judged.morebets == 1 && input.multiPressHighlight);
     const float size = (!std::isfinite(judged.size) || judged.size == 0.0F) ? 1.0F : judged.size;
@@ -997,9 +989,23 @@ void GameRenderer::Impl::drawNotePasses(const scene::StageLayout& layout,
     const auto state = judged.master->fillState(judgedAt, stageAspect);
     const auto pose = game::resolveNoteHeadEffectPose(judged, *judged.master, state, judgedAt,
         input.scrollSpeed, layout.stage.x, layout.stage.y, params.stageWidth, params.stageHeight);
-    if (!pose.valid) continue;
+    if (!pose.valid) return;
     badEffects.spawn(input.visualTimeSec, pose.x, pose.y, noteWidth, noteHeight, pose.rotationDeg,
         0.0F, 0.0F, 1.0F, 1.0F, texture);
+  };
+  if (input.judgementEventsAuthoritative) {
+    std::vector<std::size_t> indices;
+    for (const auto& event : input.judgementEvents) {
+      if (event.judgement == static_cast<int>(game::JudgementEngine::Judgement::Bad)
+          && event.noteIndex >= 0 && static_cast<std::size_t>(event.noteIndex) < chart->allNotesSorted.size()) {
+        indices.push_back(static_cast<std::size_t>(event.noteIndex));
+      }
+    }
+    std::sort(indices.begin(), indices.end());
+    indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+    for (const std::size_t index : indices) processBad(chart->allNotesSorted[index]);
+  } else {
+    for (const game::Note* note : chart->allNotesSorted) processBad(note);
   }
   batch.begin();
   badEffects.draw(batch, projection, input.visualTimeSec, textures.white(), layout.mirror);
@@ -1013,7 +1019,8 @@ void GameRenderer::Impl::drawHitEffects(const scene::StageLayout& layout,
   const bool autoplayBursts = input.practice.autoPlay && !input.replayPlayback;
   hitEffects.update(*chart, input.chartTimeSec, input.visualTimeSec, layout.stage.x,
       layout.stage.y, layout.stage.width, layout.stage.height, noteWidth,
-      input.practice.enabled ? input.practice.speed : 1.0F, autoplayBursts);
+      input.practice.enabled ? input.practice.speed : 1.0F, autoplayBursts,
+      input.judgementEventsAuthoritative ? &input.judgementEvents : nullptr);
   // Hold bursts are timed by the gameplay session and arrive as events. A head burst is
   // placed where the head was when it was hit (above the line for an early hit, on the line
   // once the head has arrived); body bursts sit on the line contact point.
@@ -1023,14 +1030,8 @@ void GameRenderer::Impl::drawHitEffects(const scene::StageLayout& layout,
             static_cast<std::size_t>(burst.noteIndex) < chart->allNotesSorted.size()
         ? chart->allNotesSorted[static_cast<std::size_t>(burst.noteIndex)]
         : nullptr;
-    if (note == nullptr) continue;
-    int lineIndex = -1;
-    for (std::size_t index = 0; index < chart->judgeLineList.size(); ++index) {
-      if (chart->judgeLineList[index].get() == note->master) {
-        lineIndex = static_cast<int>(index);
-        break;
-      }
-    }
+    if (note == nullptr || note->master == nullptr) continue;
+    const int lineIndex = note->master->index;
     if (lineIndex < 0 || static_cast<std::size_t>(lineIndex) >= lineFrames.size()) continue;
     const float stageAspect =
         layout.stage.height > 1.0e-6F ? layout.stage.width / layout.stage.height : 16.0F / 9.0F;
@@ -2046,6 +2047,14 @@ void GameRenderer::resetHudDisplay() {
   impl_->hudDisplayAccuracy = std::numeric_limits<double>::quiet_NaN();
   impl_->hudDisplayLastUpdateSec = -1.0;
   impl_->hudDisplayReset = true;
+}
+
+void GameRenderer::resetJudgementEffects() {
+  if (impl_ == nullptr || impl_->loadedChart == nullptr) return;
+  impl_->badEffects.clear();
+  impl_->badSpawned.assign(impl_->loadedChart->allNotesSorted.size(), 0);
+  impl_->hitEffects.clear();
+  impl_->clickEffects.reset(*impl_->loadedChart);
 }
 
 void GameRenderer::setSkinDirectory(const std::filesystem::path& skinDirectory) {

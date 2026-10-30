@@ -110,6 +110,11 @@ Application::Application(int argc, char** argv) {
       if (index + 1 < argc && argv[index + 1] != nullptr) {
         practiceGoodMs_ = std::atof(argv[++index]);
       }
+    } else if (argument == "--practice-seek") {
+      if (index + 1 < argc && argv[index + 1] != nullptr) {
+        practiceSeekSec_ = std::atof(argv[++index]);
+        practiceOverride_ = true;
+      }
     } else if (argument == "--replay-playback") {
       if (index + 1 < argc && argv[index + 1] != nullptr) {
         replayPlaybackPath_ = pathFromUtf8(argv[++index]);
@@ -820,6 +825,31 @@ void Application::updateBatchMode() {
   app_->totalNotesJudgedForBatch = judgement.counts()[0] + judgement.counts()[1]
       + judgement.counts()[2] + judgement.counts()[3];
 
+  if (batchMode_ && practiceSeekSec_ >= 0.0) {
+    if (practiceSeekStartFrame_ < 0 && game.loaded && !game.inIntro && !game.inOutro
+        && !game.finished) {
+      practiceSeekStartFrame_ = gameFrames;
+    }
+    if (practiceSeekStartFrame_ >= 0) {
+      const int step = gameFrames - practiceSeekStartFrame_;
+      const double firstTarget = std::min(practiceSeekSec_,
+          std::max(0.0, game.chart->chartEndTimeSec - 0.1));
+      const double secondTarget = std::max(0.0, firstTarget * 0.25);
+      if (step == 2 || step == 222) gameTogglePause(*app_);
+      if ((step == 12 || step == 232) && game.pause == GameRuntime::Pause::Menu) {
+        game.seekRequestSec = step == 12 ? firstTarget : secondTarget;
+      }
+      if (step == 20 || step == 240) gameTogglePause(*app_);
+      const auto observe = [&](int slot, double target) {
+        if (practiceSeekObserved_[slot] >= 0.0 || game.pause != GameRuntime::Pause::None) return;
+        practiceSeekObserved_[slot] = game.chartTimeSec;
+        if (std::abs(game.chartTimeSec - target) <= 0.35) ++practiceSeekVerified_;
+      };
+      if (step >= 210 && step < 222) observe(0, firstTarget);
+      if (step >= 430) observe(1, secondTarget);
+    }
+  }
+
   // Pause state machine verification: escape opens the menu, escape again starts
   // the resume countdown, and the countdown releases the game automatically.
   if (batchMode_ && expectPause_) {
@@ -948,6 +978,7 @@ void Application::printBatchSummary() {
   if (expectResult_) {
     chartRunPass = chartRunPass && resultFrames > 0 && app_->lastResult.totalNotes > 0;
   }
+  if (practiceSeekSec_ >= 0.0) chartRunPass = chartRunPass && practiceSeekVerified_ == 2;
   if (replayRun) {
     // The recorded metadata is the reference. A judgement-entry replay takes its settlement
     // result FROM that metadata, so the comparison has to read the live judgement result:
@@ -990,6 +1021,11 @@ void Application::printBatchSummary() {
     std::cout << "pause: menu=" << (pauseMenuSeen_ ? 1 : 0)
               << " countdown=" << (pauseCountdownSeen_ ? 1 : 0)
               << " resumed=" << (pauseResumedSeen_ ? 1 : 0) << '\n';
+  }
+  if (practiceSeekSec_ >= 0.0) {
+    std::cout << "practice-seek: first=" << practiceSeekObserved_[0]
+              << " second=" << practiceSeekObserved_[1]
+              << " verified=" << practiceSeekVerified_ << '\n';
   }
   if (!initialPath_.empty()) {
     std::cout << "chart: " << app_->play.songName << " / " << app_->play.difficulty << '\n';
@@ -1317,7 +1353,8 @@ void Application::captureFramebufferIfRequested() {
   const unsigned meanBlue = samples > 0 ? static_cast<unsigned>(sumBlue / samples) : 0;
   std::cout << "CAPTURE " << (written ? "PASS" : "FAIL") << " path=" << capturePath_.string()
             << " size=" << width << 'x' << height << " uniqueColors=" << colours.size()
-            << " meanRGB=" << meanRed << ',' << meanGreen << ',' << meanBlue << '\n';
+            << " meanRGB=" << meanRed << ',' << meanGreen << ',' << meanBlue
+            << " chartTime=" << app_->game.chartTimeSec << '\n';
 }
 
 void Application::drawCurrentScreen() {

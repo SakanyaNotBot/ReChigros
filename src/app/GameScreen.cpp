@@ -202,6 +202,7 @@ void applyPracticeSeek(AppContext& context, double targetChartTime) {
   // Rebuild the judgement state and skip every note before the seek point.
   game.session.setChart(game.chart.get(), game.challenge);
   game.session.setAutoplay(game.autoplay);
+  if (context.renderer != nullptr) context.renderer->resetJudgementEffects();
   syncGameplayViewport(context);
   for (auto* note : game.chart->allNotesSorted) {
     if (note->sect < target) {
@@ -220,6 +221,11 @@ void applyPracticeSeek(AppContext& context, double targetChartTime) {
   game.smoothClock.reset(game.playheadSec, context.nowSec);
   game.smoothClockValid = true;
   game.smoothedPlayheadSec = game.playheadSec;
+  if (game.pause != GameRuntime::Pause::None) {
+    game.pausePlayheadSec = game.playheadSec;
+    game.pausePlayheadValid = true;
+    game.pauseResumesFromZero = false;
+  }
   game.lastCounts[0] = game.lastCounts[1] = game.lastCounts[2] = game.lastCounts[3] = 0;
   // The animated readout follows the position; a seek replaces it, so it restarts there.
   if (context.renderer != nullptr) context.renderer->resetHudDisplay();
@@ -1559,6 +1565,7 @@ bool beginRun(AppContext& context, std::unique_ptr<game::Chart> chart,
     context.renderer->setSkinDirectory(skinDirectory);
     // The play field uses the chart's own illustration as its (blurred) backdrop.
     context.renderer->setBackgroundImage(context.play.bgFile);
+    context.renderer->resetJudgementEffects();
   }
   context.game = GameRuntime{};
   auto& game = context.game;
@@ -1973,6 +1980,7 @@ void gameUpdate(AppContext& context, float frameDeltaSec) {
   // so replay playback observes the same timing a live player did.
   dispatchRecordedTouches(context);
   game.session.update(game.chartTimeSec, delta);
+  game.judgementEvents = game.session.takeJudgementEvents();
   for (const auto& event : game.session.takeDetailedSoundEvents()) {
     if (context.audio != nullptr) context.audio->triggerSoundEffect(event.type, event.hitSound);
   }
@@ -2103,6 +2111,8 @@ void gameRender(AppContext& context) {
   input.practice.enabled = game.practice;
   input.practice.speed = game.musicSpeed;
   input.practice.autoPlay = game.autoplay;
+  input.judgementEvents = game.judgementEvents;
+  input.judgementEventsAuthoritative = true;
   input.songName = context.play.songName;
   input.levelName = context.play.difficulty;
   // Hold-body bursts are produced by the gameplay update; the hit-effect pass draws them.

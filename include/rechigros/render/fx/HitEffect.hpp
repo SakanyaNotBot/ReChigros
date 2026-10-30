@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rechigros/game/HoldBodyBurst.hpp"
+#include "rechigros/game/JudgementEvent.hpp"
 #include "rechigros/render/math/Mat4.hpp"
 
 #include <array>
@@ -75,13 +76,15 @@ public:
   void setAtlas(const HitEffectAtlas& atlas) noexcept { atlas_ = atlas; }
   [[nodiscard]] const HitEffectAtlas& atlas() const noexcept { return atlas_; }
 
-  // Scans every note for a judgement that appeared since the previous call and
-  // spawns a burst at the note head. `chartTimeSec` positions the burst, while
+  // Consumes newly judged notes in chart order and spawns their head bursts. When no event
+  // stream is supplied, diagnoses the current state with the original full-chart scan.
+  // `chartTimeSec` positions the burst, while
   // `visualTimeSec` drives its animation; `musicSpeed` back-dates a burst to the
   // moment its note was actually judged so a slow frame does not restart it.
   void update(game::Chart& chart, double chartTimeSec, double visualTimeSec,
       float stageX, float stageY, float stageWidth, float stageHeight, float noteWidth,
-      float musicSpeed = 1.0F, bool skipJudgedNotes = false);
+      float musicSpeed = 1.0F, bool skipJudgedNotes = false,
+      const std::vector<game::JudgementEvent>* events = nullptr);
 
   void clear() noexcept;
 

@@ -116,10 +116,9 @@ void HitEffectField::spawn(float x, float y, double startSec, float red, float g
 
 void HitEffectField::update(game::Chart& chart, double chartTimeSec, double visualTimeSec,
     float stageX, float stageY, float stageWidth, float stageHeight, float noteWidth,
-    float musicSpeed, bool skipJudgedNotes) {
+    float musicSpeed, bool skipJudgedNotes, const std::vector<game::JudgementEvent>* events) {
   noteWidth_ = noteWidth;
 
-  // Expire finished bursts first so the spawn budget reflects live effects only.
   effects_.erase(std::remove_if(effects_.begin(), effects_.end(),
                      [&](const HitEffectInstance& effect) {
                        return visualTimeSec - effect.startSec >
@@ -127,46 +126,46 @@ void HitEffectField::update(game::Chart& chart, double chartTimeSec, double visu
                      }),
       effects_.end());
 
-  // Autoplay draws its bursts from the chart's pre-rolled effect list, so the judgement scan
-  // must not also emit one for the same hit. Hold bodies still arrive as session events below.
   if (skipJudgedNotes) return;
   if (tracked_.size() != chart.allNotesSorted.size()) tracked_.resize(chart.allNotesSorted.size());
 
-  const float stageAspect = stageHeight > 1.0e-6F ? stageWidth / stageHeight : 16.0F / 9.0F;
   const double speed = std::max(0.001, static_cast<double>(musicSpeed));
-
-  for (std::size_t index = 0; index < chart.allNotesSorted.size(); ++index) {
+  const auto process = [&](std::size_t index) {
     game::Note* note = chart.allNotesSorted[index];
     auto& tracked = tracked_[index];
     if (note == nullptr) {
       tracked.note = nullptr;
       tracked.judgement = -1;
-      continue;
+      return;
     }
     tracked.note = note;
     const int judgement = note->judgeResult;
     if (!isPerfect(judgement) && !isGood(judgement)) {
       tracked.judgement = judgement;
-      continue;
+      return;
     }
-    if (tracked.judgement == judgement) continue; // already emitted for this state
+    if (tracked.judgement == judgement) return;
     tracked.judgement = judgement;
-    if (note->master == nullptr) continue;
-    // Hold notes get their head burst from the session event stream, which the renderer
-    // places where the head was when it was hit; an on-line burst from this scan would be
-    // wrong for an early hit and would duplicate the event burst.
-    if (note->isHold) continue;
-
-    // Very late sweeps at load time must not produce bursts.
-    if (note->sect > chartTimeSec + 0.5) continue;
-
-    // The burst starts at the moment the note was judged on the visual clock, so a
-    // slow frame or a playhead jump does not restart it.
+    if (note->master == nullptr || note->isHold || note->sect > chartTimeSec + 0.5) return;
     const double judgedAt = std::isfinite(note->judgeTimeSec) ? note->judgeTimeSec : note->sect;
     const double lag = std::max(0.0, (chartTimeSec - judgedAt) / speed);
     spawnBurstForNote(*note, judgement, chartTimeSec, visualTimeSec - lag, stageX, stageY,
         stageWidth, stageHeight);
+  };
+  if (events != nullptr) {
+    std::vector<std::size_t> indices;
+    indices.reserve(events->size());
+    for (const auto& event : *events) {
+      if (event.noteIndex >= 0 && static_cast<std::size_t>(event.noteIndex) < chart.allNotesSorted.size()) {
+        indices.push_back(static_cast<std::size_t>(event.noteIndex));
+      }
+    }
+    std::sort(indices.begin(), indices.end());
+    indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+    for (const std::size_t index : indices) process(index);
+    return;
   }
+  for (std::size_t index = 0; index < chart.allNotesSorted.size(); ++index) process(index);
 }
 
 void HitEffectField::spawnBurstForNote(const game::Note& note, int judgement,

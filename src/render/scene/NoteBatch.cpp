@@ -91,18 +91,15 @@ float tintComponent(bool hasTint, float value) {
 }
 
 // Exact AABB overlap of a rotated rectangle against the cull area.
-bool isNoteRectInArea(float centerX, float centerY, float width, float height, float rotationDeg,
-    const math::Rect& area) {
+bool isNoteRectInArea(float centerX, float centerY, float width, float height, float cosAbs,
+    float sinAbs, const math::Rect& area) {
   if (!(width > 0.0F) || !(height > 0.0F)) return false;
   const float halfW = width * 0.5F;
   const float halfH = height * 0.5F;
-  if (rotationDeg == 0.0F) {
+  if (cosAbs == 1.0F && sinAbs == 0.0F) {
     return !(centerX + halfW < area.left() || centerX - halfW > area.right() ||
              centerY + halfH < area.top() || centerY - halfH > area.bottom());
   }
-  const double radians = static_cast<double>(rotationDeg) * kPi / 180.0;
-  const auto cosAbs = static_cast<float>(std::abs(std::cos(radians)));
-  const auto sinAbs = static_cast<float>(std::abs(std::sin(radians)));
   const float extentX = halfW * cosAbs + halfH * sinAbs;
   const float extentY = halfW * sinAbs + halfH * cosAbs;
   return !(centerX + extentX < area.left() || centerX - extentX > area.right() ||
@@ -110,7 +107,18 @@ bool isNoteRectInArea(float centerX, float centerY, float width, float height, f
 }
 
 float evalControl(const game::JudgeLine& line, int type, float controlHeight) {
-  return line.calcNoteControl(controlHeight, type, type == kControlSkew ? 0.0F : 1.0F);
+  const std::vector<game::JudgeLine::NoteControlPoint>* points = nullptr;
+  switch (type) {
+    case kControlAlpha: points = &line.noteAlphaControls; break;
+    case kControlScale: points = &line.noteScaleControls; break;
+    case kControlX: points = &line.noteXControls; break;
+    case kControlY: points = &line.noteYControls; break;
+    case kControlSkew: points = &line.noteSkewControls; break;
+    default: break;
+  }
+  const float fallback = type == kControlSkew ? 0.0F : 1.0F;
+  if (points == nullptr || points->empty()) return fallback;
+  return line.calcNoteControl(controlHeight, type, fallback);
 }
 
 struct LocalPlacement {
@@ -362,6 +370,16 @@ void buildHeadBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
     if (!frame.renderable || !frame.noteValid) continue;
     if (frame.hideNotes && !reveal) continue;
 
+    if (noteType >= 0 && noteType < 8) {
+      const auto mask = line.noteVariantMasks[static_cast<std::size_t>(noteType)];
+      if ((!params.multiPressHighlight && highlightVariant) ||
+          (params.multiPressHighlight && (mask & (highlightVariant ? 2U : 1U)) == 0)) continue;
+    }
+    const double cullRadians = static_cast<double>(frame.rotateDeg) * kPi / 180.0;
+    const float cullCosAbs = static_cast<float>(std::abs(std::cos(cullRadians)));
+    const float cullSinAbs = static_cast<float>(std::abs(std::sin(cullRadians)));
+    const bool hasNoteControls = !line.noteAlphaControls.empty() || !line.noteScaleControls.empty()
+        || !line.noteXControls.empty() || !line.noteYControls.empty() || !line.noteSkewControls.empty();
     // Notes of one type are kept time-sorted by the runtime preparation, so this pass visits
     // only its own type and starts after the entries whose fade window has already closed.
     const std::vector<game::Note*>* typedNotes = nullptr;
@@ -413,8 +431,9 @@ void buildHeadBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
           continue;
         }
       }
-      const float controlHeight =
-          game::rpeControlHeightFromBasePx(baseFpPx, note.yOffset, speed, stageAspect, params.stageHeight);
+      const float controlHeight = hasNoteControls
+          ? game::rpeControlHeightFromBasePx(baseFpPx, note.yOffset, speed, stageAspect, params.stageHeight)
+          : 0.0F;
       const float yControl = params.officialFormat || note.isHold
           ? 1.0F : evalControl(line, kControlY, controlHeight);
       const float baseFpWithControl = applyYControlScale(baseFpPx, yControl);
@@ -456,7 +475,7 @@ void buildHeadBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
         }
 
         const float beforeControl = noteAlpha;
-        noteAlpha *= evalControl(line, kControlAlpha, controlHeight);
+        noteAlpha *= hasNoteControls ? evalControl(line, kControlAlpha, controlHeight) : 1.0F;
         if (beforeControl > 0.0F && noteAlpha <= 0.0F && reveal) revealHidden = true;
 
         if (noteAlpha > 0.0F && note.visibleTime >= 0.0F &&
@@ -485,9 +504,9 @@ void buildHeadBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
 
       const float size = (!isFinite(note.size) || note.size == 0.0F) ? 1.0F : note.size;
       const float xScale = (!isFinite(note.xScale) || note.xScale == 0.0F) ? 1.0F : note.xScale;
-      float scaleControl = evalControl(line, kControlScale, controlHeight);
+      float scaleControl = hasNoteControls ? evalControl(line, kControlScale, controlHeight) : 1.0F;
       if (!isFinite(scaleControl) || scaleControl == 0.0F) scaleControl = 1.0F;
-      const float skewControl = evalControl(line, kControlSkew, controlHeight);
+      const float skewControl = hasNoteControls ? evalControl(line, kControlSkew, controlHeight) : 0.0F;
       const float inclineSinr = combineInclineSinr(frame.inclineSinr, skewControl);
       float inclineValue = 1.0F;
       if (params.officialFormat && isFinite(inclineSinr)) {
@@ -504,7 +523,7 @@ void buildHeadBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
       const float noteHeight = (baseWidth / textureWidth) * textureHeight;
 
       float offsetX = static_cast<float>(note.positionX * game::PGR_WIDTH * params.stageWidth);
-      const float xControl = evalControl(line, kControlX, controlHeight);
+      const float xControl = hasNoteControls ? evalControl(line, kControlX, controlHeight) : 1.0F;
       if (params.officialFormat) offsetX *= inclineValue;
       if (isFinite(xControl) && xControl != 0.0F) offsetX *= xControl;
       const float noteAtX = frame.x + offsetX * frame.cosLine;
@@ -521,7 +540,7 @@ void buildHeadBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
           ? 0.0F : std::tan(note.positionX * 75.375F * skewControl * kPi / 180.0F);
       if (!isNoteRectInArea(headX, headY,
               std::abs(noteWidth) + std::abs(noteHeight * shear), std::abs(noteHeight),
-              drawRotation, params.cullBounds)) {
+              cullCosAbs, cullSinAbs, params.cullBounds)) {
         continue;
       }
       float u0 = params.flipU ? 1.0F : 0.0F;
@@ -555,6 +574,16 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
     if (!frame.renderable || !frame.noteValid) continue;
     if (frame.hideNotes && !reveal) continue;
 
+    {
+      const auto mask = line.noteVariantMasks[static_cast<std::size_t>(game::NOTE_HOLD)];
+      if ((!params.multiPressHighlight && highlightVariant) ||
+          (params.multiPressHighlight && (mask & (highlightVariant ? 2U : 1U)) == 0)) continue;
+    }
+    const double cullRadians = static_cast<double>(frame.rotateDeg) * kPi / 180.0;
+    const float cullCosAbs = static_cast<float>(std::abs(std::cos(cullRadians)));
+    const float cullSinAbs = static_cast<float>(std::abs(std::sin(cullRadians)));
+    const bool hasNoteControls = !line.noteAlphaControls.empty() || !line.noteScaleControls.empty()
+        || !line.noteXControls.empty() || !line.noteYControls.empty() || !line.noteSkewControls.empty();
     // Holds are kept in the hold-type list, sorted by start time. A hold can only still be
     // on screen when it started at most `maxHoldDurationSec` before the current time.
     const std::vector<game::Note*>* typedNotes = nullptr;
@@ -619,8 +648,9 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
           continue;
         }
       }
-      const float controlHeight =
-          game::rpeControlHeightFromBasePx(baseFpPx, note.yOffset, speed, stageAspect, params.stageHeight);
+      const float controlHeight = hasNoteControls
+          ? game::rpeControlHeightFromBasePx(baseFpPx, note.yOffset, speed, stageAspect, params.stageHeight)
+          : 0.0F;
       const float yControl = params.officialFormat || note.isHold
           ? 1.0F : evalControl(line, kControlY, controlHeight);
       const float baseFpWithControl = applyYControlScale(baseFpPx, yControl);
@@ -676,7 +706,7 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
         }
 
         const float beforeControl = noteAlpha;
-        noteAlpha *= evalControl(line, kControlAlpha, controlHeight);
+        noteAlpha *= hasNoteControls ? evalControl(line, kControlAlpha, controlHeight) : 1.0F;
         if (beforeControl > 0.0F && noteAlpha <= 0.0F && reveal) revealHidden = true;
 
         if (noteAlpha > 0.0F && note.visibleTime >= 0.0F &&
@@ -745,9 +775,9 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
 
       const float size = (!isFinite(note.size) || note.size == 0.0F) ? 1.0F : note.size;
       const float xScale = (!isFinite(note.xScale) || note.xScale == 0.0F) ? 1.0F : note.xScale;
-      float scaleControl = evalControl(line, kControlScale, controlHeight);
+      float scaleControl = hasNoteControls ? evalControl(line, kControlScale, controlHeight) : 1.0F;
       if (!isFinite(scaleControl) || scaleControl == 0.0F) scaleControl = 1.0F;
-      const float skewControl = evalControl(line, kControlSkew, controlHeight);
+      const float skewControl = hasNoteControls ? evalControl(line, kControlSkew, controlHeight) : 0.0F;
       const float inclineSinr = combineInclineSinr(frame.inclineSinr, skewControl);
       float inclineValue = 1.0F;
       if (params.officialFormat && isFinite(inclineSinr)) {
@@ -804,7 +834,7 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
         const float headDrawFp = std::max(headClampMin, headCenterFp);
         const float headX = noteAtX + headDrawFp * dirX;
         const float headY = noteAtY + headDrawFp * dirY;
-        if (isNoteRectInArea(headX, headY, noteWidth, noteHeadHeight, drawRotation,
+        if (isNoteRectInArea(headX, headY, noteWidth, noteHeadHeight, cullCosAbs, cullSinAbs,
                 params.cullBounds)) {
           addQuadFlippable(out, headX, headY, noteWidth, noteHeadHeight, drawRotation,
               red, green, blue, noteAlpha, 0.0F, uv.headV0, 1.0F, uv.headV1, params.flipU);
@@ -838,7 +868,7 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
       if (drawLength > 0.01F) {
         const float bodyX = noteAtX + ((drawStartFp + drawEndFp) * 0.5F) * dirX;
         const float bodyY = noteAtY + ((drawStartFp + drawEndFp) * 0.5F) * dirY;
-        if (isNoteRectInArea(bodyX, bodyY, noteWidth, drawLength, drawRotation, params.cullBounds)) {
+        if (isNoteRectInArea(bodyX, bodyY, noteWidth, drawLength, cullCosAbs, cullSinAbs, params.cullBounds)) {
           bool emittedRepeatBody = false;
           if (repeatBody) {
             const float bodyTileHeight = noteWidth * bodyTextureHeight / bodyTextureWidth;
@@ -871,7 +901,7 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
       const float tailPosFp = tailTipFp - (tailHeight * 0.5F);
       const float tailX = noteAtX + tailPosFp * dirX;
       const float tailY = noteAtY + tailPosFp * dirY;
-      if (isNoteRectInArea(tailX, tailY, noteWidth, tailHeight, drawRotation, params.cullBounds)) {
+      if (isNoteRectInArea(tailX, tailY, noteWidth, tailHeight, cullCosAbs, cullSinAbs, params.cullBounds)) {
         addQuadFlippable(out, tailX, tailY, noteWidth, tailHeight, drawRotation,
             red, green, blue, noteAlpha, 0.0F, uv.tailV0, 1.0F, uv.tailV1, params.flipU);
       }

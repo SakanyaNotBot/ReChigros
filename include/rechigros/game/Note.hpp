@@ -6,6 +6,42 @@
 
 namespace rechigros::game {
 class JudgeLine;
+struct Note;
+
+class NearNoteRange {
+public:
+  class Iterator {
+  public:
+    Note* operator*() const { return (*group_)[index_]; }
+    Iterator& operator++() {
+      ++index_;
+      skip();
+      return *this;
+    }
+    bool operator==(const Iterator& other) const noexcept {
+      return group_ == other.group_ && index_ == other.index_;
+    }
+
+  private:
+    friend class NearNoteRange;
+    const std::vector<Note*>* group_{};
+    std::size_t ownerIndex_{};
+    std::size_t index_{};
+
+    void skip();
+  };
+
+  [[nodiscard]] Iterator begin() const;
+  [[nodiscard]] Iterator end() const;
+  [[nodiscard]] std::size_t size() const;
+  [[nodiscard]] bool empty() const { return size() == 0; }
+  void clear() noexcept { group_ = nullptr; ownerIndex_ = 0; }
+
+private:
+  friend class Chart;
+  const std::vector<Note*>* group_{};
+  std::size_t ownerIndex_{};
+};
 
 struct Note {
   int type{};
@@ -45,7 +81,7 @@ struct Note {
   double holdFxTimerSec{};
   int morebets{};
   JudgeLine* master{nullptr};
-  std::vector<Note*> nearNotes;
+  NearNoteRange nearNotes;
   long long holdTapTimeMs{};
   int holdStatus{};
   bool holdBroken{false};

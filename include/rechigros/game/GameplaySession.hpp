@@ -3,6 +3,7 @@
 #include "rechigros/game/Chart.hpp"
 #include "rechigros/game/HoldBodyBurst.hpp"
 #include "rechigros/game/JudgementEngine.hpp"
+#include "rechigros/game/JudgementEvent.hpp"
 #include "rechigros/game/NoteGeometry.hpp"
 #include "rechigros/game/ReplayLog.hpp"
 
@@ -54,6 +55,7 @@ public:
   };
   std::vector<int> takeSoundEvents();
   std::vector<SoundEvent> takeDetailedSoundEvents();
+  std::vector<JudgementEvent> takeJudgementEvents();
 
   [[nodiscard]] float touchPosition(const Note& note, float x, float y, double chartTimeSec) const noexcept;
   [[nodiscard]] float judgeDistance(const Note& note, float x, float y, double chartTimeSec) const noexcept;
@@ -190,6 +192,7 @@ private:
   // has nothing to average yet and only arms the measurement.
   bool challengeTimingStarted_{};
   std::vector<SoundEvent> soundEvents_;
+  std::vector<JudgementEvent> judgementEvents_;
   std::size_t frameTimeIndex_{}, frameTimeCount_{};
   std::size_t autoNoteIndex_{};
   std::vector<OfficialBlock> blocks_;
@@ -209,6 +212,7 @@ private:
   // Holds whose body burst timer is running, so the per-frame work stays proportional to
   // the number of active holds rather than to the chart size.
   std::vector<Note*> holdFxNotes_;
+  std::vector<Note*> activeHolds_;
   std::vector<HoldBodyBurst> holdBodyBursts_;
   std::vector<HoldHeadBurst> holdHeadBursts_;
 };

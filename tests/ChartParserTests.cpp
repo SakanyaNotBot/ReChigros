@@ -1222,6 +1222,47 @@ int main() {
     }
   }
 
+  {
+    std::string text = R"({"META":{"offset":0,"RPEVersion":163},"BPMList":[{"bpm":120,"startTime":[0,0,1]}],"judgeLineList":[)";
+    text += R"({"bpmfactor":1,"notesAbove":[)";
+    for (int index = 0; index < 800; ++index) {
+      if (index > 0) text += ',';
+      text += R"({"type":1,"startTime":[)" + std::to_string(index)
+          + R"(,0,1],"positionX":75.375,"tint":[255,0,0]})";
+    }
+    text += R"(],"notesBelow":[{"type":2,"startTime":[1,0,1],"holdTime":[2,0,1],"hitSound":"hit.wav"}]})";
+    text += R"(,{"bpmfactor":1,"notes":[)";
+    for (int index = 0; index < 600; ++index) {
+      if (index > 0) text += ',';
+      text += R"({"type":1,"startTime":[)" + std::to_string(index)
+          + R"(,0,1],"above":)" + (index % 2 == 0 ? "1" : "0") + "}";
+    }
+    text += "]}]}";
+    text.append(1U << 20, ' ');
+    const auto chart = rechigros::chart::RpeChartParser::parse(
+        std::string_view(text), std::filesystem::path("pack"));
+    require(chart.judgeLineList.size() == 2 && chart.allNotesSorted.size() == 1401,
+        "large RPE streams both split and combined note arrays");
+    require(chart.judgeLineList[0]->notes.size() == 801
+        && chart.judgeLineList[1]->notes.size() == 600,
+        "large RPE keeps every note on its authored line");
+    require(chart.judgeLineList[0]->notesBelow[0].type == NOTE_HOLD
+        && close(chart.judgeLineList[0]->notesBelow[0].holdTime, 64.0),
+        "large RPE preserves hold conversion");
+    require(chart.judgeLineList[0]->notesBelow[0].hitSound
+        == (std::filesystem::path("pack") / "hit.wav").generic_string(),
+        "large RPE resolves custom hit sounds");
+    require(chart.judgeLineList[0]->notes[0].hasTint
+        && close(chart.judgeLineList[0]->notes[0].positionX, 1.0),
+        "large RPE preserves note position and tint");
+    std::size_t above = 0;
+    for (const auto& note : chart.judgeLineList[1]->notesAbove) (void)note, ++above;
+    require(above == 300 && chart.judgeLineList[1]->notesBelow.size() == 300,
+        "large RPE combined notes keep their above flags");
+    require(chart.judgeLineList[0]->rotateWithFather,
+        "large RPE keeps versioned line defaults");
+  }
+
   std::cout << "All ReChigros chart parser tests passed\n";
   return 0;
 }

@@ -401,6 +401,8 @@ std::vector<FrameSample> measure(const Options& options, rechigros::game::Chart&
     const auto updateStart = Clock::now();
     gameplay.update(chartTime, static_cast<float>(options.frameDeltaSec));
     gameplay.takeSoundEvents();
+    input.judgementEvents = gameplay.takeJudgementEvents();
+    input.judgementEventsAuthoritative = true;
     const double updateMs = millisecondsSince(updateStart);
 
     const auto& judgement = gameplay.judgement();
@@ -608,6 +610,8 @@ void runTapProfile(const Options& options, rechigros::game::Chart& chart) {
       const auto updateAllocBefore = allocationCount();
       session.update(time, static_cast<float>(options.frameDeltaSec));
       session.takeSoundEvents();
+      input.judgementEvents = session.takeJudgementEvents();
+      input.judgementEventsAuthoritative = true;
       session.takeHoldBodyBursts();
       row.updateMs = millisecondsSince(updateStart);
       row.updateAllocations = allocationCount() - updateAllocBefore;

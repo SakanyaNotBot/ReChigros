@@ -8,6 +8,7 @@
 #include "rechigros/game/RpeNoiseArea.hpp"
 
 #include <array>
+#include <deque>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -56,6 +57,7 @@ public:
   [[nodiscard]] bool hasLiveBlock(double time) const noexcept;
 
 private:
+  std::deque<std::vector<Note*>> nearNoteGroups_;
   mutable std::vector<std::size_t> blockWindowOrder_;
   mutable std::vector<std::size_t> blockWindowActive_;
   mutable std::size_t blockWindowCursor_{};

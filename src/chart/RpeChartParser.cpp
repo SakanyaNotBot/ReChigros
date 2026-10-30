@@ -1,5 +1,6 @@
 #include "rechigros/chart/RpeChartParser.hpp"
 
+#include "JsonSlice.hpp"
 #include "rechigros/game/Easing.hpp"
 #include "rechigros/game/EventUtils.hpp"
 #include "rechigros/game/GameConstants.hpp"
@@ -8,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <fstream>
@@ -15,6 +17,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -1429,12 +1432,220 @@ Chart parseRoot(const json& root, const std::filesystem::path& baseDirectory) {
   chart.prepareRuntime();
   return chart;
 }
+
+Chart parseStreaming(std::string_view text, const std::filesystem::path& baseDirectory) {
+  using Range = std::pair<std::size_t, std::size_t>;
+  std::size_t linesBegin = 0, linesEnd = 0;
+  if (!json_slice::findTopLevelValue(text,
+          {"judgeLineList", "JudgeLineList", "judgeLines", "judgeLinesList", "lines"},
+          linesBegin, linesEnd) || linesEnd <= linesBegin || text[linesBegin] != '[') {
+    return parseRoot(json::parse(text), baseDirectory);
+  }
+  std::vector<Range> lineElements;
+  if (!json_slice::splitArray(text, linesBegin, linesEnd, lineElements) || lineElements.empty()) {
+    return parseRoot(json::parse(text), baseDirectory);
+  }
+
+  struct LineSlices {
+    Range above{}, below{}, combined{};
+    bool object{};
+  };
+  std::vector<LineSlices> slices(lineElements.size());
+  std::vector<std::string> lineSkeletons(lineElements.size());
+  for (std::size_t index = 0; index < lineElements.size(); ++index) {
+    const auto [begin, end] = lineElements[index];
+    const std::string_view lineText = text.substr(begin, end - begin);
+    auto& line = slices[index];
+    line.object = !lineText.empty() && lineText.front() == '{';
+    if (!line.object) {
+      lineSkeletons[index] = std::string(lineText);
+      continue;
+    }
+    std::size_t aboveBegin = 0, aboveEnd = 0, belowBegin = 0, belowEnd = 0;
+    const bool hasAbove = json_slice::findTopLevelValue(lineText,
+        {"notesAbove", "NotesAbove"}, aboveBegin, aboveEnd)
+        && aboveEnd > aboveBegin && lineText[aboveBegin] == '[';
+    const bool hasBelow = json_slice::findTopLevelValue(lineText,
+        {"notesBelow", "NotesBelow"}, belowBegin, belowEnd)
+        && belowEnd > belowBegin && lineText[belowBegin] == '[';
+    std::vector<Range> replacements;
+    if (hasAbove || hasBelow) {
+      if (hasAbove) {
+        replacements.emplace_back(aboveBegin, aboveEnd);
+        line.above = {begin + aboveBegin, begin + aboveEnd};
+      }
+      if (hasBelow) {
+        replacements.emplace_back(belowBegin, belowEnd);
+        line.below = {begin + belowBegin, begin + belowEnd};
+      }
+    } else {
+      std::size_t combinedBegin = 0, combinedEnd = 0;
+      if (json_slice::findTopLevelValue(lineText, {"notes", "noteList", "Notes"},
+              combinedBegin, combinedEnd) && combinedEnd > combinedBegin
+          && lineText[combinedBegin] == '[') {
+        replacements.emplace_back(combinedBegin, combinedEnd);
+        line.combined = {begin + combinedBegin, begin + combinedEnd};
+      }
+    }
+    lineSkeletons[index] = json_slice::buildSkeleton(lineText, std::move(replacements));
+  }
+
+  std::string skeleton;
+  skeleton.reserve(text.size() / 32 + 4096);
+  skeleton.append(text.substr(0, linesBegin));
+  skeleton.push_back('[');
+  for (std::size_t index = 0; index < lineSkeletons.size(); ++index) {
+    if (index > 0) skeleton.push_back(',');
+    skeleton.append(lineSkeletons[index]);
+  }
+  skeleton.push_back(']');
+  skeleton.append(text.substr(linesEnd));
+  const auto root = json::parse(skeleton, nullptr, false);
+  if (root.is_discarded() || !root.is_object()) return parseRoot(json::parse(text), baseDirectory);
+  Chart chart = parseRoot(root, baseDirectory);
+
+  std::vector<JudgeLine*> lineByElement(lineElements.size(), nullptr);
+  std::size_t compactIndex = 0;
+  for (std::size_t index = 0; index < slices.size(); ++index) {
+    if (!slices[index].object) continue;
+    if (compactIndex >= chart.judgeLineList.size()) return parseRoot(json::parse(text), baseDirectory);
+    lineByElement[index] = chart.judgeLineList[compactIndex++].get();
+  }
+  if (compactIndex != chart.judgeLineList.size()) return parseRoot(json::parse(text), baseDirectory);
+
+  std::vector<BpmPoint> points;
+  if (const auto* list = array(root, {"BPMList", "bpmList", "BpmList"})) {
+    for (const auto& item : *list) if (item.is_object()) {
+      const auto value = number(item, {"bpm", "BPM"}, 0.0);
+      if (std::isfinite(value) && value > 0.0) {
+        points.push_back({parseBeat(field(item, {"startTime", "time", "beat"})), value});
+      }
+    }
+  }
+  if (points.empty()) points.push_back({0.0, 120.0});
+  std::stable_sort(points.begin(), points.end(), [](const auto& a, const auto& b) {
+    return a.beat < b.beat;
+  });
+  if (points.front().beat > 0.0) points.insert(points.begin(), {0.0, points.front().bpm});
+  BpmConverter bpm(std::move(points));
+  const double timeBase = bpm.baseBpm();
+
+  struct NoteSlice {
+    Note* output{};
+    std::size_t begin{}, end{};
+    bool above{};
+    bool combined{};
+  };
+  std::vector<NoteSlice> notes;
+  bool slicesValid = true;
+  for (std::size_t lineIndex = 0; lineIndex < slices.size(); ++lineIndex) {
+    JudgeLine* line = lineByElement[lineIndex];
+    if (line == nullptr) continue;
+    const auto append = [&](Range range, bool above, bool combined) {
+      if (range.first == range.second) return;
+      std::vector<Range> elements;
+      if (!json_slice::splitArray(text, range.first, range.second, elements)) {
+        slicesValid = false;
+        return;
+      }
+      std::size_t count = 0;
+      for (const auto& [begin, end] : elements) {
+        if (begin < end && text[begin] == '{') ++count;
+      }
+      auto& destination = combined ? line->notes : (above ? line->notesAbove : line->notesBelow);
+      destination.resize(count);
+      std::size_t output = 0;
+      for (const auto& [begin, end] : elements) {
+        if (begin >= end || text[begin] != '{') continue;
+        notes.push_back({&destination[output++], begin, end, above, combined});
+      }
+    };
+    append(slices[lineIndex].above, true, false);
+    append(slices[lineIndex].below, false, false);
+    append(slices[lineIndex].combined, true, true);
+  }
+  if (!slicesValid) return parseRoot(json::parse(text), baseDirectory);
+
+  std::atomic<bool> failed{false};
+  const unsigned workers = std::max(1U, std::min(8U, std::thread::hardware_concurrency()));
+  const std::size_t wantedChunks = std::max<std::size_t>(1, static_cast<std::size_t>(workers) * 4);
+  const std::size_t chunkSize = notes.empty() ? 1 : (notes.size() + wantedChunks - 1) / wantedChunks;
+  const std::size_t chunkCount = (notes.size() + chunkSize - 1) / chunkSize;
+  std::atomic<std::size_t> nextChunk{0};
+  const auto work = [&]() {
+    for (;;) {
+      const std::size_t chunk = nextChunk.fetch_add(1);
+      if (chunk >= chunkCount) return;
+      const std::size_t first = chunk * chunkSize;
+      const std::size_t last = std::min(notes.size(), first + chunkSize);
+      for (std::size_t index = first; index < last; ++index) {
+        if (failed.load(std::memory_order_relaxed)) return;
+        const auto& slice = notes[index];
+        const auto item = json::parse(text.substr(slice.begin, slice.end - slice.begin), nullptr, false);
+        if (item.is_discarded() || !item.is_object()) {
+          failed.store(true, std::memory_order_relaxed);
+          return;
+        }
+        if (auto note = parseNote(item, bpm, timeBase)) {
+          note->isAbove = slice.combined ? noteAbove(item, true) : slice.above;
+          *slice.output = std::move(*note);
+        }
+      }
+    }
+  };
+  if (!notes.empty()) {
+    std::vector<std::thread> threads;
+    const unsigned threadCount = static_cast<unsigned>(std::min<std::size_t>(workers, notes.size()));
+    threads.reserve(threadCount);
+    for (unsigned worker = 0; worker < threadCount; ++worker) threads.emplace_back(work);
+    for (auto& thread : threads) thread.join();
+  }
+  if (failed.load(std::memory_order_relaxed)) return parseRoot(json::parse(text), baseDirectory);
+
+  for (std::size_t lineIndex = 0; lineIndex < slices.size(); ++lineIndex) {
+    JudgeLine* line = lineByElement[lineIndex];
+    if (line == nullptr) continue;
+    const auto discardInvalid = [](std::vector<Note>& destination) {
+      std::erase_if(destination, [](const Note& note) { return note.type == 0; });
+    };
+    if (slices[lineIndex].above.first != slices[lineIndex].above.second) discardInvalid(line->notesAbove);
+    if (slices[lineIndex].below.first != slices[lineIndex].below.second) discardInvalid(line->notesBelow);
+    if (slices[lineIndex].combined.first != slices[lineIndex].combined.second) {
+      std::size_t aboveCount = 0, belowCount = 0;
+      for (const auto& note : line->notes) {
+        if (note.type == 0) continue;
+        ++(note.isAbove ? aboveCount : belowCount);
+      }
+      line->notesAbove.reserve(aboveCount);
+      line->notesBelow.reserve(belowCount);
+      for (auto& note : line->notes) {
+        if (note.type == 0) continue;
+        (note.isAbove ? line->notesAbove : line->notesBelow).push_back(std::move(note));
+      }
+      std::vector<Note>().swap(line->notes);
+    }
+    for (auto* destination : {&line->notesAbove, &line->notesBelow}) {
+      for (auto& note : *destination) {
+        if (!note.hitSound.empty()) note.hitSound = (baseDirectory / note.hitSound).generic_string();
+      }
+    }
+  }
+  chart.prepareRuntime();
+  return chart;
+}
 } // namespace
 
 game::Chart RpeChartParser::parse(const std::filesystem::path& path) {
   std::ifstream input(path, std::ios::binary);
   if (!input) throw std::runtime_error("Cannot open RPE chart: " + path.string());
-  json root; input >> root; return parseRoot(root, path.parent_path());
+  input.seekg(0, std::ios::end);
+  const auto length = input.tellg();
+  input.seekg(0, std::ios::beg);
+  std::string text;
+  if (length > 0) text.resize(static_cast<std::size_t>(length));
+  if (!text.empty()) input.read(text.data(), static_cast<std::streamsize>(text.size()));
+  text.resize(static_cast<std::size_t>(input.gcount()));
+  return parse(text, path.parent_path());
 }
 
 game::Chart RpeChartParser::parse(std::string_view text,
@@ -1442,6 +1653,7 @@ game::Chart RpeChartParser::parse(std::string_view text,
   if (text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF
       && static_cast<unsigned char>(text[1]) == 0xBB
       && static_cast<unsigned char>(text[2]) == 0xBF) text.remove_prefix(3);
+  if (text.size() >= (1U << 20)) return parseStreaming(text, baseDirectory);
   return parseRoot(json::parse(text), baseDirectory);
 }
 } // namespace rechigros::chart

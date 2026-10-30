@@ -175,6 +175,10 @@ private:
   // end to end rather than only through the engine.
   double practicePerfectMs_{};
   double practiceGoodMs_{};
+  double practiceSeekSec_{-1.0};
+  int practiceSeekStartFrame_{-1};
+  int practiceSeekVerified_{};
+  double practiceSeekObserved_[2]{-1.0, -1.0};
   std::size_t batchNoteIndex_{};
   int batchInputStage_{};
   bool expectResult_{};

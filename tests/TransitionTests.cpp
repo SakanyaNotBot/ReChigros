@@ -4,6 +4,7 @@
 #include "rechigros/game/JudgeLine.hpp"
 #include "rechigros/game/Note.hpp"
 #include "rechigros/render/fx/BadEffectField.hpp"
+#include "rechigros/render/fx/ClickEffectField.hpp"
 #include "rechigros/render/fx/BlockCompositePass.hpp"
 #include "rechigros/render/fx/BlockOverlay.hpp"
 #include "rechigros/render/fx/DsGridPass.hpp"
@@ -795,6 +796,24 @@ int main() {
         "accuracy entrance is the time-reversed exit fade");
     require(accuracyIntroAlpha(0.75F) > accuracyIntroAlpha(0.25F),
         "accuracy fades in progressively");
+  }
+
+  {
+    rechigros::game::Chart chart;
+    std::mt19937 random(7);
+    chart.clickEffectsSorted.emplace_back(nullptr, 1.0, random);
+    auto& item = chart.clickEffectsSorted.front();
+    item.animStartCached = true;
+    item.animStartSec = 12.0F;
+    item.positionCached = true;
+    item.cachedScreenX = 123.0F;
+    const auto speeds = item.effectSpeed;
+    rechigros::render::fx::ClickEffectField effects;
+    effects.reset(chart);
+    require(!item.animStartCached && !item.positionCached,
+        "a seek rearms cached autoplay hit effects");
+    require(item.effectSpeed == speeds,
+        "resetting a seek does not reroll particle parameters");
   }
 
   if (g_failures != 0) {
