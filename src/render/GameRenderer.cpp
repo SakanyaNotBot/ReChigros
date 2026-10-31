@@ -74,14 +74,18 @@ constexpr int kHeadDrawOrder[3] = {kNoteTypeDrag, kNoteTypeTap, kNoteTypeFlick};
 // per half height.
 constexpr float kHoverSpriteHeightFraction = 44.0F / 100.0F * 11.5F / 10.0F;
 
-// Note width as a fraction of stage width. Displays narrower than 16:9 draw
-// proportionally smaller notes; wider displays are untouched.
-float noteWidthRatio(float stageWidth, float stageHeight) {
+constexpr float kNoteWidthBaseRatio = 0.1234375F;
+
+// Displays narrower than 16:9 shrink the notes; wider displays are untouched.
+float noteAspectFactor(float stageWidth, float stageHeight) {
   constexpr float kReferenceAspect = 16.0F / 9.0F;
-  constexpr float kBaseRatio = 0.1234375F;
   const float aspect = stageHeight > 1.0e-6F ? stageWidth / stageHeight : kReferenceAspect;
-  const float factor = aspect < kReferenceAspect ? aspect / kReferenceAspect : 1.0F;
-  return kBaseRatio * factor;
+  return aspect < kReferenceAspect ? aspect / kReferenceAspect : 1.0F;
+}
+
+// Note width as a fraction of stage width.
+float noteWidthRatio(float stageWidth, float stageHeight) {
+  return kNoteWidthBaseRatio * noteAspectFactor(stageWidth, stageHeight);
 }
 
 void bindDefaultBlend() {
@@ -100,6 +104,8 @@ struct GameRenderer::Impl {
   ~Impl() { releaseResources(); }
 
   void releaseResources() noexcept {
+    // Stop decode workers before the cache and its graphics objects go away.
+    textures.awaitPrefetchAssets();
     chain.release();
     // The composite owns GL programs and reduced-size targets; release them before the
     // texture cache drops the samplers they point at.
@@ -212,6 +218,8 @@ struct GameRenderer::Impl {
   // Fully resolved material values from the built-in pack and the selected skin layer.
   skin::ResolvedMaterials skinMaterials;
   std::filesystem::path skinDirectory;
+  bool prefetchStarted{false};
+  std::filesystem::path prefetchSkinKey_;
   double blockUpdateLastSec{};
   fx::DsGridPass dsGrid;
   fx::KaleidoBackdropPass kaleido;
@@ -289,6 +297,8 @@ struct GameRenderer::Impl {
       const game::JudgementEngine* judgement, const scene::StageLayout& layout);
   void drawNotePasses(const scene::StageLayout& layout, const RenderFrameInput& input,
       game::Chart* chart);
+  void drawBadEffects(const scene::StageLayout& layout, const RenderFrameInput& input,
+      game::Chart* chart);
   void drawHitEffects(const scene::StageLayout& layout, const RenderFrameInput& input, game::Chart* chart);
   // Paints the backdrop ring before chart objects, leaving their scaled overflow visible.
   void drawRevealPanels(const scene::StageLayout& inner, const scene::StageLayout& outer,
@@ -324,7 +334,8 @@ struct GameRenderer::Impl {
 
 void GameRenderer::Impl::loadGameplayTextures() {
   defaultBackground = textures.loadAsset("res/background.jpg");
-  background = defaultBackground;
+  // A failed read must not blank a backdrop that was already valid.
+  if (defaultBackground != nullptr) background = defaultBackground;
   // A selected skin replaces the note, hold and hit-effect artwork with files of the same
   // names in its directory; everything it does not ship keeps the built-in asset.
   noteHeads[kNoteTypeTap][0] = loadSkinAwareTexture("click.png", "res/click.png");
@@ -549,6 +560,8 @@ void GameRenderer::Impl::applyResPackSettings() {
   hitSkin.goodGreen = skinMaterials.good.green;
   hitSkin.goodBlue = skinMaterials.good.blue;
   hitSkin.goodAlpha = skinMaterials.good.alpha;
+  hitSkin.perfectFromSkin = skinMaterials.perfectFromSkin;
+  hitSkin.goodFromSkin = skinMaterials.goodFromSkin;
 
   hitEffects.setAtlas(hitAtlas);
   hitEffects.setStyle(hitStyle);
@@ -897,6 +910,91 @@ void GameRenderer::Impl::drawLinePass(const RenderFrameInput& input, game::Chart
   batch.flush(projection, textures.white(), nullptr);
 }
 
+void GameRenderer::Impl::drawBadEffects(const scene::StageLayout& layout,
+    const RenderFrameInput& input, game::Chart* chart) {
+  if (chart == nullptr || lineFrames.size() != chart->judgeLineList.size()) return;
+
+  scene::NotePassParams params;
+  params.stageWidth = layout.stage.width;
+  params.stageHeight = layout.stage.height;
+  const float keyScale = input.keyScale > 0.0F ? input.keyScale : 1.0F;
+  // The native ClickBad keeps local scale 0.18 while CreateNote scales the note itself by
+  // noteScale * min(aspect/(16/9), 1); on narrow stages the copy is therefore relatively
+  // larger than the note. Its base is the 16:9 note width, not the shrunken one.
+  params.noteWidthBase = layout.stage.width * kNoteWidthBaseRatio * keyScale;
+  params.noteWidthScale = noteWidthScale;
+
+  // Fading copies of notes that were just judged bad. A note is spawned once, the first
+  // frame it is seen judged, so a note never produces two copies.
+  const auto processBad = [&](const game::Note* note) {
+    if (note == nullptr
+        || note->judgeResult != static_cast<int>(game::JudgementEngine::Judgement::Bad)) {
+      return;
+    }
+    if (note->sortedIndex < 0
+        || static_cast<std::size_t>(note->sortedIndex) >= badSpawned.size()) {
+      return;
+    }
+    auto& spawned = badSpawned[static_cast<std::size_t>(note->sortedIndex)];
+    if (spawned != 0) return;
+    spawned = 1;
+    const game::Note& judged = *note;
+    const int lineIndex = judged.master != nullptr ? judged.master->index : -1;
+    if (lineIndex < 0 || static_cast<std::size_t>(lineIndex) >= lineFrames.size()) return;
+    const auto& frame = lineFrames[static_cast<std::size_t>(lineIndex)];
+    if (!frame.valid || judged.master == nullptr) return;
+    const int type = std::clamp(judged.type, 0, 4);
+    // The official noteBad prefab keeps the normal note sheet even when the note itself
+    // uses the multi-press highlight variant.
+    int variant = 0;
+    gl::Texture* texture = noteHeads[type][0];
+    if (texture == nullptr) {
+      variant = 1;
+      texture = noteHeads[type][1];
+    }
+    if (texture == nullptr) return;
+    const float widthScale = params.widthScaleFor(type, variant == 1);
+    const float size = (!std::isfinite(judged.size) || judged.size == 0.0F) ? 1.0F : judged.size;
+    const float xScale =
+        (!std::isfinite(judged.xScale) || judged.xScale == 0.0F) ? 1.0F : judged.xScale;
+    const float baseWidth = params.noteWidthBase * size * widthScale;
+    const float noteWidth = baseWidth * xScale;
+    const float noteHeight =
+        (baseWidth / static_cast<float>(texture->width())) * static_cast<float>(texture->height());
+    // ClickBad is authored at local scale 0.18 while the note prefab is 0.22, and the
+    // native judge parents the copy without copying the note's scale.
+    constexpr float kBadEffectScale = 0.18F / 0.22F;
+    const double judgedAt = std::isfinite(judged.judgeTimeSec) ? judged.judgeTimeSec : judged.sect;
+    const float stageAspect = params.stageHeight > 1.0e-6F
+        ? params.stageWidth / params.stageHeight : 16.0F / 9.0F;
+    const auto state = judged.master->fillState(judgedAt, stageAspect);
+    const auto pose = game::resolveNoteHeadEffectPose(judged, *judged.master, state, judgedAt,
+        input.scrollSpeed, layout.stage.x, layout.stage.y, params.stageWidth, params.stageHeight);
+    if (!pose.valid) return;
+    badEffects.spawn(input.visualTimeSec, pose.x, pose.y, noteWidth * kBadEffectScale,
+        noteHeight * kBadEffectScale, pose.rotationDeg, 0.0F, 0.0F, 1.0F, 1.0F, texture);
+  };
+  if (input.judgementEventsAuthoritative) {
+    std::vector<std::size_t> indices;
+    for (const auto& event : input.judgementEvents) {
+      if (event.judgement == static_cast<int>(game::JudgementEngine::Judgement::Bad)
+          && event.noteIndex >= 0
+          && static_cast<std::size_t>(event.noteIndex) < chart->allNotesSorted.size()) {
+        indices.push_back(static_cast<std::size_t>(event.noteIndex));
+      }
+    }
+    std::sort(indices.begin(), indices.end());
+    indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+    for (const std::size_t index : indices) processBad(chart->allNotesSorted[index]);
+  } else {
+    for (const game::Note* note : chart->allNotesSorted) processBad(note);
+  }
+  if (badEffects.size() == 0) return;
+  batch.begin();
+  badEffects.draw(batch, layout.stageProjection(), input.visualTimeSec, textures.white(),
+      layout.mirror);
+}
+
 void GameRenderer::Impl::drawNotePasses(const scene::StageLayout& layout,
     const RenderFrameInput& input, game::Chart* chart) {
   if (chart == nullptr || lineFrames.size() != chart->judgeLineList.size()) return;
@@ -959,56 +1057,6 @@ void GameRenderer::Impl::drawNotePasses(const scene::StageLayout& layout,
       }
     }
   }
-  // Fading copies of notes that were just judged bad. A note is spawned once, the first
-  // frame it is seen judged, so a note never produces two copies.
-  const auto processBad = [&](const game::Note* note) {
-    if (note == nullptr || note->judgeResult != static_cast<int>(game::JudgementEngine::Judgement::Bad)) return;
-    if (note->sortedIndex < 0 || static_cast<std::size_t>(note->sortedIndex) >= badSpawned.size()) return;
-    auto& spawned = badSpawned[static_cast<std::size_t>(note->sortedIndex)];
-    if (spawned != 0) return;
-    spawned = 1;
-    const game::Note& judged = *note;
-    const int lineIndex = judged.master != nullptr ? judged.master->index : -1;
-    if (lineIndex < 0 || static_cast<std::size_t>(lineIndex) >= lineFrames.size()) return;
-    const auto& frame = lineFrames[static_cast<std::size_t>(lineIndex)];
-    if (!frame.valid || judged.master == nullptr) return;
-    gl::Texture* texture = noteHeads[judged.type][(judged.morebets == 1 && input.multiPressHighlight) ? 1 : 0];
-    if (texture == nullptr) return;
-    const int type = std::clamp(judged.type, 0, 4);
-    const float widthScale = params.widthScaleFor(type, judged.morebets == 1 && input.multiPressHighlight);
-    const float size = (!std::isfinite(judged.size) || judged.size == 0.0F) ? 1.0F : judged.size;
-    const float xScale =
-        (!std::isfinite(judged.xScale) || judged.xScale == 0.0F) ? 1.0F : judged.xScale;
-    const float baseWidth = params.noteWidthBase * size * widthScale;
-    const float noteWidth = baseWidth * xScale;
-    const float noteHeight =
-        (baseWidth / static_cast<float>(texture->width())) * static_cast<float>(texture->height());
-    const double judgedAt = std::isfinite(judged.judgeTimeSec) ? judged.judgeTimeSec : judged.sect;
-    const float stageAspect = params.stageHeight > 1.0e-6F
-        ? params.stageWidth / params.stageHeight : 16.0F / 9.0F;
-    const auto state = judged.master->fillState(judgedAt, stageAspect);
-    const auto pose = game::resolveNoteHeadEffectPose(judged, *judged.master, state, judgedAt,
-        input.scrollSpeed, layout.stage.x, layout.stage.y, params.stageWidth, params.stageHeight);
-    if (!pose.valid) return;
-    badEffects.spawn(input.visualTimeSec, pose.x, pose.y, noteWidth, noteHeight, pose.rotationDeg,
-        0.0F, 0.0F, 1.0F, 1.0F, texture);
-  };
-  if (input.judgementEventsAuthoritative) {
-    std::vector<std::size_t> indices;
-    for (const auto& event : input.judgementEvents) {
-      if (event.judgement == static_cast<int>(game::JudgementEngine::Judgement::Bad)
-          && event.noteIndex >= 0 && static_cast<std::size_t>(event.noteIndex) < chart->allNotesSorted.size()) {
-        indices.push_back(static_cast<std::size_t>(event.noteIndex));
-      }
-    }
-    std::sort(indices.begin(), indices.end());
-    indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
-    for (const std::size_t index : indices) processBad(chart->allNotesSorted[index]);
-  } else {
-    for (const game::Note* note : chart->allNotesSorted) processBad(note);
-  }
-  batch.begin();
-  badEffects.draw(batch, projection, input.visualTimeSec, textures.white(), layout.mirror);
 }
 
 void GameRenderer::Impl::drawHitEffects(const scene::StageLayout& layout,
@@ -1693,6 +1741,10 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       batch.setScissor(true, layout.stage.x, layout.stage.y,
           layout.stage.x + layout.stage.width, layout.stage.y + layout.stage.height);
     }
+    // The native ClickBad copies live on the Background sorting layer, under the judge line
+    // and under every note sprite, so they are submitted before the line pass.
+    if (!blockNotes) drawBadEffects(sceneLayout, revealInput, chart);
+    gl::logErrors("scene.badEffects");
     drawLinePass(revealInput, chart, judgement, sceneLayout);
     gl::logErrors("scene.lines");
     if (!blockNotes) drawNotePasses(sceneLayout, revealInput, chart);
@@ -2049,12 +2101,52 @@ void GameRenderer::resetHudDisplay() {
   impl_->hudDisplayReset = true;
 }
 
-void GameRenderer::resetJudgementEffects() {
-  if (impl_ == nullptr || impl_->loadedChart == nullptr) return;
+void GameRenderer::resetJudgementEffects(game::Chart* chart) {
+  if (impl_ == nullptr) return;
+  impl_->loadedChart = chart;
   impl_->badEffects.clear();
-  impl_->badSpawned.assign(impl_->loadedChart->allNotesSorted.size(), 0);
   impl_->hitEffects.clear();
-  impl_->clickEffects.reset(*impl_->loadedChart);
+  if (chart == nullptr) {
+    impl_->badSpawned.clear();
+    return;
+  }
+  impl_->badSpawned.assign(chart->allNotesSorted.size(), 0);
+  impl_->clickEffects.reset(*chart);
+}
+
+void GameRenderer::prefetchGameplayTextures(const std::filesystem::path& skinDirectory) {
+  if (impl_ == nullptr) return;
+  if (impl_->prefetchStarted && impl_->prefetchSkinKey_ == skinDirectory) return;
+  impl_->prefetchStarted = true;
+  impl_->prefetchSkinKey_ = skinDirectory;
+  static const std::vector<std::string> assets = {
+      "res/background.jpg", "res/click.png", "res/click_mh.png", "res/drag.png",
+      "res/drag_mh.png", "res/flick.png", "res/flick_mh.png", "res/hold.png",
+      "res/hold_mh.png", "res/hit_fx.png", "res/pause.png", "res/timerLine.png",
+      "res/NoteRing.png", "res/arrow.png", "official_textures/Glitch4in1.png",
+      "official_textures/GlitchMap.png", "official_textures/WireNoise.png",
+      "official_textures/DisplaceMap.png", "official_textures/BlockNoise1.png",
+      "official_textures/PointNoise.png", "official_textures/FD_Noise_00000.png"};
+  impl_->textures.beginPrefetchAssets(assets);
+  if (skinDirectory.empty()) return;
+  static const char* const skinFiles[] = {"click.png", "click_mh.png", "drag.png",
+      "drag_mh.png", "flick.png", "flick_mh.png", "hold.png", "hold_mh.png", "hit_fx.png",
+      "hold_body.png", "hold_body_mh.png"};
+  std::vector<std::filesystem::path> files;
+  for (const char* name : skinFiles) {
+    const auto path = skin::resolveSkinFile(skinDirectory, name);
+    if (!path.empty()) files.push_back(path);
+  }
+  impl_->textures.beginPrefetchFiles(files);
+}
+
+void GameRenderer::prefetchBackgroundImage(const std::filesystem::path& image) {
+  if (impl_ == nullptr || image.empty()) return;
+  impl_->textures.beginPrefetchFiles({image});
+}
+
+bool GameRenderer::gameplayTexturesReady() const {
+  return impl_ == nullptr || !impl_->prefetchStarted || impl_->textures.prefetchFinished();
 }
 
 void GameRenderer::setSkinDirectory(const std::filesystem::path& skinDirectory) {
@@ -2070,7 +2162,8 @@ void GameRenderer::setBackgroundImage(const std::filesystem::path& image) {
   if (impl_ == nullptr || !impl_->initialized) return;
   gl::Texture* loaded =
       image.empty() ? nullptr : impl_->textures.loadFile(image);
-  impl_->background = loaded != nullptr ? loaded : impl_->defaultBackground;
+  if (loaded != nullptr) impl_->background = loaded;
+  else if (impl_->defaultBackground != nullptr) impl_->background = impl_->defaultBackground;
   // The backdrop blur is built from the artwork, so it has to be rebuilt for the new image.
   impl_->backgroundBlur.invalidate();
 }

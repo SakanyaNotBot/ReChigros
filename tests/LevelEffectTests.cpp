@@ -204,6 +204,9 @@ int main() {
     const auto selected = OfficialLevelEffects::forChart(*throughReader,
         "8d5072369f4e120775a469e7541dd9e8", "Message", true);
     require(selected != nullptr, "a table read through the asset reader selects its effect");
+    require(OfficialLevelEffects::forChart(*throughReader,
+        "fa446d4a2229be9431748505a3a8e11f", "Message", true) != nullptr,
+        "the newer Message SP revision also selects its effect");
 
     // A reader that returns nothing must not mask a file that does exist later in the run.
     OfficialLevelEffects::setAssetReader(

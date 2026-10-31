@@ -36,8 +36,9 @@ const std::unordered_map<std::string, std::string>& chartWhitelist() {
       {"d6d016913f5c54dbe781f1522cb5487e", "desultorysignals"},
       {"ab3c6079a43fa46ae4aa25fa147d51ee", "desultorysignals"},
       {"12bead3b4e916404ad89eaa2d632561b", "desultorysignals"},
-      // Message SP always gets its effect.
+      // Message SP always gets its effect, including the newer chart revision.
       {"8d5072369f4e120775a469e7541dd9e8", "message"},
+      {"fa446d4a2229be9431748505a3a8e11f", "message"},
   };
   return table;
 }

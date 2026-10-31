@@ -12,6 +12,7 @@
 #include "rechigros/game/PlayResult.hpp"
 
 #include <filesystem>
+#include <functional>
 #include <future>
 #include <memory>
 #include <string>
@@ -178,6 +179,8 @@ struct AppContext {
   TextureCache textures;
   audio::AudioEngine* audio{};
   render::GameRenderer* renderer{};
+  // Creates the gameplay renderer on first use instead of paying for it during launch.
+  std::function<void()> ensureRenderer;
 
   Screen screen{Screen::Home};
   Screen settingsReturn{Screen::Home};

@@ -186,12 +186,21 @@ public:
   // subset of the material settings; fields it leaves out keep the built-in value. Passing
   // an empty path clears the skin and restores the built-in values.
   void setSkinDirectory(const std::filesystem::path& skinDirectory);
+  // Starts decoding every gameplay texture (built-in assets and the skin's own files) on worker
+  // threads, so the loading screen can keep animating while a large skin is read.
+  void prefetchGameplayTextures(const std::filesystem::path& skinDirectory);
+  // Prefetches the chart illustration too, so a large backdrop does not stall beginRun.
+  void prefetchBackgroundImage(const std::filesystem::path& image);
+  // True once all texture decodes started by prefetchGameplayTextures have finished.
+  [[nodiscard]] bool gameplayTexturesReady() const;
   // Discards the animated score/accuracy readout so the next frame starts it over. A seek
   // replaces the run's position outright, so the displayed value has to follow it instead of
   // sliding toward it from wherever the previous position left it.
   void resetHudDisplay();
   // Restarts note judgement feedback after a seek or a new attempt, without changing materials.
-  void resetJudgementEffects();
+  // `chart` must be the run's current chart (or null when there is none); the previous chart
+  // pointer is never dereferenced after its owner has released it.
+  void resetJudgementEffects(game::Chart* chart = nullptr);
   // Selects the chart illustration used as the play-field backdrop (and for the fixed side
   // panels). An empty or unreadable path keeps the built-in backdrop.
   void setBackgroundImage(const std::filesystem::path& image);

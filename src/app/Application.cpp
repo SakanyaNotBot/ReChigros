@@ -425,46 +425,13 @@ bool Application::initialize() {
         return platform::AssetManager::readBinary(root, relative);
       });
   audio_ = std::make_unique<audio::AudioEngine>();
-  audio_->initialize();
-  reportLaunchStage("audio device", launchStage, launchFrequency);
-  launchStage = launchMark();
-
-  audio_->loadSoundEffects(assetRoot);
-  reportLaunchStage("audio clips", launchStage, launchFrequency);
-  launchStage = launchMark();
-
-  renderer_ = std::make_unique<render::GameRenderer>();
-  if (!renderer_->initialize(assetRoot)) {
-    std::cerr << "Renderer initialization failed (asset root: " << assetRoot.string() << ")\n";
-  }
-  reportLaunchStage("renderer + shaders", launchStage, launchFrequency);
-  launchStage = launchMark();
-  // Interface glyph cache. Every label is rasterised at the pixel size it is finally drawn
-  // at, which keeps text sharp at any window size and density.
-  ui::fontCache().initialize(assetRoot);
-  reportLaunchStage("glyph cache", launchStage, launchFrequency);
-  launchStage = launchMark();
-
-  // GPU menu backdrop. When its shaders or textures fail to load, the interface
-  // keeps the simple ImGui backdrop instead. The environment switch exists so the
-  // fallback path can be verified without touching the asset tree.
-  const char* disableBackdrop = std::getenv("RECHIGROS_DISABLE_BACKDROP");
-  if (disableBackdrop != nullptr && *disableBackdrop != '\0') {
-    std::cerr << "GPU backdrop disabled by environment; using the fallback background\n";
-  } else {
-    backdrop_ = std::make_unique<TriGridBackdrop>();
-    if (!backdrop_->prepare(assetRoot)) {
-      std::cerr << "GPU backdrop unavailable; using the fallback background\n";
-      backdrop_->release();
-      backdrop_.reset();
-    }
-  }
-  ui::setBackdropSuppressed(backdrop_ != nullptr && backdrop_->ready());
 
   app_ = std::make_unique<AppContext>(
       dataRootOverride_.empty() ? platform::userDataRoot() / "app" : dataRootOverride_);
   app_->audio = audio_.get();
-  app_->renderer = renderer_.get();
+  // The gameplay renderer is created on demand: the home screen does not need its shaders or
+  // note textures, so launch no longer pays for them before the first frame.
+  app_->renderer = nullptr;
   app_->displayDpi = displayDpi_;
   app_->settingsDirty = false;
   // An explicit record path asks for a replay regardless of the stored preference.
@@ -474,6 +441,7 @@ bool Application::initialize() {
   app_->playOverrides.challenge = challengeOverride_;
   app_->playOverrides.mirrorX = mirrorOverride_;
   app_->playOverrides.autoplay = autoplayOverride_;
+  app_->ensureRenderer = [this]() { ensureRenderer(); };
   updateAudioFromSettings();
   // Scanning the pack directory reads and parses every pack's metadata. Doing it here rather
   // than on demand keeps it off the first frame that shows a screen needing the library,
@@ -482,7 +450,10 @@ bool Application::initialize() {
   // installed package. Warming it on a worker thread keeps that cost off the launch path;
   // any screen that does need the list joins the warm-up through records().
   app_->library.warmUpAsync();
-  reportLaunchStage("library warm-up (async)", launchStage, launchFrequency);
+  // Decode the hit-sound bank on a worker as well. The keyed AudioEngine loader makes a run
+  // started before this finishes wait only for the same decode instead of repeating it.
+  audioWarmUpThread_ = std::thread([this]() { audio_->loadSoundEffects(platform::assetRoot()); });
+  reportLaunchStage("app context + library warm-up", launchStage, launchFrequency);
   launchStage = launchMark();
 
   // A capture run can open a specific screen with representative state, so a single
@@ -771,6 +742,9 @@ int Application::run() {
     const double cpuMs = static_cast<double>(preSwapCounter - counter) * 1000.0
         / static_cast<double>(frequency);
     SDL_GL_SwapWindow(window_);
+    // One deferred step per presented frame: the home screen is already visible before the
+    // glyph atlas and the GPU backdrop are built.
+    runDeferredInitialization();
     const auto postSwapCounter = SDL_GetPerformanceCounter();
     const double swapMs = static_cast<double>(postSwapCounter - preSwapCounter) * 1000.0
         / static_cast<double>(frequency);
@@ -1383,8 +1357,82 @@ void Application::processEvents(bool& running) {
   }
 }
 
+void Application::ensureRenderer() {
+  if (renderer_ != nullptr) return;
+  renderer_ = std::make_unique<render::GameRenderer>();
+  if (!renderer_->initialize(platform::assetRoot())) {
+    std::cerr << "Renderer initialization failed\n";
+  }
+  if (app_ != nullptr) app_->renderer = renderer_.get();
+}
+
+void Application::runDeferredInitialization() {
+  if (deferredInitStage_ == 0) {
+    deferredInitStage_ = 1;
+    // The first frame used the ImGui font fallback; the glyph atlas is built only once that
+    // frame is on screen, so the cold-start black window does not include it.
+    ui::fontCache().initialize(platform::assetRoot());
+    return;
+  }
+  if (deferredInitStage_ == 1) {
+    deferredInitStage_ = 2;
+    const char* disableBackdrop = std::getenv("RECHIGROS_DISABLE_BACKDROP");
+    if (disableBackdrop != nullptr && *disableBackdrop != '\0') {
+      std::cerr << "GPU backdrop disabled by environment; using the fallback background\n";
+      ui::setBackdropSuppressed(false);
+      return;
+    }
+    backdrop_ = std::make_unique<TriGridBackdrop>();
+    if (!backdrop_->prepare(platform::assetRoot())) {
+      std::cerr << "GPU backdrop unavailable; using the fallback background\n";
+      backdrop_->release();
+      backdrop_.reset();
+    }
+    ui::setBackdropSuppressed(backdrop_ != nullptr && backdrop_->ready());
+  }
+}
+
+void Application::handleRenderDeviceReset() {
+  if (app_ == nullptr) return;
+  // SDL recreated the GL context (typically after a native picker or a background/foreground
+  // cycle). Every GL object from the old context is now invalid: reload the renderer, the
+  // backdrop, the font atlas and the cover textures instead of presenting a black frame.
+  if (app_->recording.state() == RecordSession::State::Running) {
+    app_->recording.cancel(*app_);
+  }
+  app_->textures.reset();
+  ui::fontCache().shutdown();
+  ui::fontCache().initialize(platform::assetRoot());
+
+  renderer_ = std::make_unique<render::GameRenderer>();
+  if (!renderer_->initialize(platform::assetRoot())) {
+    std::cerr << "Renderer reinitialization after device reset failed\n";
+  }
+  app_->renderer = renderer_.get();
+  if (!app_->settings.selectedSkin.empty()) {
+    const auto skin = app_->dataRoot / "skins" / app_->settings.selectedSkin;
+    std::error_code error;
+    if (std::filesystem::is_directory(skin, error)) renderer_->setSkinDirectory(skin);
+  }
+  if (!app_->play.bgFile.empty()) renderer_->setBackgroundImage(app_->play.bgFile);
+  renderer_->resetJudgementEffects(app_->game.chart.get());
+
+  if (backdrop_ != nullptr) {
+    backdrop_->release();
+    if (!backdrop_->prepare(platform::assetRoot())) {
+      backdrop_->release();
+      backdrop_.reset();
+    }
+  }
+  ui::setBackdropSuppressed(backdrop_ != nullptr && backdrop_->ready());
+  frameClockReset_ = true;
+}
+
 void Application::handleEvent(const SDL_Event& event, bool& running) {
   switch (event.type) {
+    case SDL_EVENT_RENDER_DEVICE_RESET:
+      handleRenderDeviceReset();
+      return;
     case SDL_EVENT_QUIT:
       running = false;
       app_->quitRequested = true;
@@ -1554,6 +1602,7 @@ void Application::shutdown() noexcept {
     if (context_ != nullptr) backdrop_->release();
     backdrop_.reset();
   }
+  if (audioWarmUpThread_.joinable()) audioWarmUpThread_.join();
   if (audio_ != nullptr) {
     audio_->shutdown();
     audio_.reset();

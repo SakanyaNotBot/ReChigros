@@ -5,6 +5,7 @@
 #include "rechigros/game/JudgeLine.hpp"
 #include "rechigros/game/Note.hpp"
 #include "rechigros/render/batch/SpriteBatch.hpp"
+#include "rechigros/render/fx/HitEffectMotion.hpp"
 #include "rechigros/render/gl/Texture.hpp"
 
 #include <algorithm>
@@ -13,57 +14,12 @@
 namespace rechigros::render::fx {
 namespace {
 
-// Burst geometry, all relative to one note width.
-constexpr float kPrefabToNoteWidth = 1.35F / 2.1758F;
-constexpr float kParticleSize = 0.3F * kPrefabToNoteWidth;
-// Debris spawn ring and speed range.
 constexpr float kSpawnRadius = 0.2F;
 constexpr float kSpawnThickness = 0.2F;
 constexpr float kSpeedMin = 15.0F;
 constexpr float kSpeedMax = 35.0F;
-// Drag constant of the fitted particle-speed law.
-constexpr float kDragK = 2.657F;
-constexpr float kParticleLifetime = 0.5F;
-// Simpson step count for the analytical particle travel.
-constexpr int kTravelSteps = 24;
 constexpr int kMaxLiveEffects = 512;
 constexpr float kPi = 3.14159265358979323846F;
-
-float clamp01(float value) {
-  if (!(value > 0.0F)) return 0.0F;
-  if (value > 1.0F) return 1.0F;
-  return value;
-}
-
-// Fitted drag term of the particle-speed law, normalised to unit progress.
-float dragIntegral(float u) {
-  if (u <= 0.0F) return 0.0F;
-  if (u > 1.0F) u = 1.0F;
-  return ((0.05F * u - 0.4666667F) * u + 1.1F) * u * u;
-}
-
-// Radial distance a particle has reached at progress `p`, in prefab units. This is
-// the integral of the fitted speed law integrated with Simpson's rule; the closed
-// form is not available because the law is a fitted polynomial.
-float particleTravel(float speed, float p) {
-  const float step = p / static_cast<float>(kTravelSteps);
-  float sum = 0.0F;
-  for (int stepIndex = 0; stepIndex <= kTravelSteps; ++stepIndex) {
-    const float u = static_cast<float>(stepIndex) * step;
-    const float weight = (stepIndex == 0 || stepIndex == kTravelSteps)
-        ? 1.0F
-        : (((stepIndex & 1) == 1) ? 4.0F : 2.0F);
-    const float speedNow = 1.0F / speed + kDragK * dragIntegral(u);
-    if (speedNow <= 1.0e-6F) continue;
-    sum += weight / speedNow;
-  }
-  return sum * step / 3.0F * kParticleLifetime;
-}
-
-// Size envelope of the debris: grows in, then shrinks away.
-float particleSize(float p) {
-  return ((0.2078F * p - 1.6524F) * p + 1.6399F) * p + 0.4988F;
-}
 
 bool isPerfect(int judgement) noexcept { return judgement == 0; }
 bool isGood(int judgement) noexcept { return judgement == 1; }
@@ -86,7 +42,7 @@ void HitEffectField::clear() noexcept {
 }
 
 void HitEffectField::spawn(float x, float y, double startSec, float red, float green, float blue,
-    float alpha, int parts, float lineRotDeg) {
+    float alpha, int parts, float lineRotDeg, bool customTint) {
   if (effects_.size() >= static_cast<std::size_t>(kMaxLiveEffects)) return;
 
   HitEffectInstance effect;
@@ -99,6 +55,7 @@ void HitEffectField::spawn(float x, float y, double startSec, float red, float g
   effect.alpha = alpha;
   effect.rotateDeg = lineRotDeg;
   effect.parts = std::clamp(parts, 1, 4);
+  effect.customTint = customTint || (effect.parts == 4 ? skin_.perfectFromSkin : skin_.goodFromSkin);
 
   // Every part gets an independent angle, speed and spawn radius; the radius is
   // reduced by a random fraction of the ring thickness.
@@ -216,7 +173,7 @@ void HitEffectField::spawnBurstForNote(const game::Note& note, int judgement,
     green = note.hitEffectG;
     blue = note.hitEffectB;
   }
-  spawn(x, y, startSec, red, green, blue, alpha, parts, lineRotDeg);
+  spawn(x, y, startSec, red, green, blue, alpha, parts, lineRotDeg, note.hasHitEffectTint);
 }
 
 void HitEffectField::spawnHoldBody(game::Chart& chart, const game::HoldBodyBurst& burst,
@@ -275,7 +232,8 @@ void HitEffectField::spawnHoldHead(game::Chart& chart, const game::HoldHeadBurst
     green = note->hitEffectG;
     blue = note->hitEffectB;
   }
-  spawn(x, y, visualTimeSec - lag, red, green, blue, alpha, parts, rotationDeg);
+  spawn(x, y, visualTimeSec - lag, red, green, blue, alpha, parts, rotationDeg,
+      note->hasHitEffectTint);
 }
 
 void HitEffectField::draw(batch::SpriteBatch& out, const math::Mat4& projection,
@@ -286,7 +244,6 @@ void HitEffectField::draw(batch::SpriteBatch& out, const math::Mat4& projection,
   if (frames <= 0 || !sheet.valid()) return;
 
   const float duration = std::max(1.0e-3F, style_.duration);
-  const float effectSize = noteWidth_ * style_.spriteScale * style_.sizeScale;
 
   // Spritesheet animation.
   out.begin();
@@ -295,12 +252,14 @@ void HitEffectField::draw(batch::SpriteBatch& out, const math::Mat4& projection,
   for (const auto& effect : effects_) {
     const float age = static_cast<float>(visualTimeSec - effect.startSec);
     if (age < 0.0F || age > duration) continue;
-    const float progress = clamp01(age / duration);
+    const float progress = hitEffectProgress(age / duration);
 
     int frame = static_cast<int>(std::floor(progress * static_cast<float>(frames)));
     frame = std::clamp(frame, 0, frames - 1);
     const int column = frame % atlas_.columns;
     const int row = frame / atlas_.columns;
+    const float effectSize = noteWidth_ * style_.spriteScale * style_.sizeScale
+        * hitEffectFrameScale(static_cast<int>(std::floor(progress * 30.0F)));
 
     const float u0 = static_cast<float>(column) / static_cast<float>(atlas_.columns) + halfU;
     const float u1 =
@@ -324,21 +283,23 @@ void HitEffectField::draw(batch::SpriteBatch& out, const math::Mat4& projection,
 
   // Debris quads, drawn with the shared white texture.
   if (!style_.showParticles) return;
-  const float worldPx = noteWidth_ * kPrefabToNoteWidth;
-  const float baseSize = noteWidth_ * kParticleSize * style_.sizeScale;
+  const float worldPx = noteWidth_ * kHitEffectPrefabToNoteWidth;
+  const float baseSize = noteWidth_ * kHitEffectParticleSize * style_.sizeScale;
   out.begin();
   for (const auto& effect : effects_) {
     const float age = static_cast<float>(visualTimeSec - effect.startSec);
     if (age < 0.0F || age > duration) continue;
-    const float progress = clamp01(age / duration);
+    const float progress = hitEffectProgress(age / duration);
     const float alpha = 1.0F - progress;
     const float size = baseSize * particleSize(progress);
+    const float* colour = effect.customTint
+        ? &effect.red : (effect.parts == 4 ? game::PERFECT_COLOR : game::GOOD_COLOR);
     for (int part = 0; part < effect.parts; ++part) {
       const auto slot = static_cast<std::size_t>(part);
       const float travel = particleTravel(effect.speed[slot], progress);
       const float radius = (effect.radius0[slot] + travel) * worldPx * style_.sizeScale;
       out.addQuad(effect.x + radius * effect.dirX[slot], effect.y + radius * effect.dirY[slot],
-          size, size, 0.0F, effect.red, effect.green, effect.blue, alpha, 0.0F, 0.0F, 1.0F, 1.0F);
+          size, size, 0.0F, colour[0], colour[1], colour[2], alpha, 0.0F, 0.0F, 1.0F, 1.0F);
     }
   }
   if (!out.empty()) out.flush(projection, whiteTexture, nullptr);

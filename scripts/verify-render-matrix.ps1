@@ -377,8 +377,8 @@ $cases = @(
      Base = @('--time', '1.0'); Changed = @('--time', '1.0', '--key-scale', '1.5'); Minimum = 0.3;
      Description = 'the key scale resizes the notes' }
   @{ Id = 'bad-effect'; BaseChart = $singleNote; ChangedChart = $singleNote;
-     Base = @('--time', '0.55');
-     Changed = @('--time', '0.55', '--force-bad'); Minimum = 1.0;
+     Base = @('--time', '0.55', '--no-hit-effects');
+     Changed = @('--time', '0.55', '--force-bad', '--no-hit-effects'); Minimum = 0.1;
      Description = 'a bad judgement leaves a fading copy of the note' }
   @{ Id = 'hold-sheet'; BaseChart = $hold; ChangedChart = $hold;
      Base = @('--time', '1.2');

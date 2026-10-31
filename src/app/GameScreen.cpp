@@ -202,7 +202,7 @@ void applyPracticeSeek(AppContext& context, double targetChartTime) {
   // Rebuild the judgement state and skip every note before the seek point.
   game.session.setChart(game.chart.get(), game.challenge);
   game.session.setAutoplay(game.autoplay);
-  if (context.renderer != nullptr) context.renderer->resetJudgementEffects();
+  if (context.renderer != nullptr) context.renderer->resetJudgementEffects(game.chart.get());
   syncGameplayViewport(context);
   for (auto* note : game.chart->allNotesSorted) {
     if (note->sect < target) {
@@ -1552,6 +1552,7 @@ bool beginRun(AppContext& context, std::unique_ptr<game::Chart> chart,
     return false;
   }
   context.loadError.clear();
+  if (context.ensureRenderer) context.ensureRenderer();
 
   // Resolve once so the scene and the mixer use the same selection. A skin only overrides
   // the resources it actually provides.
@@ -1565,7 +1566,7 @@ bool beginRun(AppContext& context, std::unique_ptr<game::Chart> chart,
     context.renderer->setSkinDirectory(skinDirectory);
     // The play field uses the chart's own illustration as its (blurred) backdrop.
     context.renderer->setBackgroundImage(context.play.bgFile);
-    context.renderer->resetJudgementEffects();
+    context.renderer->resetJudgementEffects(chart.get());
   }
   context.game = GameRuntime{};
   auto& game = context.game;
@@ -1752,6 +1753,20 @@ void gameEnterWithLoading(AppContext& context) {
 void pollChartLoad(AppContext& context) {
   auto& game = context.game;
   if (!game.loading || !game.chartLoad.valid()) return;
+  if (context.ensureRenderer) context.ensureRenderer();
+  std::filesystem::path skinDirectory;
+  if (!context.settings.selectedSkin.empty()) {
+    const auto candidate = context.dataRoot / "skins" / context.settings.selectedSkin;
+    std::error_code error;
+    if (std::filesystem::is_directory(candidate, error)) skinDirectory = candidate;
+  }
+  if (context.renderer != nullptr) {
+    context.renderer->prefetchGameplayTextures(skinDirectory);
+    context.renderer->prefetchBackgroundImage(context.play.bgFile);
+    // Keep the loading panel animated until both the chart and the (possibly very large) skin
+    // textures are decoded, so beginRun only uploads instead of decoding on the UI thread.
+    if (!context.renderer->gameplayTexturesReady()) return;
+  }
   if (game.chartLoad.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
   GameRuntime::LoadedRun loaded = game.chartLoad.get();
   // The future is spent; keep the runtime from treating it as still running.
@@ -2357,10 +2372,9 @@ void gameToggleAutoplay(AppContext& context) {
 }
 
 void gameRestart(AppContext& context) {
-  if (!gameEnter(context)) {
-    notify(context, context.loadError.empty() ? "谱面加载失败" : context.loadError);
-    return;
-  }
+  // Restart goes through the loading panel too: a large skin is decoded on a worker instead of
+  // freezing the result screen while the chart and textures are read again.
+  gameEnterWithLoading(context);
   context.screen = Screen::Game;
 }
 

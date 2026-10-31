@@ -176,9 +176,12 @@ Selected high-risk matches, each read on both sides.
 | Note width ratio `0.1234375 * min(ar/(16/9), 1)` | `:11342-11349` | `GameRenderer.cpp:noteWidthRatio` | MATCH |
 | Note cull area = stage expanded by 1/12 per side, reveal-scaled | `:6515-6520` | `GameRenderer.cpp` cull bounds + `NoteBatch.cpp:169-204` | MATCH |
 | Note control height / incline / y-control / skew formulas | `:7049-7120` | `scene/NoteBatch.cpp:69-99` | MATCH |
-| Hit-effect debris: speed 15..35, spawn radius 0.2, thickness 0.2, drag K 2.657, lifetime 0.5, size envelope `((0.2078p-1.6524)p+1.6399)p+0.4988` | `GameConstants.java:59-62`, `GameRenderer.java:1242-1267`, `:11055-11078` | `fx/HitEffect.hpp:39-46`, `fx/HitEffect.cpp:17-66` | MATCH |
+| Hit-effect debris: speed 15..35, spawn radius 0.2, thickness 0.2, drag scalar 5, lifetime 0.5, size keys `(0,0.49884492)` and `(1,0.6941143)` with unweighted tangents `1.6398785` / `-1.0415096` | `GameConstants.java:59-62`, `GameRenderer.java:1242-1267`, `:11055-11078`; Phigros 4.0.1 `perfect.prefab` / `good.prefab` `SizeModule` and `ClampVelocityModule` | `fx/HitEffectMotion.hpp` | NATIVE-CORRECTED | The native rule is `dv/dt=-drag(t)*v^2`; `5*0.5` times the exact integral of the unweighted drag curve replaces the old fitted coefficient. |
+| Hit-effect sprite colours: Perfect `(1,0.92704993,0.6273585,0.88235295)`, Good `(180/255,225/255,1,235/255)`; particle colours use `PERFECT_COLOR` / `GOOD_COLOR` | Phigros 4.0.1 prefabs | `fx/HitEffect.hpp`, `fx/HitEffect.cpp`, `fx/ClickEffectField.cpp` | NATIVE-CORRECTED | Sprite tint/alpha is separate from particle start colour; explicit per-note tints still override both. |
+| Hit-effect sprite scale: each of the 30 Sprite rects times runtime `noteScale*1.35`, relative to the 989px Note sprite times 0.22; the prefab's 1.5 localScale is overwritten by `set_localScale` | Phigros 4.0.1 Sprite assets, `ScoreControl.Good` / `ScoreControl.Perfect`, `JudgeLineControl.CreateNote` | `fx/HitEffectMotion.hpp` | NATIVE-CORRECTED | Uses the actual per-frame Sprite rect and the runtime 1.35 scale, not the prefab's 1.5. |
 | Hit-effect back-dating `lag = max(0,(chartTime-noteTime)/speed)` | `:10696-10699`, `:10725-10728` | `fx/HitEffect.cpp:233-235`, `:250-252` | MATCH |
-| Bad-effect: 0.5 s life, tint `(0.423529, 0.262745, 0.262745)`, alpha `1-p` | `:11580-11619` | `fx/BadEffectField.hpp:20-24` | MATCH |
+| Bad-effect: Click-only fading copy, 25/60 s life, tint `(0.4245283, 0.26232645, 0.26232645)`, alpha keys `(0,1,outSlope 0)` → `(0.41666666,0,inSlope -6.6625743)`, prefab scale 0.18 against the 0.22 note prefab, normal note sheet, Background layer under the line and notes | Phigros 4.0.1 `ClickBad*.prefab`, `CilckBad*.anim`, `ClickControl.Judge` RVA `0x1d8241c-0x1d82528` | `fx/BadEffectField.hpp`, `fx/BadEffectField.cpp`, `GameRenderer.cpp:drawBadEffects` | NATIVE-CORRECTED | The old row's 0.5 s linear fade came from the Java reference. The native copy is parented without copying the note scale, so it is 9/11 of the 16:9 note width and height; on narrower stages `CreateNote` shrinks the note but not the copy, and the port reproduces that ratio. |
+| Miss: no note-local effect; `ScoreControl.Miss` only updates counters/combo and `NoteUpdateManager.Update` destroys the note object immediately | `ScoreControl.Miss` RVA `0x1d874ac`, `NoteUpdateManager.Update` RVA `0x1d8457c-0x1d845c4`; `DragControl`/`HoldControl` have no `noteBad` field; `FilckBad.prefab` is never instantiated by `FlickControl.Judge` | `GameRenderer.cpp:drawBadEffects` (Bad only), `scene/NoteBatch.cpp` judged-note skip | NATIVE-CORRECTED | The native `DragControl`/`FlickControl`/`HoldControl` judges call only `Miss`, never `Bad`, and no Miss prefab exists. |
 | Judge-line width/thickness scaling and official vs editor length | `:7449-7466` | `GameRenderer.cpp:drawLinePass` | MATCH |
 | Storyboard line texture scale (RPE 1350 authoring space, `useOfficialScale`, `rpeTextureScaleInPixels`) | `:7353-7400` | `GameRenderer.cpp:drawLinePass` | MATCH |
 | Storyboard text at `50/1350 * stageW`, multi-line height scaling | `:7417-7441` | `GameRenderer.cpp:drawLinePass` | MATCH |
@@ -273,7 +276,9 @@ string, because it is an inline program in the reference too, not an asset.
 ## 4. Draw order and GL state per pass
 
 Reference order established from `renderSceneDirect` (`:6394-6559`), `drawGameplayObjects`
-(`:4629-4715`) and `renderSceneWithPrprEffects` (`:4254-4452`).
+(`:4629-4715`) and `renderSceneWithPrprEffects` (`:4254-4452`). The Bad-copy position is
+native-corrected: `ClickBad` lives on Unity's Background sorting layer at z+1, so it draws
+after the backdrop but under the judge line and under every note sprite.
 
 | # | Pass | Blend | Depth | Scissor | Port site |
 | --- | --- | --- | --- | --- | --- |
@@ -282,9 +287,9 @@ Reference order established from `renderSceneDirect` (`:6394-6559`), `drawGamepl
 | 3 | Stage backdrop artwork + dim | same | off | stage scissor in the reference; the port clips by UV instead (see §6) | `drawBackgroundPass` |
 | 4 | Hate black mask (full screen) | premultiplied, scissor temporarily off, state restored | off | off | `drawLevelEffectObjects` |
 | 5 | Level-effect objects (particles, kaleido, DS grid) | per pass: particles premultiplied, DS grid additive `SRC_ALPHA/ONE`, kaleido premultiplied; all restore | off | per pass | `drawLevelEffectObjects` |
-| 6 | Judge lines (plain, texture, text) | premultiplied | off | off | `drawLinePass` |
-| 7 | Hold bodies + heads, then note heads per texture bucket | premultiplied | off | off | `drawNotePasses` |
-| 8 | Bad-effect copies (per texture) | premultiplied | off | off | `drawNotePasses` |
+| 6 | Bad-effect copies (per texture), on the Background sorting layer | premultiplied | off | off | `drawBadEffects` |
+| 7 | Judge lines (plain, texture, text) | premultiplied | off | off | `drawLinePass` |
+| 8 | Hold bodies + heads, then note heads per texture bucket | premultiplied | off | off | `drawNotePasses` |
 | 9 | Red zones (inline path) | premultiplied | off | off | `blockOverlay.drawAll` |
 | 10 | Click effects (autoplay only) | premultiplied | off | off | `ClickEffectField::draw` |
 | 11 | Hit effects (sheet then debris) | premultiplied | off | off | `drawHitEffects` |
@@ -323,7 +328,7 @@ and nothing on the plain projection may accidentally be mirrored.
 | `GameRenderer.cpp` `drawLinePass` | plain judge lines, line textures, line text | n/a (quads use 0..1 UV; text and texture glyphs are symmetric when reflected, matching the reference which also does not swap them for lines) |
 | `GameRenderer.cpp` `drawNotePasses` (heads) | tap/drag/flick heads | **yes** — `params.flipU = layout.mirror` → `addQuadFlippable` (`NoteBatch.cpp:135-140`) |
 | `GameRenderer.cpp` `drawNotePasses` (holds) | hold head/body/tail, body sampler | **yes** — `addQuadFlippable` / `addQuadSelectFlippable` (`NoteBatch.cpp:142-148`) |
-| `GameRenderer.cpp` `drawNotePasses` (bad effects) | fading bad copies | **yes** — `mirrorU` argument |
+| `GameRenderer.cpp` `drawBadEffects` | fading bad copies | **yes** — `mirrorU` argument |
 | `GameRenderer.cpp` `drawHitEffects` | hit sheet + debris | **yes** — `mirrorU` argument (`HitEffect.cpp`) |
 | `GameRenderer.cpp` `drawHitEffects` (click effects) | autoplay sheet + debris | **yes** — `mirrorU` argument (`ClickEffectField.cpp`) |
 | `GameRenderer.cpp` red-zone inline branch | zone silhouettes | no swap needed (procedural solid quads, no texture) |
@@ -402,7 +407,7 @@ These are noted so a future reader does not mistake them for divergences.
 | `drawFpsCounter` | FPS counter | MATCH | Same smoothed FPS readout in the same corner. |
 | `settleAtCurrentPosition` | pause settle step | MATCH | Same settle that stops the playhead where the pause was taken. |
 | `advanceFrame` | per-frame advance | MATCH | Same frame advance that the delta substitution feeds. |
-| `drawHitEffects` | hit-effect draw | MATCH | Same hit and miss effects drawn from the sheets. |
+| `drawHitEffects` | hit-effect draw | NATIVE-CORRECTED | The Java reference also drew a miss sheet; the native game spawns nothing on Miss, so only Perfect/Good bursts are drawn. |
 | `computePracticeLayout` | practice panel layout | MATCH | Same panel rectangle from the practice UI scale. |
 | `drawRoundedRect` | `drawRoundedRect` (`GameScreen.cpp:353`) | MATCH | Same rounded filled rectangle. |
 | `practiceFormatTime` | practice time label | MATCH | Same `m:ss` formatting. |
@@ -537,13 +542,13 @@ These are noted so a future reader does not mistake them for divergences.
 | `addQuadToBatch` / `putBatchInstance` | `batch::SpriteBatch` instance append | MATCH | Same append of a quad instance into the current batch. |
 | `setupVertexArrayObjects` / `createQuadVao` / `createBatchVao` / `uploadQuadUvBuffer` / `uploadBatchBuffer` | `SpriteBatch` VAO and buffer setup | MATCH | Same VAO per batch kind and the same buffer upload strategy. |
 | `flushBatch` (2 overloads) / `flushHitFxBatch` | `SpriteBatch::flush` and the hit-effect batch flush | MATCH | Same flush of accumulated instances in one draw call, with the same per-kind state. |
-| `hitFxDragIntegral` :11352-11357 | `dragIntegral` (`HitEffect.cpp:39-43`) | MATCH | Identical polynomial `((0.05u - 0.4666667)u + 1.1)u^2` with the same clamp of u into 0..1 and the same zero at u <= 0. |
-| `hitFxParticleTravel` :11363-11374 | `particleTravel` (`HitEffect.cpp:48-61`) | MATCH | Same Simpson integration over `n = 24` intervals (`kTravelSteps = 24`), same endpoint/odd/even weights, same `sum * h / 3 * lifetime`, with `HIT_FX_PARTICLE_LIFETIME = 0.5` and `HIT_FX_PARTICLE_DRAG_K = 2.657` matching `kParticleLifetime = 0.5` and `kDragK = 2.657`. |
+| `hitFxDragIntegral` :11352-11357 | `particleDragIntegral` (`fx/HitEffectMotion.hpp`) | NATIVE-CORRECTED | Uses the prefab's unweighted Hermite drag curve and its exact integral (tangent `2.1999998`), not the former weighted approximation. |
+| `hitFxParticleTravel` :11363-11374 | `particleTravel` (`fx/HitEffectMotion.hpp`) | NATIVE-CORRECTED | Keeps 24-step Simpson integration over `dv/dt=-drag(t)*v^2`; uses `5*0.5` and the unweighted drag tangent from the native prefab. |
 | `drawClickEffects` | click-effect field draw | MATCH | Same effect drawn from the hit-effect sheet with the same grid slicing and per-frame travel. |
 | `getHistoricalLineState` | historical line state lookup | MATCH | Same lookup of a line's state at a past chart time, used by the replay click effects. |
 | `shouldSkipReplayClickEffect` | replay click-effect gate | MATCH | Same skip when the replay did not record a click at that moment. |
 | `removeExpiredPrefix` | expired-entry trim | MATCH | Same trim of the leading expired entries in the effect list. |
-| `drawBadEffects` | bad-effect draw | MATCH | Same miss effect drawn from its sheet. |
+| `drawBadEffects` | bad-effect draw | NATIVE-CORRECTED | The Java reference draws a sheet-sliced miss effect. The native game has no miss note effect; the port draws the Click-only fading note copy, under the line and notes. |
 | `drawTextureCover` | cover-fit texture draw | MATCH | Same cover-fit quad for a texture. |
 | `drawOfficialBackgroundClip` | background clip draw | MATCH | Same clipped background quad. |
 | `drawOfficialSideBackgrounds` / `drawOfficialSideBackgroundPanel` / `drawSideDimPanel` / `drawSideVerticalGaps` | side artwork and dim bands | MATCH | Same side art with the same dim panels and the same vertical gap fill; the alpha and dim constants are in section 2. |
@@ -552,7 +557,7 @@ These are noted so a future reader does not mistake them for divergences.
 | `hasHorizontalSideBlanks` / `isStageFullscreen` | side-blank and fullscreen tests | MATCH | Same predicate deciding whether the side art is needed at all. |
 | `enableStageScissor` / `disableStageScissor` | scissor around the stage | MATCH | Same scissor box restricted to the stage. |
 
-### Effect pools and the miss effect
+### Effect pools and the Bad copy
 
 | Reference declaration | Port implementation | Verdict | Basis |
 |---|---|---|---|
@@ -571,7 +576,7 @@ These are noted so a future reader does not mistake them for divergences.
 | `officialHudUnitPx` / `officialHudX` / `officialHudY` | `scene::hudUnit` / `hudX` / `hudY` | MATCH | Same centred mapping on the 1000-unit canvas. |
 | `getJudgeOffset` | `GameplaySession::touchPosition` | MATCH | Same normalised distance pipeline; compared term by term in the note-geometry section. |
 | `hasHitEffectTint` | `Note::tintR/G/B` presence flag | MATCH | Same single flag deciding whether the note's tint is used. |
-| `spawnBadEffect` | bad-effect spawn on a miss | MATCH | Same miss effect spawned at the note with the same quad and UVs from the effect sheet. |
+| `spawnBadEffect` | bad-effect spawn | NATIVE-CORRECTED | Only a Click `Bad` spawns the native fading note copy; Miss and the other note types spawn nothing. The copy uses the normal note sheet, 9/11 of the 16:9 note size. |
 | `obtainHitEffect` | `std::vector` of effect records in the renderer | **DIFFERENT BY DESIGN** | The reference keeps object pools (`EFFECT_POOL_MAX`) so a burst of hits does not allocate per effect. The port stores the same effect records by value in a vector cleared each frame, so there is no pool to refill and no per-effect allocation either. The effects produced per frame are the same. |
 | `obtainBadEffect` | `std::vector` of effect records in the renderer | **DIFFERENT BY DESIGN** | The reference keeps object pools (`EFFECT_POOL_MAX`) so a burst of hits does not allocate per effect. The port stores the same effect records by value in a vector cleared each frame, so there is no pool to refill and no per-effect allocation either. The effects produced per frame are the same. |
 | `recycleHitEffect` | `std::vector` of effect records in the renderer | **DIFFERENT BY DESIGN** | The reference keeps object pools (`EFFECT_POOL_MAX`) so a burst of hits does not allocate per effect. The port stores the same effect records by value in a vector cleared each frame, so there is no pool to refill and no per-effect allocation either. The effects produced per frame are the same. |

@@ -121,8 +121,14 @@ gl::Texture* TextureCache::store(const std::string& key, Image image, bool white
   return &inserted.first->second;
 }
 
+namespace {
+struct PendingTaskGuard {
+  std::atomic<std::size_t>& counter;
+  ~PendingTaskGuard() { counter.fetch_sub(1, std::memory_order_release); }
+};
+} // namespace
+
 void TextureCache::beginPrefetchAssets(const std::vector<std::string>& relativePaths) {
-  awaitPrefetchAssets();
   if (relativePaths.empty()) return;
   // Decoding is the expensive half of a texture load and touches no graphics state, so it is the
   // half that can run beside the drawing thread. The context belongs to the caller and is never
@@ -133,6 +139,7 @@ void TextureCache::beginPrefetchAssets(const std::vector<std::string>& relativeP
   // then awaits them, which is what makes the decode overlap instead of adding to the total.
   auto next = std::make_shared<std::atomic<std::size_t>>(0);
   auto paths = std::make_shared<std::vector<std::string>>(relativePaths);
+  prefetchPending_.fetch_add(relativePaths.size(), std::memory_order_release);
   prefetchThreads_.reserve(workers);
   for (std::size_t worker = 0; worker < workers; ++worker) {
     prefetchThreads_.emplace_back([this, next, paths] {
@@ -140,21 +147,53 @@ void TextureCache::beginPrefetchAssets(const std::vector<std::string>& relativeP
         const std::size_t index = next->fetch_add(1, std::memory_order_relaxed);
         if (index >= paths->size()) return;
         const std::string& relativePath = (*paths)[index];
+        PendingTaskGuard guard{prefetchPending_};
         const std::string key = "asset:" + relativePath;
         {
-          std::lock_guard<std::mutex> guard(prefetchMutex_);
+          std::lock_guard<std::mutex> guardLock(prefetchMutex_);
           if (decoded_.find(key) != decoded_.end()) continue;
         }
         const auto bytes = platform::AssetManager::readBinary(assetRoot_, relativePath);
         if (bytes.empty()) continue;
         Image image = decodeImageMemory(bytes.data(), bytes.size());
         if (!image.valid()) continue;
-        std::lock_guard<std::mutex> guard(prefetchMutex_);
+        std::lock_guard<std::mutex> guardLock(prefetchMutex_);
         decoded_.emplace(key, std::move(image));
       }
     });
   }
 }
+
+void TextureCache::beginPrefetchFiles(const std::vector<std::filesystem::path>& paths) {
+  if (paths.empty()) return;
+  const unsigned cores = std::thread::hardware_concurrency();
+  const std::size_t workers = std::clamp<std::size_t>(cores == 0 ? 2U : cores, 1U, 4U);
+  auto next = std::make_shared<std::atomic<std::size_t>>(0);
+  auto sharedPaths = std::make_shared<std::vector<std::filesystem::path>>(paths);
+  prefetchPending_.fetch_add(paths.size(), std::memory_order_release);
+  prefetchThreads_.reserve(workers);
+  for (std::size_t worker = 0; worker < workers; ++worker) {
+    prefetchThreads_.emplace_back([this, next, sharedPaths] {
+      for (;;) {
+        const std::size_t index = next->fetch_add(1, std::memory_order_relaxed);
+        if (index >= sharedPaths->size()) return;
+        const auto& path = (*sharedPaths)[index];
+        PendingTaskGuard guard{prefetchPending_};
+        const std::string key = "file:" + path.generic_string();
+        {
+          std::lock_guard<std::mutex> guardLock(prefetchMutex_);
+          if (decoded_.find(key) != decoded_.end()) continue;
+        }
+        Image image = decodeImage(path);
+        if (!image.valid()) continue;
+        std::lock_guard<std::mutex> guardLock(prefetchMutex_);
+        decoded_.emplace(key, std::move(image));
+      }
+    });
+  }
+}
+
+TextureCache::~TextureCache() { awaitPrefetchAssets(); }
 
 void TextureCache::awaitPrefetchAssets() {
   for (auto& thread : prefetchThreads_) {
@@ -169,10 +208,13 @@ gl::Texture* TextureCache::loadAsset(const std::string& relativePath, bool white
     return &it->second;
   }
   // An image decoded ahead of time only needs its upload, which is the part that has to be here.
-  if (const auto ready = decoded_.find(key); ready != decoded_.end()) {
-    Image image = std::move(ready->second);
-    decoded_.erase(ready);
-    return store(key, std::move(image), white);
+  {
+    std::lock_guard<std::mutex> guard(prefetchMutex_);
+    if (const auto ready = decoded_.find(key); ready != decoded_.end()) {
+      Image image = std::move(ready->second);
+      decoded_.erase(ready);
+      return store(key, std::move(image), white);
+    }
   }
   const auto started = std::chrono::steady_clock::now();
   const auto bytes = platform::AssetManager::readBinary(assetRoot_, relativePath);
@@ -199,10 +241,14 @@ gl::Texture* TextureCache::loadAssetFlipped(const std::string& relativePath) {
     return &it->second;
   }
   Image source;
-  if (const auto ready = decoded_.find(key); ready != decoded_.end()) {
-    source = std::move(ready->second);
-    decoded_.erase(ready);
-  } else {
+  {
+    std::lock_guard<std::mutex> guard(prefetchMutex_);
+    if (const auto ready = decoded_.find(key); ready != decoded_.end()) {
+      source = std::move(ready->second);
+      decoded_.erase(ready);
+    }
+  }
+  if (!source.valid()) {
     const auto bytes = platform::AssetManager::readBinary(assetRoot_, relativePath);
     if (bytes.empty()) return nullptr;
     source = decodeImageMemory(bytes.data(), bytes.size());
@@ -224,6 +270,14 @@ gl::Texture* TextureCache::loadFile(const std::filesystem::path& path, bool whit
   const std::string key = "file:" + path.generic_string() + (white ? "#w" : "");
   if (const auto it = textures_.find(key); it != textures_.end() && it->second.valid()) {
     return &it->second;
+  }
+  {
+    std::lock_guard<std::mutex> guard(prefetchMutex_);
+    if (const auto ready = decoded_.find("file:" + path.generic_string()); ready != decoded_.end()) {
+      Image image = std::move(ready->second);
+      decoded_.erase(ready);
+      return store(key, std::move(image), white);
+    }
   }
   return store(key, decodeImage(path), white);
 }

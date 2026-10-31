@@ -27,18 +27,20 @@ struct HitEffectAtlas {
 // HUD palette, and each judgement carries its own alpha.
 struct HitEffectSkin {
   float perfectRed{1.0F};
-  float perfectGreen{164.0F / 255.0F};
-  float perfectBlue{107.0F / 255.0F};
-  float perfectAlpha{1.0F};
-  float goodRed{107.0F / 255.0F};
-  float goodGreen{188.0F / 255.0F};
+  float perfectGreen{0.92704993F};
+  float perfectBlue{0.6273585F};
+  float perfectAlpha{0.88235295F};
+  float goodRed{180.0F / 255.0F};
+  float goodGreen{225.0F / 255.0F};
   float goodBlue{1.0F};
-  float goodAlpha{1.0F};
+  float goodAlpha{0.92156863F};
+  bool perfectFromSkin{};
+  bool goodFromSkin{};
 };
 
 // Tuning values that come from the skin configuration.
 struct HitEffectStyle {
-  float spriteScale{1.583F};
+  float spriteScale{1.0F};
   float sizeScale{1.0F};
   float duration{0.5F};
   bool rotateSheet{false};
@@ -61,6 +63,7 @@ struct HitEffectInstance {
   std::array<float, 4> radius0{};
   std::array<float, 4> speed{};
   int parts{4};
+  bool customTint{};
 };
 
 // Detects freshly judged notes and keeps the resulting bursts alive until they
@@ -119,7 +122,7 @@ private:
   };
 
   void spawn(float x, float y, double startSec, float red, float green, float blue, float alpha,
-      int parts, float lineRotDeg);
+      int parts, float lineRotDeg, bool customTint);
   // Spawns a burst for one note at `startSec`, using the note's current line geometry.
   void spawnBurstForNote(const game::Note& note, int judgement, double chartTimeSec,
       double startSec, float stageX, float stageY, float stageWidth, float stageHeight);

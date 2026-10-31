@@ -228,7 +228,7 @@ bool RecordSession::start(AppContext& context, const Settings& settings, std::st
   context.game.scrollSpeed = context.settings.scrollSpeed;
   context.game.session.setChart(context.game.chart.get(), context.game.challenge);
   context.game.session.setAutoplay(true);
-  context.renderer->resetJudgementEffects();
+  context.renderer->resetJudgementEffects(context.game.chart.get());
   context.game.session.setMusicSpeed(context.game.musicSpeed);
   context.game.session.judgement().setJudgementDetailDistribution(
       context.settings.judgementDetailDistribution);

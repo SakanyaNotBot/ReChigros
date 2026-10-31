@@ -95,9 +95,9 @@ struct ResolvedMaterials {
   bool holdCompact{false};
   bool holdKeepHead{false};
   bool holdRepeat{false};
-  // Judgement colours, defaults from the reference constants.
-  SkinColour perfect{1.0F, 164.0F / 255.0F, 107.0F / 255.0F, 1.0F};
-  SkinColour good{107.0F / 255.0F, 188.0F / 255.0F, 1.0F, 1.0F};
+  // Judgement sprite colours from the Phigros 4.0.1 prefabs.
+  SkinColour perfect{1.0F, 0.92704993F, 0.6273585F, 0.88235295F};
+  SkinColour good{180.0F / 255.0F, 225.0F / 255.0F, 1.0F, 0.92156863F};
   // True when the selected skin itself declared the colour field (the reference gates the
   // judge-line colour override on this, not on whether the text parsed).
   bool perfectFromSkin{false};

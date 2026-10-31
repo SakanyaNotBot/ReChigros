@@ -11,9 +11,11 @@ namespace rechigros::render::fx {
 
 // The fading copy of a note head that appears when a note is judged bad.
 //
-// A bad note leaves its head behind at the position and size it had when it was judged,
-// tinted dark red, and fades out over 25 frames at 60 Hz. Misses do not produce one:
-// only a bad judgement does.
+// A bad note leaves a copy behind at the position and rotation it had when it was judged,
+// tinted dark red, and fades out over 25 frames at 60 Hz. The native ClickBad prefab is
+// authored at local scale 0.18 against the 0.22 note prefab, and the judge does not copy
+// the note's scale, so on the 16:9 reference stage the copy is 9/11 of the note size.
+// Misses do not produce one: only a bad judgement does.
 class BadEffectField final {
 public:
   // How long one copy lives, in visual seconds.

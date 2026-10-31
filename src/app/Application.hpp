@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 #include <cstdint>
 
@@ -46,6 +47,9 @@ private:
   void shutdown() noexcept;
   void processEvents(bool& running);
   void handleEvent(const SDL_Event& event, bool& running);
+  void handleRenderDeviceReset();
+  void ensureRenderer();
+  void runDeferredInitialization();
   void handleKeyDown(const SDL_Event& event);
   void syncWindowMetrics();
   void updateAudioFromSettings();
@@ -71,6 +75,8 @@ private:
   std::unique_ptr<AppContext> app_;
   std::unique_ptr<audio::AudioEngine> audio_;
   std::unique_ptr<render::GameRenderer> renderer_;
+  std::thread audioWarmUpThread_;
+  int deferredInitStage_{0};
   std::unique_ptr<TriGridBackdrop> backdrop_;
   std::filesystem::path initialPath_;
   std::filesystem::path replayPlaybackPath_;

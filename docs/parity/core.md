@@ -603,16 +603,10 @@ mid-task (see Cross-area requests).
 Changes I did **not** make because the file belongs to another owner. Each is a real
 divergence from the reference.
 
-1. **`src/render/fx/HitEffect.cpp` — click-effect debris still uses the old wrong model.**
-   `HitEffect.cpp:112` computes `radius0 = 0.2*(1 - 0.2*rnd)` — that part is now consistent —
-   but the file has its own `kSpeedMin/kSpeedMax` (15/35) and a *fitted* travel law
-   (`kDragK 2.657`, Simpson over 24 steps, `HitEffect.cpp:39-61`). The reference evaluates
-   `hitFxParticleTravel(speed, p)` (`GameRenderer.java:11363`) per particle from
-   `item.effectSpeed[pi]`, which is now available as `ClickEffectItem::effectSpeed`. The
-   renderer should consume `clickEffectsSorted` (`GameRenderer.cpp` currently never reads it —
-   `grep ClickEffect` in `src/render` returns nothing) instead of re-rolling its own burst, so
-   the pre-rolled `effectRotateDeg`/`effectSpeed`/`effectR0`/`effectDir` values are honoured.
-   Owner: render.
+1. **`src/render/fx/HitEffect.cpp` — click-effect debris.** The former fitted travel law was
+   replaced after a full Phigros 4.0.1 prefab and native-module review. Shared code now uses the
+   official weighted Hermite curves and `5*0.5` drag scaling; pre-rolled effect parameters are
+   preserved, and sprite colours, particle colours and per-frame Sprite scaling are independent.
 2. **`src/render/GameRenderer.cpp:1123-1143` — level-effect HUD/audio flags not wired.**
    `hideHud()` and `lowPassOnBlock()` now return correct values (previously always
    false/true), but nothing consumes them. Reference hides the HUD for Hate/Desultory/Message

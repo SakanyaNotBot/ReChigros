@@ -24,8 +24,7 @@ public:
   // Integral of the debris drag curve over 0..u, in prefab units.
   [[nodiscard]] static float dragIntegral(float u) noexcept;
   // Radial distance one particle has reached at animation progress `p`, in prefab units:
-  // the drag law integrated with Simpson's rule, because the fitted curve has no closed
-  // form.
+  // the drag law integrated with Simpson's rule over the official weighted curve.
   [[nodiscard]] static float particleTravel(float speed, float p) noexcept;
   // Size envelope of the debris: it swells, then shrinks away.
   [[nodiscard]] static float particleSize(float p) noexcept;

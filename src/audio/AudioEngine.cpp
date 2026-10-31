@@ -256,6 +256,10 @@ struct AudioEngine::Impl final {
         self->running_.store(true, std::memory_order_release);
         break;
       case ma_device_notification_type_stopped:
+        // A deliberate ma_device_stop is not a device loss: the same device can be started
+        // again. Rebuilding it here would turn every pause/resume into a risky reinit.
+        self->running_.store(false, std::memory_order_release);
+        break;
       case ma_device_notification_type_rerouted:
       case ma_device_notification_type_interruption_began:
         self->running_.store(false, std::memory_order_release);
@@ -515,6 +519,11 @@ struct AudioEngine::Impl final {
   // Provenance of each bank, read by diagnostic queries from any thread.
   std::array<SoundEffectStatus, kSoundEffectBankCount> effectStatus_;
   std::mutex effectStatusMutex_;
+  // Key of the currently installed hit-sound bank set. Loading the same set again is a no-op,
+  // which lets a background warm-up and the first run share one decode.
+  std::mutex soundEffectsMutex_;
+  std::string soundEffectsKey_;
+  bool soundEffectsLoaded_{false};
 
   // Owned by the audio thread.
   std::array<Voice, kMaxVoices> voices_{};
@@ -560,6 +569,11 @@ void AudioEngine::shutdown() {
   }
   impl_->flushVoices();
   impl_->queue_.clear();
+  {
+    std::lock_guard<std::mutex> lock{impl_->soundEffectsMutex_};
+    impl_->soundEffectsLoaded_ = false;
+    impl_->soundEffectsKey_.clear();
+  }
   impl_->playheadFrames_.store(0.0, std::memory_order_release);
   impl_->seekTargetFrames_.store(kNoSeek, std::memory_order_release);
   impl_->callbackStartFrames_.store(0.0, std::memory_order_release);
@@ -572,6 +586,9 @@ void AudioEngine::shutdown() {
 
 bool AudioEngine::loadSoundEffects(const std::filesystem::path& assetRoot,
     const std::filesystem::path& skinDirectory) {
+  const std::string key = assetRoot.generic_string() + "|" + skinDirectory.generic_string();
+  std::lock_guard<std::mutex> keyLock{impl_->soundEffectsMutex_};
+  if (impl_->soundEffectsLoaded_ && impl_->soundEffectsKey_ == key) return true;
   if (!initialize()) return false;
 
   const auto rate = impl_->sampleRate_.load(std::memory_order_acquire);
@@ -585,6 +602,10 @@ bool AudioEngine::loadSoundEffects(const std::filesystem::path& assetRoot,
     impl_->banks_ = std::move(resolved.banks);
     std::lock_guard<std::mutex> lock{impl_->effectStatusMutex_};
     impl_->effectStatus_ = std::move(resolved.status);
+  }
+  if (loaded) {
+    impl_->soundEffectsKey_ = key;
+    impl_->soundEffectsLoaded_ = true;
   }
   return loaded;
 }
@@ -645,14 +666,14 @@ void AudioEngine::play() {
 }
 
 void AudioEngine::pause() {
+  // The mixer already outputs silence while paused, so the device itself can stay alive.
+  // Stopping it here would force a full device rebuild on the next play().
   impl_->paused_.store(true, std::memory_order_release);
-  impl_->stopDevice();
 }
 
 void AudioEngine::stop() {
   impl_->playing_.store(false, std::memory_order_release);
   impl_->paused_.store(true, std::memory_order_release);
-  impl_->stopDevice();
   impl_->seekTo(0.0);
 }
 
@@ -665,7 +686,8 @@ void AudioEngine::resume() {
   if (!impl_->suspended_.exchange(false, std::memory_order_acq_rel)) return;
   impl_->repairDevice();
   if (!impl_->playing_.load(std::memory_order_acquire)) return;
-  impl_->paused_.store(false, std::memory_order_release);
+  // Keep the paused flag as it was before the suspension: a game that is still in its pause
+  // menu must not start playing music just because the app came back to the foreground.
   impl_->startDevice();
 }
 
@@ -687,7 +709,6 @@ void AudioEngine::restartPaused() {
   impl_->playing_.store(true, std::memory_order_release);
   impl_->paused_.store(true, std::memory_order_release);
   impl_->seekTo(0.0);
-  impl_->stopDevice();
 }
 
 void AudioEngine::setVolume(float volume) { setMusicVolume(volume); }

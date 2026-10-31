@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -63,6 +64,7 @@ private:
 // Loads texture files from disk and the packaged asset tree, caching by path.
 class TextureCache final {
 public:
+  ~TextureCache();
   void setAssetRoot(std::filesystem::path root) { assetRoot_ = std::move(root); }
   [[nodiscard]] const std::filesystem::path& assetRoot() const noexcept { return assetRoot_; }
 
@@ -78,6 +80,10 @@ public:
   // Split in two so the work can overlap a stage that does not load textures: begin, do that
   // stage, then await. Starting and waiting back to back is still correct, just not overlapped.
   void beginPrefetchAssets(const std::vector<std::string>& relativePaths);
+  // Starts decoding absolute image paths on worker threads, for example every file in a skin.
+  void beginPrefetchFiles(const std::vector<std::filesystem::path>& paths);
+  // True when every task handed to beginPrefetchAssets/beginPrefetchFiles has finished decoding.
+  bool prefetchFinished() const noexcept { return prefetchPending_.load(std::memory_order_acquire) == 0; }
   // Waits for a started prefetch. Every decoded image is then available to loadAsset, which only
   // has to upload it.
   void awaitPrefetchAssets();
@@ -103,6 +109,7 @@ private:
   std::unordered_map<std::string, Image> decoded_;
   std::vector<std::thread> prefetchThreads_;
   std::mutex prefetchMutex_;
+  std::atomic<std::size_t> prefetchPending_{0};
   std::unordered_map<std::string, gl::Texture> textures_;
   std::unordered_map<std::string, AnimatedTexture> animated_;
   gl::Texture white_;

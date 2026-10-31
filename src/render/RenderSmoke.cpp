@@ -76,6 +76,8 @@ struct Options {
   bool captureYuv{false};
   bool animate{false};
   bool apfc{false};
+  // Suppresses the perfect/good burst so a bad copy can be compared on its own.
+  bool noHitEffects{false};
 };
 
 Options parseOptions(int argc, char** argv) {
@@ -152,6 +154,8 @@ Options parseOptions(int argc, char** argv) {
       options.animate = true;
     } else if (flag == "--apfc") {
       options.apfc = true;
+    } else if (flag == "--no-hit-effects") {
+      options.noHitEffects = true;
     }
   }
   return options;
@@ -290,6 +294,7 @@ int main(int argc, char** argv) {
       input.multiPressHighlight = options.multiPressHighlight;
       input.storyMode = options.storyMode;
       input.chartReveal = options.chartReveal;
+      input.showHitParticles = !options.noHitEffects;
       input.songName = options.songName;
       input.levelName = options.levelName;
       // Hold-body bursts produced while the session was driven to this chart time. The

@@ -8,6 +8,7 @@
 #include "rechigros/render/fx/BlockCompositePass.hpp"
 #include "rechigros/render/fx/BlockOverlay.hpp"
 #include "rechigros/render/fx/DsGridPass.hpp"
+#include "rechigros/render/fx/HitEffectMotion.hpp"
 #include "rechigros/render/scene/NoteBatch.hpp"
 #include "rechigros/render/fx/PrprChain.hpp"
 #include "rechigros/render/scene/HudPass.hpp"
@@ -814,6 +815,33 @@ int main() {
         "a seek rearms cached autoplay hit effects");
     require(item.effectSpeed == speeds,
         "resetting a seek does not reroll particle parameters");
+  }
+
+  {
+    using namespace rechigros::render::fx;
+    require(close(particleDragIntegral(0.0F), 0.0F, 1e-7), "the drag integral starts at zero");
+    require(close(particleDragIntegral(1.0F), 2.5F * (0.5F + 2.1999998F / 12.0F), 1e-6),
+        "drag integrates the official Hermite curve and scalar over the lifetime");
+    require(close(particleTravel(25.0F, 0.0F), 0.0F, 1e-7), "particles start on the spawn ring");
+    require(particleTravel(25.0F, 0.5F) > 0.0F, "particles travel outwards");
+    require(close(particleSize(0.0F), 0.49884492F, 1e-7),
+        "particle size starts at the official key");
+    require(close(particleSize(1.0F), 0.6941143F, 1e-7),
+        "particle size ends at the official key");
+    require(close(particleSize(0.5F),
+        0.49884492F * 0.5F + 1.6398785F * 0.125F
+            + 0.6941143F * 0.5F - 1.0415096F * -0.125F, 1e-6),
+        "particle size preserves both native tangents at the midpoint");
+    require(close(hitEffectFrameScale(0), 1.35F / 2.1758F * 0.87847755F, 1e-6),
+        "the first hit sprite uses its rect and the native scale chain");
+    require(close(hitEffectFrameScale(29), 1.35F / 2.1758F * 2.4784775F, 1e-6),
+        "the last hit sprite uses its own rect, not a constant fitted scale");
+    require(close(hitEffectFrameScale(-1), hitEffectFrameScale(0)), "frame scale clamps low");
+    require(close(hitEffectFrameScale(30), hitEffectFrameScale(29)), "frame scale clamps high");
+    const HitEffectSkin skin;
+    require(close(skin.perfectGreen, 0.92704993F) && close(skin.perfectAlpha, 0.88235295F),
+        "perfect sprite tint and alpha match the prefab");
+    require(close(skin.goodAlpha, 235.0F / 255.0F), "good sprite alpha matches the prefab");
   }
 
   if (g_failures != 0) {

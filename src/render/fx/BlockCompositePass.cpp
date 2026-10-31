@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -491,9 +492,22 @@ bool BlockCompositePass::ensureHoverProgram(const std::filesystem::path& assetRo
 void BlockCompositePass::uploadMaterials() const {
   auto& program = const_cast<gl::ShaderProgram&>(composite_.program());
   program.use();
-  glUniform4fv(program.uniform("matParams[0]"), 8, &kMatParams[0][0]);
+  // Displacement amplitudes are in screen UV space. When the reveal camera shrinks the
+  // stage, those offsets must shrink with it or a small zone is warped far past its own
+  // boundary instead of merely wobbling at its edge.
+  float params[8][4];
+  std::memcpy(params, kMatParams, sizeof(params));
+  params[1][2] *= geometryScale_;  // sparkDisplace
+  params[4][3] *= geometryScale_;  // noiseDispStr
+  float extra[5][4];
+  std::memcpy(extra, kMatExtra, sizeof(extra));
+  extra[0][3] *= geometryScale_;   // compose displacement strength
+  extra[1][3] *= geometryScale_;   // active scene displacement
+  extra[3][1] *= geometryScale_;   // disabled-zone displacement
+  extra[4][1] *= geometryScale_;   // touch-hover displacement
+  glUniform4fv(program.uniform("matParams[0]"), 8, &params[0][0]);
   glUniform4fv(program.uniform("matColors[0]"), 7, &kMatColors[0][0]);
-  glUniform4fv(program.uniform("matExtra[0]"), 5, &kMatExtra[0][0]);
+  glUniform4fv(program.uniform("matExtra[0]"), 5, &extra[0][0]);
 }
 
 void BlockCompositePass::runPrepasses(float chartTimeSec) {
