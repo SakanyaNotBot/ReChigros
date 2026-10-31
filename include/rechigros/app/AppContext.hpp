@@ -16,6 +16,7 @@
 #include <future>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace rechigros::audio {
@@ -68,6 +69,9 @@ struct GameRuntime {
     std::unique_ptr<game::Chart> chart;
     bool musicDecoded{};
     audio::AudioBuffer music;
+    // Chart-specific hit sounds decoded by the load worker, so beginRun installs them
+    // instead of decoding each one on the frame that starts play.
+    std::vector<std::pair<std::string, audio::AudioBuffer>> hitSounds;
   };
   // Filled by the worker; empty once consumed. The future yields no chart on failure, with the
   // reason left in loadingError.

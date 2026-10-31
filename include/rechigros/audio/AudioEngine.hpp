@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace rechigros::audio {
 
@@ -39,6 +41,21 @@ public:
   /// next load. Missing assets fall back to synthesised tones so effects still trigger.
   bool loadSoundEffects(const std::filesystem::path& assetRoot,
       const std::filesystem::path& skinDirectory = {});
+
+  /// Decodes the effect bank for `skinDirectory` on a worker thread and keeps the result.
+  /// The decode is the expensive half of loadSoundEffects; a loading screen calls this when
+  /// the run starts and polls soundEffectsPrefetchDone() while it animates, so the frame
+  /// that installs the bank only swaps buffers. A request for a different skin while the
+  /// previous worker is still decoding is deferred to a later poll, never waited on here.
+  void beginSoundEffectPrefetch(const std::filesystem::path& assetRoot,
+      const std::filesystem::path& skinDirectory);
+  /// True when no prefetch is running. A completed or failed prefetch both count as done.
+  [[nodiscard]] bool soundEffectsPrefetchDone() const;
+
+  /// Installs hit-sound buffers decoded by a chart-load worker. Each path is installed once;
+  /// a buffer already present is left alone. The swap takes the same exclusive window as
+  /// loadSoundEffects, so it is real-time safe.
+  void installHitSounds(std::vector<std::pair<std::string, AudioBuffer>> buffers);
 
   /// Decodes `path` as the current music track. Replaces any previous track and
   /// rewinds the playhead.

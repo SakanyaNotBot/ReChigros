@@ -466,9 +466,18 @@ bool Application::initialize() {
   // installed package. Warming it on a worker thread keeps that cost off the launch path;
   // any screen that does need the list joins the warm-up through records().
   app_->library.warmUpAsync();
-  // Decode the hit-sound bank on a worker as well. The keyed AudioEngine loader makes a run
-  // started before this finishes wait only for the same decode instead of repeating it.
-  audioWarmUpThread_ = std::thread([this]() { audio_->loadSoundEffects(platform::assetRoot()); });
+  // Decode the effect bank for the selected skin on a worker. The loading screen waits for
+  // this prefetch (and starts one for a newly selected skin), so the first run installs the
+  // finished set instead of decoding on the frame that enters gameplay.
+  {
+    std::filesystem::path skinDirectory;
+    if (!app_->settings.selectedSkin.empty()) {
+      const auto candidate = app_->dataRoot / "skins" / app_->settings.selectedSkin;
+      std::error_code error;
+      if (std::filesystem::is_directory(candidate, error)) skinDirectory = candidate;
+    }
+    audio_->beginSoundEffectPrefetch(assetRoot, skinDirectory);
+  }
   reportLaunchStage("app context + library warm-up", launchStage, launchFrequency);
   launchStage = launchMark();
 
@@ -1659,7 +1668,6 @@ void Application::shutdown() noexcept {
     if (context_ != nullptr) backdrop_->release();
     backdrop_.reset();
   }
-  if (audioWarmUpThread_.joinable()) audioWarmUpThread_.join();
   if (audio_ != nullptr) {
     audio_->shutdown();
     audio_.reset();

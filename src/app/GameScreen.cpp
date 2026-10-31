@@ -28,6 +28,7 @@
 #include <numbers>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace rechigros::app {
 namespace {
@@ -1546,7 +1547,8 @@ void syncLevelEffectChallenge(AppContext& context) {
 // Everything a run needs once its chart has been parsed. Split from the load itself so the
 // loading screen can hand the chart over when its worker finishes.
 bool beginRun(AppContext& context, std::unique_ptr<game::Chart> chart,
-    audio::AudioBuffer* decodedMusic = nullptr) {
+    audio::AudioBuffer* decodedMusic = nullptr,
+    std::vector<std::pair<std::string, audio::AudioBuffer>>* decodedHitSounds = nullptr) {
   if (!chart) {
     context.loadError = "谱面为空";
     return false;
@@ -1618,8 +1620,13 @@ bool beginRun(AppContext& context, std::unique_ptr<game::Chart> chart,
     context.audio->setPlaybackSpeed(game.musicSpeed);
     context.audio->setMusicVolume(context.settings.musicVolume);
     context.audio->setSoundEffectVolume(context.settings.soundEffectVolume);
+    if (decodedHitSounds != nullptr) {
+      context.audio->installHitSounds(std::move(*decodedHitSounds));
+    }
+    std::unordered_set<std::string> seenHitSounds;
     for (const auto* note : game.chart->allNotesSorted) {
-      if (!note->hitSound.empty()) context.audio->loadHitSound(note->hitSound);
+      if (note->hitSound.empty() || !seenHitSounds.insert(note->hitSound).second) continue;
+      context.audio->loadHitSound(note->hitSound);
     }
     // A run started through the loading screen already has its music decoded, so the frame
     // that starts it only swaps the buffer in. The synchronous path still decodes here.
@@ -1745,6 +1752,19 @@ void gameEnterWithLoading(AppContext& context) {
         } catch (...) {
           *failure = "未知错误";
         }
+        // Chart-specific hit sounds decode on this worker too. The frame that starts the
+        // run then installs finished buffers instead of reading and decoding each file.
+        if (loaded.chart != nullptr && sampleRate > 0) {
+          std::unordered_set<std::string> seen;
+          for (const auto* note : loaded.chart->allNotesSorted) {
+            if (note == nullptr || note->hitSound.empty()) continue;
+            if (!seen.insert(note->hitSound).second) continue;
+            auto buffer = audio::Decoder::decodeFile(note->hitSound, sampleRate);
+            if (!buffer.empty()) {
+              loaded.hitSounds.emplace_back(note->hitSound, std::move(buffer));
+            }
+          }
+        }
         return loaded;
       });
   // The worker keeps the reason; the frame that consumes the future reads it here.
@@ -1768,12 +1788,23 @@ void pollChartLoad(AppContext& context) {
     std::error_code error;
     if (std::filesystem::is_directory(candidate, error)) skinDirectory = candidate;
   }
+  // The effect bank is the other one-time decode of the first run; start it for this run's
+  // skin and keep the panel animated until the worker has finished. beginRun then installs
+  // the finished set with a buffer swap instead of decoding on the frame that starts play.
+  if (context.audio != nullptr) {
+    context.audio->beginSoundEffectPrefetch(platform::assetRoot(), skinDirectory);
+    if (!context.audio->soundEffectsPrefetchDone()) return;
+  }
   if (context.renderer != nullptr) {
     context.renderer->prefetchGameplayTextures(skinDirectory);
     context.renderer->prefetchBackgroundImage(context.play.bgFile);
     // Keep the loading panel animated until both the chart and the (possibly very large) skin
     // textures are decoded, so beginRun only uploads instead of decoding on the UI thread.
     if (!context.renderer->gameplayTexturesReady()) return;
+    // The uploads are paid here, while the panel is still up, rather than on the frame that
+    // enters the run. Both calls are cached, so beginRun's own calls are lookups.
+    context.renderer->setSkinDirectory(skinDirectory);
+    context.renderer->setBackgroundImage(context.play.bgFile);
   }
   if (game.chartLoad.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
   GameRuntime::LoadedRun loaded = game.chartLoad.get();
@@ -1795,7 +1826,7 @@ void pollChartLoad(AppContext& context) {
   // on the worker, so this is what a press still costs the frame that consumes it.
   const auto startMark = std::chrono::steady_clock::now();
   const bool entered = beginRun(context, std::move(loaded.chart),
-      loaded.musicDecoded ? &loaded.music : nullptr);
+      loaded.musicDecoded ? &loaded.music : nullptr, &loaded.hitSounds);
   const auto elapsed = std::chrono::duration<double, std::milli>(
       std::chrono::steady_clock::now() - startMark).count();
   std::printf("run-start: deferred=%.1f ms entered=%d\n", elapsed, entered ? 1 : 0);

@@ -11,6 +11,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <thread>
@@ -100,7 +101,10 @@ void mixSilence(float* output, std::uint32_t frameCount) noexcept {
 /// reading it, without blocking the callback on a mutex.
 struct AudioEngine::Impl final {
   Impl() = default;
-  ~Impl() { closeDevice(); }
+  ~Impl() {
+    if (effectPrefetchThread_.joinable()) effectPrefetchThread_.join();
+    closeDevice();
+  }
 
   Impl(const Impl&) = delete;
   Impl& operator=(const Impl&) = delete;
@@ -525,6 +529,15 @@ struct AudioEngine::Impl final {
   std::string soundEffectsKey_;
   bool soundEffectsLoaded_{false};
 
+  // Effect-bank prefetch: the decode runs on its own worker while a loading screen is up,
+  // and loadSoundEffects then installs the finished set without reading the files again.
+  std::mutex effectPrefetchMutex_;
+  std::thread effectPrefetchThread_;
+  std::atomic<bool> effectPrefetchRunning_{false};
+  std::string effectPrefetchKey_;
+  std::string prefetchedEffectsKey_;
+  SoundEffectSet prefetchedEffects_;
+
   // Owned by the audio thread.
   std::array<Voice, kMaxVoices> voices_{};
   LowPassFilter lowPass_;
@@ -557,6 +570,15 @@ bool AudioEngine::initialize() {
 }
 
 void AudioEngine::shutdown() {
+  // Stop the prefetch worker before the buffers it can touch are cleared.
+  {
+    std::thread prefetch;
+    {
+      std::lock_guard<std::mutex> lock{impl_->effectPrefetchMutex_};
+      prefetch = std::move(impl_->effectPrefetchThread_);
+    }
+    if (prefetch.joinable()) prefetch.join();
+  }
   impl_->playing_.store(false, std::memory_order_release);
   impl_->paused_.store(true, std::memory_order_release);
   impl_->stopDevice();
@@ -584,30 +606,127 @@ void AudioEngine::shutdown() {
   impl_->closeDevice();
 }
 
+void AudioEngine::beginSoundEffectPrefetch(const std::filesystem::path& assetRoot,
+    const std::filesystem::path& skinDirectory) {
+  const std::string key = assetRoot.generic_string() + "|" + skinDirectory.generic_string();
+  {
+    std::lock_guard<std::mutex> lock{impl_->soundEffectsMutex_};
+    if (impl_->soundEffectsLoaded_ && impl_->soundEffectsKey_ == key) return;
+  }
+  std::thread previous;
+  {
+    std::lock_guard<std::mutex> lock{impl_->effectPrefetchMutex_};
+    // A finished prefetch for the same key is as good as a running one: the load will take
+    // it from prefetchedEffects_ without reading the files again.
+    if ((impl_->effectPrefetchRunning_.load(std::memory_order_acquire)
+            && impl_->effectPrefetchKey_ == key)
+        || impl_->prefetchedEffectsKey_ == key) {
+      return;
+    }
+    // A worker for another skin is still decoding. Let it finish and start this one on a
+    // later poll instead of joining it on the frame that asked; the waiting is what the
+    // loading panel is for.
+    if (impl_->effectPrefetchRunning_.load(std::memory_order_acquire)) return;
+    previous = std::move(impl_->effectPrefetchThread_);
+  }
+  // A worker for another key (the player changed skins) is collected outside the lock; the
+  // prefetch only ever runs on the loading screen's frames.
+  if (previous.joinable()) previous.join();
+  {
+    std::lock_guard<std::mutex> lock{impl_->effectPrefetchMutex_};
+    impl_->effectPrefetchKey_ = key;
+    impl_->prefetchedEffectsKey_.clear();
+    impl_->effectPrefetchRunning_.store(true, std::memory_order_release);
+    impl_->effectPrefetchThread_ = std::thread([this, assetRoot, skinDirectory, key] {
+      SoundEffectSet resolved;
+      // Opening the device is the other one-time cost of the first run, so it happens on the
+      // worker too and needs no graphics context.
+      const auto started = std::chrono::steady_clock::now();
+      if (initialize()) {
+        const auto rate = impl_->sampleRate_.load(std::memory_order_acquire);
+        resolved = resolveSoundEffects(assetRoot, skinDirectory, rate);
+      }
+      const double elapsedMs = std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - started).count();
+      std::fprintf(stderr, "[audio] effect bank prefetched in %.1f ms (skin %s, loaded=%d)\n",
+          elapsedMs, skinDirectory.filename().string().c_str(), resolved.anyLoaded() ? 1 : 0);
+      std::lock_guard<std::mutex> lock{impl_->effectPrefetchMutex_};
+      if (impl_->effectPrefetchKey_ == key) {
+        impl_->prefetchedEffects_ = std::move(resolved);
+        impl_->prefetchedEffectsKey_ = key;
+      }
+      impl_->effectPrefetchRunning_.store(false, std::memory_order_release);
+    });
+  }
+}
+
+bool AudioEngine::soundEffectsPrefetchDone() const {
+  return !impl_->effectPrefetchRunning_.load(std::memory_order_acquire);
+}
+
 bool AudioEngine::loadSoundEffects(const std::filesystem::path& assetRoot,
     const std::filesystem::path& skinDirectory) {
   const std::string key = assetRoot.generic_string() + "|" + skinDirectory.generic_string();
-  std::lock_guard<std::mutex> keyLock{impl_->soundEffectsMutex_};
-  if (impl_->soundEffectsLoaded_ && impl_->soundEffectsKey_ == key) return true;
-  if (!initialize()) return false;
-
-  const auto rate = impl_->sampleRate_.load(std::memory_order_acquire);
-  auto resolved = resolveSoundEffects(assetRoot, skinDirectory, rate);
+  {
+    std::lock_guard<std::mutex> keyLock{impl_->soundEffectsMutex_};
+    if (impl_->soundEffectsLoaded_ && impl_->soundEffectsKey_ == key) return true;
+  }
+  // The loading screen waits for the prefetch, so this join only collects a finished worker;
+  // a run that starts without one still takes the synchronous path below.
+  {
+    std::thread prefetch;
+    {
+      std::lock_guard<std::mutex> lock{impl_->effectPrefetchMutex_};
+      prefetch = std::move(impl_->effectPrefetchThread_);
+    }
+    if (prefetch.joinable()) prefetch.join();
+  }
+  SoundEffectSet resolved;
+  bool havePrefetched = false;
+  {
+    std::lock_guard<std::mutex> lock{impl_->effectPrefetchMutex_};
+    if (impl_->prefetchedEffectsKey_ == key && impl_->prefetchedEffects_.anyLoaded()) {
+      resolved = std::move(impl_->prefetchedEffects_);
+      impl_->prefetchedEffectsKey_.clear();
+      havePrefetched = true;
+    }
+  }
+  if (!havePrefetched) {
+    if (!initialize()) return false;
+    const auto rate = impl_->sampleRate_.load(std::memory_order_acquire);
+    resolved = resolveSoundEffects(assetRoot, skinDirectory, rate);
+  }
   const bool loaded = resolved.anyLoaded();
 
   {
+    std::lock_guard<std::mutex> keyLock{impl_->soundEffectsMutex_};
+    if (impl_->soundEffectsLoaded_ && impl_->soundEffectsKey_ == key) return true;
     // The whole bank set is swapped inside one window: every call replaces the previous skin
     // completely, and the audio thread never sees a bank from two different loads.
     Impl::ExclusiveScope scope{*impl_};
     impl_->banks_ = std::move(resolved.banks);
     std::lock_guard<std::mutex> lock{impl_->effectStatusMutex_};
     impl_->effectStatus_ = std::move(resolved.status);
-  }
-  if (loaded) {
-    impl_->soundEffectsKey_ = key;
-    impl_->soundEffectsLoaded_ = true;
+    if (loaded) {
+      impl_->soundEffectsKey_ = key;
+      impl_->soundEffectsLoaded_ = true;
+    }
   }
   return loaded;
+}
+
+void AudioEngine::installHitSounds(
+    std::vector<std::pair<std::string, AudioBuffer>> buffers) {
+  if (buffers.empty() || !initialize()) return;
+  // One exclusive window for the whole set; the frame that installs them does no decoding.
+  Impl::ExclusiveScope scope{*impl_};
+  std::lock_guard<std::mutex> lock{impl_->customMutex_};
+  for (auto& entry : buffers) {
+    if (entry.first.empty() || entry.second.empty()) continue;
+    if (impl_->customBanks_.contains(entry.first)) continue;
+    impl_->customBanks_[entry.first] =
+        std::make_shared<AudioBuffer>(std::move(entry.second));
+  }
 }
 
 bool AudioEngine::loadHitSound(const std::filesystem::path& path) {
