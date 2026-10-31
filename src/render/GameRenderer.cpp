@@ -1383,10 +1383,6 @@ bool GameRenderer::initializeBegin(const std::filesystem::path& assetRoot) {
   }
   impl_->initTextMs = std::chrono::duration<double, std::milli>(
       std::chrono::steady_clock::now() - impl_->initStart).count();
-  // Both shipped shaders are loaded here and stay ready for the whole session; a missing
-  // asset simply leaves the composite unavailable and the inline silhouettes in charge.
-  (void)impl_->blockComposite.prepare(assetRoot, impl_->blockDisplaceMap, impl_->blockSparkMap,
-      impl_->blockNoiseMap);
   impl_->beginDone = true;
   return true;
 }
@@ -1398,6 +1394,11 @@ bool GameRenderer::initializeFinish() {
   // so only the uploads below remain on this thread.
   impl_->textures.awaitPrefetchAssets();
   impl_->loadGameplayTextures();
+  // The composite's shaders sample the displacement, spark and noise maps, so it can only
+  // be prepared once loadGameplayTextures has produced them. Preparing it in begin() handed
+  // the pass null textures, which silently disabled every zone's shader.
+  (void)impl_->blockComposite.prepare(impl_->assets, impl_->blockDisplaceMap,
+      impl_->blockSparkMap, impl_->blockNoiseMap);
   const double texturesMs = std::chrono::duration<double, std::milli>(
       std::chrono::steady_clock::now() - impl_->initStart).count() - impl_->initTextMs;
   bindDefaultBlend();
