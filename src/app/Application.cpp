@@ -1363,7 +1363,12 @@ void Application::ensureRenderer() {
   if (!renderer_->initialize(platform::assetRoot())) {
     std::cerr << "Renderer initialization failed\n";
   }
-  if (app_ != nullptr) app_->renderer = renderer_.get();
+  if (app_ != nullptr) {
+    app_->renderer = renderer_.get();
+    // The offscreen targets are allocated by resize(); syncWindowMetrics only calls it on a
+    // size change, so a renderer created after the window settled would keep them unallocated.
+    renderer_->resize(app_->drawableWidth, app_->drawableHeight);
+  }
 }
 
 void Application::runDeferredInitialization() {
@@ -1409,6 +1414,7 @@ void Application::handleRenderDeviceReset() {
     std::cerr << "Renderer reinitialization after device reset failed\n";
   }
   app_->renderer = renderer_.get();
+  renderer_->resize(app_->drawableWidth, app_->drawableHeight);
   if (!app_->settings.selectedSkin.empty()) {
     const auto skin = app_->dataRoot / "skins" / app_->settings.selectedSkin;
     std::error_code error;
