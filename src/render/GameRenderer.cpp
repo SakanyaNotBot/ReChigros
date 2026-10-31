@@ -2103,9 +2103,15 @@ void GameRenderer::resetHudDisplay() {
 
 void GameRenderer::resetJudgementEffects(game::Chart* chart) {
   if (impl_ == nullptr) return;
-  impl_->loadedChart = chart;
+  // Only the per-run effect state is cleared here. prepareForChart owns the chart-scoped
+  // setup (storyboard chain, noise layers, line order) and skips itself when the chart is
+  // already loaded, so claiming the chart here would leave a fresh run without its shaders.
   impl_->badEffects.clear();
   impl_->hitEffects.clear();
+  // A chart that is not the loaded one has to go through prepareForChart again, even when it
+  // happens to reuse the address of the chart it replaced. Only the pointer is compared, so
+  // the released chart is never dereferenced.
+  if (impl_->loadedChart != chart) impl_->loadedChart = nullptr;
   if (chart == nullptr) {
     impl_->badSpawned.clear();
     return;
