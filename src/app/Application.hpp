@@ -49,6 +49,8 @@ private:
   void handleEvent(const SDL_Event& event, bool& running);
   void handleRenderDeviceReset();
   void ensureRenderer();
+  // Two-stage gameplay renderer startup used by the loading screen: true once usable.
+  bool advanceRenderer();
   void runDeferredInitialization();
   void handleKeyDown(const SDL_Event& event);
   void syncWindowMetrics();

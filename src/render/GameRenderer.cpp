@@ -146,6 +146,11 @@ struct GameRenderer::Impl {
   int width{1280};
   int height{720};
   bool initialized{};
+  // Two-stage startup: the artwork decode starts in begin() and the uploads happen in
+  // finish(), so a loading screen can animate in between.
+  bool beginDone{};
+  std::chrono::steady_clock::time_point initStart{};
+  double initTextMs{};
 
   // Offscreen capture state for recording. The target and the size it replaced are held here so
   // a capture survives many frames without reallocating or disturbing the interactive size.
@@ -1347,13 +1352,12 @@ GameRenderer::GameRenderer() : impl_(std::make_unique<Impl>()) {}
 GameRenderer::~GameRenderer() = default;
 
 bool GameRenderer::initialize(const std::filesystem::path& assetRoot) {
-  // This is the largest single block of the launch, and a packaged build shows it as black screen,
-  // so each part reports its own cost instead of being one opaque number.
-  const auto launchStart = std::chrono::steady_clock::now();
-  const auto since = [&launchStart]() {
-    return std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - launchStart).count();
-  };
+  return initializeBegin(assetRoot) && initializeFinish();
+}
+
+bool GameRenderer::initializeBegin(const std::filesystem::path& assetRoot) {
+  if (impl_->initialized || impl_->beginDone) return true;
+  impl_->initStart = std::chrono::steady_clock::now();
   impl_->assets = assetRoot;
   impl_->textures.setAssetRoot(assetRoot);
   // Decode the startup artwork on worker threads while the text layer initialises. Decoding is the
@@ -1367,6 +1371,8 @@ bool GameRenderer::initialize(const std::filesystem::path& assetRoot) {
       "official_textures/GlitchMap.png", "official_textures/WireNoise.png",
       "official_textures/DisplaceMap.png", "official_textures/BlockNoise1.png",
       "official_textures/BlockSpark.png"});
+  // The same bank the loading screen will ask for, so its readiness check covers this stage.
+  impl_->prefetchStarted = true;
   if (!impl_->text.initialize(assetRoot)) {
     // A renderer that was not initialised draws nothing at all, which reads as an empty
     // scene on the device; the reason is logged instead of failing silently.
@@ -1375,22 +1381,34 @@ bool GameRenderer::initialize(const std::filesystem::path& assetRoot) {
         assetRoot.string().c_str());
     return false;
   }
-  const double textMs = since();
-  impl_->textures.awaitPrefetchAssets();
-  impl_->loadGameplayTextures();
-  const double texturesMs = since() - textMs;
+  impl_->initTextMs = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - impl_->initStart).count();
   // Both shipped shaders are loaded here and stay ready for the whole session; a missing
   // asset simply leaves the composite unavailable and the inline silhouettes in charge.
   (void)impl_->blockComposite.prepare(assetRoot, impl_->blockDisplaceMap, impl_->blockSparkMap,
       impl_->blockNoiseMap);
-  const double compositeMs = since() - textMs - texturesMs;
+  impl_->beginDone = true;
+  return true;
+}
+
+bool GameRenderer::initializeFinish() {
+  if (impl_->initialized) return true;
+  if (!impl_->beginDone) return false;
+  // The wait is what the loading screen covers: the decode has been running since begin(),
+  // so only the uploads below remain on this thread.
+  impl_->textures.awaitPrefetchAssets();
+  impl_->loadGameplayTextures();
+  const double texturesMs = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - impl_->initStart).count() - impl_->initTextMs;
   bindDefaultBlend();
   impl_->initialized = true;
   SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-      "[render] renderer initialized (asset root %s) text=%.1fms textures=%.1fms shaders=%.1fms",
-      assetRoot.string().c_str(), textMs, texturesMs, compositeMs);
+      "[render] renderer initialized (asset root %s) text=%.1fms textures=%.1fms",
+      impl_->assets.string().c_str(), impl_->initTextMs, texturesMs);
   return true;
 }
+
+bool GameRenderer::initializeBegun() const noexcept { return impl_->beginDone; }
 
 void GameRenderer::shutdown() noexcept {
   impl_->releaseResources();

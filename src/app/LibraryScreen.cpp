@@ -1260,8 +1260,11 @@ void drawLibraryScreen(AppContext& context) {
 
   // Records shown by the current tab. The catalogue tabs have no network content in this
   // port and deliberately stay empty; their page controls still match the reference.
+  // The warm-up scan never blocks this screen: until it has published the index the grid
+  // draws an empty scanning state and the list appears on the frame it completes.
+  const bool libraryReady = context.library.ready();
   std::vector<const ChartRecord*> visible;
-  if (localTab) {
+  if (localTab && libraryReady) {
     for (const auto& record : context.library.records()) {
       if (matchesSearch(record, context.searchQuery)) visible.push_back(&record);
     }
@@ -1291,6 +1294,16 @@ void drawLibraryScreen(AppContext& context) {
   // Card grid, clipped to the scroll viewport.
   drawList->PushClipRect(ImVec2(static_cast<float>(grid.gridL), static_cast<float>(grid.gridT)),
       ImVec2(static_cast<float>(grid.gridR), static_cast<float>(grid.gridB)), true);
+  if (localTab && !libraryReady) {
+    const char* scanning = "正在扫描资源包...";
+    ImFont* font = ImGui::GetFont();
+    const float textSize = map.px(16.0F);
+    const ImVec2 extent = font->CalcTextSizeA(textSize, FLT_MAX, 0.0F, scanning);
+    const ImVec2 centre((grid.gridL + grid.gridR) * 0.5F, (grid.gridT + grid.gridB) * 0.5F);
+    drawList->AddText(font, textSize,
+        ImVec2(centre.x - extent.x * 0.5F, centre.y - extent.y * 0.5F),
+        ui::argb(ui::kTextSecondary), scanning);
+  }
   for (std::size_t index = 0; index < visible.size(); ++index) {
     const int column = static_cast<int>(index) % kGridColumns;
     const int row = static_cast<int>(index) / kGridColumns;

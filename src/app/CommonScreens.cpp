@@ -552,15 +552,15 @@ void drawHomeScreen(AppContext& context) {
     // The list is opened from the cached records. Only an import, a delete or a recorded
     // score changes them, and each of those invalidates explicitly; rescanning here made
     // entering the list from the home screen stall on a large library.
-    context.screen = Screen::Library;
+    navigateTo(context, Screen::Library);
   } else if (sidePressed == 0) {
     context.settingsTab = 0;
     context.settingsReturn = Screen::Home;
-    context.screen = Screen::Settings;
+    navigateTo(context, Screen::Settings);
   } else if (sidePressed == 1) {
     context.settingsTab = 0;
     context.settingsReturn = Screen::Home;
-    context.screen = Screen::Settings;
+    navigateTo(context, Screen::Settings);
     notify(context, "可在视频页导入皮肤资源");
   } else if (sidePressed == 2) {
     notify(context, "暂无活动");

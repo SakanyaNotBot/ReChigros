@@ -79,6 +79,9 @@ public:
   // launch into a multi-second black screen. Callers that need the records still go
   // through records(), which waits for this warm-up when it is already running.
   void warmUpAsync();
+  // True when the index can be read without waiting for the warm-up. A screen that polls
+  // this can draw a scanning state instead of stalling its first frame on a large library.
+  [[nodiscard]] bool ready();
 
 private:
   struct ScoreEntry {

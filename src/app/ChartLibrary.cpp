@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <fstream>
 #include <future>
@@ -520,6 +521,13 @@ void ChartLibrary::warmUpAsync() {
     }
     promise->set_value();
   }).detach();
+}
+
+bool ChartLibrary::ready() {
+  std::lock_guard<std::mutex> lock(indexMutex_);
+  if (loaded_) return true;
+  if (!warmUp_) return false;
+  return warmUp_->wait_for(std::chrono::seconds(0)) == std::future_status::ready;
 }
 
 const std::vector<ChartRecord>& ChartLibrary::records(bool force) {

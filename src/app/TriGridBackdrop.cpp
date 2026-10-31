@@ -171,10 +171,11 @@ unsigned int TriGridBackdrop::buildProgram(const char* vertexSource,
   return program;
 }
 
-bool TriGridBackdrop::loadTexture(const std::filesystem::path& assetRoot,
-    const char* relativePath, Texture& texture) {
+TriGridBackdrop::Image TriGridBackdrop::decodeAsset(const std::filesystem::path& assetRoot,
+    const char* relativePath) {
+  Image image;
   const auto bytes = platform::AssetManager::readBinary(assetRoot, relativePath);
-  if (bytes.empty()) return false;
+  if (bytes.empty()) return image;
   int width = 0;
   int height = 0;
   int channels = 0;
@@ -182,16 +183,23 @@ bool TriGridBackdrop::loadTexture(const std::filesystem::path& assetRoot,
       static_cast<int>(bytes.size()), &width, &height, &channels, 4);
   if (pixels == nullptr || width <= 0 || height <= 0) {
     if (pixels != nullptr) stbi_image_free(pixels);
-    return false;
+    return image;
   }
+  image.width = width;
+  image.height = height;
+  const auto count = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4U;
+  image.pixels.assign(pixels, pixels + count);
+  stbi_image_free(pixels);
+  return image;
+}
+
+bool TriGridBackdrop::uploadTexture(Image& image, Texture& texture) {
+  if (!image.valid()) return false;
   GLuint id = 0;
   glGenTextures(1, &id);
-  if (id == 0) {
-    stbi_image_free(pixels);
-    return false;
-  }
+  if (id == 0) return false;
   glBindTexture(GL_TEXTURE_2D, id);
-  const bool wrapRepeat = isPowerOfTwo(width) && isPowerOfTwo(height);
+  const bool wrapRepeat = isPowerOfTwo(image.width) && isPowerOfTwo(image.height);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
@@ -199,13 +207,43 @@ bool TriGridBackdrop::loadTexture(const std::filesystem::path& assetRoot,
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,
       wrapRepeat ? GL_MIRRORED_REPEAT : GL_CLAMP_TO_EDGE);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, image.width, image.height, 0, GL_RGBA,
+      GL_UNSIGNED_BYTE, image.pixels.data());
   glBindTexture(GL_TEXTURE_2D, 0);
-  stbi_image_free(pixels);
   texture.id = id;
-  texture.width = width;
-  texture.height = height;
+  texture.width = image.width;
+  texture.height = image.height;
+  // The decoded copy has served its purpose; holding 14 MB of pixels next to the texture
+  // would double the memory the backdrop needs.
+  image = Image{};
   return true;
+}
+
+bool TriGridBackdrop::loadTexture(const std::filesystem::path& assetRoot,
+    const char* relativePath, Texture& texture) {
+  Image image = decodeAsset(assetRoot, relativePath);
+  return uploadTexture(image, texture);
+}
+
+void TriGridBackdrop::beginPrepare(const std::filesystem::path& assetRoot) {
+  if (decodeStarted_ || ready_) return;
+  decodeStarted_ = true;
+  prepareFailed_ = false;
+  decodeDone_.store(false, std::memory_order_release);
+  const std::filesystem::path root = assetRoot;
+  // The decode is the expensive half of the preparation and it touches no OpenGL state, so
+  // it runs while the window and the interface are still being set up. The upload that
+  // remains on the render thread is the only cost the first frame pays.
+  decodeThread_ = std::thread([this, root] {
+    Image mask = decodeAsset(root, "res/TriGridBase.png");
+    Image background = decodeAsset(root, "res/background_blur.png");
+    {
+      std::lock_guard<std::mutex> lock{decodeMutex_};
+      decodedMask_ = std::move(mask);
+      decodedBackground_ = std::move(background);
+    }
+    decodeDone_.store(true, std::memory_order_release);
+  });
 }
 
 void TriGridBackdrop::destroyTexture(Texture& texture) noexcept {
@@ -216,8 +254,7 @@ void TriGridBackdrop::destroyTexture(Texture& texture) noexcept {
   texture = Texture{};
 }
 
-bool TriGridBackdrop::prepare(const std::filesystem::path& assetRoot) {
-  release();
+bool TriGridBackdrop::createProgramsAndGeometry() {
   const std::string header = shaderHeader();
   const std::string vertexSource = header + kVertexShaderBody;
   const std::string gridSource = header + kGridShaderBody;
@@ -249,10 +286,34 @@ bool TriGridBackdrop::prepare(const std::filesystem::path& assetRoot) {
       reinterpret_cast<const void*>(2 * sizeof(float)));
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
+  return true;
+}
 
-  if (!loadTexture(assetRoot, "res/TriGridBase.png", triGridMask_)
-      || !loadTexture(assetRoot, "res/background_blur.png", blurredBackground_)) {
+bool TriGridBackdrop::prepare(const std::filesystem::path& assetRoot) {
+  release();
+  beginPrepare(assetRoot);
+  if (decodeThread_.joinable()) decodeThread_.join();
+  return finishPrepare();
+}
+
+bool TriGridBackdrop::finishPrepare() {
+  if (ready_) return true;
+  if (prepareFailed_) return false;
+  if (!decodeStarted_ || !decodeDone_.load(std::memory_order_acquire)) return false;
+  if (decodeThread_.joinable()) decodeThread_.join();
+  if (!createProgramsAndGeometry()) {
+    prepareFailed_ = true;
+    return false;
+  }
+  bool uploaded = false;
+  {
+    std::lock_guard<std::mutex> lock{decodeMutex_};
+    uploaded = uploadTexture(decodedMask_, triGridMask_)
+        && uploadTexture(decodedBackground_, blurredBackground_);
+  }
+  if (!uploaded) {
     release();
+    prepareFailed_ = true;
     return false;
   }
   ready_ = true;
@@ -260,6 +321,15 @@ bool TriGridBackdrop::prepare(const std::filesystem::path& assetRoot) {
 }
 
 void TriGridBackdrop::release() noexcept {
+  if (decodeThread_.joinable()) decodeThread_.join();
+  decodeStarted_ = false;
+  decodeDone_.store(false, std::memory_order_release);
+  prepareFailed_ = false;
+  {
+    std::lock_guard<std::mutex> lock{decodeMutex_};
+    decodedMask_ = Image{};
+    decodedBackground_ = Image{};
+  }
   if (gridProgram_ != 0) glDeleteProgram(gridProgram_);
   if (backgroundProgram_ != 0) glDeleteProgram(backgroundProgram_);
   if (vertexBuffer_ != 0) glDeleteBuffers(1, &vertexBuffer_);

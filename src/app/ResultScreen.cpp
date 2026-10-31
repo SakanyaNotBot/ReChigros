@@ -991,7 +991,9 @@ void drawResultScreen(AppContext& context) {
 
   ui::endFullscreenWindow();
 
-  if (exitPressed) navigateTo(context, Screen::Library);
+  // Leave straight to the chart's detail page; the settlement page already knows which chart
+  // it belongs to, and rendering the list first is what made it flash in between.
+  if (exitPressed) gameQuitToMenu(context);
 }
 
 } // namespace rechigros::app

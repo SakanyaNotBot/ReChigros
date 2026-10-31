@@ -59,6 +59,9 @@ struct GameRuntime {
   // is not usable until the panel clears.
   bool loading{};
   double loadingElapsedSec{};
+  // Frames the panel has been on screen. The renderer start waits for one full presented
+  // frame so the panel is visible before its initialization touches the frame.
+  int loadingFrames{};
   // What the loader produced. The chart is always present when the load succeeded; the music
   // buffer is only filled when the worker decoded it, which is the case for a music-backed run.
   struct LoadedRun {
@@ -181,6 +184,10 @@ struct AppContext {
   render::GameRenderer* renderer{};
   // Creates the gameplay renderer on first use instead of paying for it during launch.
   std::function<void()> ensureRenderer;
+  // Advances the two-stage renderer startup: the first call starts the artwork decode, later
+  // calls upload it once the decode has finished. Returns true when the renderer is usable,
+  // so the loading screen can animate between the stages.
+  std::function<bool()> advanceRenderer;
 
   Screen screen{Screen::Home};
   Screen settingsReturn{Screen::Home};

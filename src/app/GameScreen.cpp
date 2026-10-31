@@ -1711,6 +1711,7 @@ void gameEnterWithLoading(AppContext& context) {
   game = GameRuntime{};
   game.loading = true;
   game.loadingElapsedSec = 0.0;
+  game.loadingFrames = 0;
   game.loadingPlay = context.play;
   game.loadingError.clear();
   // The file and the name are copied into the worker: the context's play setup may be replaced
@@ -1753,7 +1754,14 @@ void gameEnterWithLoading(AppContext& context) {
 void pollChartLoad(AppContext& context) {
   auto& game = context.game;
   if (!game.loading || !game.chartLoad.valid()) return;
-  if (context.ensureRenderer) context.ensureRenderer();
+  // The panel gets one presented frame before any of the renderer's cost is paid, so the
+  // screen that the press came from never freezes; the artwork decode then runs beside it.
+  if (game.loadingFrames < 2) return;
+  if (context.advanceRenderer) {
+    if (!context.advanceRenderer()) return;
+  } else if (context.ensureRenderer) {
+    context.ensureRenderer();
+  }
   std::filesystem::path skinDirectory;
   if (!context.settings.selectedSkin.empty()) {
     const auto candidate = context.dataRoot / "skins" / context.settings.selectedSkin;
@@ -1858,6 +1866,10 @@ void gameUpdate(AppContext& context, float frameDeltaSec) {
   // inside the loader's own thread.
   if (game.loading) {
     game.loadingElapsedSec += static_cast<double>(frameDeltaSec);
+    // The first loading frame starts the artwork decode, before the panel is drawn and
+    // before the frame opens the interface, so the decode overlaps the panel's animation.
+    if (game.loadingFrames == 0 && context.advanceRenderer) (void)context.advanceRenderer();
+    ++game.loadingFrames;
     pollChartLoad(context);
     return;
   }
@@ -2379,6 +2391,17 @@ void gameRestart(AppContext& context) {
 }
 
 void gameQuitToMenu(AppContext& context) {
+  // The back action belongs to the chart that was played, so it lands on that chart's detail
+  // page directly. Going through the list first made the list render for a frame before the
+  // detail page replaced it.
+  const std::string chartId =
+      context.play.chartId.empty() ? context.activeChartId : context.play.chartId;
+  if (!chartId.empty()) {
+    context.activeChartId = chartId;
+    context.detailReturn = Screen::Library;
+    navigateTo(context, Screen::Detail);
+    return;
+  }
   navigateTo(context, Screen::Library);
 }
 

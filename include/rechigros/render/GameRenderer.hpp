@@ -181,6 +181,13 @@ public:
   GameRenderer& operator=(const GameRenderer&) = delete;
 
   bool initialize(const std::filesystem::path& assetRoot);
+  // Two-stage form of the above. begin() starts the artwork decode and builds the parts
+  // that need no uploaded textures; finish() waits for the decode and uploads. A loading
+  // screen can draw frames between the two, which keeps the decode off the frame that
+  // starts a run.
+  bool initializeBegin(const std::filesystem::path& assetRoot);
+  bool initializeFinish();
+  [[nodiscard]] bool initializeBegun() const noexcept;
 
   // Applies a skin directory on top of the built-in resource pack. A skin may override any
   // subset of the material settings; fields it leaves out keep the built-in value. Passing

@@ -62,8 +62,14 @@ std::vector<std::filesystem::path> runDialog(
   PickRequest request;
   show(pickCallback, &request);
   // The callback is the only completion signal, and the platform calls it exactly once per
-  // request, including when the dialog is dismissed.
+  // request, including when the dialog is dismissed. Pumping while waiting matters on
+  // Android: the lifecycle transition that rebuilds the EGL surface when the picker's
+  // activity closes is driven by the event pump, and a caller that only sleeps leaves the
+  // app drawing into a destroyed surface (a black screen until the next resume).
+  // Pumping gathers events but does not consume them, so nothing aimed at the interface is
+  // lost; the loop still yields to keep the wait from spinning.
   while (!request.done.load(std::memory_order_acquire)) {
+    SDL_PumpEvents();
     SDL_Delay(1);
   }
   std::lock_guard<std::mutex> guard(request.mutex);

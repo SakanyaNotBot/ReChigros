@@ -233,6 +233,17 @@ bool Application::initialize() {
   }
   reportLaunchStage("SDL_Init", launchStart, launchFrequency);
   std::uint64_t launchStage = launchMark();
+  // The menu backdrop's artwork is decoded on a worker from here on, so the first frame
+  // only uploads it and the interface never appears without its real background.
+  {
+    const char* disableBackdrop = std::getenv("RECHIGROS_DISABLE_BACKDROP");
+    if (disableBackdrop == nullptr || *disableBackdrop == '\0') {
+      backdrop_ = std::make_unique<TriGridBackdrop>();
+      backdrop_->beginPrepare(platform::assetRoot());
+    } else {
+      std::cerr << "GPU backdrop disabled by environment; using the fallback background\n";
+    }
+  }
   // The diagnostic switch has to be on before the first draw so the first failing pass
   // is the one reported, rather than one inherited from an earlier frame.
   render::gl::setErrorLoggingEnabled(glDebug_);
@@ -442,6 +453,11 @@ bool Application::initialize() {
   app_->playOverrides.mirrorX = mirrorOverride_;
   app_->playOverrides.autoplay = autoplayOverride_;
   app_->ensureRenderer = [this]() { ensureRenderer(); };
+  app_->advanceRenderer = [this]() { return advanceRenderer(); };
+  // The home screen's own artwork decodes on the cache worker from here on. Requesting it
+  // during launch means the first frame already draws it instead of a placeholder.
+  app_->textures.textureFor(platform::assetRoot() / "res/meow.png", 320);
+  app_->textures.textureFor(platform::assetRoot() / "res/github.png", 128);
   updateAudioFromSettings();
   // Scanning the pack directory reads and parses every pack's metadata. Doing it here rather
   // than on demand keeps it off the first frame that shows a screen needing the library,
@@ -655,6 +671,15 @@ int Application::run() {
       }
     } else {      glBindFramebuffer(GL_FRAMEBUFFER, 0);
       glViewport(0, 0, app_->drawableWidth, app_->drawableHeight);
+      // The decode started before the window existed. Finishing it here means the first
+      // presented frame already carries the real backdrop instead of the fallback that the
+      // final picture would replace a frame or two later.
+      if (backdrop_ != nullptr && !backdrop_->prepareSettled()) (void)backdrop_->finishPrepare();
+      if (backdrop_ != nullptr && !backdrop_->ready() && backdrop_->prepareSettled()) {
+        std::cerr << "GPU backdrop unavailable; using the fallback background\n";
+        backdrop_.reset();
+      }
+      ui::setBackdropSuppressed(backdrop_ != nullptr && backdrop_->ready());
       if (backdrop_ != nullptr && backdrop_->ready()) {
         // The chart detail page supplies its own artwork behind the grid.
         unsigned int source = 0;
@@ -1371,6 +1396,25 @@ void Application::ensureRenderer() {
   }
 }
 
+bool Application::advanceRenderer() {
+  if (renderer_ == nullptr) {
+    renderer_ = std::make_unique<render::GameRenderer>();
+    if (!renderer_->initializeBegin(platform::assetRoot())) {
+      std::cerr << "Renderer initialization failed\n";
+      return false;
+    }
+    if (app_ != nullptr) {
+      app_->renderer = renderer_.get();
+      renderer_->resize(app_->drawableWidth, app_->drawableHeight);
+    }
+  }
+  if (!renderer_->initializeBegun()) return false;
+  // The artwork decode has been running since the first call; only the uploads block, and
+  // they run on the frame after the loading panel has already been presented.
+  if (!renderer_->gameplayTexturesReady()) return false;
+  return renderer_->initializeFinish();
+}
+
 void Application::runDeferredInitialization() {
   if (deferredInitStage_ == 0) {
     deferredInitStage_ = 1;
@@ -1381,19 +1425,9 @@ void Application::runDeferredInitialization() {
   }
   if (deferredInitStage_ == 1) {
     deferredInitStage_ = 2;
-    const char* disableBackdrop = std::getenv("RECHIGROS_DISABLE_BACKDROP");
-    if (disableBackdrop != nullptr && *disableBackdrop != '\0') {
-      std::cerr << "GPU backdrop disabled by environment; using the fallback background\n";
-      ui::setBackdropSuppressed(false);
-      return;
-    }
-    backdrop_ = std::make_unique<TriGridBackdrop>();
-    if (!backdrop_->prepare(platform::assetRoot())) {
-      std::cerr << "GPU backdrop unavailable; using the fallback background\n";
-      backdrop_->release();
-      backdrop_.reset();
-    }
-    ui::setBackdropSuppressed(backdrop_ != nullptr && backdrop_->ready());
+    // The backdrop's decode started before the window existed; the first interface frame
+    // completes the upload. Until then the procedural fallback stands in for it.
+    ui::setBackdropSuppressed(false);
   }
 }
 
@@ -1408,6 +1442,17 @@ void Application::handleRenderDeviceReset() {
   app_->textures.reset();
   ui::fontCache().shutdown();
   ui::fontCache().initialize(platform::assetRoot());
+  // The immediate-mode backend's shader and glyph atlas belonged to the old context too.
+  // Rebuilding only the application's own caches left the interface drawing through a
+  // deleted texture, which reads as a black screen until the next context reset.
+  if (imguiReady_) {
+    ImGui_ImplOpenGL3_Shutdown();
+#ifdef RECHIGROS_GLES
+    ImGui_ImplOpenGL3_Init("#version 300 es");
+#else
+    ImGui_ImplOpenGL3_Init("#version 330 core");
+#endif
+  }
 
   renderer_ = std::make_unique<render::GameRenderer>();
   if (!renderer_->initialize(platform::assetRoot())) {
@@ -1425,12 +1470,11 @@ void Application::handleRenderDeviceReset() {
 
   if (backdrop_ != nullptr) {
     backdrop_->release();
-    if (!backdrop_->prepare(platform::assetRoot())) {
-      backdrop_->release();
-      backdrop_.reset();
-    }
+    // The decode restarts on a worker and the next frame completes the upload, so the
+    // reinitialisation does not block the frame that handles the reset.
+    backdrop_->beginPrepare(platform::assetRoot());
+    ui::setBackdropSuppressed(false);
   }
-  ui::setBackdropSuppressed(backdrop_ != nullptr && backdrop_->ready());
   frameClockReset_ = true;
 }
 
@@ -1516,6 +1560,13 @@ void Application::handleEvent(const SDL_Event& event, bool& running) {
         suspended_ = false;
         frameClockReset_ = true;
       }
+      // Returning from a native picker or another activity can leave the surface rebuilt
+      // without a device-reset event. Making the context current here is what lets the next
+      // frame present instead of leaving the window black until the user backgrounds it.
+      if (window_ != nullptr && context_ != nullptr
+          && !SDL_GL_MakeCurrent(window_, context_)) {
+        handleRenderDeviceReset();
+      }
       return;
     case SDL_EVENT_TERMINATING:
       if (app_->screen == Screen::Game) gameFocusLost(*app_);
@@ -1548,7 +1599,7 @@ void Application::handleKeyDown(const SDL_Event& event) {
       case Screen::Calibration: break; // Handled by the screen itself.
       case Screen::Library: navigateTo(*app_, Screen::Home); break;
       case Screen::Detail: navigateTo(*app_, Screen::Library); break;
-      case Screen::Result: navigateTo(*app_, Screen::Library); break;
+      case Screen::Result: gameQuitToMenu(*app_); break;
       default: break;
     }
     return;

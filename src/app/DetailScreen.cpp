@@ -454,7 +454,10 @@ void drawDetailScreen(AppContext& context) {
   const float contentWidth = viewport.x / canvas.scale;
   const float contentHeight = viewport.y / canvas.scale;
   drawList->AddRectFilled(ImVec2(0.0F, 0.0F), viewport, ui::argb(0x46000000U));
-  const std::uint64_t cover = coverTexture(context, *record, 2048);
+  // The large copy decodes on the worker; until it lands, the card-sized copy the list
+  // already uploaded keeps the page from opening on an empty frame.
+  std::uint64_t cover = coverTexture(context, *record, 2048);
+  if (cover == 0) cover = coverTexture(context, *record, 1024);
   if (cover != 0) {
     const int coverWidth = static_cast<int>(context.textures.width(cover));
     const int coverHeight = static_cast<int>(context.textures.height(cover));
