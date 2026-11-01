@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rechigros/render/gl/Texture.hpp"
+#include "rechigros/render/asset/ImageCache.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -12,22 +13,6 @@
 #include <vector>
 
 namespace rechigros::render::asset {
-
-// Decoded RGBA image, ready for upload. Kept around so a texture can be
-// re-created after a context loss without touching the filesystem again.
-struct Image {
-  int width{};
-  int height{};
-  std::vector<std::uint8_t> pixels;
-  [[nodiscard]] bool valid() const noexcept { return width > 0 && height > 0 && !pixels.empty(); }
-};
-
-// Decodes an image file (PNG/JPEG/GIF frame) into RGBA. Images are not flipped:
-// row 0 is the top row, which matches the top-left UV convention used here.
-[[nodiscard]] Image decodeImage(const std::filesystem::path& path);
-[[nodiscard]] Image decodeImageMemory(const std::uint8_t* data, std::size_t size);
-// Forces every texel to opaque white while keeping the alpha channel.
-void forceWhite(Image& image);
 
 // An animated image decoded from a GIF: one texture per frame plus the timing needed to
 // pick the frame for a moment in time.
@@ -87,6 +72,14 @@ public:
   // Waits for a started prefetch. Every decoded image is then available to loadAsset, which only
   // has to upload it.
   void awaitPrefetchAssets();
+  // A copy of the prefetched pixels, used by material crops before the texture upload consumes them.
+  Image imageForFile(const std::filesystem::path& path);
+  gl::Texture* loadAssetDeferred(const std::string& relativePath);
+  gl::Texture* loadFileDeferred(const std::filesystem::path& path);
+  void advanceDeferredUploads(double budgetMs);
+  void completeDeferredUploads();
+  void cancelDeferredUploads();
+  [[nodiscard]] bool deferredUploadsComplete() const noexcept { return deferred_.empty(); }
   // Texture from an absolute path on disk.
   gl::Texture* loadFile(const std::filesystem::path& path, bool white = false);
   // Animated texture from a GIF on disk; null when the file is not a decodable GIF.
@@ -110,7 +103,14 @@ private:
   std::vector<std::thread> prefetchThreads_;
   std::mutex prefetchMutex_;
   std::atomic<std::size_t> prefetchPending_{0};
+  struct DeferredUpload {
+    Image image;
+    gl::Texture texture;
+    std::size_t nextRow{};
+    std::string key;
+  };
   std::unordered_map<std::string, gl::Texture> textures_;
+  std::unordered_map<std::string, DeferredUpload> deferred_;
   std::unordered_map<std::string, AnimatedTexture> animated_;
   gl::Texture white_;
 };

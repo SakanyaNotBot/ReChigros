@@ -82,7 +82,7 @@ if(TARGET rechigros_platform)
   target_include_directories(rechigros_skin_tests PRIVATE
     "${PROJECT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}")
-  target_link_libraries(rechigros_skin_tests PRIVATE rechigros_platform nlohmann_json_headers)
+  target_link_libraries(rechigros_skin_tests PRIVATE rechigros_platform rechigros_image_cache nlohmann_json_headers)
   if(NOT ANDROID AND NOT IOS)
     add_test(NAME rechigros_skin_tests COMMAND rechigros_skin_tests)
   endif()

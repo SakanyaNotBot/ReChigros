@@ -5,6 +5,7 @@
 #include "rechigros/app/Replay.hpp"
 #include "rechigros/platform/Archive.hpp"
 #include "rechigros/platform/FileSystem.hpp"
+#include "rechigros/render/asset/ImageCache.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -377,6 +378,9 @@ SkinImportOutcome importSkinPackage(const std::filesystem::path& archive,
     if (written == 0) {
       platform::removeRecursively(destination);
       return {false, "导入皮肤失败：压缩包内没有皮肤文件", {}};
+    }
+    if (platform::fileExists(destination / "hit_fx.png")) {
+      (void)render::asset::prepareImageCache(destination / "hit_fx.png");
     }
     SkinImportOutcome outcome;
     outcome.imported = true;

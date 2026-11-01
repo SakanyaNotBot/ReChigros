@@ -19,6 +19,10 @@ public:
 
   // Uploads 8-bit RGBA pixels. Rows are stored top-down in the source data.
   bool uploadRgba(int width, int height, const std::uint8_t* pixels) noexcept;
+  // Uploads premultiplied gray/alpha pairs and replicates the gray channel into RGB.
+  bool uploadDualChannel(int width, int height, const std::uint8_t* pixels) noexcept;
+  bool allocateStorage(int width, int height, bool dualChannel) noexcept;
+  void updateRows(int firstRow, int rowCount, const std::uint8_t* pixels, bool dualChannel) noexcept;
   // Allocates an empty RGBA image, used for render targets.
   bool allocateEmpty(int width, int height) noexcept;
   // Replaces the whole level-0 image of an existing texture (same dimensions allowed).

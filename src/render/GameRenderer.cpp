@@ -125,9 +125,14 @@ struct GameRenderer::Impl {
     halfResFbo.reset();
     batch.release();
     text.shutdown();
+    textReady = false;
     textures.clear();
+    materialsLoaded = false;
+    useChartBackground = false;
+    backgroundPath.clear();
     loadedChart = nullptr;
     background = nullptr;
+    defaultBackground = nullptr;
     for (auto& pair : noteHeads) {
       pair[0] = nullptr;
       pair[1] = nullptr;
@@ -149,6 +154,7 @@ struct GameRenderer::Impl {
   // Two-stage startup: the artwork decode starts in begin() and the uploads happen in
   // finish(), so a loading screen can animate in between.
   bool beginDone{};
+  bool textReady{};
   std::chrono::steady_clock::time_point initStart{};
   double initTextMs{};
 
@@ -223,6 +229,9 @@ struct GameRenderer::Impl {
   // Fully resolved material values from the built-in pack and the selected skin layer.
   skin::ResolvedMaterials skinMaterials;
   std::filesystem::path skinDirectory;
+  bool materialsLoaded{};
+  bool useChartBackground{};
+  std::filesystem::path backgroundPath;
   bool prefetchStarted{false};
   std::filesystem::path prefetchSkinKey_;
   double blockUpdateLastSec{};
@@ -278,6 +287,7 @@ struct GameRenderer::Impl {
   // Loads a texture the skin may override: the skin directory's file first, then the
   // built-in asset. Returns null when neither can be decoded.
   gl::Texture* loadSkinAwareTexture(const char* fileName, const char* assetFallback);
+  gl::Texture* loadSkinAwareTextureDeferred(const char* fileName, const char* assetFallback);
   // Same fallback order, but decodes the image so it can be cropped before upload.
   asset::Image loadSkinAwareImage(
       const char* fileName, const char* assetFallback, std::string& cacheKey);
@@ -338,9 +348,13 @@ struct GameRenderer::Impl {
 };
 
 void GameRenderer::Impl::loadGameplayTextures() {
-  defaultBackground = textures.loadAsset("res/background.jpg");
-  // A failed read must not blank a backdrop that was already valid.
-  if (defaultBackground != nullptr) background = defaultBackground;
+  textures.cancelDeferredUploads();
+  if (!useChartBackground) {
+    defaultBackground = textures.loadAsset("res/background.jpg");
+    if (defaultBackground != nullptr) background = defaultBackground;
+  }
+  applyResPackSettings();
+  refreshHoldSheet();
   // A selected skin replaces the note, hold and hit-effect artwork with files of the same
   // names in its directory; everything it does not ship keeps the built-in asset.
   noteHeads[kNoteTypeTap][0] = loadSkinAwareTexture("click.png", "res/click.png");
@@ -353,7 +367,7 @@ void GameRenderer::Impl::loadGameplayTextures() {
   holdTextures[1] = loadSkinAwareTexture("hold_mh.png", "res/hold_mh.png");
   noteHeads[kNoteTypeHold][0] = holdTextures[0];
   noteHeads[kNoteTypeHold][1] = holdTextures[1];
-  hitFx = loadSkinAwareTexture("hit_fx.png", "res/hit_fx.png");
+  hitFx = loadSkinAwareTextureDeferred("hit_fx.png", "res/hit_fx.png");
   // HUD artwork; a missing file makes the corresponding widget fall back to a flat quad.
   hudArtwork.pause = textures.loadAsset("res/pause.png");
   hudArtwork.timerLine = textures.loadAsset("res/timerLine.png");
@@ -413,14 +427,12 @@ void GameRenderer::Impl::loadGameplayTextures() {
     blockNoiseMap->setWrapMirrored(true, true);
   }
 
-  // Resolve the material settings before slicing the hold sheet: the pack and a skin may
-  // change the slice sizes.
-  applyResPackSettings();
-
-  // The hold sheet is a vertical stack of tail, body and head. The body is not a
-  // separate asset: it is the middle slice of the same sheet, cropped here.
-  refreshHoldSheet();
-
+  for (int highlight = 0; highlight < 2; ++highlight) {
+    if (holdTextures[highlight] != nullptr) {
+      holdUv[highlight] = scene::buildHoldUv(holdTextures[highlight]->height(),
+          holdTailSlice[highlight], holdHeadSlice[highlight]);
+    }
+  }
   headTextureList.clear();
   for (const int type : kHeadDrawOrder) {
     for (const auto& pair : noteHeads[type]) {
@@ -433,6 +445,7 @@ void GameRenderer::Impl::loadGameplayTextures() {
       headTextureList.push_back(texture);
     }
   }
+  materialsLoaded = true;
 }
 
 void GameRenderer::Impl::refreshHoldSheet() {
@@ -471,13 +484,10 @@ asset::Image GameRenderer::Impl::loadSkinAwareImage(
   if (!skinDirectory.empty()) {
     const auto skinPath = skin::resolveSkinFile(skinDirectory, fileName);
     if (!skinPath.empty()) {
-      const auto bytes = platform::readBinaryFile(skinPath);
-      if (!bytes.empty()) {
-        asset::Image image = asset::decodeImageMemory(bytes.data(), bytes.size());
-        if (image.valid()) {
-          cacheKey = skinPath.generic_string();
-          return image;
-        }
+      asset::Image image = textures.imageForFile(skinPath);
+      if (image.valid()) {
+        cacheKey = skinPath.generic_string();
+        return image;
       }
     }
   }
@@ -508,6 +518,18 @@ gl::Texture* GameRenderer::Impl::loadSkinAwareTexture(
   return textures.loadAsset(assetFallback);
 }
 
+gl::Texture* GameRenderer::Impl::loadSkinAwareTextureDeferred(
+    const char* fileName, const char* assetFallback) {
+  if (!skinDirectory.empty()) {
+    const auto skinPath = skin::resolveSkinFile(skinDirectory, fileName);
+    if (!skinPath.empty()) {
+      if (gl::Texture* texture = textures.loadFileDeferred(skinPath)) return texture;
+    }
+  }
+  if (assetFallback == nullptr) return nullptr;
+  return textures.loadAssetDeferred(assetFallback);
+}
+
 gl::Texture* GameRenderer::Impl::cropHoldBody(
     const char* fileName, const char* assetFallback, int tailSlice, int headSlice) {
   std::string cacheKey;
@@ -522,6 +544,7 @@ gl::Texture* GameRenderer::Impl::cropHoldBody(
   asset::Image body;
   body.width = sheet.width;
   body.height = bodyHeight;
+  body.premultiplied = sheet.premultiplied;
   body.pixels.resize(rowBytes * static_cast<std::size_t>(bodyHeight));
   const auto* source = sheet.pixels.data() + static_cast<std::size_t>(bodyTop) * rowBytes;
   std::copy_n(source, body.pixels.size(), body.pixels.data());
@@ -1066,7 +1089,7 @@ void GameRenderer::Impl::drawNotePasses(const scene::StageLayout& layout,
 
 void GameRenderer::Impl::drawHitEffects(const scene::StageLayout& layout,
     const RenderFrameInput& input, game::Chart* chart) {
-  if (chart == nullptr || hitFx == nullptr) return;
+  if (chart == nullptr || hitFx == nullptr || !textures.deferredUploadsComplete()) return;
   const float noteWidth =
       layout.stage.width * noteWidthRatio(layout.stage.width, layout.stage.height) * input.keyScale;
   const bool autoplayBursts = input.practice.autoPlay && !input.replayPlayback;
@@ -1355,57 +1378,46 @@ bool GameRenderer::initialize(const std::filesystem::path& assetRoot) {
   return initializeBegin(assetRoot) && initializeFinish();
 }
 
-bool GameRenderer::initializeBegin(const std::filesystem::path& assetRoot) {
+bool GameRenderer::initializeBegin(const std::filesystem::path& assetRoot,
+    const std::filesystem::path& skinDirectory, const std::filesystem::path& backgroundImage) {
   if (impl_->initialized || impl_->beginDone) return true;
   impl_->initStart = std::chrono::steady_clock::now();
   impl_->assets = assetRoot;
   impl_->textures.setAssetRoot(assetRoot);
-  // Decode the startup artwork on worker threads while the text layer initialises. Decoding is the
-  // half of a texture load that costs the time on a device and needs no graphics context, so it
-  // runs underneath a stage that does not touch textures; the uploads below then run back to back
-  // on this thread. Names are the ones loadGameplayTextures asks for.
-  impl_->textures.beginPrefetchAssets({"res/background.jpg", "res/click.png", "res/click_mh.png",
-      "res/drag.png", "res/drag_mh.png", "res/flick.png", "res/flick_mh.png", "res/hold.png",
-      "res/hold_mh.png", "res/hit_fx.png", "res/pause.png", "res/timerLine.png",
-      "res/NoteRing.png", "res/arrow.png", "official_textures/Glitch4in1.png",
-      "official_textures/GlitchMap.png", "official_textures/WireNoise.png",
-      "official_textures/DisplaceMap.png", "official_textures/BlockNoise1.png",
-      "official_textures/BlockSpark.png"});
-  // The same bank the loading screen will ask for, so its readiness check covers this stage.
-  impl_->prefetchStarted = true;
-  if (!impl_->text.initialize(assetRoot)) {
-    // A renderer that was not initialised draws nothing at all, which reads as an empty
-    // scene on the device; the reason is logged instead of failing silently.
-    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-        "[render] renderer initialization failed: text layer unavailable (asset root %s)",
-        assetRoot.string().c_str());
-    return false;
-  }
-  impl_->initTextMs = std::chrono::duration<double, std::milli>(
-      std::chrono::steady_clock::now() - impl_->initStart).count();
+  impl_->skinDirectory = skinDirectory;
+  impl_->useChartBackground = !backgroundImage.empty();
+  prefetchGameplayTextures(skinDirectory);
+  prefetchBackgroundImage(backgroundImage);
   impl_->beginDone = true;
   return true;
 }
 
-bool GameRenderer::initializeFinish() {
-  if (impl_->initialized) return true;
+bool GameRenderer::initializeFinish(bool initializeText) {
   if (!impl_->beginDone) return false;
-  // The wait is what the loading screen covers: the decode has been running since begin(),
-  // so only the uploads below remain on this thread.
-  impl_->textures.awaitPrefetchAssets();
-  impl_->loadGameplayTextures();
-  // The composite's shaders sample the displacement, spark and noise maps, so it can only
-  // be prepared once loadGameplayTextures has produced them. Preparing it in begin() handed
-  // the pass null textures, which silently disabled every zone's shader.
-  (void)impl_->blockComposite.prepare(impl_->assets, impl_->blockDisplaceMap,
-      impl_->blockSparkMap, impl_->blockNoiseMap);
-  const double texturesMs = std::chrono::duration<double, std::milli>(
-      std::chrono::steady_clock::now() - impl_->initStart).count() - impl_->initTextMs;
-  bindDefaultBlend();
-  impl_->initialized = true;
-  SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-      "[render] renderer initialized (asset root %s) text=%.1fms textures=%.1fms",
-      impl_->assets.string().c_str(), impl_->initTextMs, texturesMs);
+  if (!impl_->initialized) {
+    impl_->textures.awaitPrefetchAssets();
+    impl_->loadGameplayTextures();
+    (void)impl_->blockComposite.prepare(impl_->assets, impl_->blockDisplaceMap,
+        impl_->blockSparkMap, impl_->blockNoiseMap);
+    const double texturesMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - impl_->initStart).count();
+    bindDefaultBlend();
+    impl_->initialized = true;
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "[render] renderer initialized (textures) %.1fms", texturesMs);
+  }
+  if (initializeText && !impl_->textReady) {
+    const auto started = std::chrono::steady_clock::now();
+    if (!impl_->text.initialize(impl_->assets)) {
+      SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+          "[render] renderer initialization failed: text layer unavailable (asset root %s)",
+          impl_->assets.string().c_str());
+      return false;
+    }
+    impl_->textReady = true;
+    impl_->initTextMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "[render] text initialized %.1fms", impl_->initTextMs);
+  }
   return true;
 }
 
@@ -2144,30 +2156,43 @@ void GameRenderer::prefetchGameplayTextures(const std::filesystem::path& skinDir
   if (impl_->prefetchStarted && impl_->prefetchSkinKey_ == skinDirectory) return;
   impl_->prefetchStarted = true;
   impl_->prefetchSkinKey_ = skinDirectory;
-  static const std::vector<std::string> assets = {
-      "res/background.jpg", "res/click.png", "res/click_mh.png", "res/drag.png",
-      "res/drag_mh.png", "res/flick.png", "res/flick_mh.png", "res/hold.png",
-      "res/hold_mh.png", "res/hit_fx.png", "res/pause.png", "res/timerLine.png",
-      "res/NoteRing.png", "res/arrow.png", "official_textures/Glitch4in1.png",
-      "official_textures/GlitchMap.png", "official_textures/WireNoise.png",
-      "official_textures/DisplaceMap.png", "official_textures/BlockNoise1.png",
-      "official_textures/PointNoise.png", "official_textures/FD_Noise_00000.png"};
-  impl_->textures.beginPrefetchAssets(assets);
-  if (skinDirectory.empty()) return;
-  static const char* const skinFiles[] = {"click.png", "click_mh.png", "drag.png",
-      "drag_mh.png", "flick.png", "flick_mh.png", "hold.png", "hold_mh.png", "hit_fx.png",
-      "hold_body.png", "hold_body_mh.png"};
+  std::vector<std::string> assets = {
+      "res/pause.png", "res/timerLine.png", "res/NoteRing.png", "res/arrow.png",
+      "official_textures/Glitch4in1.png", "official_textures/GlitchMap.png",
+      "official_textures/WireNoise.png", "official_textures/DisplaceMap.png",
+      "official_textures/BlockNoise1.png", "official_textures/PointNoise.png",
+      "official_textures/FD_Noise_00000.png", "official_textures/KaleidoNormal.png",
+      "official_textures/KaleidoCol.png"};
   std::vector<std::filesystem::path> files;
-  for (const char* name : skinFiles) {
-    const auto path = skin::resolveSkinFile(skinDirectory, name);
-    if (!path.empty()) files.push_back(path);
-  }
+  const auto resolve = [&](const char* name, const char* fallback) {
+    if (!skinDirectory.empty()) {
+      const auto path = skin::resolveSkinFile(skinDirectory, name);
+      if (!path.empty()) {
+        files.push_back(path);
+        return;
+      }
+    }
+    if (fallback != nullptr) assets.emplace_back(fallback);
+  };
+  resolve("click.png", "res/click.png");
+  resolve("click_mh.png", "res/click_mh.png");
+  resolve("drag.png", "res/drag.png");
+  resolve("drag_mh.png", "res/drag_mh.png");
+  resolve("flick.png", "res/flick.png");
+  resolve("flick_mh.png", "res/flick_mh.png");
+  resolve("hold.png", "res/hold.png");
+  resolve("hold_mh.png", "res/hold_mh.png");
+  resolve("hit_fx.png", "res/hit_fx.png");
+  resolve("hold_body.png", nullptr);
+  resolve("hold_body_mh.png", nullptr);
+  impl_->textures.beginPrefetchAssets(assets);
   impl_->textures.beginPrefetchFiles(files);
 }
 
 void GameRenderer::prefetchBackgroundImage(const std::filesystem::path& image) {
-  if (impl_ == nullptr || image.empty()) return;
-  impl_->textures.beginPrefetchFiles({image});
+  if (impl_ == nullptr) return;
+  if (image.empty()) impl_->textures.beginPrefetchAssets({"res/background.jpg"});
+  else impl_->textures.beginPrefetchFiles({image});
 }
 
 bool GameRenderer::gameplayTexturesReady() const {
@@ -2175,31 +2200,46 @@ bool GameRenderer::gameplayTexturesReady() const {
 }
 
 void GameRenderer::setSkinDirectory(const std::filesystem::path& skinDirectory) {
-  if (impl_ == nullptr) return;
+  if (impl_ == nullptr || (impl_->materialsLoaded && impl_->skinDirectory == skinDirectory)) return;
   impl_->skinDirectory = skinDirectory;
-  // Re-resolve the material settings and reload the gameplay textures: the selected skin
-  // may replace any texture, and loading from the defaults also clears the previous skin's
-  // values, so an empty path restores the built-in look.
   impl_->loadGameplayTextures();
 }
 
 void GameRenderer::setBackgroundImage(const std::filesystem::path& image) {
-  if (impl_ == nullptr || !impl_->initialized) return;
-  gl::Texture* loaded =
-      image.empty() ? nullptr : impl_->textures.loadFile(image);
+  if (impl_ == nullptr || !impl_->initialized || impl_->backgroundPath == image) return;
+  impl_->backgroundPath = image;
+  gl::Texture* loaded = image.empty() ? nullptr : impl_->textures.loadFile(image);
+  impl_->useChartBackground = loaded != nullptr;
   if (loaded != nullptr) impl_->background = loaded;
-  else if (impl_->defaultBackground != nullptr) impl_->background = impl_->defaultBackground;
-  // The backdrop blur is built from the artwork, so it has to be rebuilt for the new image.
+  else {
+    if (impl_->defaultBackground == nullptr) {
+      impl_->defaultBackground = impl_->textures.loadAsset("res/background.jpg");
+    }
+    if (impl_->defaultBackground != nullptr) impl_->background = impl_->defaultBackground;
+  }
   impl_->backgroundBlur.invalidate();
 }
 
 void GameRenderer::render(const RenderFrameInput& input, game::Chart* chart,
     const game::JudgementEngine* judgement) {
   if (!impl_->initialized) return;
+  const auto refreshHitFx = [this]() {
+    impl_->hitFx = impl_->loadSkinAwareTextureDeferred("hit_fx.png", "res/hit_fx.png");
+  };
+  if (!impl_->textures.deferredUploadsComplete()) refreshHitFx();
+  if (chart != nullptr && !chart->allNotesSorted.empty() && !impl_->textures.deferredUploadsComplete()
+      && input.chartTimeSec + 0.35 >= chart->allNotesSorted.front()->sect) {
+    impl_->textures.completeDeferredUploads();
+    refreshHitFx();
+  }
   impl_->disableChartShaderSetting = input.disableChartShader;
   impl_->prepareForChart(chart);
   // Target 0 is the default framebuffer the window presents from.
   impl_->drawScene(input, chart, judgement, 0);
+  if (!impl_->textures.deferredUploadsComplete()) {
+    impl_->textures.advanceDeferredUploads(12.0);
+    refreshHitFx();
+  }
 }
 void GameRenderer::render(double chartTimeSeconds, game::Chart* chart,
     const game::JudgementEngine* judgement) {
@@ -2214,6 +2254,8 @@ bool GameRenderer::renderOffscreen(const RenderFrameInput& input, game::Chart* c
     const game::JudgementEngine* judgement, const std::filesystem::path& outputPng, int frames,
     int width, int height) {
   if (!impl_->initialized || width <= 0 || height <= 0) return false;
+  impl_->textures.completeDeferredUploads();
+  impl_->hitFx = impl_->loadSkinAwareTextureDeferred("hit_fx.png", "res/hit_fx.png");
   gl::Framebuffer target;
   if (!target.resize(width, height)) return false;
 
@@ -2284,6 +2326,8 @@ bool GameRenderer::renderOffscreen(const RenderFrameInput& input, game::Chart* c
 bool GameRenderer::beginCapture(const RenderFrameInput& input, game::Chart* chart, int width,
     int height) {
   if (!impl_->initialized || width <= 0 || height <= 0) return false;
+  impl_->textures.completeDeferredUploads();
+  impl_->hitFx = impl_->loadSkinAwareTextureDeferred("hit_fx.png", "res/hit_fx.png");
   endCapture();
   if (!impl_->captureTarget.resize(width, height)) return false;
   // The staging buffers are a latency optimisation only: a driver without pixel buffer support

@@ -1544,6 +1544,25 @@ void syncLevelEffectChallenge(AppContext& context) {
 
 } // namespace
 
+namespace {
+
+std::unique_ptr<game::Chart> gCachedChart;
+std::string gCachedChartKey;
+std::string gRunChartKey;
+
+std::string chartCacheKey(const std::filesystem::path& path, bool storyMode) {
+  std::error_code error;
+  const auto size = std::filesystem::file_size(path, error);
+  if (error) return {};
+  const auto modified = std::filesystem::last_write_time(path, error);
+  if (error) return {};
+  return path.generic_string() + "|" + std::to_string(size) + "|"
+      + std::to_string(static_cast<long long>(modified.time_since_epoch().count())) + "|"
+      + (storyMode ? "1" : "0");
+}
+
+} // namespace
+
 // Everything a run needs once its chart has been parsed. Split from the load itself so the
 // loading screen can hand the chart over when its worker finishes.
 bool beginRun(AppContext& context, std::unique_ptr<game::Chart> chart,
@@ -1554,6 +1573,7 @@ bool beginRun(AppContext& context, std::unique_ptr<game::Chart> chart,
     return false;
   }
   context.loadError.clear();
+  gRunChartKey = chartCacheKey(context.play.chartFile, context.settings.storyMode);
   if (context.ensureRenderer) context.ensureRenderer();
 
   // Resolve once so the scene and the mixer use the same selection. A skin only overrides
@@ -1570,8 +1590,14 @@ bool beginRun(AppContext& context, std::unique_ptr<game::Chart> chart,
     context.renderer->setBackgroundImage(context.play.bgFile);
     context.renderer->resetJudgementEffects(chart.get());
   }
+  const auto loadingStartedAt = context.game.loadingStartedAt;
+  const auto loadingPanelPresentedAt = context.game.loadingPanelPresentedAt;
+  const bool loadingPanelPresented = context.game.loadingPanelPresented;
   context.game = GameRuntime{};
   auto& game = context.game;
+  game.loadingStartedAt = loadingStartedAt;
+  game.loadingPanelPresentedAt = loadingPanelPresentedAt;
+  game.loadingPanelPresented = loadingPanelPresented;
   game.chart = std::move(chart);
   game.loaded = true;
   game.started = true;
@@ -1601,6 +1627,7 @@ bool beginRun(AppContext& context, std::unique_ptr<game::Chart> chart,
   game.userOffsetSec =
       static_cast<double>(context.play.chartOffsetMs + context.play.audioOffsetMs) / 1000.0;
   game.chartOffsetSec = game.chart->offset;
+  if (game.chart->levelEffects != nullptr) game.chart->levelEffects->resetChallenge();
   game.session.setChart(game.chart.get(), game.challenge);
   game.session.setAutoplay(game.autoplay);
   // The duck and the level-mod latch follow the session's own swallowed-finger edge. The
@@ -1631,7 +1658,7 @@ bool beginRun(AppContext& context, std::unique_ptr<game::Chart> chart,
     // A run started through the loading screen already has its music decoded, so the frame
     // that starts it only swaps the buffer in. The synchronous path still decodes here.
     const bool musicReady = decodedMusic != nullptr
-        ? context.audio->installDecodedMusic(std::move(*decodedMusic))
+        ? context.audio->installDecodedMusic(std::move(*decodedMusic), context.play.musicFile)
         : (!context.play.musicFile.empty() && context.audio->loadMusic(context.play.musicFile));
     if (musicReady) {
       game.musicLoaded = true;
@@ -1717,6 +1744,7 @@ void gameEnterWithLoading(AppContext& context) {
   auto& game = context.game;
   game = GameRuntime{};
   game.loading = true;
+  game.loadingStartedAt = std::chrono::steady_clock::now();
   game.loadingElapsedSec = 0.0;
   game.loadingFrames = 0;
   game.loadingPlay = context.play;
@@ -1727,22 +1755,34 @@ void gameEnterWithLoading(AppContext& context) {
   const auto songName = context.play.songName;
   const auto musicFile = context.play.musicFile;
   const bool storyMode = context.settings.storyMode;
+  const auto cacheKey = chartCacheKey(chartFile, storyMode);
+  std::unique_ptr<game::Chart> cachedChart;
+  if (gCachedChart != nullptr && gCachedChartKey == cacheKey) {
+    cachedChart = std::move(gCachedChart);
+    gCachedChartKey.clear();
+  }
+  const bool reuseMusic = context.audio != nullptr && context.audio->hasMusicFile(musicFile);
   // The device rate has to be read before the worker starts: the worker resamples the track to
   // it, and opening the device is the engine's business, not the worker's.
   std::uint32_t sampleRate = 0;
   if (context.audio != nullptr) sampleRate = context.audio->outputSampleRate();
   auto failure = std::make_shared<std::string>();
   game.chartLoad = std::async(std::launch::async,
-      [chartFile, songName, musicFile, sampleRate, storyMode, failure]() -> GameRuntime::LoadedRun {
+      [chartFile, songName, musicFile, sampleRate, storyMode, failure, reuseMusic,
+       cachedChart = std::move(cachedChart)]() mutable -> GameRuntime::LoadedRun {
         GameRuntime::LoadedRun loaded;
-        // The audio decode is the larger half of a run start, so it rides along with the parse
-        // instead of blocking the frame that installs the result.
-        if (!musicFile.empty() && sampleRate > 0) {
-          if (auto music = audio::Decoder::decodeFile(musicFile, sampleRate); !music.empty()) {
-            loaded.musicDecoded = true;
-            loaded.music = std::move(music);
+        if (cachedChart != nullptr) {
+          loaded.chart = std::move(cachedChart);
+          if (!reuseMusic && !musicFile.empty() && sampleRate > 0) {
+            loaded.music = audio::Decoder::decodeFile(musicFile, sampleRate);
+            loaded.musicDecoded = !loaded.music.empty();
           }
+          return loaded;
         }
+        auto musicLoad = std::async(std::launch::async, [musicFile, sampleRate] {
+          return !musicFile.empty() && sampleRate > 0
+              ? audio::Decoder::decodeFile(musicFile, sampleRate) : audio::AudioBuffer{};
+        });
         try {
           // Sampled when the load starts, like the rest of the run's settings.
           loaded.chart = chart::ChartLoader::loadFromFile(chartFile, platform::assetRoot(),
@@ -1751,6 +1791,10 @@ void gameEnterWithLoading(AppContext& context) {
           *failure = exception.what();
         } catch (...) {
           *failure = "未知错误";
+        }
+        if (musicLoad.valid()) {
+          loaded.music = musicLoad.get();
+          loaded.musicDecoded = !loaded.music.empty();
         }
         // Chart-specific hit sounds decode on this worker too. The frame that starts the
         // run then installs finished buffers instead of reading and decoding each file.
@@ -1846,7 +1890,12 @@ void gameLeave(AppContext& context) {
     context.audio->setMusicLooping(false);
     context.audio->setPlaybackSpeed(1.0F);
   }
-  game.chart.reset();
+  if (game.chart != nullptr && !gRunChartKey.empty()) {
+    gCachedChart = std::move(game.chart);
+    gCachedChartKey = gRunChartKey;
+  } else {
+    game.chart.reset();
+  }
   game.loaded = false;
   game.pause = GameRuntime::Pause::None;
   game.recording = false;
@@ -1897,9 +1946,6 @@ void gameUpdate(AppContext& context, float frameDeltaSec) {
   // inside the loader's own thread.
   if (game.loading) {
     game.loadingElapsedSec += static_cast<double>(frameDeltaSec);
-    // The first loading frame starts the artwork decode, before the panel is drawn and
-    // before the frame opens the interface, so the decode overlaps the panel's animation.
-    if (game.loadingFrames == 0 && context.advanceRenderer) (void)context.advanceRenderer();
     ++game.loadingFrames;
     pollChartLoad(context);
     return;
@@ -2184,6 +2230,7 @@ void gameRender(AppContext& context) {
   // finger that has been swallowed keeps its slot until it lifts.
   updateHoverSlots(context, context.nowSec, input.touches);
   context.renderer->render(input, game.chart.get(), &judgement);
+  game.gameplayFrameDrawn = true;
 }
 
 // The loading panel shown while a run's chart is being parsed. The reference puts a small
@@ -2252,6 +2299,7 @@ void drawGameOverlay(AppContext& context) {
   // The loading panel replaces the gameplay overlay: there is no HUD to draw yet and the pause
   // control has nothing to act on.
   if (game.loading) {
+    game.loadingPanelDrawn = true;
     drawLoadingPanel(context);
     return;
   }

@@ -110,6 +110,7 @@ if(NOT ANDROID AND NOT IOS)
   target_include_directories(rechigros_import_check PRIVATE "${PROJECT_SOURCE_DIR}/include")
   target_link_libraries(rechigros_import_check PRIVATE
     rechigros_platform
+    rechigros_image_cache
     nlohmann_json_headers
     miniz_headers)
   if(TARGET miniz)

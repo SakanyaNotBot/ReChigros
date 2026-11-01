@@ -1,6 +1,11 @@
+add_library(rechigros_image_cache STATIC
+  asset/ImageCache.cpp
+  stb_image.cpp)
+target_include_directories(rechigros_image_cache PUBLIC "${PROJECT_SOURCE_DIR}/include")
+target_link_libraries(rechigros_image_cache PUBLIC rechigros_platform stb_headers miniz)
+
 add_library(rechigros_render STATIC
   GameRenderer.cpp
-  stb_image.cpp
   stb_image_write.cpp
   gl/Texture.cpp
   gl/Framebuffer.cpp
@@ -41,7 +46,7 @@ target_include_directories(rechigros_render PUBLIC "${PROJECT_SOURCE_DIR}/includ
 target_include_directories(rechigros_render PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}"
   "${CMAKE_CURRENT_SOURCE_DIR}/text")
-target_link_libraries(rechigros_render PUBLIC rechigros_core rechigros_platform imgui stb_headers nlohmann_json::nlohmann_json)
+target_link_libraries(rechigros_render PUBLIC rechigros_core rechigros_platform rechigros_image_cache imgui stb_headers nlohmann_json::nlohmann_json)
 if(ANDROID)
   target_link_libraries(rechigros_render PUBLIC GLESv3)
   target_compile_definitions(rechigros_render PUBLIC RECHIGROS_GLES=1)

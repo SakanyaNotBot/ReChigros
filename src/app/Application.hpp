@@ -78,6 +78,7 @@ private:
   std::unique_ptr<audio::AudioEngine> audio_;
   std::unique_ptr<render::GameRenderer> renderer_;
   int deferredInitStage_{0};
+  bool rendererWarmupDone_{};
   std::unique_ptr<TriGridBackdrop> backdrop_;
   std::filesystem::path initialPath_;
   std::filesystem::path replayPlaybackPath_;

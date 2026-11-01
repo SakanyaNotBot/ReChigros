@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -21,68 +22,11 @@
 
 namespace rechigros::render::asset {
 
-Image decodeImageMemory(const std::uint8_t* data, std::size_t size) {
-  Image image;
-  if (data == nullptr || size == 0) return image;
-  int width = 0;
-  int height = 0;
-  int channels = 0;
-  stbi_uc* pixels = stbi_load_from_memory(data, static_cast<int>(size), &width, &height, &channels, 4);
-  if (pixels == nullptr) return image;
-  image.width = width;
-  image.height = height;
-  image.pixels.assign(pixels, pixels + static_cast<std::size_t>(width) * height * 4);
-  stbi_image_free(pixels);
-  return image;
-}
-
 // Per-asset cost of the startup texture load, so the largest block of the launch can be
 // attributed. Enabled with RECHIGROS_TEXTURE_LOG so a normal run pays nothing.
 bool textureLoadLogEnabled() {
   static const bool enabled = std::getenv("RECHIGROS_TEXTURE_LOG") != nullptr;
   return enabled;
-}
-
-Image decodeImage(const std::filesystem::path& path) {
-  const auto bytes = [&path] {
-    std::vector<std::uint8_t> data;
-    std::error_code error;
-    const auto size = std::filesystem::file_size(path, error);
-    if (error || size == 0) return data;
-    data.resize(static_cast<std::size_t>(size));
-    std::FILE* file = nullptr;
-#ifdef _MSC_VER
-    if (fopen_s(&file, path.string().c_str(), "rb") != 0) file = nullptr;
-#else
-    file = std::fopen(path.string().c_str(), "rb");
-#endif
-    if (file == nullptr) return std::vector<std::uint8_t>{};
-    std::fread(data.data(), 1, data.size(), file);
-    std::fclose(file);
-    return data;
-  }();
-  return decodeImageMemory(bytes.data(), bytes.size());
-}
-
-void forceWhite(Image& image) {
-  for (std::size_t index = 0; index + 3 < image.pixels.size(); index += 4) {
-    image.pixels[index] = 255;
-    image.pixels[index + 1] = 255;
-    image.pixels[index + 2] = 255;
-  }
-}
-
-void premultiply(Image& image) {
-  // The sprite pipeline composites with premultiplied alpha (ONE, ONE_MINUS_SRC_ALPHA),
-  // so colour channels have to be scaled by alpha before upload.
-  for (std::size_t index = 0; index + 3 < image.pixels.size(); index += 4) {
-    const auto alpha = static_cast<std::uint32_t>(image.pixels[index + 3]);
-    if (alpha == 255) continue;
-    for (int channel = 0; channel < 3; ++channel) {
-      image.pixels[index + channel] = static_cast<std::uint8_t>(
-          (static_cast<std::uint32_t>(image.pixels[index + channel]) * alpha + 127) / 255);
-    }
-  }
 }
 
 gl::Texture& TextureCache::white() {
@@ -105,18 +49,23 @@ gl::Texture* TextureCache::store(const std::string& key, Image image, bool white
   const int imageWidth = image.width;
   const int imageHeight = image.height;
   if (white) forceWhite(image);
+  const bool large = image.pixels.size() >= 16U * 1024U * 1024U;
   premultiply(image);
+  const auto gpuStart = std::chrono::steady_clock::now();
   gl::Texture texture;
-  if (!texture.uploadRgba(image.width, image.height, image.pixels.data())) return nullptr;
+  const bool uploaded = image.dualChannel
+      ? texture.uploadDualChannel(image.width, image.height, image.pixels.data())
+      : texture.uploadRgba(image.width, image.height, image.pixels.data());
+  if (!uploaded) return nullptr;
+  const auto gpuEnd = std::chrono::steady_clock::now();
   texture.setFilter(true);
   const auto inserted = textures_.emplace(key, std::move(texture));
-  if (textureLoadLogEnabled()) {
-    // The upload is the part that has to run on the thread owning the graphics context, so its
-    // cost is what actually remains on the launch path once decoding moved to workers.
+  if (large || textureLoadLogEnabled()) {
     const double uploadMs = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - uploadStart).count();
-    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "[tex] upload %-40s %6.1f ms %dx%d",
-        key.c_str(), uploadMs, imageWidth, imageHeight);
+    const double gpuMs = std::chrono::duration<double, std::milli>(gpuEnd - gpuStart).count();
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "[tex] upload %-40s %6.1f ms gpu=%6.1f ms %dx%d",
+        key.c_str(), uploadMs, gpuMs, imageWidth, imageHeight);
   }
   return &inserted.first->second;
 }
@@ -129,18 +78,21 @@ struct PendingTaskGuard {
 } // namespace
 
 void TextureCache::beginPrefetchAssets(const std::vector<std::string>& relativePaths) {
-  if (relativePaths.empty()) return;
-  // Decoding is the expensive half of a texture load and touches no graphics state, so it is the
-  // half that can run beside the drawing thread. The context belongs to the caller and is never
-  // touched here; the decoded pixels are handed over through the map instead.
+  auto paths = std::make_shared<std::vector<std::string>>();
+  {
+    std::lock_guard<std::mutex> guard(prefetchMutex_);
+    for (const auto& relativePath : relativePaths) {
+      const std::string key = "asset:" + relativePath;
+      if (!textures_.contains(key) && !decoded_.contains(key)) paths->push_back(relativePath);
+    }
+  }
+  if (paths->empty()) return;
   const unsigned cores = std::thread::hardware_concurrency();
-  const std::size_t workers = std::clamp<std::size_t>(cores == 0 ? 2U : cores, 1U, 4U);
-  // The threads outlive this call: the caller runs a stage that does not touch textures and only
-  // then awaits them, which is what makes the decode overlap instead of adding to the total.
+  const std::size_t workers = std::min<std::size_t>(paths->size(),
+      std::clamp<std::size_t>(cores == 0 ? 2U : cores, 1U, 4U));
   auto next = std::make_shared<std::atomic<std::size_t>>(0);
-  auto paths = std::make_shared<std::vector<std::string>>(relativePaths);
-  prefetchPending_.fetch_add(relativePaths.size(), std::memory_order_release);
-  prefetchThreads_.reserve(workers);
+  prefetchPending_.fetch_add(paths->size(), std::memory_order_release);
+  prefetchThreads_.reserve(prefetchThreads_.size() + workers);
   for (std::size_t worker = 0; worker < workers; ++worker) {
     prefetchThreads_.emplace_back([this, next, paths] {
       for (;;) {
@@ -157,6 +109,8 @@ void TextureCache::beginPrefetchAssets(const std::vector<std::string>& relativeP
         if (bytes.empty()) continue;
         Image image = decodeImageMemory(bytes.data(), bytes.size());
         if (!image.valid()) continue;
+        premultiply(image);
+        optimizeChannels(image);
         std::lock_guard<std::mutex> guardLock(prefetchMutex_);
         decoded_.emplace(key, std::move(image));
       }
@@ -164,20 +118,28 @@ void TextureCache::beginPrefetchAssets(const std::vector<std::string>& relativeP
   }
 }
 
-void TextureCache::beginPrefetchFiles(const std::vector<std::filesystem::path>& paths) {
-  if (paths.empty()) return;
+void TextureCache::beginPrefetchFiles(const std::vector<std::filesystem::path>& requested) {
+  auto paths = std::make_shared<std::vector<std::filesystem::path>>();
+  {
+    std::lock_guard<std::mutex> guard(prefetchMutex_);
+    for (const auto& path : requested) {
+      const std::string key = "file:" + path.generic_string();
+      if (!textures_.contains(key) && !decoded_.contains(key)) paths->push_back(path);
+    }
+  }
+  if (paths->empty()) return;
   const unsigned cores = std::thread::hardware_concurrency();
-  const std::size_t workers = std::clamp<std::size_t>(cores == 0 ? 2U : cores, 1U, 4U);
+  const std::size_t workers = std::min<std::size_t>(paths->size(),
+      std::clamp<std::size_t>(cores == 0 ? 2U : cores, 1U, 4U));
   auto next = std::make_shared<std::atomic<std::size_t>>(0);
-  auto sharedPaths = std::make_shared<std::vector<std::filesystem::path>>(paths);
-  prefetchPending_.fetch_add(paths.size(), std::memory_order_release);
-  prefetchThreads_.reserve(workers);
+  prefetchPending_.fetch_add(paths->size(), std::memory_order_release);
+  prefetchThreads_.reserve(prefetchThreads_.size() + workers);
   for (std::size_t worker = 0; worker < workers; ++worker) {
-    prefetchThreads_.emplace_back([this, next, sharedPaths] {
+    prefetchThreads_.emplace_back([this, next, paths] {
       for (;;) {
         const std::size_t index = next->fetch_add(1, std::memory_order_relaxed);
-        if (index >= sharedPaths->size()) return;
-        const auto& path = (*sharedPaths)[index];
+        if (index >= paths->size()) return;
+        const auto& path = (*paths)[index];
         PendingTaskGuard guard{prefetchPending_};
         const std::string key = "file:" + path.generic_string();
         {
@@ -186,6 +148,8 @@ void TextureCache::beginPrefetchFiles(const std::vector<std::filesystem::path>& 
         }
         Image image = decodeImage(path);
         if (!image.valid()) continue;
+        premultiply(image);
+        optimizeChannels(image);
         std::lock_guard<std::mutex> guardLock(prefetchMutex_);
         decoded_.emplace(key, std::move(image));
       }
@@ -206,6 +170,9 @@ gl::Texture* TextureCache::loadAsset(const std::string& relativePath, bool white
   const std::string key = "asset:" + relativePath + (white ? "#w" : "");
   if (const auto it = textures_.find(key); it != textures_.end() && it->second.valid()) {
     return &it->second;
+  }
+  if (!white) {
+    if (const auto it = deferred_.find(key); it != deferred_.end()) return &it->second.texture;
   }
   // An image decoded ahead of time only needs its upload, which is the part that has to be here.
   {
@@ -235,6 +202,99 @@ gl::Texture* TextureCache::loadAsset(const std::string& relativePath, bool white
   return result;
 }
 
+gl::Texture* TextureCache::loadAssetDeferred(const std::string& relativePath) {
+  const std::string key = "asset:" + relativePath;
+  if (const auto it = textures_.find(key); it != textures_.end() && it->second.valid()) {
+    return &it->second;
+  }
+  if (const auto it = deferred_.find(key); it != deferred_.end()) return &it->second.texture;
+  Image image;
+  {
+    std::lock_guard<std::mutex> guard(prefetchMutex_);
+    if (const auto ready = decoded_.find(key); ready != decoded_.end()) {
+      image = std::move(ready->second);
+      decoded_.erase(ready);
+    }
+  }
+  if (!image.valid()) {
+    const auto bytes = platform::AssetManager::readBinary(assetRoot_, relativePath);
+    if (bytes.empty()) return nullptr;
+    image = decodeImageMemory(bytes.data(), bytes.size());
+  }
+  premultiply(image);
+  optimizeChannels(image);
+  if (!image.valid()) return nullptr;
+  DeferredUpload upload;
+  upload.key = key;
+  if (!upload.texture.allocateStorage(image.width, image.height, image.dualChannel)) return nullptr;
+  upload.image = std::move(image);
+  const auto inserted = deferred_.emplace(key, std::move(upload));
+  return &inserted.first->second.texture;
+}
+
+gl::Texture* TextureCache::loadFileDeferred(const std::filesystem::path& path) {
+  const std::string key = "file:" + path.generic_string();
+  if (const auto it = textures_.find(key); it != textures_.end() && it->second.valid()) {
+    return &it->second;
+  }
+  if (const auto it = deferred_.find(key); it != deferred_.end()) return &it->second.texture;
+  Image image;
+  {
+    std::lock_guard<std::mutex> guard(prefetchMutex_);
+    if (const auto ready = decoded_.find(key); ready != decoded_.end()) {
+      image = std::move(ready->second);
+      decoded_.erase(ready);
+    }
+  }
+  if (!image.valid()) image = decodeImage(path);
+  premultiply(image);
+  optimizeChannels(image);
+  if (!image.valid()) return nullptr;
+  DeferredUpload upload;
+  upload.key = key;
+  if (!upload.texture.allocateStorage(image.width, image.height, image.dualChannel)) return nullptr;
+  upload.image = std::move(image);
+  const auto inserted = deferred_.emplace(key, std::move(upload));
+  return &inserted.first->second.texture;
+}
+
+void TextureCache::advanceDeferredUploads(double budgetMs) {
+  const auto started = std::chrono::steady_clock::now();
+  for (auto it = deferred_.begin(); it != deferred_.end();) {
+    auto& upload = it->second;
+    const int channels = upload.image.dualChannel ? 2 : 4;
+    while (upload.nextRow < static_cast<std::size_t>(upload.image.height)) {
+      const int row = static_cast<int>(upload.nextRow);
+      const int rows = std::min(8, upload.image.height - row);
+      const auto offset = upload.nextRow * static_cast<std::size_t>(upload.image.width) * channels;
+      upload.texture.updateRows(row, rows, upload.image.pixels.data() + offset,
+          upload.image.dualChannel);
+      upload.nextRow += static_cast<std::size_t>(rows);
+      const double elapsed = std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - started).count();
+      if (elapsed >= budgetMs && upload.nextRow < static_cast<std::size_t>(upload.image.height)) {
+        return;
+      }
+    }
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "[tex] deferred upload complete %s %dx%d",
+        upload.key.c_str(), upload.image.width, upload.image.height);
+    textures_.emplace(upload.key, std::move(upload.texture));
+    it = deferred_.erase(it);
+    if (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count()
+        >= budgetMs) {
+      return;
+    }
+  }
+}
+
+void TextureCache::completeDeferredUploads() {
+  while (!deferred_.empty()) advanceDeferredUploads(std::numeric_limits<double>::max());
+}
+
+void TextureCache::cancelDeferredUploads() {
+  deferred_.clear();
+}
+
 gl::Texture* TextureCache::loadAssetFlipped(const std::string& relativePath) {
   const std::string key = "asset:" + relativePath;
   if (const auto it = textures_.find(key); it != textures_.end() && it->second.valid()) {
@@ -254,9 +314,11 @@ gl::Texture* TextureCache::loadAssetFlipped(const std::string& relativePath) {
     source = decodeImageMemory(bytes.data(), bytes.size());
   }
   if (!source.valid()) return nullptr;
+  expandChannels(source);
   Image flipped;
   flipped.width = source.width;
   flipped.height = source.height;
+  flipped.premultiplied = source.premultiplied;
   flipped.pixels.resize(source.pixels.size());
   const auto rowBytes = static_cast<std::size_t>(source.width) * 4U;
   for (int row = 0; row < source.height; ++row) {
@@ -266,10 +328,26 @@ gl::Texture* TextureCache::loadAssetFlipped(const std::string& relativePath) {
   return store(key, std::move(flipped), false);
 }
 
+Image TextureCache::imageForFile(const std::filesystem::path& path) {
+  Image image;
+  {
+    std::lock_guard<std::mutex> guard(prefetchMutex_);
+    if (const auto ready = decoded_.find("file:" + path.generic_string()); ready != decoded_.end()) {
+      image = ready->second;
+    }
+  }
+  if (!image.valid()) image = decodeImage(path);
+  expandChannels(image);
+  return image;
+}
+
 gl::Texture* TextureCache::loadFile(const std::filesystem::path& path, bool white) {
   const std::string key = "file:" + path.generic_string() + (white ? "#w" : "");
   if (const auto it = textures_.find(key); it != textures_.end() && it->second.valid()) {
     return &it->second;
+  }
+  if (!white) {
+    if (const auto it = deferred_.find(key); it != deferred_.end()) return &it->second.texture;
   }
   {
     std::lock_guard<std::mutex> guard(prefetchMutex_);
@@ -287,6 +365,7 @@ gl::Texture* TextureCache::loadPixels(const std::string& key, Image image) {
 }
 
 void TextureCache::clear() noexcept {
+  deferred_.clear();
   textures_.clear();
   white_.reset();
 }

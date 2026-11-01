@@ -3,6 +3,7 @@
 // rule is covered headlessly.
 
 #include "rechigros/render/skin/SkinConfig.hpp"
+#include "rechigros/render/asset/ImageCache.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -374,6 +375,33 @@ void testAssetOverrides() {
       "hold_body.png has no built-in fallback");
 }
 
+void testChannelPacking() {
+  using rechigros::render::asset::Image;
+  Image image;
+  image.width = 2048;
+  image.height = 2048;
+  image.premultiplied = true;
+  image.pixels.resize(static_cast<std::size_t>(image.width) * image.height * 4);
+  for (std::size_t index = 0; index < image.pixels.size(); index += 4) {
+    const auto gray = static_cast<std::uint8_t>((index / 4) % 256);
+    image.pixels[index] = gray;
+    image.pixels[index + 1] = gray;
+    image.pixels[index + 2] = gray;
+    image.pixels[index + 3] = static_cast<std::uint8_t>((index / 4 * 7) % 256);
+  }
+  const auto original = image.pixels;
+  rechigros::render::asset::optimizeChannels(image);
+  require(image.dualChannel, "gray and independent alpha use two-channel storage");
+  require(image.pixels.size() == original.size() / 2, "two-channel storage halves the byte count");
+  rechigros::render::asset::expandChannels(image);
+  require(!image.dualChannel, "two-channel pixels expand to RGBA");
+  require(image.pixels == original, "channel packing is byte-exact");
+
+  image.pixels[2] = static_cast<std::uint8_t>(image.pixels[2] ^ 1U);
+  rechigros::render::asset::optimizeChannels(image);
+  require(!image.dualChannel, "non-gray pixels keep full RGBA storage");
+}
+
 } // namespace
 
 int main() {
@@ -384,6 +412,7 @@ int main() {
   testResolveMaterials();
   testColourParsing();
   testAssetOverrides();
+  testChannelPacking();
 
   if (g_failures != 0) {
     std::cerr << g_failures << " skin config test(s) failed\n";

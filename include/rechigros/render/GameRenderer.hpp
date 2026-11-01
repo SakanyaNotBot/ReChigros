@@ -185,8 +185,10 @@ public:
   // that need no uploaded textures; finish() waits for the decode and uploads. A loading
   // screen can draw frames between the two, which keeps the decode off the frame that
   // starts a run.
-  bool initializeBegin(const std::filesystem::path& assetRoot);
-  bool initializeFinish();
+  bool initializeBegin(const std::filesystem::path& assetRoot,
+      const std::filesystem::path& skinDirectory = {},
+      const std::filesystem::path& backgroundImage = {});
+  bool initializeFinish(bool initializeText = true);
   [[nodiscard]] bool initializeBegun() const noexcept;
 
   // Applies a skin directory on top of the built-in resource pack. A skin may override any

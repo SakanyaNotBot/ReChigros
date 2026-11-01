@@ -776,6 +776,25 @@ int Application::run() {
     const double cpuMs = static_cast<double>(preSwapCounter - counter) * 1000.0
         / static_cast<double>(frequency);
     SDL_GL_SwapWindow(window_);
+    auto& loadingGame = app_->game;
+    const auto presentedAt = std::chrono::steady_clock::now();
+    const auto milliseconds = [presentedAt](const auto from) {
+      return std::chrono::duration<double, std::milli>(presentedAt - from).count();
+    };
+    if (loadingGame.loadingPanelDrawn && !loadingGame.loadingPanelPresented
+        && loadingGame.loadingStartedAt.time_since_epoch().count() != 0) {
+      loadingGame.loadingPanelPresented = true;
+      loadingGame.loadingPanelPresentedAt = presentedAt;
+      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "run-loading: press_to_panel=%.1f ms",
+          milliseconds(loadingGame.loadingStartedAt));
+    }
+    if (loadingGame.gameplayFrameDrawn && !loadingGame.gameplayFramePresented
+        && loadingGame.loadingPanelPresented) {
+      loadingGame.gameplayFramePresented = true;
+      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+          "run-loading: panel_to_game=%.1f ms total=%.1f ms",
+          milliseconds(loadingGame.loadingPanelPresentedAt), milliseconds(loadingGame.loadingStartedAt));
+    }
     // One deferred step per presented frame: the home screen is already visible before the
     // glyph atlas and the GPU backdrop are built.
     runDeferredInitialization();
@@ -1408,7 +1427,14 @@ void Application::ensureRenderer() {
 bool Application::advanceRenderer() {
   if (renderer_ == nullptr) {
     renderer_ = std::make_unique<render::GameRenderer>();
-    if (!renderer_->initializeBegin(platform::assetRoot())) {
+    std::filesystem::path skinDirectory;
+    if (app_ != nullptr && !app_->settings.selectedSkin.empty()) {
+      const auto candidate = app_->dataRoot / "skins" / app_->settings.selectedSkin;
+      std::error_code error;
+      if (std::filesystem::is_directory(candidate, error)) skinDirectory = candidate;
+    }
+    const auto background = app_ != nullptr ? app_->play.bgFile : std::filesystem::path{};
+    if (!renderer_->initializeBegin(platform::assetRoot(), skinDirectory, background)) {
       std::cerr << "Renderer initialization failed\n";
       return false;
     }
@@ -1421,7 +1447,7 @@ bool Application::advanceRenderer() {
   // The artwork decode has been running since the first call; only the uploads block, and
   // they run on the frame after the loading panel has already been presented.
   if (!renderer_->gameplayTexturesReady()) return false;
-  return renderer_->initializeFinish();
+  return renderer_->initializeFinish(app_ != nullptr && app_->game.loading);
 }
 
 void Application::runDeferredInitialization() {
@@ -1437,6 +1463,11 @@ void Application::runDeferredInitialization() {
     // The backdrop's decode started before the window existed; the first interface frame
     // completes the upload. Until then the procedural fallback stands in for it.
     ui::setBackdropSuppressed(false);
+    return;
+  }
+  if (!rendererWarmupDone_ && app_->advanceRenderer) {
+    (void)app_->advanceRenderer();
+    rendererWarmupDone_ = true;
   }
 }
 

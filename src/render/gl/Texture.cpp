@@ -114,6 +114,64 @@ bool Texture::uploadRgba(int width, int height, const std::uint8_t* pixels) noex
   return true;
 }
 
+bool Texture::uploadDualChannel(int width, int height, const std::uint8_t* pixels) noexcept {
+  if (width <= 0 || height <= 0 || pixels == nullptr || !contextAvailable()) return false;
+  if (id_ == 0) glGenTextures(1, &id_);
+  if (id_ == 0) return false;
+  width_ = width;
+  height_ = height;
+  bindUnit0(id_);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, linear_ ? GL_LINEAR : GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, linear_ ? GL_LINEAR : GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_RED);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, GL_RED);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_RED);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_GREEN);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8, width, height, 0, GL_RG, GL_UNSIGNED_BYTE, pixels);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  return true;
+}
+
+bool Texture::allocateStorage(int width, int height, bool dualChannel) noexcept {
+  if (width <= 0 || height <= 0 || !contextAvailable()) return false;
+  if (id_ == 0) glGenTextures(1, &id_);
+  if (id_ == 0) return false;
+  width_ = width;
+  height_ = height;
+  bindUnit0(id_);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, linear_ ? GL_LINEAR : GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, linear_ ? GL_LINEAR : GL_NEAREST);
+  if (dualChannel) {
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_RED);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, GL_RED);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_RED);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_GREEN);
+  }
+  glPixelStorei(GL_UNPACK_ALIGNMENT, dualChannel ? 2 : 4);
+  glTexImage2D(GL_TEXTURE_2D, 0, dualChannel ? GL_RG8 : GL_RGBA, width, height, 0,
+      dualChannel ? GL_RG : GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  return true;
+}
+
+void Texture::updateRows(int firstRow, int rowCount, const std::uint8_t* pixels,
+    bool dualChannel) noexcept {
+  if (id_ == 0 || pixels == nullptr || firstRow < 0 || rowCount <= 0
+      || firstRow + rowCount > height_ || !contextAvailable()) {
+    return;
+  }
+  bindUnit0(id_);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, dualChannel ? 2 : 4);
+  glTexSubImage2D(GL_TEXTURE_2D, 0, 0, firstRow, width_, rowCount,
+      dualChannel ? GL_RG : GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+}
+
 bool Texture::allocateEmpty(int width, int height) noexcept {
   if (width <= 0 || height <= 0) return false;
   if (!contextAvailable()) return false;

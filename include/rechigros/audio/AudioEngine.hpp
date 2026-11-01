@@ -66,7 +66,8 @@ public:
   /// screen to keep drawing decodes on its own thread and hands the buffer over here;
   /// the swap takes an exclusive window and is real-time safe. An empty buffer is
   /// rejected and leaves the current track alone.
-  bool installDecodedMusic(AudioBuffer decoded);
+  bool installDecodedMusic(AudioBuffer decoded, const std::filesystem::path& source = {});
+  [[nodiscard]] bool hasMusicFile(const std::filesystem::path& path) const;
 
   /// Starts or resumes playback from the current playhead.
   void play();

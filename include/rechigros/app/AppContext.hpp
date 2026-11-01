@@ -11,6 +11,7 @@
 #include "rechigros/game/PracticeJudgeWindows.hpp"
 #include "rechigros/game/PlayResult.hpp"
 
+#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <future>
@@ -63,6 +64,12 @@ struct GameRuntime {
   // Frames the panel has been on screen. The renderer start waits for one full presented
   // frame so the panel is visible before its initialization touches the frame.
   int loadingFrames{};
+  std::chrono::steady_clock::time_point loadingStartedAt{};
+  std::chrono::steady_clock::time_point loadingPanelPresentedAt{};
+  bool loadingPanelDrawn{};
+  bool loadingPanelPresented{};
+  bool gameplayFrameDrawn{};
+  bool gameplayFramePresented{};
   // What the loader produced. The chart is always present when the load succeeded; the music
   // buffer is only filled when the worker decoded it, which is the case for a music-backed run.
   struct LoadedRun {

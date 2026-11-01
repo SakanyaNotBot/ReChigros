@@ -41,6 +41,18 @@ std::int64_t nowNanoseconds() noexcept {
       std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
+std::string musicFileKey(const std::filesystem::path& path, std::uint32_t sampleRate) {
+  if (path.empty() || sampleRate == 0) return {};
+  std::error_code error;
+  const auto size = std::filesystem::file_size(path, error);
+  if (error) return {};
+  const auto modified = std::filesystem::last_write_time(path, error);
+  if (error) return {};
+  return path.generic_string() + "|" + std::to_string(size) + "|"
+      + std::to_string(static_cast<long long>(modified.time_since_epoch().count())) + "|"
+      + std::to_string(sampleRate);
+}
+
 /// Single-producer single-consumer queue of effect triggers.
 class SfxQueue final {
 public:
@@ -516,6 +528,7 @@ struct AudioEngine::Impl final {
 
   // Decoded audio, replaced only while the audio thread is standing down.
   AudioBuffer music_;
+  std::string musicKey_;
   std::array<AudioBuffer, kSoundEffectBankCount> banks_;
   std::unordered_map<std::string, std::shared_ptr<AudioBuffer>> customBanks_;
   std::mutex customMutex_;
@@ -583,6 +596,7 @@ void AudioEngine::shutdown() {
   impl_->paused_.store(true, std::memory_order_release);
   impl_->stopDevice();
   impl_->music_.clear();
+  impl_->musicKey_.clear();
   for (auto& bank : impl_->banks_) bank.clear();
   impl_->customBanks_.clear();
   {
@@ -747,14 +761,24 @@ bool AudioEngine::loadHitSound(const std::filesystem::path& path) {
   return true;
 }
 
-bool AudioEngine::loadMusic(const std::filesystem::path& path) {
-  if (!initialize()) return false;
-
-  const auto rate = impl_->sampleRate_.load(std::memory_order_acquire);
-  return installDecodedMusic(Decoder::decodeFile(path, rate));
+bool AudioEngine::hasMusicFile(const std::filesystem::path& path) const {
+  const auto key = musicFileKey(path, impl_->sampleRate_.load(std::memory_order_acquire));
+  std::lock_guard<std::mutex> lock{impl_->stateMutex_};
+  return !key.empty() && impl_->musicKey_ == key && !impl_->music_.empty();
 }
 
-bool AudioEngine::installDecodedMusic(AudioBuffer decoded) {
+bool AudioEngine::loadMusic(const std::filesystem::path& path) {
+  if (!initialize()) return false;
+  if (hasMusicFile(path)) {
+    restartPaused();
+    return true;
+  }
+
+  const auto rate = impl_->sampleRate_.load(std::memory_order_acquire);
+  return installDecodedMusic(Decoder::decodeFile(path, rate), path);
+}
+
+bool AudioEngine::installDecodedMusic(AudioBuffer decoded, const std::filesystem::path& source) {
   if (!initialize()) return false;
   if (decoded.empty()) return false;
 
@@ -762,6 +786,8 @@ bool AudioEngine::installDecodedMusic(AudioBuffer decoded) {
   {
     Impl::ExclusiveScope scope{*impl_};
     impl_->music_ = std::move(decoded);
+    std::lock_guard<std::mutex> lock{impl_->stateMutex_};
+    impl_->musicKey_ = musicFileKey(source, impl_->sampleRate_.load(std::memory_order_acquire));
   }
   impl_->playheadFrames_.store(0.0, std::memory_order_release);
   impl_->seekTargetFrames_.store(kNoSeek, std::memory_order_release);
