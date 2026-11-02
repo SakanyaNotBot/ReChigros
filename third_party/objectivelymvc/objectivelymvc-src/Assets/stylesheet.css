@@ -1,0 +1,442 @@
+* {
+  alignment: none;
+  autoresizing-mask: none;
+  background-color: transparent;
+  background-gradient-angle: 0;
+  background-gradient-color: transparent;
+  border-color: transparent;
+  border-radius: 0;
+  border-width: 0;
+  clips-subviews: false;
+  corner-cut: 0;
+  max-size: 0 0;
+  min-size: 0 0;
+  padding: 0;
+  pointer-events: auto;
+  visibility: unspecified;
+}
+
+Box {
+  autoresizing-mask: contain;
+  border-color: #dededeaa;
+  border-radius: 4;
+  border-width: 1;
+  padding: 10 10 10 10;
+}
+
+Box > Label {
+  alignment: internal;
+  background-color: #888888;
+  left: 20;
+  padding: 0 8 0 8;
+}
+
+Box > Label > Text {
+  font-size: 12;
+}
+
+Box > .contentView {
+  autoresizing-mask: contain | width;
+  padding-top: 4;
+  spacing: 4;
+}
+
+Button {
+  autoresizing-mask: contain;
+  background-color: #88888822;
+  border-color: ghostwhite;
+  bevel: outset;
+  min-width: 100;
+  padding: 8 8 8 8;
+}
+
+Button:highlighted {
+  bevel: inset;
+}
+
+Button > * {
+  alignment: middle-center;
+}
+
+Checkbox {
+  autoresizing-mask: contain;
+}
+
+Checkbox ImageView {
+  autoresizing-mask: fill;
+  height: 12;
+  visibility: hidden;
+  width: 12;
+}
+
+Checkbox:selected ImageView {
+  visibility: visible;
+}
+
+/* The box holds a 12 check in 4 of padding, so 20 is the size it takes once one is in it */
+
+Checkbox > Control {
+  alignment: middle-center;
+  autoresizing-mask: contain;
+  background-color: #22222266;
+  bevel: inset;
+  min-height: 20;
+  min-width: 20;
+  padding: 4 4 4 4;
+}
+
+CollectionItemView {
+  background-color: #22222266;
+  border-color: #999999aa;
+  clips-subviews: true;
+}
+
+CollectionItemView > ImageView {
+  autoresizing-mask: fill;
+}
+
+CollectionItemView > Text {
+  alignment: middle-center;
+}
+
+CollectionItemView > .selectionOverlay {
+  autoresizing-mask: fill;
+  background-color: #ffffff22;
+  visibility: hidden;
+}
+
+CollectionItemView:selected > .selectionOverlay {
+  visibility: visible;
+}
+
+CollectionView {
+  axis: vertical;
+  background-color: #22222266;
+  item-size: 0 0;
+  item-size: 64 64;
+  item-spacing: 0 0;
+  item-spacing: 10 10;
+}
+
+CollectionView .contentView {
+  autoresizing-mask: contain | width;
+  padding: 10 10 10 10;
+}
+
+Control {
+  bevel-dark-color: black;
+  bevel-light-color: silver;
+  bevel: none;
+  border-radius: 4;
+  min-height: 32;
+  selection: none;
+  selection: single;
+}
+
+Control:disabled Text {
+  color: grey;
+}
+
+HSVColorPicker,
+HueColorPicker,
+RGBColorPicker {
+  autoresizing-mask: contain;
+}
+
+HSVColorPicker .colorView,
+HueColorPicker .colorView,
+RGBColorPicker .colorView {
+  autoresizing-mask: width;
+  background-color: none;
+  height: 8;
+}
+
+Input {
+  autoresizing-mask: contain;
+}
+
+Label {
+  autoresizing-mask: contain;
+}
+
+Label > Text {
+  alignment: middle-left;
+}
+
+Option {
+  autoresizing-mask: contain | width;
+  min-width: 100;
+  padding: 2 2 2 2;
+}
+
+Option > Text {
+  alignment: middle-left;
+}
+
+/*
+ * A ViewController's own root View fills its parent, which is what a controller pushed onto a
+ * window or added to another wants. A rule rather than the element style, so that a controller
+ * whose view is a panel of its own, or a page measured by its content, can say so.
+ */
+
+.viewController {
+  autoresizing-mask: fill;
+}
+
+PageView {
+  autoresizing-mask: contain;
+  border-color: #888888;
+  padding: 12 12 12 12;
+}
+
+Panel {
+  autoresizing-mask: contain;
+  background-color: #444444dd;
+  border-color: #dedede;
+  border-width: 1;
+  draggable: true;
+  padding: 12 12 12 12;
+  resizable: true;
+}
+
+Panel > StackView {
+  spacing: 12;
+}
+
+Panel .accessoryView {
+  alignment: middle-right;
+  autoresizing-mask: contain;
+  axis: horizontal;
+  spacing: 16;
+}
+
+/*
+ * A Panel shows its own accessory view only once something is put in it. The class name is a
+ * layout a consumer may wear anywhere, so this addresses the Panel's own by where it sits.
+ */
+
+Panel > StackView > .accessoryView {
+  visibility: hidden;
+}
+
+Panel > .resizeHandle {
+  alignment: internal;
+  border-radius: 4;
+}
+
+ProgressBar {
+  autoresizing-mask: contain | width;
+}
+
+ProgressBar > .background {
+  autoresizing-mask: fill;
+  background-color: silver;
+}
+
+ProgressBar > .foreground {
+  autoresizing-mask: height;
+  background-color: darkgray;
+}
+
+ProgressBar > Text {
+  alignment: middle-center;
+}
+
+ScrollBar {
+  background-color: #222222c0;
+  clips-subviews: true;
+  width: 12;
+}
+
+ScrollBar > .handle {
+  background-color: #888888c0;
+  min-height: 16;
+}
+
+ScrollView {
+  autoresizing-mask: fill;
+  clips-subviews: true;
+  scrollbar: auto;
+}
+
+ScrollView > .scrollBar {
+  alignment: right;
+  autoresizing-mask: height;
+}
+
+ScrollView > .contentView {
+  autoresizing-mask: fit;
+}
+
+Select {
+  autoresizing-mask: contain;
+  background-color: #dedede10;
+  bevel: outset;
+  padding: 4 4 4 4;
+  selection: single;
+}
+
+Select > StackView {
+  autoresizing-mask: contain;
+  alignment: middle-left;
+}
+
+Slider {
+  autoresizing-mask: contain;
+  min-width: 140;
+}
+
+Slider > .bar {
+  alignment: middle-left;
+  autoresizing-mask: fill;
+}
+
+Slider > .bar > .handle {
+  alignment: middle;
+  background-color: #444444ff;
+  border-color: #aaaaaaff;
+  border-radius: 3;
+  border-width: 1;
+  min-width: 8;
+  min-height: 16;
+}
+
+Slider > .label {
+  alignment: middle-right;
+  padding: 0 0 0 18;
+}
+
+SlideShowView {
+  autoresizing-mask: fill;
+  clips-subviews: true;
+}
+
+SlideShowView > ImageView {
+  autoresizing-mask: fill;
+}
+
+StackView {
+  autoresizing-mask: contain;
+  axis: vertical;
+  distribution: default;
+  reversed: false;
+  spacing: 0;
+}
+
+StackView.container {
+  spacing: 12;
+}
+
+TableCellView {
+  autoresizing-mask: contain;
+  padding: 0 2 0 2;
+  min-width: 80;
+  min-height: 24;
+}
+
+TableCellView > Text {
+  alignment: middle-left;
+}
+
+TableHeaderView {
+  background-color: #ffffff22;
+}
+
+TableRowView {
+  autoresizing-mask: contain | width;
+  axis: horizontal;
+  distribution: fill;
+}
+
+TableRowView:nth-child(even) TableCellView {
+  background-color: #ffffff11;
+}
+
+TableRowView:selected {
+  background-color: darkgray;
+}
+
+TableView > ScrollView > .contentView {
+  autoresizing-mask: contain | width;
+}
+
+TabView {
+  spacing: 4;
+}
+
+.tabViewController {
+  autoresizing-mask: contain;
+}
+
+TabView > .tabPageView {
+  border-color: silver;
+  border-radius: 4;
+  border-width: 1;
+}
+
+TabView > .tabSelectionView {
+  autoresizing-mask: contain | width;
+  axis: horizontal;
+  distribution: fill-equally;
+  spacing: 4;
+}
+
+TabView > .tabSelectionView > Label {
+  padding: 2 2 2 2;
+}
+
+TabView > .tabSelectionView > Label.selected {
+  background-color: darkgray;
+}
+
+TabView > .tabSelectionView > Label.disabled > Text {
+  color: grey;
+}
+
+TabView > .tabSelectionView > Label > Text {
+  alignment: middle-center;
+}
+
+TextView {
+  autoresizing-mask: contain;
+  background-color: #22222266;
+  bevel: inset;
+  clips-subviews: true;
+  editable: true;
+  min-width: 160;
+  padding: 4 4 4 4;
+}
+
+TextView > Text {
+  alignment: middle-left;
+}
+
+Text {
+  color: ghostwhite;
+}
+
+.container {
+  autoresizing-mask: contain;
+}
+
+.options {
+  alignment: internal;
+  background-color: charcoal;
+  border-color: #dededeaa;
+  border-radius: 4;
+  border-width: 1;
+  padding: 2;
+}
+
+.options > Option {
+  border-radius: 2;
+  padding: 2 4 2 4;
+}
+
+.options > Option:hover {
+  background-color: darkgray;
+}
+
+.options > Option:selected {
+  background-color: dimgray;
+}

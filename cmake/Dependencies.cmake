@@ -138,10 +138,43 @@ if(RECHIGROS_BUILD_APP)
   rechigros_download("sdl3_image/SDL3_image-3.2.4.tar.gz"
     "https://github.com/libsdl-org/SDL_image/releases/download/release-3.2.4/SDL3_image-3.2.4.tar.gz"
     "A725BD6D04261FDDA0DD8D950659E1DC15A8065D025275EF460D32AE7DCFC182")
-  file(ARCHIVE_EXTRACT INPUT "${RECHIGROS_DOWNLOAD_DIR}/sdl3_ttf/SDL3_ttf-3.2.2.tar.gz"
-    DESTINATION "${RECHIGROS_DOWNLOAD_DIR}/sdl3_ttf")
-  file(ARCHIVE_EXTRACT INPUT "${RECHIGROS_DOWNLOAD_DIR}/sdl3_image/SDL3_image-3.2.4.tar.gz"
-    DESTINATION "${RECHIGROS_DOWNLOAD_DIR}/sdl3_image")
+  # Each archive is expanded only once. Extracting on every configure costs seconds and, on
+  # Windows, reports the Xcode framework symlinks as warnings.
+  if(NOT EXISTS "${RECHIGROS_DOWNLOAD_DIR}/sdl3_ttf/SDL3_ttf-3.2.2/CMakeLists.txt")
+    file(ARCHIVE_EXTRACT INPUT "${RECHIGROS_DOWNLOAD_DIR}/sdl3_ttf/SDL3_ttf-3.2.2.tar.gz"
+      DESTINATION "${RECHIGROS_DOWNLOAD_DIR}/sdl3_ttf")
+  endif()
+  if(NOT EXISTS "${RECHIGROS_DOWNLOAD_DIR}/sdl3_image/SDL3_image-3.2.4/CMakeLists.txt")
+    file(ARCHIVE_EXTRACT INPUT "${RECHIGROS_DOWNLOAD_DIR}/sdl3_image/SDL3_image-3.2.4.tar.gz"
+      DESTINATION "${RECHIGROS_DOWNLOAD_DIR}/sdl3_image")
+  endif()
+
+  # The release archive does not contain the freetype submodule. SDL_ttf builds its own
+  # freetype when SdlTtf is configured with vendored support, so a clean tree needs the
+  # pinned SDL fork unpacked next to it. The upstream download script clones the branch,
+  # which would make the dependency float; the archive is pinned to the submodule commit.
+  set(rechigros_freetype_dir "${RECHIGROS_DOWNLOAD_DIR}/sdl3_ttf/SDL3_ttf-3.2.2/external/freetype")
+  if(NOT EXISTS "${rechigros_freetype_dir}/CMakeLists.txt")
+    set(rechigros_freetype_commit "9973564cfa63763a3e4ac67c09147899539b1e07")
+    set(rechigros_freetype_archive
+      "${RECHIGROS_DOWNLOAD_DIR}/sdl3_ttf/freetype-${rechigros_freetype_commit}.tar.gz")
+    rechigros_download(
+      "sdl3_ttf/freetype-${rechigros_freetype_commit}.tar.gz"
+      "https://github.com/libsdl-org/freetype/archive/${rechigros_freetype_commit}.tar.gz"
+      "026A05A49D114A1235D2926F4C03A9330E4B1A6EFE7C217EC9607904C32907D4")
+    set(rechigros_freetype_extract "${RECHIGROS_DOWNLOAD_DIR}/sdl3_ttf/freetype-extract")
+    file(REMOVE_RECURSE "${rechigros_freetype_extract}")
+    file(ARCHIVE_EXTRACT INPUT "${rechigros_freetype_archive}"
+      DESTINATION "${rechigros_freetype_extract}")
+    file(GLOB rechigros_freetype_roots LIST_DIRECTORIES true "${rechigros_freetype_extract}/*")
+    list(LENGTH rechigros_freetype_roots rechigros_freetype_root_count)
+    if(NOT rechigros_freetype_root_count EQUAL 1)
+      message(FATAL_ERROR "The freetype archive has an unexpected layout.")
+    endif()
+    list(GET rechigros_freetype_roots 0 rechigros_freetype_root)
+    file(RENAME "${rechigros_freetype_root}" "${rechigros_freetype_dir}")
+    file(REMOVE_RECURSE "${rechigros_freetype_extract}")
+  endif()
 
   # SDL_ttf/SDL_image key their target names off BUILD_SHARED_LIBS, which this project never
   # sets; without an explicit value they would look for SDL3::SDL3-shared and re-run

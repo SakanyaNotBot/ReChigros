@@ -1,0 +1,91 @@
+/*
+ * Objectively: Ultra-lightweight object oriented framework for GNU C.
+ * Copyright (C) 2014 Jay Dolan <jay@jaydolan.com>
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty. In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ * claim that you wrote the original software. If you use this software
+ * in a product, an acknowledgment in the product documentation would be
+ * appreciated but is not required.
+ *
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ * misrepresented as being the original software.
+ *
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+#pragma once
+
+#include <Objectively/Types.h>
+#include <Objectively/String.h>
+
+/**
+ * @file
+ * @brief Named enumerations.
+ */
+
+/**
+ * @brief The EnumName type.
+ */
+typedef struct {
+  const char *name;
+  const char *alias;
+  int value;
+} EnumName;
+
+/**
+ * @brief Creates an EnumName for `en` for use with `valueof`.
+ * @see valueof(const EnumName *, const char *, int)
+ */
+#define MakeEnumName(en) \
+  { \
+    .name = #en, \
+    .alias = NULL, \
+    .value = en, \
+  }
+
+/**
+ * @brief Creates an EnumName alias for `en` for use with `valueof`.
+ * @see valueof(constEnumName *, const char *, int)
+ */
+#define MakeEnumAlias(en, al) \
+  { \
+    .name = #en, \
+    .alias = #al, \
+    .value = en, \
+  }
+
+/**
+ * @brief Creates a null-terminated array of EnumNames.
+ */
+#define MakeEnumNames(...) \
+  { \
+    __VA_ARGS__, \
+    { \
+      .name = NULL, \
+      .value = 0 \
+    } \
+  }
+
+/**
+ * @brief Marshal `value`, returning a String of `OR`'ed EnumNames for the given enum value.
+ * @param names A null-terminated array of EnumNames.
+ * @param value The enum value, which may be a bitwise `OR` of multiple enum values.
+ * @return A String of EnumNames matching value, or `NULL`.
+ */
+OBJECTIVELY_EXPORT String *nameof(const EnumName *names, int value);
+
+/**
+ * @brief Parse `string`, returning the corresponding enum value.
+ * @param names A null-terminated array of EnumNames.
+ * @param chars A null-terminated C string.
+ * @return The `value` of the EnumName matching `string`, or `-1`.
+ */
+OBJECTIVELY_EXPORT int valueof(const EnumName *names, const char *chars);

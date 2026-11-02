@@ -120,6 +120,10 @@ function(build_gnu_c_library omvc_target)
     target_include_directories(${omvc_target}
       PUBLIC ${OMVC_PUBLIC_INCLUDES}
       PRIVATE ${OMVC_DEP_INCLUDES})
+    # SDL3 is fetched during configure on this path, so its include directory is only
+    # known through the target's usage requirements. Linking the header target keeps the
+    # framework's own compilation in sync with whichever SDL3 layout the host selected.
+    target_link_libraries(${omvc_target} PRIVATE SDL3::Headers)
     target_compile_options(${omvc_target} PRIVATE -w)
     # GLIBC hides dladdr's Dl_info unless the feature-test macro is on; the reference builds
     # set it globally, and this library reads it for class introspection.
@@ -206,6 +210,7 @@ function(build_gnu_c_library_from_list omvc_target)
   target_include_directories(${omvc_target}
     PUBLIC ${OMVC_PUBLIC_INCLUDES}
     PRIVATE ${OMVC_DEP_INCLUDES})
+  target_link_libraries(${omvc_target} PRIVATE SDL3::Headers)
   target_compile_options(${omvc_target} PRIVATE -w)
   if(NOT WIN32)
     target_compile_definitions(${omvc_target} PRIVATE _GNU_SOURCE)

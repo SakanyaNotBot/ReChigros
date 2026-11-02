@@ -1,0 +1,262 @@
+/*
+ * ObjectivelyMVC: Object oriented MVC framework for SDL3 and C.
+ * Copyright (C) 2014 Jay Dolan <jay@jaydolan.com>
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty. In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ * claim that you wrote the original software. If you use this software
+ * in a product, an acknowledgment in the product documentation would be
+ * appreciated but is not required.
+ *
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ * misrepresented as being the original software.
+ *
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+#pragma once
+
+#include <Objectively/Object.h>
+
+#include <ObjectivelyMVC/DebugViewController.h>
+#include <ObjectivelyMVC/Renderer.h>
+#include <ObjectivelyMVC/ViewController.h>
+
+/**
+ * @file
+ * @brief A WindowController manages a ViewController and its descendants within an SDL_Window.
+ */
+
+typedef struct WindowController WindowController;
+typedef struct WindowControllerInterface WindowControllerInterface;
+
+/**
+ * @brief A WindowController manages a ViewController and its descendants within an SDL_Window.
+ * @extends Object
+ * @ingroup ViewControllers
+ */
+struct WindowController {
+
+  /**
+   * @brief The superclass.
+   */
+  Object object;
+
+  /**
+   * @brief The interface type.
+   * @protected
+   */
+  WindowControllerInterface *interface[0];
+
+  /**
+   * @brief The DebugViewController.
+   */
+  DebugViewController *debugViewController;
+
+  /**
+   * @brief The Renderer.
+   */
+  Renderer *renderer;
+
+  /**
+   * @brief The Theme.
+   */
+  Theme *theme;
+
+  /**
+   * @brief The ViewController.
+   */
+  ViewController *viewController;
+
+  /**
+   * @brief The window.
+   */
+  SDL_Window *window;
+};
+
+/**
+ * @brief The WindowController interface.
+ */
+struct WindowControllerInterface {
+
+  /**
+   * @brief The superclass interface.
+   */
+  ObjectInterface objectInterface;
+
+  /**
+   * @private
+   * @fn void WindowController::debug(WindowController *self)
+   * @brief Debugs the current frame.
+   * @param self The WindowController.
+   * @memberof WindowController
+   */
+  void (*debug)(WindowController *self);
+  
+  /**
+   * @fn View *WindowController::keyResponder(const WindowController *self)
+   * @param self The WindowController.
+   * @return The key responder or NULL.
+   * @memberof WindowController
+   */
+  View *(*keyResponder)(const WindowController *self);
+
+  /**
+   * @fn Array *WindowController::keyResponders(const WindowController *self)
+   * @param self The WindowController.
+   * @return An Array of all first responders in the WindowController's View hierarchy.
+   * @memberof WindowController
+   */
+  Array *(*keyResponders)(const WindowController *self);
+
+  /**
+   * @fn WindowController *WindowController::initWithDevice(WindowController *self, RenderDevice *device)
+   * @brief Initializes this WindowController with the given RenderDevice.
+   * @param self The WindowController.
+   * @param device The RenderDevice.
+   * @return The initialized WindowController, or `NULL` on error.
+   * @memberof WindowController
+   */
+  WindowController *(*initWithDevice)(WindowController *self, RenderDevice *device);
+
+  /**
+   * @fn View *WindowController::nextKeyResponder(const WindowController *self, View *keyResponder)
+   * @brief Finds the next available keyResponder from the given `keyResponder`.
+   * @param self The WindowController.
+   * @param keyResponder The current keyResponder.
+   * @return The next keyResponder, or NULL.
+   * @memberof WindowController
+   */
+  View *(*nextKeyResponder)(const WindowController *self, View *keyResponder);
+
+  /**
+   * @fn View *WindowController::previousKeyResponder(const WindowController *self, View *keyResponder)
+   * @brief Finds the previous available keyResponder from the given `keyResponder`.
+   * @param self The WindowController.
+   * @param keyResponder The current keyResponder.
+   * @return The previous keyResponder, or NULL.
+   * @memberof WindowController
+   */
+  View *(*previousKeyResponder)(const WindowController *self, View *keyResponder);
+
+  /**
+   * @fn void WindowController::render(WindowController *self)
+   * @brief Renders the ViewController's View into the RenderDevice's current frame.
+   * @details Convenience over `renderTo` for the common case of rendering the UI into
+   *   the device's own current command buffer and framebuffer. Equivalent to
+   *   `$(self, renderTo, device->commands, device->framebuffer)`.
+   * @param self The WindowController.
+   * @memberof WindowController
+   */
+  void (*render)(WindowController *self);
+
+  /**
+   * @fn void WindowController::renderTo(WindowController *self, CommandBuffer *commands, Framebuffer *framebuffer)
+   * @brief Renders the ViewController's View into the given Framebuffer.
+   * @details The caller owns @c commands and is responsible for submitting it after this returns.
+   *   The UI is composited over whatever is already in the Framebuffer's color texture
+   *   (`SDL_GPU_LOADOP_LOAD`), so render your scene into the Framebuffer first.
+   * @param self The WindowController.
+   * @param commands The frame's CommandBuffer.
+   * @param framebuffer The Framebuffer to render the UI into.
+   * @memberof WindowController
+   */
+  void (*renderTo)(WindowController *self, CommandBuffer *commands, Framebuffer *framebuffer);
+
+  /**
+   * @fn void WindowController::respondToEvent(WindowController *self, const SDL_Event *event)
+   * @brief Responds to the given event.
+   * @param self The WindowController.
+   * @param event The event.
+   * @remarks Your application should call this method for each event that the View hierarchy is
+   * expected to respond to. The event will be dispatched to WindowController::keyResponder,
+   * which is the first of:
+   *  * The View that has claimed key responder status for the window via
+   *    View::becomeKeyResponder
+   *  * The inner-most descendant in the View hierarchy that received the event, according to
+   *    View::hitTest
+   *  * This WindowController's ViewController
+   * @remarks By default, the event is passed up the View hierarchy by View::respondToEvent.
+   * Subclasses of View, such as Control, may stop event propagation if an event has been
+   * captured.
+   * @memberof WindowController
+   */
+  void (*respondToEvent)(WindowController * self, const SDL_Event *event);
+
+  /**
+   * @fn void WindowController::setTheme(WindowController *self, Theme *theme)
+   * @brief Sets this WindowController's Theme.
+   * @param self The WindowController.
+   * @param theme The Theme.
+   * @memberof WindowController
+   */
+  void (*setTheme)(WindowController *self, Theme *theme);
+
+  /**
+   * @fn void WindowController::setViewController(WindowController *self, ViewController *viewController)
+   * @brief Sets this WindowController's ViewController.
+   * @param self The WindowController.
+   * @param viewController The ViewController.
+   * @memberof WindowController
+   */
+  void (*setViewController)(WindowController *self, ViewController *viewController);
+
+  /**
+   * @fn void WindowController::setWindow(WindowController *self, SDL_Window *window)
+   * @brief Sets this WindowController's window.
+   * @param self The WindowController.
+   * @param window The window.
+   * @memberof WindowController
+   */
+  void (*setWindow)(WindowController *self, SDL_Window *window);
+
+  /**
+   * @fn void WindowController::toggleDebugger(WindowController *self)
+   * @brief Toggles the debugger tools.
+   * @param self The WindowViewController.
+   * @memberof WindowController
+   */
+  void (*toggleDebugger)(WindowController *self);
+  
+  /**
+   * @fn View *WindowController::touchResponder(const WindowController *self)
+   * @param self The WindowController.
+   * @return The touch responder or NULL.
+   * @see View::hitTest(const View *, const SDL_Point *)
+   * @memberof WindowController
+   */
+  View *(*touchResponder)(const WindowController *self);
+
+  /**
+   * @fn View *WindowController::touchTarget(const WindowController *self, const SDL_Event *event))
+   * @brief Returns the touch event target, or NULL.
+   * @param self The WindowController.
+   * @return The touch event target, or NULL.
+   * @memberof WindowController
+   */
+  View *(*touchTarget)(const WindowController *self, const SDL_Event *event);
+
+  /**
+   * @static
+   * @fn WindowController *WindowController::windowController(SDL_Window *window)
+   * @param window The window.
+   * @return The WindowController bound to the given window.
+   * @memberof WindowController
+   */
+  WindowController *(*windowController)(SDL_Window *window);
+};
+
+/**
+ * @fn Class *WindowController::_WindowController(void)
+ * @brief The WindowController archetype.
+ * @return The WindowController Class.
+ * @memberof WindowController
+ */
+OBJECTIVELYMVC_EXPORT Class *_WindowController(void);

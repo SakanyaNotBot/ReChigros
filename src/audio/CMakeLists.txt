@@ -8,6 +8,22 @@ target_include_directories(rechigros_audio PRIVATE "${PROJECT_SOURCE_DIR}/src/au
 target_link_libraries(rechigros_audio PUBLIC miniaudio_headers rechigros_platform)
 target_compile_features(rechigros_audio PUBLIC cxx_std_20)
 
+if(APPLE)
+  # miniaudio talks to the system audio frameworks directly.
+  target_link_libraries(rechigros_audio PUBLIC
+    "-framework AudioToolbox"
+    "-framework CoreAudio"
+    "-framework CoreFoundation")
+  if(IOS)
+    # The iOS backend includes AVFoundation and Objective-C runtime types, so this
+    # translation unit has to be compiled as Objective-C rather than C.
+    set_source_files_properties(MiniaudioImpl.c PROPERTIES LANGUAGE OBJC)
+    target_link_libraries(rechigros_audio PUBLIC
+      "-framework AVFoundation"
+      "-framework Foundation")
+  endif()
+endif()
+
 if(MSVC)
   target_compile_options(rechigros_audio PRIVATE /W4 /permissive-)
   # The bundled single-file decoder is not warning-clean.

@@ -260,6 +260,11 @@ function Invoke-Tool {
 
     $tail = New-Object 'System.Collections.Generic.Queue[string]'
     $writer = New-Object System.IO.StreamWriter($LogPath, $false, (New-Object System.Text.UTF8Encoding($false)))
+    # Windows PowerShell turns a native tool's stderr into an error record, and a terminating
+    # preference would abort the build over a harmless warning. The exit code is what decides
+    # success, so stderr is only logged here.
+    $previousErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     try {
         & $FilePath @ArgumentList 2>&1 | ForEach-Object {
             $line = [string]$_
@@ -271,6 +276,7 @@ function Invoke-Tool {
         $exitCode = $LASTEXITCODE
     }
     finally {
+        $ErrorActionPreference = $previousErrorAction
         $writer.Flush()
         $writer.Dispose()
     }
@@ -303,7 +309,8 @@ function Resolve-Proxy {
              elseif ($env:RECHIGROS_PROXY) { $env:RECHIGROS_PROXY }
              elseif ($env:HTTPS_PROXY) { $env:HTTPS_PROXY }
              elseif ($env:HTTP_PROXY) { $env:HTTP_PROXY }
-             else { 'http://127.0.0.1:7899' }
+             elseif ($IsWindowsHost) { 'http://127.0.0.1:7899' }
+             else { '' }
     return $value.TrimEnd('/')
 }
 
