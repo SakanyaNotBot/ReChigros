@@ -84,6 +84,16 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      - name: Cache CMake dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            third_party/cache
+            build/ios/_deps
+          key: ios-deps-${{ runner.os }}-${{ hashFiles('cmake/Dependencies.cmake', 'CMakeLists.txt') }}
+          restore-keys: |
+            ios-deps-${{ runner.os }}-
+
       - name: Configure CMake project
         env:
           IOS_PATH: ${{ inputs.ios_path }}
