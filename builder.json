@@ -1,0 +1,24 @@
+{
+  "project": "ReChigros",
+  "platform": "ios",
+  "github": {
+    "owner": "SakanyaNotBot",
+    "repo": "ReChigros"
+  },
+  "provider": "github",
+  "codemagic": {},
+  "bitrise": {},
+  "ios": {
+    "path": ".",
+    "scheme": "ReChigros",
+    "bundleId": "com.wuying.chigros",
+    "configuration": "Release",
+    "signing": false
+  },
+  "flutter": {
+    "watch": {}
+  },
+  "reactNative": {},
+  "kmp": {},
+  "mobai": {}
+}
