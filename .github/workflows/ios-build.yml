@@ -56,7 +56,9 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    # GitHub's arm64 macOS pool is heavily contended; the Intel image still cross-compiles
+    # the arm64 app because CMAKE_OSX_ARCHITECTURES pins the slice.
+    runs-on: macos-15-intel
     timeout-minutes: 90
     permissions:
       contents: read
