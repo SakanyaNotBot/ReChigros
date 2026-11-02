@@ -2,9 +2,8 @@
 
 #include "rechigros/platform/AssetManager.hpp"
 #include "rechigros/platform/FileSystem.hpp"
+#include "rechigros/render/asset/ImageCache.hpp"
 #include "rechigros/render/gl/Gl.hpp"
-
-#include <stb_image.h>
 
 #include <algorithm>
 #include <cmath>
@@ -171,33 +170,27 @@ void TextureCache::startWorker() {
       // pixels cross back.
       Decoded decoded;
       decoded.key = task.key;
-      int width = 0;
-      int height = 0;
-      int channels = 0;
       const auto bytes = platform::AssetManager::readBinary(platform::assetRoot(),
           task.path.lexically_relative(platform::assetRoot()).generic_string());
-      unsigned char* pixels = bytes.empty()
-          ? stbi_load(task.path.string().c_str(), &width, &height, &channels, 4)
-          : stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), &width, &height,
-                &channels, 4);
-      if (pixels == nullptr || width <= 0 || height <= 0) {
-        if (pixels != nullptr) stbi_image_free(pixels);
+      const auto image = bytes.empty() ? rechigros::render::asset::decodeImage(task.path)
+                                       : rechigros::render::asset::decodeImageMemory(
+                                             bytes.data(), bytes.size());
+      if (!image.valid()) {
         decoded.failed = true;
       } else {
-        int finalWidth = width;
-        int finalHeight = height;
-        const auto scaled = downscale(pixels, width, height, task.maxSize, finalWidth,
-            finalHeight);
+        int finalWidth = image.width;
+        int finalHeight = image.height;
+        const auto scaled = downscale(image.pixels.data(), image.width, image.height,
+            task.maxSize, finalWidth, finalHeight);
         if (scaled.empty()) {
-          decoded.pixels.assign(pixels, pixels + static_cast<std::size_t>(width) * height * 4U);
-          decoded.width = width;
-          decoded.height = height;
+          decoded.pixels = image.pixels;
+          decoded.width = image.width;
+          decoded.height = image.height;
         } else {
           decoded.pixels = scaled;
           decoded.width = finalWidth;
           decoded.height = finalHeight;
         }
-        stbi_image_free(pixels);
       }
       {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -297,26 +290,23 @@ std::uint64_t TextureCache::blurredBackdropFor(const std::filesystem::path& imag
   if (const auto iterator = entries_.find(key); iterator != entries_.end()) {
     return iterator->second.failed ? 0 : iterator->second.texture;
   }
-  int width = 0;
-  int height = 0;
-  int channels = 0;
   const auto bytes = platform::AssetManager::readBinary(platform::assetRoot(),
       image.lexically_relative(platform::assetRoot()).generic_string());
-  unsigned char* pixels = bytes.empty()
-      ? stbi_load(image.string().c_str(), &width, &height, &channels, 4)
-      : stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), &width, &height,
-            &channels, 4);
-  if (pixels == nullptr || width <= 0 || height <= 0) {
+  const auto decodedImage = bytes.empty()
+      ? rechigros::render::asset::decodeImage(image)
+      : rechigros::render::asset::decodeImageMemory(bytes.data(), bytes.size());
+  if (!decodedImage.valid()) {
     Entry entry;
     entry.failed = true;
     entries_[key] = entry;
-    if (pixels != nullptr) stbi_image_free(pixels);
     return 0;
   }
+  const int width = decodedImage.width;
+  const int height = decodedImage.height;
   const int smallWidth = std::max(1, width / 3);
   const int smallHeight = std::max(1, height / 3);
-  auto small = downscaleBilinear(pixels, width, height, smallWidth, smallHeight);
-  stbi_image_free(pixels);
+  auto small = downscaleBilinear(decodedImage.pixels.data(), width, height, smallWidth,
+      smallHeight);
   const int radius = std::max(4,
       static_cast<int>(std::lround(static_cast<double>(width) * 0.05 / 3.0)));
   for (int pass = 0; pass < 3; ++pass) {

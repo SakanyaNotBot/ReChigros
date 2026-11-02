@@ -38,6 +38,13 @@ inline constexpr float SIDE_FACTOR = 0.3F;
 // Whether the plain lines still need to be drawn at all during the exit.
 [[nodiscard]] bool outroLinesVisible(bool inOutro, float elapsedSec) noexcept;
 
+// Alpha of the RPE backdrop/storyboard layer during the exit. It eases to zero over the
+// window before the judge-line canvas starts collapsing, so the stage backdrop leaves
+// before any line is shortened.
+[[nodiscard]] float outroBackdropAlpha(bool inOutro, float elapsedSec) noexcept;
+
+[[nodiscard]] bool storyboardVisibleDuringOutro(bool inOutro, float elapsedSec) noexcept;
+
 // Artwork alpha for the play field. `introDimMix` runs 0..1 with the decorative line, so
 // the artwork opens at INTRO_START_BRIGHTNESS and lands on the gameplay value as the
 // line reaches the stage ends.

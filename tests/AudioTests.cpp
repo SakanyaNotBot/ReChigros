@@ -151,6 +151,19 @@ void testWavDecoding() {
 
   const double measuredFrequency = measureFrequency(decoded.data(), decoded.frameCount(), kRate);
   require(std::abs(measuredFrequency - kFrequency) < 5.0, "WAV frequency recovered");
+
+  const auto unicodePath = temporaryWavPath("audio") /
+      std::filesystem::path(u8"音效/回放.wav");
+  std::filesystem::create_directories(unicodePath.parent_path());
+  {
+    std::ofstream output(unicodePath, std::ios::binary | std::ios::trunc);
+    output.write(reinterpret_cast<const char*>(wav.data()),
+        static_cast<std::streamsize>(wav.size()));
+  }
+  const auto unicodeDecoded = rechigros::audio::Decoder::decodeFile(unicodePath, kRate);
+  require(unicodeDecoded.frameCount() == static_cast<std::int64_t>(kFrames),
+      "a UTF-8 audio path decodes without changing its samples");
+  std::filesystem::remove_all(unicodePath.parent_path(), ignored);
 }
 
 void testWavResampling() {

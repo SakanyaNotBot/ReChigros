@@ -13,7 +13,7 @@ std::vector<float> PrprVariable::evaluate(double chartTimeSec) const {
       if (chartTimeSec < event.startTime) break;
       selected = &event;
     }
-    if (chartTimeSec < selected->startTime) return values;
+    if (chartTimeSec < selected->startTime) return {};
     const double duration = selected->endTime - selected->startTime;
     const double progress = duration <= 1e-9 ? 1.0
         : std::clamp((chartTimeSec - selected->startTime) / duration, 0.0, 1.0);
@@ -28,6 +28,7 @@ std::vector<float> PrprVariable::evaluate(double chartTimeSec) const {
     return result;
   }
   if (events.empty()) return values;
+  if (chartTimeSec < events.front().startTime) return {};
   const double value = EventUtils::getEventVal(chartTimeSec, events);
   return {static_cast<float>(value)};
 }

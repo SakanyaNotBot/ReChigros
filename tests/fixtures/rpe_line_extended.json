@@ -1,0 +1,23 @@
+{
+  "META": {"RPEVersion": 160, "offset": 0},
+  "BPMList": [{"bpm": 120, "startTime": [0, 0, 1]}],
+  "judgeLineList": [{
+    "bpmfactor": 1,
+    "eventLayers": [{
+      "moveXEvents": [], "moveYEvents": [], "rotateEvents": [], "speedEvents": [],
+      "alphaEvents": [{"startTime": [0, 0, 1], "endTime": [16, 0, 1], "start": 255, "end": 255}]
+    }],
+    "extended": {
+      "scaleXEvents": [
+        {"startTime": [0, 0, 1], "endTime": [1, 0, 1], "start": 1.0, "end": 1.0, "easingType": 1},
+        {"startTime": [1, 0, 1], "endTime": [2, 0, 1], "start": 0.1, "end": 0.1, "easingType": 1}
+      ],
+      "scaleYEvents": [],
+      "colorEvents": [
+        {"startTime": [0, 0, 1], "endTime": [1, 0, 1], "start": [255, 0, 0], "end": [255, 0, 0], "easingType": 1},
+        {"startTime": [1, 0, 1], "endTime": [2, 0, 1], "start": [0, 255, 0], "end": [0, 255, 0], "easingType": 1}
+      ]
+    },
+    "notes": []
+  }]
+}

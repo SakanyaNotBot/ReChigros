@@ -8,8 +8,10 @@
 #include "rechigros/app/Settings.hpp"
 #include "rechigros/app/SmoothingClock.hpp"
 #include "rechigros/game/PlayResult.hpp"
+#include "rechigros/platform/FileSystem.hpp"
 
 #include <cmath>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -18,6 +20,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -38,6 +41,11 @@ void require(bool condition, const std::string& message) {
 
 // U+2002 EN SPACE encoded as UTF-8, the separator the reference labels use.
 constexpr const char* kEnSpace = "\xE2\x80\x82";
+
+bool writeZipArchive(const std::filesystem::path& archive,
+    const std::vector<std::pair<std::string, std::string>>& files);
+std::string chartJson(const std::string& name, const std::string& level,
+    const std::string& background, const std::string& music, bool withMeta = true);
 
 bool contains(const std::string& haystack, const std::string& needle) {
   return haystack.find(needle) != std::string::npos;
@@ -89,6 +97,37 @@ void testDifficultyNormalisation() {
           std::string("IN") + kEnSpace + "Lv.15",
       "an authored label is not prefixed again");
 }
+
+void testIncompleteMetadataNestedArchive() {
+  using namespace rechigros::app;
+  const auto root = rechigros::test::scratchDirectory("app-data-import-incomplete");
+  std::filesystem::remove_all(root);
+  const auto packs = root / "packs";
+  std::filesystem::create_directories(packs);
+  const auto archive = root / "chart.zip";
+  const std::string nested = "chart/";
+  require(writeZipArchive(archive,
+              {{nested + "info.json", "{\"name\":\"Incomplete Song\",\"level\":\"IN Lv.12\"}"},
+                  {nested + "chart.json",
+                      chartJson("", "", "", "", false)},
+                  {nested + "music.ogg", "OggS music"},
+                  {nested + "image.png", "PNG image"}}),
+      "a chart archive with minimal metadata is written");
+
+  ChartLibrary library(packs, root / "library.txt");
+  const auto imported = library.importZip(archive, false);
+  require(imported.imported, "a chart archive with minimal metadata imports");
+  require(imported.record.complete(), "minimal metadata still finds chart, music and background");
+  require(imported.record.musicFile.filename() == "music.ogg",
+      "minimal metadata finds the sibling music track");
+  require(imported.record.bgFile.filename() == "image.png",
+      "minimal metadata finds the sibling illustration");
+  require(imported.record.songName == "Incomplete Song",
+      "the metadata name survives the missing references");
+  require(imported.record.chartFile.filename() == "chart.json",
+      "the nested chart is found by content");
+}
+
 
 void writeText(const std::filesystem::path& path, const std::string& text) {
   std::ofstream output(path, std::ios::binary);
@@ -330,7 +369,7 @@ namespace {
 // A minimal official-format chart with a META block; the chart detector keys on the
 // judge-line list plus the format version, exactly like the reference importer.
 std::string chartJson(const std::string& name, const std::string& level,
-    const std::string& background, const std::string& music, bool withMeta = true) {
+    const std::string& background, const std::string& music, bool withMeta) {
   std::ostringstream out;
   out << R"({"formatVersion":3,"offset":0,)";
   if (withMeta) {
@@ -660,6 +699,32 @@ void testImportPersistsAcrossReload() {
   require(matches == 1, "the local list holds the imported chart exactly once");
 }
 
+void testLibraryRecoversAfterInvalidate() {
+  using namespace rechigros::app;
+  const auto root = rechigros::test::scratchDirectory("app-data-invalidate-ready");
+  std::filesystem::remove_all(root);
+  const auto packs = root / "packs";
+  const auto pack = packs / "one";
+  std::filesystem::create_directories(pack);
+  writeText(pack / "info.json",
+      "{\"name\":\"Ready Song\",\"level\":\"IN Lv.1\",\"chart\":\"chart.json\","
+      "\"music\":\"music.ogg\",\"illustration\":\"cover.png\"}");
+  writeText(pack / "chart.json", chartJson("", "", "", "", false));
+  writeText(pack / "music.ogg", "OggS");
+  writeText(pack / "cover.png", "PNG");
+
+  ChartLibrary library(packs, root / "library.txt");
+  require(library.records().size() == 1, "the one-pack library indexes before invalidation");
+  require(library.remove({"one"}), "the pack is removed from the library");
+  bool ready = false;
+  for (int attempt = 0; attempt < 200; ++attempt) {
+    if (library.ready()) { ready = true; break; }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  require(ready, "deleting a pack starts a rebuild instead of scanning forever");
+  require(library.records().empty(), "the rebuilt index drops the deleted pack");
+}
+
 void testNestedArchiveImport() {
   using namespace rechigros::app;
   const auto root = rechigros::test::scratchDirectory("app-data-import-nested");
@@ -696,6 +761,46 @@ void testNestedArchiveImport() {
       "the wrapper folder is folded into the installed pack root");
   require(!std::filesystem::is_directory(installed / "Wrapped Pack"),
       "the installed pack keeps no redundant wrapper folder");
+
+  const auto unicodeArchive = root / "Unicode.zip";
+  const std::string wrapper = "感谢日特辑/";
+  const std::string folder = wrapper + "楽曲データ/";
+  const std::string chartName = "谱面.json";
+  const std::string musicName = "音楽.ogg";
+  const std::string imageName = "背景.png";
+  const std::string musicBytes = "OggS music payload";
+  const std::string imageBytes = "PNG image payload";
+  const std::string chartBytes = chartJson("Unicode Song", "SP Lv.15", imageName, musicName);
+  require(writeZipArchive(unicodeArchive,
+              {{wrapper, ""}, {folder, ""},
+                  {folder + "info.yml", "name: Unicode Song\nlevel: SP Lv.15\nchart: " + chartName
+                   + "\nmusic: " + musicName + "\nillustration: " + imageName + "\n"},
+                  {folder + chartName, chartBytes}, {folder + musicName, musicBytes},
+                  {folder + imageName, imageBytes}}),
+      "a UTF-8 archive with multiple non-ASCII wrapper levels is written");
+  const auto unicode = library.importZip(unicodeArchive, true);
+  require(unicode.imported, "a UTF-8 nested archive imports with every required resource");
+  require(unicode.record.info.chart == chartName && unicode.record.info.music == musicName
+          && unicode.record.info.illustration == imageName,
+      "the installed metadata keeps UTF-8 resource references");
+  require(unicode.record.chartFile.filename() == rechigros::platform::pathFromUtf8(chartName)
+          && unicode.record.musicFile.filename() == rechigros::platform::pathFromUtf8(musicName)
+          && unicode.record.bgFile.filename() == rechigros::platform::pathFromUtf8(imageName),
+      "UTF-8 resource paths resolve to the extracted files");
+  require(rechigros::platform::readTextFile(unicode.record.chartFile) == chartBytes,
+      "the UTF-8 chart payload survives extraction");
+  const auto installedMusic = rechigros::platform::readBinaryFile(unicode.record.musicFile);
+  require(std::string(installedMusic.begin(), installedMusic.end()) == musicBytes,
+      "the UTF-8 music payload survives extraction");
+  const auto installedImage = rechigros::platform::readBinaryFile(unicode.record.bgFile);
+  require(std::string(installedImage.begin(), installedImage.end()) == imageBytes,
+      "the UTF-8 illustration payload survives extraction");
+  ChartLibrary reopenedUnicode(packs, root / "library.txt");
+  const auto afterRestart = reopenedUnicode.loadRecord(unicode.record.id);
+  require(afterRestart && afterRestart->complete()
+          && afterRestart->info.chart == chartName && afterRestart->info.music == musicName
+          && afterRestart->info.illustration == imageName,
+      "the UTF-8 nested archive reloads completely after a restart");
 }
 
 void requireNear(float actual, float expected, const char* what) {
@@ -1109,7 +1214,9 @@ int main() {
   testInfoFileFormats();
   testChartLibraryPackDetection();
   testImportPersistsAcrossReload();
+  testLibraryRecoversAfterInvalidate();
   testNestedArchiveImport();
+  testIncompleteMetadataNestedArchive();
   testSettingsDefaultsPersistenceAndClamps();
   testSidecarDiscovery();
   testReplayStoreRows();

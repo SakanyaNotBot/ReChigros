@@ -59,7 +59,10 @@ void AsyncReadback::request(int width, int height) noexcept {
 }
 
 bool AsyncReadback::take(std::vector<std::uint8_t>& out) noexcept {
-  if (!valid() || pendingCount_ == 0) return false;
+  // The caller requests a frame and then collects the previous one. A single pending request
+  // is therefore the current frame, not a completed earlier frame; the caller must read it
+  // directly instead of consuming the other, still unwritten buffer.
+  if (!valid() || pendingCount_ < 2) return false;
   // Collections lag requests by one: the buffer holding the completed frame is the one the
   // previous request wrote, which is the other half of the pair.
   const int readIndex = (writeIndex_ + 1) % 2;

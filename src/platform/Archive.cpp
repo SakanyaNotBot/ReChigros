@@ -80,6 +80,7 @@ struct RawEntry {
   std::uint64_t compressedSize{};
   std::uint64_t uncompressedSize{};
   std::uint64_t localHeaderOffset{};
+  bool directory{};
 };
 
 // Reads the 64-bit values out of the 0x0001 extended field. Only the values the entry
@@ -163,6 +164,7 @@ std::vector<RawEntry> readCentralDirectory(std::ifstream& stream, std::uint64_t 
       if (needsOffset) entry.localHeaderOffset = offset;
     }
 
+    entry.directory = !name.empty() && (name.back() == '/' || name.back() == '\\');
     if (!normaliseEntryName(std::string(name.begin(), name.end()), entry.name)) continue;
     entries.push_back(std::move(entry));
   }
@@ -295,14 +297,13 @@ std::vector<std::filesystem::path> extractArchive(const std::filesystem::path& a
   std::vector<std::filesystem::path> extracted;
   std::uint64_t total = 0;
   for (const auto& entry : entries) {
-    const auto target = outputDirectory / std::filesystem::path(entry.name);
+    const auto target = outputDirectory / pathFromUtf8(entry.name);
     const auto resolved = std::filesystem::weakly_canonical(target, error);
     if (error) { error.clear(); continue; }
     const auto relative = resolved.lexically_relative(root);
     if (relative.empty() || relative.native().rfind(std::filesystem::path(L"..").native(), 0) == 0) continue;
 
-    // Directories hold no payload in a ZIP; the parent of a later file creates them.
-    if (!entry.name.empty() && entry.name.back() == '/') continue;
+    if (entry.directory) continue;
 
     std::filesystem::create_directories(resolved.parent_path(), error);
     error.clear();

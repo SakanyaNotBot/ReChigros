@@ -16,6 +16,7 @@
 #include <functional>
 #include <future>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -83,6 +84,9 @@ struct GameRuntime {
   // Filled by the worker; empty once consumed. The future yields no chart on failure, with the
   // reason left in loadingError.
   std::future<LoadedRun> chartLoad;
+  // A finished load waiting for its storyboard textures to finish decoding. The loading panel
+  // stays up instead of letting the first frames decode images on the render thread.
+  std::optional<LoadedRun> pendingRun;
   std::string loadingError;
   // The run the loader was started for. The settings and mode are captured when it starts so
   // the worker and the frame that consumes it agree even if the library changes underneath.
@@ -254,6 +258,7 @@ struct AppContext {
   // Pointer events that reached gameplay input; used by the batch verification mode.
   int forwardedPointerEvents{};
   int totalNotesJudgedForBatch{};
+  bool captureGameplayRequested{};
 };
 
 } // namespace rechigros::app

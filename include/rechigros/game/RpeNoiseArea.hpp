@@ -88,4 +88,12 @@ private:
   Prefixes rotatePrefix_, scaleXPrefix_, scaleYPrefix_;
 };
 
+[[nodiscard]] bool rpeNoiseContains(const RpeNoiseArea& area, const RpeNoiseSample& sample,
+    RpeNoisePoint point, double inset = 0.0, double aspect = 1.5) noexcept;
+[[nodiscard]] bool rpeNoiseGroupCovered(const std::vector<RpeNoiseArea>& areas,
+    const std::string& layerId, double seconds, RpeNoisePoint point, RpeNoiseState state,
+    bool singleInversion, double inset = 0.0, double aspect = 1.5) noexcept;
+[[nodiscard]] bool rpeNoiseTouchBlocked(const std::vector<RpeNoiseArea>& areas, double seconds,
+    RpeNoisePoint point, double screenHeight, bool singleInversion, double aspect = 1.5) noexcept;
+
 } // namespace rechigros::game

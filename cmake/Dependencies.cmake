@@ -76,6 +76,14 @@ rechigros_download("stb/stb_image_write.h" "${JSDELIVR}/nothings/stb@master/stb_
 add_library(stb_headers INTERFACE)
 target_include_directories(stb_headers INTERFACE "${RECHIGROS_DOWNLOAD_DIR}/stb")
 
+# WebP decoding for packs that carry a WebP payload under a .png name. Wuffs' release is a
+# single C file and covers VP8/VP8L, so no platform image framework is involved.
+rechigros_download("wuffs/wuffs-v0.4.c"
+  "${JSDELIVR}/google/wuffs@main/release/c/wuffs-v0.4.c"
+  "458066457347BD6D9BC3C906AA8292BEA4488577727569DDD9436FDD89D5F04D")
+add_library(wuffs_headers INTERFACE)
+target_include_directories(wuffs_headers INTERFACE "${RECHIGROS_DOWNLOAD_DIR}/wuffs")
+
 set(IMGUI_BASE "${JSDELIVR}/ocornut/imgui@v1.91.8")
 rechigros_download("imgui/imconfig.h" "${IMGUI_BASE}/imconfig.h" "BD89B32DE6A8A286700383BAE47B4F4BBA753BA13058D1A350770C5232B2E4E8")
 rechigros_download("imgui/imgui.h" "${IMGUI_BASE}/imgui.h" "C54743F229027D3A9C057343073C6C6EFA37A907306AAFE94C79D706B8BF832A")

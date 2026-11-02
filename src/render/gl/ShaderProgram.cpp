@@ -86,17 +86,33 @@ void replaceAllText(std::string& text, const std::string& from, const std::strin
   }
 }
 
-std::string adaptLegacyEffect(std::string body) {
-  if (body.find("CC_Texture0") == std::string::npos &&
+std::string adaptLegacyEffect(std::string body, bool rpeViewport) {
+  if (!rpeViewport && body.find("CC_Texture0") == std::string::npos &&
       body.find("v_texCoord") == std::string::npos) return body;
   const bool portable = body.find("uniform sampler2D screenTexture") != std::string::npos;
   const std::string coordinate = portable ? "uv" : "v_texCoord";
   const std::string origin = portable ? "vec2(0.0)" : "vec2(0.0, 0.0333)";
   const std::string size = portable ? "vec2(1.0)" : "vec2(0.7031, 1.0 / 1.2)";
-  replaceAllText(body, "CC_Texture0", "u_texture");
-  replaceAllText(body, "screenTexture", "u_texture");
-  replaceAllText(body, "screenSize", "resolution");
+  body = replaceWord(body, "CC_Texture0", "u_texture");
+  body = replaceWord(body, "screenTexture", "u_texture");
+  body = replaceWord(body, "screenSize", "resolution");
   replaceAllText(body, "uniform sampler2D u_texture;", "");
+  if (!portable) {
+    const auto replaceRectangle = [&body](const char* name, const std::string& value) {
+      const std::string declaration = std::string("const vec2 ") + name;
+      const auto begin = body.find(declaration);
+      if (begin == std::string::npos) return;
+      const auto equal = body.find('=', begin + declaration.size());
+      const auto end = body.find(';', equal);
+      if (equal != std::string::npos && end != std::string::npos) {
+        body.replace(equal + 1, end - equal - 1, " " + value + " ");
+      }
+    };
+    replaceRectangle("rectMin", origin);
+    replaceRectangle("rectMax", origin + " + " + size);
+  }
+  replaceAllText(body, "gl_FragCoord.xy",
+      "((v_texCoord - rpeRectMin) / (rpeRectMax - rpeRectMin) * resolution)");
   for (const std::string declaration : {
       "varying vec2 " + coordinate + ";",
       "varying highp vec2 " + coordinate + ";",
@@ -104,16 +120,18 @@ std::string adaptLegacyEffect(std::string body) {
       "varying lowp vec2 " + coordinate + ";"}) {
     replaceAllText(body, declaration, "");
   }
-  replaceAllText(body, coordinate, "rpeCoordinate");
+  body = replaceWord(body, coordinate.c_str(), "rpeCoordinate");
   replaceAllText(body, "texture2DProj", "rpeSampleProj");
   replaceAllText(body, "texture2D", "rpeSample");
   body = replaceWord(body, "texture", "u_texture_legacy");
   replaceAllText(body, "void main", "void rpeMain");
+  replaceAllText(body, "uniform vec2 resolution;", "");
   return "precision mediump float;\n"
       "uniform sampler2D u_texture;\n"
       "varying vec2 v_texCoord;\n"
       "uniform vec2 rpeRectMin;\n"
       "uniform vec2 rpeRectMax;\n"
+      "uniform vec2 resolution;\n"
       "vec2 rpeCoordinate;\n"
       "vec4 rpeSample(sampler2D source, vec2 coordinate) {\n"
       "  vec2 local = (coordinate - " + origin + ") / " + size + ";\n"
@@ -137,8 +155,8 @@ std::string adaptLegacyEffect(std::string body) {
 } // namespace
 
 std::string prepareShaderSourceForLanguage(bool fragment, bool esProfile,
-    const std::string& source) {
-  const std::string adapted = fragment ? adaptLegacyEffect(source) : source;
+    const std::string& source, bool rpeViewport) {
+  const std::string adapted = fragment ? adaptLegacyEffect(source, rpeViewport) : source;
   std::string body = replaceWord(adapted, "attribute", "in");
   body = replaceWord(body, "varying", fragment ? "in" : "out");
   body = replaceWord(body, "texture2D", "texture");
@@ -178,18 +196,19 @@ std::string prepareShaderSourceForLanguage(bool fragment, bool esProfile,
   return out;
 }
 
-std::string prepareShaderSource(bool fragment, const std::string& source) {
+std::string prepareShaderSource(bool fragment, const std::string& source, bool rpeViewport) {
 #ifdef RECHIGROS_GLES
-  return prepareShaderSourceForLanguage(fragment, true, source);
+  return prepareShaderSourceForLanguage(fragment, true, source, rpeViewport);
 #else
-  return prepareShaderSourceForLanguage(fragment, false, source);
+  return prepareShaderSourceForLanguage(fragment, false, source, rpeViewport);
 #endif
 }
 
 ShaderProgram::~ShaderProgram() { reset(); }
 
 ShaderProgram::ShaderProgram(ShaderProgram&& other) noexcept
-    : program_(other.program_), locations_(std::move(other.locations_)), log_(std::move(other.log_)) {
+    : program_(other.program_), locations_(std::move(other.locations_)),
+      types_(std::move(other.types_)), log_(std::move(other.log_)) {
   other.program_ = 0;
 }
 
@@ -198,6 +217,7 @@ ShaderProgram& ShaderProgram::operator=(ShaderProgram&& other) noexcept {
     reset();
     program_ = other.program_;
     locations_ = std::move(other.locations_);
+    types_ = std::move(other.types_);
     log_ = std::move(other.log_);
     other.program_ = 0;
   }
@@ -208,6 +228,7 @@ void ShaderProgram::reset() noexcept {
   if (program_ != 0) glDeleteProgram(program_);
   program_ = 0;
   locations_.clear();
+  types_.clear();
   log_.clear();
 }
 
@@ -238,10 +259,11 @@ unsigned int compile(GLenum type, const std::string& source, std::string& log) {
 }
 } // namespace
 
-bool ShaderProgram::build(const std::string& vertexSource, const std::string& fragmentSource) noexcept {
+bool ShaderProgram::build(const std::string& vertexSource, const std::string& fragmentSource,
+    bool rpeViewport) noexcept {
   reset();
   const std::string vertex = prepareShaderSource(false, vertexSource);
-  const std::string fragment = prepareShaderSource(true, fragmentSource);
+  const std::string fragment = prepareShaderSource(true, fragmentSource, rpeViewport);
   const unsigned int vertexShader = compile(GL_VERTEX_SHADER, vertex, log_);
   const unsigned int fragmentShader = compile(GL_FRAGMENT_SHADER, fragment, log_);
   if (vertexShader == 0 || fragmentShader == 0) {
@@ -268,6 +290,22 @@ bool ShaderProgram::build(const std::string& vertexSource, const std::string& fr
     program_ = 0;
     return false;
   }
+  GLint count = 0;
+  GLint maximumNameLength = 0;
+  glGetProgramiv(program_, GL_ACTIVE_UNIFORMS, &count);
+  glGetProgramiv(program_, GL_ACTIVE_UNIFORM_MAX_LENGTH, &maximumNameLength);
+  std::vector<GLchar> uniformName(static_cast<std::size_t>(
+      maximumNameLength > 0 ? maximumNameLength : 1));
+  for (GLint index = 0; index < count; ++index) {
+    GLsizei length = 0;
+    GLint size = 0;
+    GLenum type = 0;
+    glGetActiveUniform(program_, static_cast<GLuint>(index),
+        static_cast<GLsizei>(uniformName.size()), &length, &size, &type, uniformName.data());
+    std::string name(uniformName.data(), static_cast<std::size_t>(length > 0 ? length : 0));
+    if (name.ends_with("[0]")) name.resize(name.size() - 3);
+    types_[name] = static_cast<int>(type);
+  }
   return true;
 }
 
@@ -289,6 +327,11 @@ int ShaderProgram::uniform(const char* name) const {
   const int location = glGetUniformLocation(program_, key.c_str());
   locations_.emplace(key, location);
   return location;
+}
+
+int ShaderProgram::uniformType(const char* name) const {
+  if (const auto it = types_.find(name); it != types_.end()) return it->second;
+  return 0;
 }
 
 void ShaderProgram::set1f(const char* name, float value) const {
@@ -327,6 +370,16 @@ void ShaderProgram::set2fv(const char* name, int count, const float* values) con
     location = uniform(indexed.c_str());
   }
   if (location >= 0) glUniform2fv(location, count, values);
+}
+
+void ShaderProgram::set4fv(const char* name, int count, const float* values) const {
+  if (count <= 0 || values == nullptr) return;
+  int location = uniform(name);
+  if (location < 0) {
+    const std::string indexed = std::string(name) + "[0]";
+    location = uniform(indexed.c_str());
+  }
+  if (location >= 0) glUniform4fv(location, count, values);
 }
 
 void ShaderProgram::setMat4(const char* name, const float* value) const {

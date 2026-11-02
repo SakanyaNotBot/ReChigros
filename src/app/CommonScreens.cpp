@@ -75,7 +75,7 @@ bool buildAdhocSetup(AppContext& context, const std::filesystem::path& chartFile
   if (context.play.bgFile.empty()) {
     context.play.bgFile = findSidecarImageFile(directory);
   }
-  if (info.name.empty()) info.name = chartFile.stem().string();
+  if (info.name.empty()) info.name = platform::pathToUtf8(chartFile.stem());
   context.play.songName = info.name;
   context.play.difficulty = buildDifficultyLabel(info, chartFile);
   context.play.chartOffsetMs = info.hasChartOffset ? info.chartOffsetMs : 0;

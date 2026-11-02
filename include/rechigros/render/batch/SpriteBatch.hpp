@@ -35,6 +35,8 @@ static_assert(sizeof(SpriteInstance) == 16 * sizeof(float), "instance layout mus
 
 // Upper bound on sprites buffered between two flushes.
 inline constexpr int MAX_BATCH_SPRITES = 131072;
+// Additional textures a single flush can bind beside the primary and body samplers.
+inline constexpr int MAX_BATCH_EXTRA_TEXTURES = 14;
 
 // Accumulates sprites in screen space and submits them as one instanced draw.
 class SpriteBatch final {
@@ -63,6 +65,18 @@ public:
   bool addQuadSelect(float centerX, float centerY, float width, float height, float rotationDeg,
       float red, float green, float blue, float alpha,
       float u0, float v0, float u1, float v1, float textureSelect);
+
+  // Queues a quad that samples `texture` in the same flush as the rest of the batch. The
+  // texture is registered in a free sampler slot; false means every extra slot is taken and
+  // the caller has to flush before retrying. This keeps storyboard images and text in the
+  // surrounding draw order without breaking the batch at every texture change.
+  bool addQuadTextured(float centerX, float centerY, float width, float height, float rotationDeg,
+      float red, float green, float blue, float alpha,
+      float u0, float v0, float u1, float v1, const gl::Texture& texture);
+
+  bool addQuadAnchoredTextured(float x, float y, float width, float height, float rotationDeg,
+      float red, float green, float blue, float alpha, float anchorX, float anchorY,
+      float u0, float v0, float u1, float v1, const gl::Texture& texture);
 
   // Quad anchored by a point inside it: (0.5,0.5) is the centre, (0,0) the top-left.
   bool addQuadAnchored(float x, float y, float width, float height, float rotationDeg,
@@ -124,6 +138,8 @@ private:
   float cachedRotationCos_{1.0F};
   float cachedRotationSin_{};
   bool rotationCached_{};
+  const gl::Texture* extraTextures_[MAX_BATCH_EXTRA_TEXTURES]{};
+  int extraTextureCount_{};
 };
 
 } // namespace rechigros::render::batch

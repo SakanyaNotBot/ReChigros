@@ -16,9 +16,13 @@ constexpr float kQuadPositions[8] = {
 const char* kVertexSource = R"(
 layout(location = 0) in vec2 aPosition;
 out vec2 uv;
+out vec2 v_texCoord;
+out vec4 v_fragmentColor;
 void main() {
   gl_Position = vec4(aPosition, 0.0, 1.0);
   uv = aPosition * 0.5 + 0.5;
+  v_texCoord = uv;
+  v_fragmentColor = vec4(1.0);
 }
 )";
 
@@ -69,9 +73,9 @@ void FullscreenQuad::draw() const noexcept {
 
 FullscreenPass::~FullscreenPass() { release(); }
 
-bool FullscreenPass::build(const char* fragmentSource) noexcept {
+bool FullscreenPass::build(const char* fragmentSource, bool rpeViewport) noexcept {
   if (fragmentSource == nullptr) return false;
-  if (!program_.build(kVertexSource, fragmentSource)) {
+  if (!program_.build(kVertexSource, fragmentSource, rpeViewport)) {
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "[render] fullscreen pass shader failed: %s",
         program_.log().c_str());
     return false;

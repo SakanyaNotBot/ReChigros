@@ -51,10 +51,20 @@ int hexDigit(char value) {
 
 // Filters are extension lists, not glob patterns: the shared validator accepts only letters,
 // digits, underscore, hyphen, dot and the semicolon separator, and rejects "*." and "*.*".
+// Android asks the system MIME map for each extension. The packaged formats have no MIME
+// registration there, so pez/cgrp resolve to nothing and the picker would hide them; the
+// `*` fallback keeps every document visible while still preferring the archive MIME.
 SDL_DialogFileFilter chartFilters[] = { {"Chart", "json;pec;txt"} };
+#if defined(__ANDROID__)
+SDL_DialogFileFilter packageFilters[] = { {"Chart package", "zip;pez;cgrp"},
+    {"All files", "*"} };
+SDL_DialogFileFilter replayFilters[] = { {"Replay", "cgrp;zip;json"}, {"All files", "*"} };
+SDL_DialogFileFilter skinFilters[] = { {"Skin package", "zip;pez"}, {"All files", "*"} };
+#else
 SDL_DialogFileFilter packageFilters[] = { {"Chart package", "zip;pez;cgrp"} };
 SDL_DialogFileFilter replayFilters[] = { {"Replay", "cgrp;zip;json"} };
 SDL_DialogFileFilter skinFilters[] = { {"Skin package", "zip;pez"} };
+#endif
 
 // Runs one dialog and waits for its answer.
 std::vector<std::filesystem::path> runDialog(

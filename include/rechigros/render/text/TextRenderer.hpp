@@ -12,6 +12,8 @@
 
 namespace rechigros::render::text {
 
+struct FontInfo;
+
 // A single rasterised line of text with its own texture. Textures are cached by
 // (text, pixel size, bold) because gameplay text changes only a few times per frame.
 class TextTexture final {
@@ -104,6 +106,7 @@ public:
   // Reads and parses the font file. Returns false when the file is unreadable or
   // the font data is invalid.
   bool load(const std::filesystem::path& path);
+  void setFallback(const FontAtlas* fallback) noexcept { fallback_ = fallback; }
   [[nodiscard]] bool valid() const noexcept { return fontInfo_ != nullptr; }
 
   // Rasterises `text` at `pixelSize` into a tightly cropped RGBA texture.
@@ -128,8 +131,10 @@ public:
       int& placementCount) const;
 
 private:
+  [[nodiscard]] const FontInfo* selectFont(std::uint32_t codepoint) const;
   std::vector<std::uint8_t> fontData_;
   std::unique_ptr<struct FontInfo> fontInfo_;
+  const FontAtlas* fallback_{};
 };
 
 // Owns the font plus a cache of rasterised strings.
@@ -173,6 +178,7 @@ private:
   };
 
   FontAtlas font_;
+  FontAtlas fallback_;
   std::vector<CacheEntry> cache_;
   std::vector<StripEntry> strips_;
   std::size_t cacheLimit_{512};

@@ -89,6 +89,14 @@ struct RenderFrameInput {
     int count{};
   } touches;
 
+  struct NoiseTouch {
+    std::int64_t id{-1};
+    float x{};
+    float y{};
+  };
+  std::array<NoiseTouch, 32> noiseTouches;
+  int noiseTouchCount{};
+
   struct PauseState {
     PauseMode mode{PauseMode::None};
     // Seconds since the pause overlay started animating.
@@ -200,6 +208,9 @@ public:
   void prefetchGameplayTextures(const std::filesystem::path& skinDirectory);
   // Prefetches the chart illustration too, so a large backdrop does not stall beginRun.
   void prefetchBackgroundImage(const std::filesystem::path& image);
+  // Starts decoding every storyboard line texture on a worker thread. A chart that walks a
+  // sequence of images would otherwise decode each one on the frame it first appears.
+  void prefetchChartTextures(const game::Chart& chart);
   // True once all texture decodes started by prefetchGameplayTextures have finished.
   [[nodiscard]] bool gameplayTexturesReady() const;
   // Discards the animated score/accuracy readout so the next frame starts it over. A seek

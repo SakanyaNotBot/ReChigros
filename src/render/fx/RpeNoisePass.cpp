@@ -1,59 +1,23 @@
 #include "rechigros/render/fx/RpeNoisePass.hpp"
 
+#include "RpeNoiseMaterial.hpp"
+
+#include "rechigros/game/RpeCamera.hpp"
 #include "rechigros/render/asset/TextureCache.hpp"
 #include "rechigros/render/fx/FullscreenPass.hpp"
 #include "rechigros/render/gl/Gl.hpp"
 
+#include <SDL3/SDL_log.h>
+
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <sstream>
 
 namespace rechigros::render::fx {
 namespace {
-
-const char* kDefaultFragment = R"(
-uniform sampler2D screenTexture;
-uniform sampler2D blockMask;
-uniform vec2 screenSize;
-uniform float time;
-in vec2 uv;
-out vec4 fragmentColor;
-float bitValue(float word, int bit) {
-  float divisor = pow(2.0, float(bit));
-  return mod(floor(word / divisor), 2.0);
-}
-void main() {
-  ivec2 size = textureSize(blockMask, 0);
-  ivec2 pixel = clamp(ivec2(uv * vec2(size)), ivec2(0), size - 1);
-  vec4 mask = texelFetch(blockMask, pixel, 0);
-  float word = floor(mask.r * 255.0 + 0.5);
-  float activeMask = max(bitValue(word, 0), bitValue(word, 1));
-  float otherMask = max(bitValue(word, 2), bitValue(word, 3));
-  float readyMask = max(bitValue(word, 4), bitValue(word, 5));
-  float coverage = max(max(activeMask, otherMask), readyMask);
-  float activation = activeMask > 0.5 ? 1.0 : (readyMask > 0.5 ? mask.g : 0.0);
-  vec3 appearance = vec3(127.0, 35.0, 35.0) / 255.0;
-  vec3 activeColor = vec3(182.0, 60.0, 60.0) / 255.0;
-  vec3 edgeColor = vec3(255.0, 84.0, 84.0) / 255.0;
-  vec3 color = mix(appearance, activeColor, activation);
-  float alpha = (0.4 + (0.667 - 0.4) * activation) * coverage;
-  float edge = 0.0;
-  for (int y = -1; y <= 1; ++y) for (int x = -1; x <= 1; ++x) {
-    ivec2 neighbour = clamp(pixel + ivec2(x, y), ivec2(0), size - 1);
-    float neighbourWord = floor(texelFetch(blockMask, neighbour, 0).r * 255.0 + 0.5);
-    float neighbourCoverage = max(max(bitValue(neighbourWord, 0), bitValue(neighbourWord, 1)),
-        max(bitValue(neighbourWord, 2), bitValue(neighbourWord, 3)));
-    edge = max(edge, abs(neighbourCoverage - coverage));
-  }
-  edge *= activation;
-  vec4 scene = texture(screenTexture, uv);
-  vec3 result = mix(scene.rgb, color, clamp(alpha, 0.0, 1.0));
-  result = mix(result, edgeColor, clamp(edge, 0.0, 1.0));
-  fragmentColor = vec4(result, 1.0);
-}
-)";
 
 std::string readText(const std::filesystem::path& path) {
   std::ifstream input(path, std::ios::binary);
@@ -72,11 +36,6 @@ std::vector<float> numberArray(const nlohmann::json& value) {
     result.push_back(item.get<float>());
   }
   return result;
-}
-
-std::string parameterType(const std::string& type) {
-  if (type == "float") return "float";
-  return "";
 }
 
 bool parseUniformDefault(const std::string& line, std::string& name, std::vector<float>& values) {
@@ -101,35 +60,78 @@ bool parseUniformDefault(const std::string& line, std::string& name, std::vector
   return !values.empty();
 }
 
+template<typename Channel>
+std::string packedTextureReads(std::string source,
+    const std::unordered_map<std::string, std::string>& inputs, const Channel& channel) {
+  std::string helpers;
+  for (const auto& [name, target] : inputs) {
+    const auto spec = channel.targets.find(target);
+    if (spec == channel.targets.end() || spec->second.channels == 4) continue;
+    const std::string function = "rpenPacked_" + name;
+    for (std::size_t at = 0; (at = source.find("texture2D", at)) != std::string::npos;) {
+      std::size_t cursor = at + 9;
+      while (cursor < source.size() && std::isspace(static_cast<unsigned char>(source[cursor]))) ++cursor;
+      if (cursor >= source.size() || source[cursor++] != '(') { at += 9; continue; }
+      while (cursor < source.size() && std::isspace(static_cast<unsigned char>(source[cursor]))) ++cursor;
+      if (source.compare(cursor, name.size(), name) != 0) { at += 9; continue; }
+      cursor += name.size();
+      while (cursor < source.size() && std::isspace(static_cast<unsigned char>(source[cursor]))) ++cursor;
+      if (cursor >= source.size() || source[cursor] != ',') { at += 9; continue; }
+      source.replace(at, cursor - at + 1, function + "(");
+      at += function.size() + 1;
+    }
+    helpers += "vec4 " + function + "(vec2 p) { vec4 c = texture2D(" + name +
+        ", p); return " + (spec->second.channels == 1 ? "vec4(c.r, 0.0, 0.0, 1.0);" :
+            "vec4(c.rg, 0.0, 1.0);") + " }\n";
+  }
+  if (helpers.empty()) return source;
+  const auto lastUniform = source.rfind("uniform");
+  const auto insertAt = lastUniform == std::string::npos ? 0 : source.find(';', lastUniform);
+  source.insert(insertAt == std::string::npos ? 0 : insertAt + 1, "\n" + helpers);
+  return source;
+}
+
 } // namespace
+
+bool invertedNoiseCoveredForTest(int overlapCount, bool single) noexcept {
+  return single ? overlapCount == 1 : (overlapCount & 1) != 0;
+}
+
+struct RpeNoisePass::TouchTimelines {
+  std::unordered_map<std::string, RpeNoiseTouchTimeline> entries;
+};
+
+RpeNoisePass::RpeNoisePass() = default;
 
 RpeNoisePass::~RpeNoisePass() { release(); }
 
-bool RpeNoisePass::ensureDefaultProgram() {
-  return defaultProgram_.valid() || (defaultProgram_.build(fullscreenVertexSource(), kDefaultFragment) &&
-      FullscreenQuad::instance().ensure());
+bool RpeNoisePass::ready() const noexcept {
+  return material_ != nullptr && material_->valid();
 }
 
 void RpeNoisePass::release() noexcept {
   resources_.clear();
-  layerIds_.clear();
-  defaultProgram_.reset();
+  if (timelines_) timelines_->entries.clear();
+  material_.reset();
   maskPixels_.reset();
-  mask_.reset();
   maskData_.clear();
 }
 
 void RpeNoisePass::resize(int width, int height) {
   width_ = std::max(1, width);
   height_ = std::max(1, height);
+  if (material_) material_->setViewport(width_, height_);
+  for (auto& resource : resources_) {
+    if (resource && resource->material) resource->material->setViewport(width_, height_);
+  }
 }
 
-void RpeNoisePass::clearTarget(gl::Framebuffer& target) {
+void RpeNoisePass::clearTarget(gl::Framebuffer& target, bool opaqueAlpha) {
   target.bind();
   glDisable(GL_BLEND);
   glDisable(GL_SCISSOR_TEST);
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-  glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
+  glClearColor(0.0F, 0.0F, 0.0F, opaqueAlpha ? 1.0F : 0.0F);
   glClear(GL_COLOR_BUFFER_BIT);
 }
 
@@ -149,6 +151,8 @@ bool RpeNoisePass::loadChannel(const std::filesystem::path& root,
       TargetSpec spec;
       spec.scaleX = std::max(0.001F, value.value("scaleX", 1.0F));
       spec.scaleY = std::max(0.001F, value.value("scaleY", 1.0F));
+      const auto format = value.value("format", "rgba8");
+      spec.channels = format == "r8" ? 1 : format == "rg8" ? 2 : 4;
       spec.linear = value.value("filter", "nearest") == "linear";
       spec.noClear = value.value("noClear", false);
       result.targets[name] = spec;
@@ -162,11 +166,11 @@ bool RpeNoisePass::loadChannel(const std::filesystem::path& root,
     const std::string output = passValue.value("output", "");
     if (shader.empty() || output.empty()) return false;
     const auto sourceFile = root / shader;
-    auto program = std::make_unique<gl::ShaderProgram>();
-    if (!program->build(fullscreenVertexSource(), readText(sourceFile).c_str())) return false;
-    programs[shader] = std::move(program);
+    auto& program = programs[shader];
+    if (!program) program = std::make_unique<gl::ShaderProgram>();
+    const std::string passSource = readText(sourceFile);
     Pass pass;
-    pass.program = programs[shader].get();
+    pass.program = program.get();
     pass.output = output.substr(0, output.find('.'));
     if (output.find('.') != std::string::npos && output.size() > output.find('.') + 1) {
       pass.component = output[output.find('.') + 1];
@@ -183,21 +187,28 @@ bool RpeNoisePass::loadChannel(const std::filesystem::path& root,
         if (!values.empty()) pass.constants[name] = std::move(values);
       }
     }
-    std::istringstream lines(readText(sourceFile));
+    if (!program->build(fullscreenVertexSource(),
+            packedTextureReads(passSource, pass.inputs, result))) {
+      SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "[render] noise skin %s: %s",
+          sourceFile.string().c_str(), program->log().c_str());
+      return false;
+    }
+    std::istringstream lines(passSource);
     std::string line;
     while (std::getline(lines, line)) {
       const auto textureAt = line.find("@texture");
       if (textureAt == std::string::npos) continue;
       std::istringstream declaration(line.substr(0, textureAt));
-      std::string type, name;
-      declaration >> type >> name;
-      if (type != "sampler2D" || name.empty()) continue;
+      std::string qualifier, type, name;
+      declaration >> qualifier >> type >> name;
+      if (qualifier != "uniform" || type != "sampler2D" || name.empty()) continue;
+      name.resize(name.find_first_of("[;"));
       std::istringstream options(line.substr(textureAt + 8));
       std::string path;
       options >> path;
       ImageSpec image;
       image.name = name;
-      image.path = root / path;
+      image.path = sourceFile.parent_path() / path;
       std::string option;
       while (options >> option) {
         const auto separator = option.find('=');
@@ -283,8 +294,9 @@ std::unique_ptr<RpeNoisePass::Resource> RpeNoisePass::loadResource(
       }
     }
     if (config.is_object()) {
-      const auto normal = config.find("normal");
-      if (normal != config.end()) {
+      if (config.contains("passes")) {
+        loadChannel(root, mainSource, &config, resource->normal, resource->programs, resource->images);
+      } else if (const auto normal = config.find("normal"); normal != config.end()) {
         loadChannel(root, mainSource, &*normal, resource->normal, resource->programs, resource->images);
       }
       if (const auto low = config.find("lowPerformance"); low != config.end()) {
@@ -293,128 +305,48 @@ std::unique_ptr<RpeNoisePass::Resource> RpeNoisePass::loadResource(
       }
     }
     if (resource->normal.passes.empty()) {
-      Channel fallback;
-      fallback.passes.push_back({});
-      const auto source = root / "main.glsl";
-      auto program = std::make_unique<gl::ShaderProgram>();
-      if (program->build(fullscreenVertexSource(), readText(source).c_str())) {
-        resource->programs["main.glsl"] = std::move(program);
-        fallback.passes.front().program = resource->programs["main.glsl"].get();
-        fallback.passes.front().output = "$screen";
-        if (config.is_object()) {
-          if (const auto mask = config.find("blockMask"); mask != config.end() && mask->is_object()) {
-            fallback.blockMaskScaleX = std::max(0.001F, mask->value("scaleX", 1.0F));
-            fallback.blockMaskScaleY = std::max(0.001F, mask->value("scaleY", 1.0F));
-          }
-        }
-        resource->normal = std::move(fallback);
-      }
+      nlohmann::json fallback;
+      fallback["targets"] = nlohmann::json::object();
+      fallback["passes"] = nlohmann::json::array();
+      fallback["passes"].push_back({{"shader", "main.glsl"}, {"output", "$screen"}});
+      loadChannel(root, mainSource, &fallback, resource->normal, resource->programs,
+          resource->images);
     }
   } else {
-    resource->normal.blockMaskScaleX = 0.125F;
-    resource->normal.blockMaskScaleY = 0.125F;
+    resource->normal.blockMaskScaleX = 1.0F;
+    resource->normal.blockMaskScaleY = 1.0F;
   }
   return resource;
 }
 
 bool RpeNoisePass::prepare(const std::filesystem::path& packDirectory,
-    const std::vector<game::RpeNoiseLayer>& layers) {
+    const std::vector<game::RpeNoiseLayer>& layers, const std::filesystem::path& assetRoot,
+    gl::Texture* displace, gl::Texture* spark, gl::Texture* noise) {
   release();
   packDirectory_ = packDirectory;
-  if (!ensureDefaultProgram()) return false;
+  material_ = std::make_unique<RpeNoiseMaterial>();
+  timelines_ = std::make_unique<TouchTimelines>();
+  material_->prepare(assetRoot, displace, spark, noise);
+  material_->setViewport(width_, height_);
   for (const auto& layer : layers) {
     resources_.push_back(loadResource(layer));
-    layerIds_.push_back(layer.id);
+    resources_.back()->material = std::make_unique<RpeNoiseMaterial>();
+    resources_.back()->material->prepare(assetRoot, displace, spark, noise);
+    resources_.back()->material->setViewport(width_, height_);
   }
-  return true;
-}
-
-void RpeNoisePass::uploadMask(const std::vector<game::RpeNoiseArea>& areas, double seconds,
-    float, float, float, float stageHeight) {
-  std::fill(maskData_.begin(), maskData_.end(), 0U);
-  const int maskWidth = maskPixels_ != nullptr ? maskPixels_->width() : 1;
-  const int maskHeight = maskPixels_ != nullptr ? maskPixels_->height() : 1;
-  const float scale = stageHeight / 900.0F;
-  struct Entry {
-    const game::RpeNoiseArea* area;
-    game::RpeNoiseSample sample;
-  };
-  std::vector<Entry> entries;
-  entries.reserve(areas.size());
-  for (const auto& area : areas) {
-    auto sample = game::RpeNoiseRuntime(area).sample(seconds);
-    if (sample.state != game::RpeNoiseState::HiddenBefore &&
-        sample.state != game::RpeNoiseState::HiddenAfter) {
-      entries.push_back({&area, sample});
-    }
-  }
-  const auto inside = [](const game::RpeNoiseSample& shape, double x, double y) {
-    bool positive = false;
-    bool negative = false;
-    for (int corner = 0; corner < 4; ++corner) {
-      const auto& a = shape.points[static_cast<std::size_t>(corner)];
-      const auto& b = shape.points[static_cast<std::size_t>((corner + 1) % 4)];
-      const double cross = (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x);
-      positive = positive || cross > 0.0;
-      negative = negative || cross < 0.0;
-    }
-    return !(positive && negative);
-  };
-  for (int y = 0; y < maskHeight; ++y) {
-    const float screenY = (static_cast<float>(y) + 0.5F) * height_ / maskHeight;
-    const double worldY = (height_ * 0.5 - screenY) / scale;
-    for (int x = 0; x < maskWidth; ++x) {
-      const float screenX = (static_cast<float>(x) + 0.5F) * width_ / maskWidth;
-      const double worldX = (screenX - width_ * 0.5) / scale;
-      int normal[3]{};
-      int inverted[3]{};
-      double activation[3]{};
-      for (const auto& entry : entries) {
-        if (!inside(entry.sample, worldX, worldY)) continue;
-        const bool active = entry.sample.state == game::RpeNoiseState::Active;
-        const bool ready = entry.sample.state == game::RpeNoiseState::Ready;
-        const bool eligible[3]{active, !active, ready};
-        for (int group = 0; group < 3; ++group) {
-          if (!eligible[group]) continue;
-          if (entry.area->invert) ++inverted[group];
-          else ++normal[group];
-          activation[group] = std::max(activation[group], entry.sample.activationMix);
-        }
-      }
-      const std::size_t pixel = (static_cast<std::size_t>(y) * maskWidth + x) * 4U;
-      int word = 0;
-      int strongest = 0;
-      for (int group = 0; group < 3; ++group) {
-        if (normal[group] > 0) word |= 1 << (group * 2);
-        if (inverted[group] == 1) word |= 1 << (group * 2 + 1);
-        if (normal[group] > 0 || inverted[group] == 1) {
-          strongest = std::max(strongest, static_cast<int>(std::lround(activation[group] * 255.0)));
-        }
-      }
-      if (word == 0) continue;
-      maskData_[pixel] = static_cast<std::uint8_t>(word);
-      maskData_[pixel + 1U] = static_cast<std::uint8_t>(strongest);
-      maskData_[pixel + 2U] = 255;
-      maskData_[pixel + 3U] = 255;
-    }
-  }
-  if (maskPixels_ == nullptr) maskPixels_ = std::make_unique<gl::Texture>();
-  if (maskPixels_->width() != maskWidth || maskPixels_->height() != maskHeight) {
-    maskPixels_->uploadRgba(maskWidth, maskHeight, maskData_.data());
-  } else {
-    maskPixels_->updateRgba(maskWidth, maskHeight, maskData_.data());
-  }
+  return ready();
 }
 
 gl::Texture* RpeNoisePass::run(Resource& resource, const Channel& channel, gl::Texture& input,
-    const game::RpeNoiseLayer& layer, double seconds) {
-  if (!resource.screens[0].valid()) {
-    resource.screens[0].resize(width_, height_);
-    resource.screens[1].resize(width_, height_);
-  }
-  for (auto& [name, target] : resource.targets) (void)name;
+    const game::RpeNoiseLayer& layer, double seconds,
+    const std::vector<RpeNoiseTouchSample>& touches) {
+  if (!resource.screens[0].valid()) resource.screens[0].resize(width_, height_);
+  if (!resource.screens[1].valid()) resource.screens[1].resize(width_, height_);
+  const bool repeated = resource.lastSeconds == seconds && resource.lastParameters == layer.parameters;
+  BlitPass::instance().ensure();
   for (const auto& [name, spec] : channel.targets) {
     auto& target = resource.targets[name];
+    const bool created = !target;
     if (!target) target = std::make_unique<Target>();
     target->spec = spec;
     const int targetWidth = std::max(1, static_cast<int>(width_ * spec.scaleX));
@@ -423,32 +355,34 @@ gl::Texture* RpeNoisePass::run(Resource& resource, const Channel& channel, gl::T
     target->back.resize(targetWidth, targetHeight);
     target->front.color().setFilter(spec.linear);
     target->back.color().setFilter(spec.linear);
-    if (!spec.noClear) clearTarget(target->front);
+    if (created) {
+      clearTarget(target->front, spec.channels < 4);
+      clearTarget(target->back, spec.channels < 4);
+    }
+    if (!spec.noClear) {
+      clearTarget(target->front, spec.channels < 4);
+      continue;
+    }
+    auto& history = resource.history[name];
+    if (!history) history = std::make_unique<gl::Framebuffer>();
+    history->resize(targetWidth, targetHeight);
+    auto& source = repeated ? *history : target->front;
+    auto& destination = repeated ? target->front : *history;
+    destination.bind();
+    glViewport(0, 0, targetWidth, targetHeight);
+    glDisable(GL_BLEND);
+    BlitPass::instance().draw(source.color(), 1.0F, 1.0F, 1.0F, 1.0F, false);
   }
   glDisable(GL_BLEND);
   glDisable(GL_SCISSOR_TEST);
   glDisable(GL_DEPTH_TEST);
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
   resource.screens[0].bind();
-  BlitPass::instance().ensure();
+  glViewport(0, 0, width_, height_);
   BlitPass::instance().draw(input, 1.0F, 1.0F, 1.0F, 1.0F, false);
   int screenIndex = 0;
   gl::Texture* current = &resource.screens[0].color();
-  if (channel.passes.empty()) {
-    resource.screens[1].bind();
-    glViewport(0, 0, width_, height_);
-    defaultProgram_.use();
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, current->id());
-    defaultProgram_.set1i("screenTexture", 0);
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, maskPixels_->id());
-    defaultProgram_.set1i("blockMask", 1);
-    defaultProgram_.set2f("screenSize", static_cast<float>(width_), static_cast<float>(height_));
-    defaultProgram_.set1f("time", static_cast<float>(seconds));
-    FullscreenQuad::instance().draw();
-    return &resource.screens[1].color();
-  }
+  if (channel.passes.empty()) return current;
   for (const auto& pass : channel.passes) {
     gl::Framebuffer* target = nullptr;
     if (pass.output != "$screen") {
@@ -482,7 +416,15 @@ gl::Texture* RpeNoisePass::run(Resource& resource, const Channel& channel, gl::T
         static_cast<float>(destination.height()));
     pass.program->set2f("targetTexelSize", 1.0F / destination.width(), 1.0F / destination.height());
     pass.program->set1f("time", static_cast<float>(seconds));
-    pass.program->set1i("touchCount", 0);
+    pass.program->set1i("touchCount", std::min(32, static_cast<int>(touches.size())));
+    float touchPoints[128]{};
+    for (std::size_t index = 0; index < touches.size() && index < 32; ++index) {
+      touchPoints[index * 4] = touches[index].x;
+      touchPoints[index * 4 + 1] = touches[index].y;
+      touchPoints[index * 4 + 2] = touches[index].age;
+      touchPoints[index * 4 + 3] = touches[index].held ? 1.0F : 0.0F;
+    }
+    pass.program->set4fv("touchPoints", std::min(32, static_cast<int>(touches.size())), touchPoints);
     glActiveTexture(GL_TEXTURE0);
     int unit = 2;
     for (const auto& [name, inputName] : pass.inputs) {
@@ -494,14 +436,20 @@ gl::Texture* RpeNoisePass::run(Resource& resource, const Channel& channel, gl::T
       }
       glActiveTexture(GL_TEXTURE0 + unit);
       glBindTexture(GL_TEXTURE_2D, texture->id());
-      pass.program->set1i(name.c_str(), unit++);
+      pass.program->set1i(name.c_str(), unit);
+      pass.program->set2f((name + "Size").c_str(), static_cast<float>(texture->width()),
+          static_cast<float>(texture->height()));
+      ++unit;
     }
     for (const auto& image : pass.images) {
       const auto found = resource.images.find(image.name);
       if (found == resource.images.end()) continue;
       glActiveTexture(GL_TEXTURE0 + unit);
       glBindTexture(GL_TEXTURE_2D, found->second.id());
-      pass.program->set1i(image.name.c_str(), unit++);
+      pass.program->set1i(image.name.c_str(), unit);
+      pass.program->set2f((image.name + "Size").c_str(),
+          static_cast<float>(found->second.width()), static_cast<float>(found->second.height()));
+      ++unit;
     }
     for (const auto& [name, values] : resource.parameterDefaults) {
       const auto override = layer.parameters.find(name);
@@ -535,8 +483,10 @@ gl::Texture* RpeNoisePass::run(Resource& resource, const Channel& channel, gl::T
 gl::Texture* RpeNoisePass::draw(gl::Texture& scene,
     const std::vector<game::RpeNoiseArea>& areas,
     const std::vector<game::RpeNoiseLayer>& layers, double chartTimeSec, float stageX,
-    float stageY, float stageWidth, float stageHeight) {
-  if (!defaultProgram_.valid() || width_ <= 0 || height_ <= 0) return &scene;
+    float stageY, float stageWidth, float stageHeight, bool singleInversion,
+    const std::vector<RpeNoiseTouch>& touches,
+    const game::RpeCameraFrame* camera, float cameraViewScale, int layerMask) {
+  if (!ready() || width_ <= 0 || height_ <= 0) return &scene;
   GLint oldFbo = 0;
   GLint oldViewport[4]{};
   glGetIntegerv(GL_FRAMEBUFFER_BINDING, &oldFbo);
@@ -551,32 +501,63 @@ gl::Texture* RpeNoisePass::draw(gl::Texture& scene,
               chartTimeSec < area.disappear;
         })) continue;
     auto& resource = *resources_[index];
-    if (resource.lastSeconds > -1.0e299 && chartTimeSec < resource.lastSeconds - 1.0e-9) {
+    if (resource.lastSeconds > -1.0e299 &&
+        (chartTimeSec < resource.lastSeconds - 1.0e-9 ||
+         std::abs(chartTimeSec - resource.lastSeconds) > 1.0 ||
+         resource.lastParameters != layers[index].parameters)) {
       for (auto& [name, target] : resource.targets) {
-        clearTarget(target->front);
-        clearTarget(target->back);
+        clearTarget(target->front, target->spec.channels < 4);
+        clearTarget(target->back, target->spec.channels < 4);
       }
+      resource.history.clear();
+      timelines_->entries[layers[index].id].reset();
     }
     const Channel& channel = layers[index].channel == "low" && resource.hasLow
         ? resource.low : resource.normal;
-    const int maskWidth = std::max(1, static_cast<int>(width_ * channel.blockMaskScaleX));
-    const int maskHeight = std::max(1, static_cast<int>(height_ * channel.blockMaskScaleY));
-    maskData_.assign(static_cast<std::size_t>(maskWidth) * maskHeight * 4U, 0U);
-    if (!maskPixels_) maskPixels_ = std::make_unique<gl::Texture>();
-    if (maskPixels_->width() != maskWidth || maskPixels_->height() != maskHeight) {
-      maskPixels_->uploadRgba(maskWidth, maskHeight, maskData_.data());
+    const bool custom = !resource.skin.empty() && !channel.passes.empty();
+    double release = 0.1;
+    if (const auto found = resource.parameterDefaults.find("touchReleaseDuration");
+        found != resource.parameterDefaults.end() && !found->second.empty()) {
+      release = std::max(0.0F, found->second.front());
     }
-    std::vector<game::RpeNoiseArea> layerAreas;
-    for (const auto& area : areas) {
-      if (area.layerId == layers[index].id) layerAreas.push_back(area);
+    if (const auto found = layers[index].parameters.find("touchReleaseDuration");
+        found != layers[index].parameters.end() && !found->second.empty()) {
+      release = std::max(0.0F, found->second.front());
     }
-    uploadMask(layerAreas, chartTimeSec, stageX, stageY, stageWidth, stageHeight);
-    glDisable(GL_BLEND);
-    glDisable(GL_SCISSOR_TEST);
-    glDisable(GL_DEPTH_TEST);
-    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-    current = run(resource, channel, *current, layers[index], chartTimeSec);
+    std::vector<RpeNoiseTouch> normalizedTouches;
+    normalizedTouches.reserve(touches.size());
+    for (const auto& touch : touches) {
+      normalizedTouches.push_back({touch.id, touch.x / width_, 1.0F - touch.y / height_});
+    }
+    const auto& timeline = timelines_->entries[layers[index].id].update(normalizedTouches,
+        chartTimeSec, release);
+    if (custom && (layerMask & 2) != 0) {
+      const int maskWidth = std::max(1, static_cast<int>(width_ * channel.blockMaskScaleX));
+      const int maskHeight = std::max(1, static_cast<int>(height_ * channel.blockMaskScaleY));
+      auto coverage = buildRpeNoiseCoverage(maskWidth, maskHeight, areas, layers[index].id,
+          chartTimeSec, stageX, stageY, stageWidth, stageHeight, true, camera,
+          cameraViewScale);
+      maskData_ = std::move(coverage.skin);
+      if (!maskPixels_) maskPixels_ = std::make_unique<gl::Texture>();
+      if (maskPixels_->width() != maskWidth || maskPixels_->height() != maskHeight) {
+        maskPixels_->uploadRgba(maskWidth, maskHeight, maskData_.data());
+      } else {
+        maskPixels_->updateRgba(maskWidth, maskHeight, maskData_.data());
+      }
+      maskPixels_->setFilter(false);
+      glDisable(GL_BLEND);
+      glDisable(GL_SCISSOR_TEST);
+      glDisable(GL_DEPTH_TEST);
+      glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+      current = run(resource, channel, *current, layers[index], chartTimeSec, timeline);
+    } else {
+      auto coverage = buildRpeNoiseCoverage(std::max(1, width_ / 8) * 2,
+          std::max(1, height_ / 8) * 2, areas, layers[index].id, chartTimeSec, stageX, stageY,
+          stageWidth, stageHeight, singleInversion, camera, cameraViewScale);
+      current = resource.material->draw(*current, resource.screens, coverage, chartTimeSec, timeline, layerMask);
+    }
     resource.lastSeconds = chartTimeSec;
+    resource.lastParameters = layers[index].parameters;
     resource.lastOutput = current;
   }
   glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(oldFbo));

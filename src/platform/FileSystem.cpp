@@ -32,10 +32,6 @@ std::filesystem::path g_userDataRoot;
 std::once_flag g_resolveOnce;
 std::mutex g_rootMutex;
 
-std::filesystem::path pathFromUtf8(const std::string& value) {
-  return std::filesystem::path(std::u8string(value.begin(), value.end()));
-}
-
 std::filesystem::path resolveAssetRoot() {
   if (!g_assetOverride.empty()) return g_assetOverride;
   if (const char* overridePath = std::getenv("RECHIGROS_ASSETS")) {
@@ -67,6 +63,10 @@ std::filesystem::path resolveUserDataRoot() {
 }
 
 } // namespace
+
+std::filesystem::path pathFromUtf8(std::string_view value) {
+  return std::filesystem::path(std::u8string(value.begin(), value.end()));
+}
 
 const std::filesystem::path& assetRoot() {
   std::call_once(g_resolveOnce, [] { g_assetRoot = resolveAssetRoot(); });
@@ -470,13 +470,13 @@ std::filesystem::path joinPortable(const std::filesystem::path& base, std::strin
   component.reserve(relative.size());
   for (const char character : relative) {
     if (character == '/' || character == '\\') {
-      if (!component.empty()) result /= component;
+      if (!component.empty()) result /= pathFromUtf8(component);
       component.clear();
       continue;
     }
     component.push_back(character);
   }
-  if (!component.empty()) result /= component;
+  if (!component.empty()) result /= pathFromUtf8(component);
   return result;
 }
 

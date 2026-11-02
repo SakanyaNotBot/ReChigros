@@ -84,6 +84,18 @@ struct FontInfo {
   float scale{1.0F};
 };
 
+const FontInfo* FontAtlas::selectFont(std::uint32_t codepoint) const {
+  if (fontInfo_ != nullptr && stbtt_FindGlyphIndex(&fontInfo_->info,
+          static_cast<int>(codepoint)) > 0) {
+    return fontInfo_.get();
+  }
+  if (fallback_ != nullptr && fallback_->fontInfo_ != nullptr &&
+      stbtt_FindGlyphIndex(&fallback_->fontInfo_->info, static_cast<int>(codepoint)) > 0) {
+    return fallback_->fontInfo_.get();
+  }
+  return fontInfo_.get();
+}
+
 FontAtlas::~FontAtlas() = default;
 
 bool FontAtlas::load(const std::filesystem::path& path) {
@@ -115,19 +127,24 @@ bool FontAtlas::load(const std::filesystem::path& path) {
 
 float FontAtlas::measure(const std::string& text, float pixelSize) const {
   if (fontInfo_ == nullptr || text.empty()) return 0.0F;
-  const float scale = stbtt_ScaleForPixelHeight(&fontInfo_->info, pixelSize);
   float width = 0.0F;
   int previous = 0;
+  const FontInfo* previousFont = nullptr;
   for (const std::uint32_t character : decodeUtf8(text)) {
+    if (character == 0xFE0FU) continue;
+    const auto* font = selectFont(character);
+    if (font == nullptr) continue;
+    const float scale = stbtt_ScaleForPixelHeight(&font->info, pixelSize);
     const int codepoint = static_cast<int>(character);
     int advance = 0;
     int leftSideBearing = 0;
-    stbtt_GetCodepointHMetrics(&fontInfo_->info, codepoint, &advance, &leftSideBearing);
-    const int kern = previous != 0
-        ? stbtt_GetCodepointKernAdvance(&fontInfo_->info, previous, codepoint)
+    stbtt_GetCodepointHMetrics(&font->info, codepoint, &advance, &leftSideBearing);
+    const int kern = previous != 0 && font == previousFont
+        ? stbtt_GetCodepointKernAdvance(&font->info, previous, codepoint)
         : 0;
     width += static_cast<float>(advance + kern) * scale;
     previous = codepoint;
+    previousFont = font;
   }
   return width;
 }
@@ -457,26 +474,32 @@ std::unique_ptr<TextTexture> FontAtlas::rasterize(const std::string& text, float
   const auto codepoints = decodeUtf8(content);
   float penX = 0.0F;
   int previous = 0;
+  const FontInfo* previousFont = nullptr;
   float minX = 0.0F;
   float maxX = 0.0F;
   float minY = 0.0F;
   float maxY = 0.0F;
   bool hasBounds = false;
   for (const std::uint32_t character : codepoints) {
+    if (character == 0xFE0FU) continue;
+    const auto* selected = selectFont(character);
+    if (selected == nullptr) continue;
+    const float glyphScale = stbtt_ScaleForPixelHeight(&selected->info, pixelSize);
     const int codepoint = static_cast<int>(character);
     int advance = 0;
     int leftSideBearing = 0;
-    stbtt_GetCodepointHMetrics(&fontInfo_->info, codepoint, &advance, &leftSideBearing);
-    const int kern = previous != 0
-        ? stbtt_GetCodepointKernAdvance(&fontInfo_->info, previous, codepoint)
+    stbtt_GetCodepointHMetrics(&selected->info, codepoint, &advance, &leftSideBearing);
+    const int kern = previous != 0 && selected == previousFont
+        ? stbtt_GetCodepointKernAdvance(&selected->info, previous, codepoint)
         : 0;
-    penX += static_cast<float>(kern) * scale;
+    penX += static_cast<float>(kern) * glyphScale;
 
     int x0 = 0;
     int y0 = 0;
     int x1 = 0;
     int y1 = 0;
-    stbtt_GetCodepointBitmapBox(&fontInfo_->info, codepoint, scale, scale, &x0, &y0, &x1, &y1);
+    stbtt_GetCodepointBitmapBox(&selected->info, codepoint, glyphScale, glyphScale,
+        &x0, &y0, &x1, &y1);
     if (x1 > x0 && y1 > y0) {
       const float glyphLeft = penX + static_cast<float>(x0);
       const float glyphRight = penX + static_cast<float>(x1);
@@ -495,8 +518,9 @@ std::unique_ptr<TextTexture> FontAtlas::rasterize(const std::string& text, float
         maxY = std::max(maxY, glyphBottom);
       }
     }
-    penX += static_cast<float>(advance) * scale;
+    penX += static_cast<float>(advance) * glyphScale;
     previous = codepoint;
+    previousFont = selected;
   }
 
   const float advanceWidth = penX;
@@ -518,21 +542,27 @@ std::unique_ptr<TextTexture> FontAtlas::rasterize(const std::string& text, float
   // Second pass: sample each glyph at subpixel offsets and accumulate coverage.
   penX = 0.0F;
   previous = 0;
+  previousFont = nullptr;
   for (const std::uint32_t character : codepoints) {
+    if (character == 0xFE0FU) continue;
+    const auto* selected = selectFont(character);
+    if (selected == nullptr) continue;
+    const float glyphScale = stbtt_ScaleForPixelHeight(&selected->info, pixelSize);
     const int codepoint = static_cast<int>(character);
     int advance = 0;
     int leftSideBearing = 0;
-    stbtt_GetCodepointHMetrics(&fontInfo_->info, codepoint, &advance, &leftSideBearing);
-    const int kern = previous != 0
-        ? stbtt_GetCodepointKernAdvance(&fontInfo_->info, previous, codepoint)
+    stbtt_GetCodepointHMetrics(&selected->info, codepoint, &advance, &leftSideBearing);
+    const int kern = previous != 0 && selected == previousFont
+        ? stbtt_GetCodepointKernAdvance(&selected->info, previous, codepoint)
         : 0;
-    penX += static_cast<float>(kern) * scale;
+    penX += static_cast<float>(kern) * glyphScale;
 
     int x0 = 0;
     int y0 = 0;
     int x1 = 0;
     int y1 = 0;
-    stbtt_GetCodepointBitmapBox(&fontInfo_->info, codepoint, scale, scale, &x0, &y0, &x1, &y1);
+    stbtt_GetCodepointBitmapBox(&selected->info, codepoint, glyphScale, glyphScale,
+        &x0, &y0, &x1, &y1);
     const int glyphW = x1 - x0;
     const int glyphH = y1 - y0;
     if (glyphW > 0 && glyphH > 0) {
@@ -549,8 +579,8 @@ std::unique_ptr<TextTexture> FontAtlas::rasterize(const std::string& text, float
         for (int subX = 0; subX < kSubpixelsX; ++subX) {
           const float shiftX = static_cast<float>(subX) / kSubpixelsX;
           const float shiftY = static_cast<float>(subY) / kSubpixelsY;
-          stbtt_MakeCodepointBitmapSubpixel(&fontInfo_->info, bitmap.data(), glyphW, glyphH,
-              glyphW, scale, scale, shiftX, shiftY, codepoint);
+          stbtt_MakeCodepointBitmapSubpixel(&selected->info, bitmap.data(), glyphW, glyphH,
+              glyphW, glyphScale, glyphScale, shiftX, shiftY, codepoint);
           for (int row = 0; row < glyphH; ++row) {
             const int targetY = originY + row;
             if (targetY < 0 || targetY >= height) continue;
@@ -569,8 +599,9 @@ std::unique_ptr<TextTexture> FontAtlas::rasterize(const std::string& text, float
         }
       }
     }
-    penX += static_cast<float>(advance) * scale;
+    penX += static_cast<float>(advance) * glyphScale;
     previous = codepoint;
+    previousFont = selected;
   }
 
   std::vector<std::uint8_t> rgba(static_cast<std::size_t>(width) * height * 4, 0);
@@ -616,9 +647,30 @@ bool TextRenderer::initialize(const std::filesystem::path& assetRoot) {
   auto fontPath = platform::AssetManager::materialize(assetRoot, "res/font.ttf");
   if (fontPath.empty()) fontPath = assetRoot / "res" / "font.ttf";
   const bool loaded = font_.load(fontPath);
+  font_.setFallback(nullptr);
   if (!loaded) {
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "[render] text font unavailable: %s",
         fontPath.string().c_str());
+  }
+  std::vector<std::filesystem::path> candidates;
+#if defined(_WIN32)
+  candidates = {L"C:/Windows/Fonts/seguisym.ttf", L"C:/Windows/Fonts/arialuni.ttf"};
+#elif defined(__ANDROID__)
+  candidates = {"/system/fonts/NotoSansSymbols2-Regular.ttf",
+      "/system/fonts/NotoSansSymbols-Regular-Subsetted2.ttf",
+      "/system/fonts/NotoSansSymbols-Regular-Subsetted.ttf",
+      "/system/fonts/NotoSansSymbols-Regular.ttf", "/system/fonts/NotoSansCJK-Regular.ttc"};
+#elif defined(__APPLE__)
+  candidates = {"/System/Library/Fonts/Supplemental/Apple Symbols.ttf",
+      "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"};
+#else
+  candidates = {"/usr/share/fonts/opentype/noto/NotoSansSymbols2-Regular.ttf",
+      "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"};
+#endif
+  for (const auto& candidate : candidates) {
+    if (!fallback_.load(candidate)) continue;
+    font_.setFallback(&fallback_);
+    break;
   }
   return loaded;
 }

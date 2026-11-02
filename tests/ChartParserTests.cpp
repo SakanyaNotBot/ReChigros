@@ -85,13 +85,13 @@ int main() {
 
   // ---------------- RPE parity ----------------
   {
-    // Note fields: `size`/`xScale` collapse into xScale, and a non-positive value falls
-    // back to 1. `size` is always forced to 1 (it is a separate render channel).
+    // Note fields: `size`/`xScale` collapse into xScale. Zero is a valid hidden width;
+    // `size` is a separate vertical scale and stays at 1 here.
     const auto fields = rechigros::chart::RpeChartParser::parse(std::string_view{R"json(
     {"META":{"offset":0,"RPEVersion":160},"BPMList":[{"bpm":120,"startTime":[0,0,1]}],
      "judgeLineList":[{"bpmfactor":1,"notes":[
        {"type":1,"startTime":[0,0,1],"size":2.5},
-       {"type":1,"startTime":[1,0,1],"xScale":-4},
+       {"type":1,"startTime":[1,0,1],"xScale":0},
        {"type":1,"startTime":[2,0,1],"alpha":128},
        {"type":1,"startTime":[3,0,1],"alpha":-1},
        {"type":1,"startTime":[4,0,1],"yOffset":450},
@@ -102,7 +102,7 @@ int main() {
     require(fieldLine.notesAbove.size() == 7, "RPE combined notes form");
     require(close(fieldLine.notesAbove[0].xScale, 2.5) && close(line.notesAbove[0].size, 1.0),
         "RPE size maps to xScale, size forced to 1");
-    require(close(fieldLine.notesAbove[1].xScale, 1.0), "RPE non-positive xScale falls back to 1");
+    require(close(fieldLine.notesAbove[1].xScale, 0.0), "RPE zero note width is preserved");
     // alpha above 1.5 is treated as byte-scaled: 128/255.
     require(close(fieldLine.notesAbove[2].alpha, 128.0 / 255.0), "RPE byte-scaled alpha");
     // Negative alpha clamps to 0.
@@ -164,16 +164,15 @@ int main() {
     require(close(pos.judgeLineList.at(0)->notesAbove[0].positionX, 75.375 / (670.0 * 9.0 / 80.0)),
         "RPE positionX conversion");
 
-    // parseBeat rounds to 3 decimals before scaling by 32, so [1,1,3] = 1.3333 -> 1.333
-    // -> 42.656 ticks rather than 42.6667.
+    // Fractional beat triples retain their exact value before conversion to ticks.
     const auto beats = rechigros::chart::RpeChartParser::parse(std::string_view{R"json(
     {"META":{"offset":0,"RPEVersion":160},"BPMList":[{"bpm":120,"startTime":[0,0,1]}],
      "judgeLineList":[{"bpmfactor":1,"notesAbove":[
        {"type":1,"startTime":[1,1,3]},{"type":1,"startTime":[2,0,1]}]}]})json"});
-    require(close(beats.judgeLineList.at(0)->notesAbove[0].time, 1.333 * 32.0),
-        "RPE beat rounding to 3 decimals then *32");
-    require(close(beats.judgeLineList.at(0)->notesAbove[0].rpeGlobalBeat, 1.333 * 32.0),
-        "RPE rpeGlobalBeat retains the raw tick");
+    require(close(beats.judgeLineList.at(0)->notesAbove[0].time, (4.0 / 3.0) * 32.0),
+        "RPE beat triples are not quantised");
+    require(close(beats.judgeLineList.at(0)->notesAbove[0].rpeGlobalBeat, (4.0 / 3.0) * 32.0),
+        "RPE rpeGlobalBeat retains the exact tick");
   }
 
   // ---------------- RPE speed-layer semantics ----------------
@@ -311,6 +310,18 @@ int main() {
         && close(variable.vectorEvents[0].startTime, 1.0)
         && close(variable.vectorEvents[0].endTime, 2.0),
         "bpmfactor 2 stretches effect variable times");
+    require(variable.evaluate(0.5).empty(),
+        "a shader variable keeps its default before the first key");
+    PrprVariable scalar;
+    LineEvent scalarEvent;
+    scalarEvent.startTime = 10.0;
+    scalarEvent.endTime = 20.0;
+    scalarEvent.start = 0.25;
+    scalarEvent.end = 0.75;
+    scalar.events.push_back(scalarEvent);
+    require(scalar.evaluate(5.0).empty(), "a scalar shader variable has the same leading gap");
+    require(scalar.evaluate(10.0).size() == 1 && close(scalar.evaluate(10.0)[0], 0.25),
+        "a scalar shader variable starts at its first key");
   }
 
   // ---------------- PEC parity ----------------
@@ -1011,7 +1022,9 @@ int main() {
         "effects": [ {
           "shader": "official_bloom",
           "start": [0,0,1], "end": [4,0,1],
-          "vars": { "k": 0.5, "v": [0.1, 0.2] }
+          "vars": { "k": 0.5, "v": [0.1, 0.2],
+            "color": [ { "startTime": [0,0,1], "endTime": [2,0,1],
+              "start": [0, 0, 0, 255], "end": [60, 0, 120, 255], "easingType": 1 } ] }
         } ]
       })";
     }
@@ -1028,13 +1041,23 @@ int main() {
         require(effect.shader == "official_bloom", "the shader name is kept");
         // 60 BPM: four beats is four seconds.
         require(close(effect.endTime, 4.0), "the effect span converts beats at the pack BPM");
-        require(effect.variables.size() == 2, "both effect variables are read");
+        require(effect.variables.size() == 3, "every effect variable is read");
         const auto scalar = effect.variables.find("k");
         require(scalar != effect.variables.end() && !scalar->second.animated(),
             "a scalar variable stays constant");
         const auto vector = effect.variables.find("v");
         require(vector != effect.variables.end() && vector->second.values.size() == 2,
             "a numeric array becomes a vector");
+        const auto color = effect.variables.find("color");
+        require(color != effect.variables.end()
+                && color->second.vectorEvents.size() == 1
+                && color->second.vectorEvents.front().count == 4,
+            "a vector-valued color span is read as four components");
+        if (color != effect.variables.end() && !color->second.vectorEvents.empty()) {
+          const auto midway = color->second.evaluate(1.0);
+          require(midway.size() == 4 && close(midway[0], 30.0F) && close(midway[2], 60.0F),
+              "the color span interpolates all four components");
+        }
       }
       require(chart->prprVideos.size() == 1, "one storyboard video is read");
       if (chart->prprVideos.size() == 1) {
@@ -1079,6 +1102,21 @@ int main() {
       require(chart->prprShaderSources.contains("/glitch.frag"),
           "the source is keyed by the authored shader name");
     }
+    {
+      std::ofstream out(packDir / "rpe.json", std::ios::binary);
+      out << R"({"META":{"RPEVersion":240},"BPMList":[{"bpm":120,"startTime":[0,0,1]}],
+        "effects":[{"shader":"/fog_pr.glsl","start":[0,0,1],"end":[1,0,1]}],
+        "judgeLineList":[]})";
+    }
+    {
+      std::ofstream out(packDir / "fog_pr.glsl", std::ios::binary);
+      out << "uniform sampler2D screenTexture; varying vec2 uv; void main(){gl_FragColor=texture2D(screenTexture,uv);}";
+    }
+    const auto named = rechigros::chart::ChartLoader::loadFromFile(packDir / "rpe.json");
+    require(named != nullptr && named->prprEffects.size() == 3
+        && named->prprEffects[0].shader == "fog", "a named custom shader keeps its canonical identity");
+    require(named != nullptr && named->prprShaderSources.contains("/fog_pr.glsl"),
+        "a named custom shader loads its source from the original path");
     std::filesystem::remove_all(packDir, ignored);
   }
 
@@ -1091,7 +1129,7 @@ int main() {
        {"father":0,"rotateWithFather":false,"skewControl":[{"x":0,"skew":0.5,"easing":1},{"x":900,"skew":0.5,"easing":1}],
         "notes":[
           {"type":2,"startTime":[2,0,1],"endTime":[1,0,1],"speed":1,"hitsound":"audio/cue.ogg"},
-          {"type":2,"startTime":[4,0,1],"endTime":[5,0,1],"speed":-2}
+          {"type":2,"startTime":[4,0,1],"endTime":[5,0,1],"speed":-2,"hitSound":"音效/cue.wav"}
         ]}
      ]})json"}, "pack");
     require(chart.judgeLineList[0]->notes.empty(), "the parent fixture has no notes");
@@ -1110,6 +1148,11 @@ int main() {
         "a negative speed gives a negative floor length");
     require(chart.judgeLineList[1]->notes[0].hitSound == "pack/audio/cue.ogg",
         "a custom hit sound resolves against the chart directory");
+    const auto unicodeSound =
+        (std::filesystem::path("pack") / std::filesystem::path(u8"音效/cue.wav")).generic_u8string();
+    require(chart.judgeLineList[1]->notes[1].hitSound ==
+        std::string(unicodeSound.begin(), unicodeSound.end()),
+        "a custom hit sound preserves its UTF-8 resource path");
 
     const auto inherited = rechigros::chart::RpeChartParser::parse(std::string_view{R"json(
     {"META":{"RPEVersion":163},"BPMList":[{"bpm":120,"startTime":[0,0,1]}],
@@ -1201,6 +1244,23 @@ int main() {
         "noise rotation transforms the corners around the area centre");
     require(runtime.sample(1.0).state == RpeNoiseState::HiddenAfter,
         "noise disappears at its lifetime end");
+    auto inverse = area;
+    inverse.invert = true;
+    const std::vector<RpeNoiseArea> triple{inverse, inverse, inverse};
+    require(rpeNoiseTouchBlocked(triple, 0.5, {0.0, 0.0}, 900.0, false),
+        "odd inversion coverage blocks touches");
+    require(!rpeNoiseTouchBlocked(triple, 0.5, {0.0, 0.0}, 900.0, true),
+        "single-inversion mode cancels two or more overlaps");
+    require(!rpeNoiseTouchBlocked(triple, 0.1, {0.0, 0.0}, 900.0, false),
+        "ready areas never block touches");
+    const std::vector<RpeNoiseArea> hole{area, inverse};
+    require(!rpeNoiseTouchBlocked(hole, 0.5, {0.0, 0.0}, 900.0, false),
+        "an inverted area cancels normal touch coverage");
+    require(rpeNoiseContains(inverse, active, {108.0, 0.0}, 90.0, 1.5) &&
+        !rpeNoiseContains(area, active, {108.0, 0.0}, 90.0, 1.5),
+        "touch bounds expand inverted areas and shrink normal areas");
+    require(rpeNoiseTouchBlocked(triple, 0.5, {60.0, 0.0}, 900.0, false),
+        "coverage of the original and inset touch areas is composed together");
   }
 
   {
@@ -1220,6 +1280,113 @@ int main() {
       require(variants.prprEffects[2].sourceName == "rainbow_pr.glsl",
           "an integer portable shader index gets its portable source name");
     }
+    const std::array<std::pair<const char*, const char*>, 5> aliases{{
+        {"radialblur", "radial_blur"}, {"circleblur", "circle_blur"},
+        {"oldtv", "old_tv"}, {"oilpainting", "oil_painting"},
+        {"heateffect", "heat_distortion"},
+    }};
+    for (const auto& [alias, expected] : aliases) {
+      const std::string source = std::string(R"({"META":{"RPEVersion":240},
+        "BPMList":[{"bpm":120,"startTime":[0,0,1]}],"effects":[{"shader":")") + alias +
+        R"(","startTime":[0,0,1],"endTime":[1,0,1]}],"judgeLineList":[]})";
+      const auto chart = rechigros::chart::RpeChartParser::parse(std::string_view(source));
+      require(chart.prprEffects.size() == 1 && chart.prprEffects[0].shader == expected,
+          "a supported shader alias resolves to its preset");
+    }
+  }
+
+  {
+    const auto cameraChart = rechigros::chart::RpeChartParser::parse(std::string_view{R"json(
+      {"META":{"RPEVersion":240},"BPMList":[{"bpm":120,"startTime":[0,0,1]}],
+       "globalEvents":{"version":1,"types":{
+         "spatial-camera/position":{"columns":{
+           "x":{"events":[{"startTime":[0,0,1],"endTime":[0,0,1],"start":200,"end":200}]},
+           "z":{"events":[{"startTime":[0,0,1],"endTime":[2,0,1],"start":1200,"end":400,"easingType":1}]}
+         }},
+         "spatial-camera/rotation":{"columns":{
+           "yaw":{"events":[{"startTime":[0,0,1],"endTime":[1,0,1],"start":0,"end":90,"easingType":1}]}
+         }},
+         "spatial-camera/lens":{"settings":{"followChart":true},"columns":{"fov":{"events":[]}}}
+       }},"judgeLineList":[]})json"});
+    require(cameraChart.rpeCamera.available() && cameraChart.rpeCamera.sample(0.0).followChart,
+        "spatial-camera events and the follow-chart setting are parsed");
+    const auto before = cameraChart.rpeCamera.sample(-0.1);
+    require(close(before.z, 1000.0) && close(before.fov, RPE_CAMERA_DEFAULT_FOV),
+        "camera tracks use their defaults before the first event");
+    const auto middle = cameraChart.rpeCamera.sample(0.75);
+    require(close(middle.x, 200.0) && close(middle.z, 600.0) && close(middle.yaw, 90.0),
+        "camera axes interpolate on the global BPM timeline");
+    const auto after = cameraChart.rpeCamera.sample(2.0);
+    require(close(after.z, 400.0) && close(after.yaw, 90.0),
+        "camera axes hold their final values");
+    RpeCameraFrame neutral;
+    neutral.active = true;
+    const auto centre = neutral.planeAt(960.0, 540.0, 1920.0, 1080.0, 1.2);
+    require(centre && close((*centre)[0], 0.0, 1e-7) && close((*centre)[1], 0.0, 1e-7),
+        "the default camera inverse maps the screen centre to the chart origin");
+    const auto point = neutral.planeAt(1080.0, 480.0, 1920.0, 1080.0, 1.2);
+    require(point && close((*point)[0], 100.0, 1e-6) && close((*point)[1], 50.0, 1e-6),
+        "the default camera inverse preserves planar world coordinates");
+
+    const auto rules = rechigros::chart::RpeChartParser::parse(std::string_view{R"json(
+      {"META":{"RPEVersion":240},"BPMList":[{"bpm":120,"startTime":[0,0,1]}],
+       "effects":[{"shader":"chromatic","clone":true,"startTime":[1,0,1],"endTime":[1,0,1]}],
+       "judgeLineList":[]})json"});
+    require(rules.prprEffects.size() == 1 && rules.prprEffects[0].shader == "chromatic_2",
+        "a cloned base shader keeps its clone identity");
+    require(rules.prprEffects[0].startTime == rules.prprEffects[0].endTime
+        && std::isfinite(rules.prprEffects[0].endTime),
+        "a zero-duration shader does not become permanent");
+
+    const auto text = rechigros::chart::RpeChartParser::parse(std::string_view{R"json(
+      {"META":{"RPEVersion":160},"BPMList":[{"bpm":120,"startTime":[0,0,1]}],
+       "judgeLineList":[{"extended":{"textEvents":[{
+         "startTime":[0,0,1],"endTime":[1,0,1],"start":"","end":"谱面","easingType":1
+       }]}}]})json"});
+    auto& textLine = *text.judgeLineList[0];
+    require(textLine.fillState(0.0, 16.0F / 9.0F).text.empty(),
+        "an empty text event start is preserved");
+    require(textLine.fillState(0.25, 16.0F / 9.0F).text == "谱",
+        "text interpolation advances by Unicode character");
+    require(textLine.fillState(0.5, 16.0F / 9.0F).text == "谱面",
+        "text interpolation reaches the authored end text");
+  }
+
+  {
+    const auto root = rechigros::test::scratchDirectory("utf8-resource-pack") /
+        std::filesystem::path(u8"歌曲包");
+    std::filesystem::remove_all(root);
+    const auto write = [](const std::filesystem::path& path, const std::string& content) {
+      std::filesystem::create_directories(path.parent_path());
+      std::ofstream output(path, std::ios::binary | std::ios::trunc);
+      output.write(content.data(), static_cast<std::streamsize>(content.size()));
+    };
+    const auto chartFile = root / std::filesystem::path(u8"谱面.json");
+    const auto textureFile = root / std::filesystem::path(u8"素材/纹理.png");
+    const auto soundFile = root / std::filesystem::path(u8"音效/击打.wav");
+    const auto shaderFile = root / std::filesystem::path(u8"着色器/特效.glsl");
+    const std::string shaderSource =
+        "uniform sampler2D screenTexture; varying vec2 uv; "
+        "void main(){gl_FragColor=texture2D(screenTexture,uv);}";
+    write(chartFile, R"json({"META":{"RPEVersion":240},"BPMList":[{"bpm":120,"startTime":[0,0,1]}],
+      "effects":[{"shader":"着色器/特效.glsl","startTime":[0,0,1],"endTime":[1,0,1]}],
+      "judgeLineList":[{"Texture":"素材/纹理.png","notes":[{"type":1,"startTime":[0,0,1],
+      "positionX":0,"hitSound":"音效/击打.wav"}]}]})json");
+    write(textureFile, "image");
+    write(soundFile, "sound");
+    write(shaderFile, shaderSource);
+    const auto chart = rechigros::chart::ChartLoader::loadFromFile(chartFile, "assets");
+    require(chart != nullptr, "a chart with UTF-8 resource references loads from disk");
+    const auto textureUtf8 = textureFile.generic_u8string();
+    require(chart->judgeLineList[0]->texture == std::string(textureUtf8.begin(), textureUtf8.end()),
+        "the chart texture resolves through its UTF-8 path");
+    const auto soundUtf8 = soundFile.generic_u8string();
+    require(chart->judgeLineList[0]->notes[0].hitSound == std::string(soundUtf8.begin(), soundUtf8.end()),
+        "the hit sound resolves through its UTF-8 path");
+    require(chart->prprShaderSources.contains("着色器/特效.glsl")
+        && chart->prprShaderSources.at("着色器/特效.glsl") == shaderSource,
+        "the custom shader source is read through its UTF-8 path");
+    std::filesystem::remove_all(root);
   }
 
   {

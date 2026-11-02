@@ -1295,7 +1295,7 @@ void drawLibraryScreen(AppContext& context) {
   drawList->PushClipRect(ImVec2(static_cast<float>(grid.gridL), static_cast<float>(grid.gridT)),
       ImVec2(static_cast<float>(grid.gridR), static_cast<float>(grid.gridB)), true);
   if (localTab && !libraryReady) {
-    const char* scanning = "正在扫描资源包...";
+    const char* scanning = "正在扫描本地谱面...";
     ImFont* font = ImGui::GetFont();
     const float textSize = map.px(16.0F);
     const ImVec2 extent = font->CalcTextSizeA(textSize, FLT_MAX, 0.0F, scanning);
@@ -1320,8 +1320,10 @@ void drawLibraryScreen(AppContext& context) {
   }
   drawList->PopClipRect();
 
-  // Empty / loading state inside the panel.
-  if (!localTab || visible.empty()) {
+  // Empty / loading state inside the panel. While the local index is still scanning the
+  // placeholder above owns the panel; the empty-state label must not claim the library is
+  // empty before the scan has published its result.
+  if (!localTab || (libraryReady && visible.empty())) {
     const std::string stateText = localTab ? std::string("本地暂无谱面") : std::string("暂无谱面");
     const ui::Box stateBox = map.box(static_cast<float>(grid.panelL),
         static_cast<float>(grid.panelT + map.rpx(26.0F)),

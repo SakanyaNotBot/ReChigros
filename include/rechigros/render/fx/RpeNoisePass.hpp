@@ -13,29 +13,42 @@
 #include <unordered_map>
 #include <vector>
 
+namespace rechigros::game { struct RpeCameraFrame; }
+
 namespace rechigros::render::fx {
+
+struct RpeNoiseTouch;
+struct RpeNoiseTouchSample;
+class RpeNoiseMaterial;
+
+[[nodiscard]] bool invertedNoiseCoveredForTest(int overlapCount, bool single = false) noexcept;
 
 class RpeNoisePass final {
 public:
-  RpeNoisePass() = default;
+  RpeNoisePass();
   ~RpeNoisePass();
   RpeNoisePass(const RpeNoisePass&) = delete;
   RpeNoisePass& operator=(const RpeNoisePass&) = delete;
 
   bool prepare(const std::filesystem::path& packDirectory,
-      const std::vector<game::RpeNoiseLayer>& layers);
+      const std::vector<game::RpeNoiseLayer>& layers, const std::filesystem::path& assetRoot,
+      gl::Texture* displace, gl::Texture* spark, gl::Texture* noise);
   void release() noexcept;
   void resize(int width, int height);
-  [[nodiscard]] bool ready() const noexcept { return defaultProgram_.valid(); }
+  [[nodiscard]] bool ready() const noexcept;
 
   gl::Texture* draw(gl::Texture& scene, const std::vector<game::RpeNoiseArea>& areas,
       const std::vector<game::RpeNoiseLayer>& layers, double chartTimeSec, float stageX,
-      float stageY, float stageWidth, float stageHeight);
+      float stageY, float stageWidth, float stageHeight, bool singleInversion,
+      const std::vector<RpeNoiseTouch>& touches,
+      const game::RpeCameraFrame* camera = nullptr, float cameraViewScale = 1.0F,
+      int layerMask = 3);
 
 private:
   struct TargetSpec {
     float scaleX{1.0F};
     float scaleY{1.0F};
+    int channels{4};
     bool linear{};
     bool noClear{};
   };
@@ -78,37 +91,31 @@ private:
     std::unordered_map<std::string, gl::Texture> images;
     std::unordered_map<std::string, std::vector<float>> parameterDefaults;
     std::unordered_map<std::string, std::unique_ptr<Target>> targets;
+    std::unordered_map<std::string, std::unique_ptr<gl::Framebuffer>> history;
+    std::unordered_map<std::string, std::vector<float>> lastParameters;
     gl::Framebuffer screens[2];
-    gl::Framebuffer mask;
-    std::string signature;
+    std::unique_ptr<RpeNoiseMaterial> material;
     double lastSeconds{-1.0e300};
     gl::Texture* lastOutput{};
   };
-  struct LayerState {
-    std::unique_ptr<Resource> resource;
-    std::string skin;
-  };
+  struct TouchTimelines;
 
-  bool ensureDefaultProgram();
   std::unique_ptr<Resource> loadResource(const game::RpeNoiseLayer& layer);
   bool loadChannel(const std::filesystem::path& root, const std::string& mainSource,
       const nlohmann::json* channel, Channel& result,
       std::unordered_map<std::string, std::unique_ptr<gl::ShaderProgram>>& programs,
       std::unordered_map<std::string, gl::Texture>& images);
-  void uploadMask(const std::vector<game::RpeNoiseArea>& areas, double seconds,
-      float stageX, float stageY, float stageWidth, float stageHeight);
   gl::Texture* run(Resource& resource, const Channel& channel, gl::Texture& input,
-      const game::RpeNoiseLayer& layer, double seconds);
-  void drawQuad(gl::Texture* texture);
-  static void clearTarget(gl::Framebuffer& target);
+      const game::RpeNoiseLayer& layer, double seconds,
+      const std::vector<RpeNoiseTouchSample>& touches);
+  static void clearTarget(gl::Framebuffer& target, bool opaqueAlpha = false);
 
   std::filesystem::path packDirectory_;
   int width_{};
   int height_{};
   std::vector<std::unique_ptr<Resource>> resources_;
-  std::vector<std::string> layerIds_;
-  gl::Framebuffer mask_;
-  gl::ShaderProgram defaultProgram_;
+  std::unique_ptr<RpeNoiseMaterial> material_;
+  std::unique_ptr<TouchTimelines> timelines_;
   std::unique_ptr<gl::Texture> maskPixels_;
   std::vector<std::uint8_t> maskData_;
 };

@@ -109,6 +109,7 @@ public:
   [[nodiscard]] const std::vector<BlockedTouch>& blockedTouches() const noexcept {
     return blockedTouches_;
   }
+  [[nodiscard]] std::vector<BlockedTouch> liveTouches() const;
 
   // Receives the swallowed-finger edge. The audio duck and the effect chain both react to the
   // transition rather than the level, and the session is the only place that knows the edge:

@@ -75,6 +75,8 @@ void gameEnterWithLoading(AppContext& context);
 void pollChartLoad(AppContext& context);
 void gameUpdate(AppContext& context, float frameDeltaSec);
 void gameRender(AppContext& context);
+bool captureGameplayFrame(AppContext& context, int width, int height,
+    std::vector<std::uint8_t>& pixels);
 void gameLeave(AppContext& context);
 void gameTogglePause(AppContext& context);
 bool gamePointerDown(AppContext& context, std::int64_t pointerId, float x, float y);

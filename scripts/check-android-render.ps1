@@ -374,10 +374,10 @@ if ($null -eq $statistics) {
     $problems.Add("no frame capture was written (expected $remoteCapture)")
 } else {
     Write-Step 'Captured frame'
-    Write-Info ("{0}x{1} uniqueColors={2} meanRGB={3},{4},{5} brightFraction={6:P1}" -f `
-        $statistics.Width, $statistics.Height, $statistics.UniqueColors,
-        $statistics.MeanRed, $statistics.MeanGreen, $statistics.MeanBlue,
-        $statistics.BrightFraction)
+    Write-Info ("$($statistics.Width)x$($statistics.Height) uniqueColors=" +
+        "$($statistics.UniqueColors) meanRGB=$($statistics.MeanRed)," +
+        "$($statistics.MeanGreen),$($statistics.MeanBlue) brightFraction=" +
+        $statistics.BrightFraction.ToString('P1'))
     if ($statistics.UniqueColors -lt $MinUniqueColors) {
         $problems.Add("the captured frame has only $($statistics.UniqueColors) distinct colours " +
             "(minimum $MinUniqueColors): the play field did not render")
@@ -394,10 +394,10 @@ if (Test-Path -LiteralPath $screenshotPath -PathType Leaf) {
     $screenshotStatistics = Get-FrameStatistics -Path $screenshotPath
     if ($null -ne $screenshotStatistics) {
         Write-Step 'System screenshot'
-        Write-Info ("{0}x{1} uniqueColors={2} meanRGB={3},{4},{5}" -f `
-            $screenshotStatistics.Width, $screenshotStatistics.Height,
-            $screenshotStatistics.UniqueColors, $screenshotStatistics.MeanRed,
-            $screenshotStatistics.MeanGreen, $screenshotStatistics.MeanBlue)
+        Write-Info ("$($screenshotStatistics.Width)x$($screenshotStatistics.Height) " +
+            "uniqueColors=$($screenshotStatistics.UniqueColors) " +
+            "meanRGB=$($screenshotStatistics.MeanRed),$($screenshotStatistics.MeanGreen)," +
+            "$($screenshotStatistics.MeanBlue)")
         if ($screenshotStatistics.UniqueColors -lt 32) {
             $problems.Add('the system screenshot is nearly flat: the frame was not presented')
         }

@@ -21,22 +21,25 @@ struct StageLayout {
   bool mirror{false};
   // Uniform reveal transform applied after chart geometry has been evaluated in stage space.
   float fieldScale{1.0F};
+  bool cameraActive{};
+  bool cameraIncludesUi{};
+  math::Mat4 cameraMatrix{};
 
   [[nodiscard]] float centerX() const noexcept { return stage.x + stage.width * 0.5F; }
   [[nodiscard]] float centerY() const noexcept { return stage.y + stage.height * 0.5F; }
   [[nodiscard]] math::Mat4 projection() const noexcept {
-    return math::Mat4::orthoTopLeft(viewWidth, viewHeight);
+    return cameraIncludesUi ? cameraMatrix : math::Mat4::orthoTopLeft(viewWidth, viewHeight);
   }
-  // Projection for play-field geometry: `projection()` plus mirror and reveal transforms.
-  // Notes, judge lines and hit effects all go through it, so they move together,
-  // while the HUD keeps `projection()` and applies its own camera transform.
+  // Play-field geometry shares mirror, reveal and the optional chart camera. UI uses
+  // projection(), which follows the same camera only when the chart enables that option.
   [[nodiscard]] math::Mat4 stageProjection() const noexcept {
     math::Mat4 transform = mirror ? math::Mat4::mirrorX(centerX()) : math::Mat4::identity();
     if (std::isfinite(fieldScale) && fieldScale > 1.0e-6F && fieldScale < 0.999999F) {
       transform = transform * math::Mat4::translation(centerX(), centerY()) *
           math::Mat4::scaling(fieldScale, fieldScale) * math::Mat4::translation(-centerX(), -centerY());
     }
-    return projection() * transform;
+    const auto base = cameraActive ? cameraMatrix : projection();
+    return base * transform;
   }
 };
 

@@ -1322,7 +1322,7 @@ SkinDialogLayout skinDialogLayout(const Metrics& m, int rowCount) {
 std::vector<std::string> skinNames(const AppContext& context) {
   std::vector<std::string> names{"内置皮肤"};
   for (const auto& skin : listSkinDirectories(context)) {
-    names.push_back(skin.filename().string());
+    names.push_back(platform::pathToUtf8(skin.filename()));
   }
   return names;
 }
@@ -1545,7 +1545,7 @@ void drawSkinSelectDialog(
           const auto skins = listSkinDirectories(context);
           const auto index = static_cast<std::size_t>(row - 1);
           if (index < skins.size()) {
-            context.settings.selectedSkin = skins[index].filename().string();
+            context.settings.selectedSkin = platform::pathToUtf8(skins[index].filename());
           }
         }
         markChanged(context);
@@ -1814,7 +1814,7 @@ void drawDialogs(AppContext& context, const Metrics& m, const BackButtonLayout& 
           if (error) {
             notify(context, "皮肤导入失败");
           } else {
-            context.settings.selectedSkin = source.filename().string();
+            context.settings.selectedSkin = platform::pathToUtf8(source.filename());
             markChanged(context);
             notify(context, "皮肤已导入");
           }

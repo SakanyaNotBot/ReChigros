@@ -402,6 +402,21 @@ bool Application::initialize() {
       ranges.push_back(0);
       font = io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), 20.0F, &config,
           ranges.data());
+      const auto symbolPath = ui::findSymbolFontPath();
+      if (font != nullptr && !symbolPath.empty()) {
+        // The bundled text font omits pictograms and many symbol ranges. Merge the system
+        // symbol face so labels containing them do not fall back to the missing-glyph box.
+        static const ImWchar kSymbolRanges[] = {
+            0x2190, 0x21FF, 0x2300, 0x23FF, 0x2460, 0x27BF, 0x2B00, 0x2BFF, 0};
+        ImFontConfig symbol;
+        symbol.MergeMode = true;
+        symbol.RasterizerDensity = fontDensity;
+        symbol.OversampleH = 1;
+        symbol.OversampleV = 1;
+        symbol.PixelSnapH = false;
+        (void)io.Fonts->AddFontFromFileTTF(symbolPath.string().c_str(), 20.0F, &symbol,
+            kSymbolRanges);
+      }
     }
     if (font == nullptr) io.Fonts->AddFontDefault();
   }
@@ -452,6 +467,7 @@ bool Application::initialize() {
   app_->playOverrides.challenge = challengeOverride_;
   app_->playOverrides.mirrorX = mirrorOverride_;
   app_->playOverrides.autoplay = autoplayOverride_;
+  app_->captureGameplayRequested = !capturePath_.empty();
   app_->ensureRenderer = [this]() { ensureRenderer(); };
   app_->advanceRenderer = [this]() { return advanceRenderer(); };
   // The home screen's own artwork decodes on the cache worker from here on. Requesting it
@@ -1322,6 +1338,10 @@ void Application::pollGpuTimer() {
 void Application::captureFramebufferIfRequested() {
   // A capture of gameplay waits for the opening to finish, so the frame shows the play
   // field rather than the transition into it. An explicit frame can be requested instead.
+  if (captureAtFrame_ <= 0 && app_ != nullptr && app_->screen == Screen::Game &&
+      (!app_->game.loaded || app_->game.inIntro)) {
+    return;
+  }
   const int minimumFrames = captureAtFrame_ > 0
       ? captureAtFrame_
       : (app_ != nullptr && app_->screen == Screen::Game ? 140 : 20);
@@ -1335,9 +1355,16 @@ void Application::captureFramebufferIfRequested() {
 
   const auto rowBytes = static_cast<std::size_t>(width) * 4;
   std::vector<std::uint8_t> pixels(rowBytes * static_cast<std::size_t>(height));
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
-  glPixelStorei(GL_PACK_ALIGNMENT, 1);
-  glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+  const bool offscreen = app_->screen == Screen::Game &&
+      captureGameplayFrame(*app_, width, height, pixels);
+  if (!offscreen) {
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glReadBuffer(GL_BACK);
+    glFinish();
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    render::gl::logErrors("application.capture");
+  }
 
   // Colour statistics prove the shaders produced content, not a flat clear.
   std::unordered_set<std::uint32_t> colours;
@@ -1360,11 +1387,16 @@ void Application::captureFramebufferIfRequested() {
     ++samples;
   }
 
-  // Readback rows are bottom-up; flip them for the PNG writer.
-  std::vector<std::uint8_t> flipped(pixels.size());
-  for (int row = 0; row < height; ++row) {
-    std::copy_n(pixels.data() + static_cast<std::size_t>(height - 1 - row) * rowBytes, rowBytes,
-        flipped.data() + static_cast<std::size_t>(row) * rowBytes);
+  std::vector<std::uint8_t> flipped;
+  if (offscreen) {
+    flipped = std::move(pixels);
+  } else {
+    // Readback rows are bottom-up; flip them for the PNG writer.
+    flipped.resize(rowBytes * static_cast<std::size_t>(height));
+    for (int row = 0; row < height; ++row) {
+      std::copy_n(pixels.data() + static_cast<std::size_t>(height - 1 - row) * rowBytes, rowBytes,
+          flipped.data() + static_cast<std::size_t>(row) * rowBytes);
+    }
   }
   // A device capture path points into storage the caller owns; the directory is created
   // here because the package build has no shell to prepare it.

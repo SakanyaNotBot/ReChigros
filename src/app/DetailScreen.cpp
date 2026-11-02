@@ -3,6 +3,7 @@
 #include "rechigros/app/Screens.hpp"
 #include "rechigros/app/UiLayout.hpp"
 #include "rechigros/app/UiStyle.hpp"
+#include "rechigros/platform/FileSystem.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -110,7 +111,7 @@ std::string plainSpaces(const std::string& value) {
 }
 
 std::string fileNameOrUnknown(const std::filesystem::path& file) {
-  return file.empty() ? std::string("Unkown") : file.filename().string();
+  return file.empty() ? std::string("Unkown") : platform::pathToUtf8(file.filename());
 }
 
 std::uint64_t assetTextureSized(

@@ -103,6 +103,7 @@ float measureRun(std::string_view text, float pixelSize, bool bold) {
     index += length;
     if (length == 0) break;
     if (codepoint == '\n') break;
+    if (codepoint == 0xFE0FU) continue;
     if (previous != 0) width += fonts.kerning(previous, codepoint, pixelSize, bold) / scale.x;
     width += fonts.advance(codepoint, pixelSize, bold) / scale.x;
     previous = codepoint;
@@ -126,6 +127,7 @@ void drawRun(ImDrawList* drawList, std::string_view text, float x, float baselin
     index += length;
     if (length == 0) break;
     if (codepoint == '\n') break;
+    if (codepoint == 0xFE0FU) continue;
     if (previous != 0) pen += fonts.kerning(previous, codepoint, pixelSize, bold) / scale.x;
     if (codepoint != ' ') {
       const UiFontCache::Glyph* glyph = fonts.glyph(codepoint, pixelSize, bold);
@@ -158,6 +160,12 @@ std::string_view truncateWithEllipsis(std::string_view text, float pixelSize, bo
   while (index < text.size()) {
     std::size_t length = 0;
     const std::uint32_t codepoint = UiFontCache::decode(text, index, length);
+    if (length == 0) break;
+    if (codepoint == 0xFE0FU) {
+      index += length;
+      lastFit = index;
+      continue;
+    }
     const float advance = fontCache().advance(
         codepoint, pixelSize * framebufferScale().x, bold) / framebufferScale().x;
     if (width + advance + ellipsis > available) break;

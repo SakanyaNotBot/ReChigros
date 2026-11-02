@@ -154,6 +154,9 @@ struct HudHitOffset {
 
 // Numeric readouts. The score is always seven digits and the accuracy is a percentage in
 // hundredths, both clamped the same way the HUD's own layout expects.
+[[nodiscard]] std::array<float, 2> hudElementCentreForTest(HudElement element, float centerX,
+    float centerY, float width, float height, const HudTransforms& transforms);
+
 [[nodiscard]] std::string formatScore(int value);
 [[nodiscard]] std::string formatAccuracyHundredths(int hundredths);
 // Catch-up of a displayed value towards its target: `deltaMs` is the frame's elapsed

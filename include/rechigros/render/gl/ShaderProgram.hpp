@@ -19,7 +19,8 @@ public:
 
   // Both sources are passed through prepareSource() first, so callers may write
   // either legacy ES 1.00 style or fully versioned modern GLSL.
-  bool build(const std::string& vertexSource, const std::string& fragmentSource) noexcept;
+  bool build(const std::string& vertexSource, const std::string& fragmentSource,
+      bool rpeViewport = false) noexcept;
   void reset() noexcept;
 
   void use() const noexcept;
@@ -28,6 +29,7 @@ public:
 
   [[nodiscard]] int attribute(const char* name) const;
   [[nodiscard]] int uniform(const char* name) const;
+  [[nodiscard]] int uniformType(const char* name) const;
 
   void set1f(const char* name, float value) const;
   void set2f(const char* name, float a, float b) const;
@@ -36,6 +38,7 @@ public:
   void set1i(const char* name, int value) const;
   // Uploads `count` vec2 values to a uniform array such as `touchPos[]`.
   void set2fv(const char* name, int count, const float* values) const;
+  void set4fv(const char* name, int count, const float* values) const;
   void setMat4(const char* name, const float* value) const;
 
   // Last compile or link diagnostic, for startup logging.
@@ -44,18 +47,20 @@ public:
 private:
   unsigned int program_{};
   mutable std::unordered_map<std::string, int> locations_;
+  std::unordered_map<std::string, int> types_;
   std::string log_;
 };
 
 // Normalises a shader body to the context version: strips any existing #version,
 // rewrites legacy attribute/varying/texture2D/gl_FragColor spellings and injects
 // the version header plus a fragment output declaration when needed.
-[[nodiscard]] std::string prepareShaderSource(bool fragment, const std::string& source);
+[[nodiscard]] std::string prepareShaderSource(bool fragment, const std::string& source,
+    bool rpeViewport = false);
 
 // Same, for an explicitly chosen language family. The ES branch is reachable from a
 // desktop host so a build-time check can validate the device form of every shader
 // without an ES context.
 [[nodiscard]] std::string prepareShaderSourceForLanguage(bool fragment, bool esProfile,
-    const std::string& source);
+    const std::string& source, bool rpeViewport = false);
 
 } // namespace rechigros::render::gl

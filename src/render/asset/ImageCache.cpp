@@ -1,5 +1,6 @@
 #include "rechigros/render/asset/ImageCache.hpp"
 
+#include "WebPDecoder.hpp"
 #include "rechigros/platform/FileSystem.hpp"
 
 #include <SDL3/SDL_log.h>
@@ -264,7 +265,7 @@ Image decodeImageMemory(const std::uint8_t* data, std::size_t size) {
   int height = 0;
   int channels = 0;
   stbi_uc* pixels = stbi_load_from_memory(data, static_cast<int>(size), &width, &height, &channels, 4);
-  if (pixels == nullptr) return image;
+  if (pixels == nullptr) return decodeWebpMemory(data, size);
   image.width = width;
   image.height = height;
   image.pixels.assign(pixels, pixels + static_cast<std::size_t>(width) * height * 4);

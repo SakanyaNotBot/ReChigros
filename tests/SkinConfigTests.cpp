@@ -402,6 +402,19 @@ void testChannelPacking() {
   require(!image.dualChannel, "non-gray pixels keep full RGBA storage");
 }
 
+void testWebpPayloadWithPngName() {
+  // A chart pack may ship WebP bytes under a .png name. The regular decoder keys off the
+  // extension, so the image cache must sniff the RIFF payload before giving up.
+  static const std::uint8_t kWebp[] = {
+      0x52, 0x49, 0x46, 0x46, 0x1e, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38,
+      0x4c, 0x11, 0x00, 0x00, 0x00, 0x2f, 0x03, 0xc0, 0x00, 0x00, 0x07, 0x50, 0x8f, 0x72, 0x17,
+      0xa5, 0xff, 0x81, 0x88, 0xe8, 0x7f, 0x00, 0x00};
+  const auto image = rechigros::render::asset::decodeImageMemory(kWebp, sizeof(kWebp));
+  require(image.valid(), "a WebP payload decodes even when the caller names it .png");
+  require(image.width == 4 && image.height == 4, "the WebP dimensions are read");
+  require(image.pixels.size() == 4U * 4U * 4U, "the WebP decodes to RGBA pixels");
+}
+
 } // namespace
 
 int main() {
@@ -413,6 +426,7 @@ int main() {
   testColourParsing();
   testAssetOverrides();
   testChannelPacking();
+  testWebpPayloadWithPngName();
 
   if (g_failures != 0) {
     std::cerr << g_failures << " skin config test(s) failed\n";

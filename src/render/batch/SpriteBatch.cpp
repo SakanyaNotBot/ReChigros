@@ -39,15 +39,50 @@ void main() {
 constexpr const char* FRAGMENT_SOURCE = R"(
 uniform sampler2D uTexture;
 uniform sampler2D uTextureBody;
+uniform sampler2D uExtra0;
+uniform sampler2D uExtra1;
+uniform sampler2D uExtra2;
+uniform sampler2D uExtra3;
+uniform sampler2D uExtra4;
+uniform sampler2D uExtra5;
+uniform sampler2D uExtra6;
+uniform sampler2D uExtra7;
+uniform sampler2D uExtra8;
+uniform sampler2D uExtra9;
+uniform sampler2D uExtra10;
+uniform sampler2D uExtra11;
+uniform sampler2D uExtra12;
+uniform sampler2D uExtra13;
 uniform int uHasBody;
 in vec2 vUv;
 in vec4 vColor;
 in float vTextureSelect;
 out vec4 fragmentColor;
+
+vec4 sampleExtra(int slot) {
+  if (slot == 0) return texture(uExtra0, vUv);
+  if (slot == 1) return texture(uExtra1, vUv);
+  if (slot == 2) return texture(uExtra2, vUv);
+  if (slot == 3) return texture(uExtra3, vUv);
+  if (slot == 4) return texture(uExtra4, vUv);
+  if (slot == 5) return texture(uExtra5, vUv);
+  if (slot == 6) return texture(uExtra6, vUv);
+  if (slot == 7) return texture(uExtra7, vUv);
+  if (slot == 8) return texture(uExtra8, vUv);
+  if (slot == 9) return texture(uExtra9, vUv);
+  if (slot == 10) return texture(uExtra10, vUv);
+  if (slot == 11) return texture(uExtra11, vUv);
+  if (slot == 12) return texture(uExtra12, vUv);
+  return texture(uExtra13, vUv);
+}
+
 void main() {
+  int slot = int(vTextureSelect + 0.5);
   vec4 texel;
-  if (vTextureSelect >= 0.5 && uHasBody == 1) {
+  if (slot == 1 && uHasBody == 1) {
     texel = texture(uTextureBody, vUv);
+  } else if (slot >= 2) {
+    texel = sampleExtra(slot - 2);
   } else {
     texel = texture(uTexture, vUv);
   }
@@ -177,6 +212,7 @@ void SpriteBatch::release() noexcept {
 
 void SpriteBatch::begin() noexcept {
   count_ = 0;
+  extraTextureCount_ = 0;
   clipEnabled_ = false;
   // Buffers are allocated lazily, but a batch must never hand out writes into a
   // null instance array, so allocFailure latches and addQuad* become no-ops.
@@ -238,6 +274,46 @@ bool SpriteBatch::addQuadSheared(float centerX, float centerY, float width, floa
   return true;
 }
 
+bool SpriteBatch::addQuadTextured(float centerX, float centerY, float width, float height,
+    float rotationDeg, float red, float green, float blue, float alpha,
+    float u0, float v0, float u1, float v1, const gl::Texture& texture) {
+  if (!texture.valid()) {
+    return addQuad(centerX, centerY, width, height, rotationDeg, red, green, blue, alpha,
+        u0, v0, u1, v1);
+  }
+  int slot = -1;
+  for (int index = 0; index < extraTextureCount_; ++index) {
+    if (extraTextures_[index] == &texture) {
+      slot = index;
+      break;
+    }
+  }
+  if (slot < 0) {
+    if (extraTextureCount_ >= MAX_BATCH_EXTRA_TEXTURES) return false;
+    slot = extraTextureCount_++;
+    extraTextures_[slot] = &texture;
+  }
+  return addQuadSelect(centerX, centerY, width, height, rotationDeg, red, green, blue, alpha,
+      u0, v0, u1, v1, static_cast<float>(slot + 2));
+}
+
+bool SpriteBatch::addQuadAnchoredTextured(float x, float y, float width, float height,
+    float rotationDeg, float red, float green, float blue, float alpha,
+    float anchorX, float anchorY, float u0, float v0, float u1, float v1,
+    const gl::Texture& texture) {
+  if (!std::isfinite(anchorX)) anchorX = 0.5F;
+  if (!std::isfinite(anchorY)) anchorY = 0.5F;
+  const float dx = (anchorX - 0.5F) * width;
+  const float dy = (anchorY - 0.5F) * height;
+  const float radians = rotationDeg * kDegToRad;
+  const float c = std::cos(radians);
+  const float s = std::sin(radians);
+  const float ox = dx * c - dy * s;
+  const float oy = dx * s + dy * c;
+  return addQuadTextured(x - ox, y - oy, width, height, rotationDeg, red, green, blue, alpha,
+      u0, v0, u1, v1, texture);
+}
+
 bool SpriteBatch::addQuadAnchored(float x, float y, float width, float height, float rotationDeg,
     float red, float green, float blue, float alpha,
     float anchorX, float anchorY,
@@ -290,7 +366,10 @@ void SpriteBatch::setScissor(bool enabled, float left, float top, float right,
   scissorBottom_ = bottom;
 }
 
-void SpriteBatch::discard() noexcept { count_ = 0; }
+void SpriteBatch::discard() noexcept {
+  count_ = 0;
+  extraTextureCount_ = 0;
+}
 
 void SpriteBatch::flush(const math::Mat4& projection, const gl::Texture& texture,
     const gl::Texture* bodyTexture) {
@@ -316,6 +395,17 @@ void SpriteBatch::flush(const math::Mat4& projection, const gl::Texture& texture
   glBindTexture(GL_TEXTURE_2D, bodyId != 0 ? bodyId : (texture.valid() ? texture.id() : 0U));
   program_->set1i("uTextureBody", 1);
   program_->set1i("uHasBody", bodyId != 0 ? 1 : 0);
+  static const char* const kExtraUniforms[MAX_BATCH_EXTRA_TEXTURES] = {
+      "uExtra0", "uExtra1", "uExtra2", "uExtra3", "uExtra4", "uExtra5", "uExtra6",
+      "uExtra7", "uExtra8", "uExtra9", "uExtra10", "uExtra11", "uExtra12", "uExtra13"};
+  for (int index = 0; index < extraTextureCount_; ++index) {
+    const int unit = 2 + index;
+    glActiveTexture(GL_TEXTURE0 + unit);
+    const unsigned int extraId = extraTextures_[index] != nullptr && extraTextures_[index]->valid()
+        ? extraTextures_[index]->id() : 0U;
+    glBindTexture(GL_TEXTURE_2D, extraId);
+    program_->set1i(kExtraUniforms[index], unit);
+  }
   glActiveTexture(GL_TEXTURE0);
 
   glBindVertexArray(vao_);
@@ -340,6 +430,7 @@ void SpriteBatch::flush(const math::Mat4& projection, const gl::Texture& texture
   if (scissorEnabled_) glDisable(GL_SCISSOR_TEST);
   glBindVertexArray(0);
   count_ = 0;
+  extraTextureCount_ = 0;
 }
 
 } // namespace rechigros::render::batch

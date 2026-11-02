@@ -1,8 +1,12 @@
 add_library(rechigros_image_cache STATIC
   asset/ImageCache.cpp
+  asset/WebPDecoder.cpp
   stb_image.cpp)
 target_include_directories(rechigros_image_cache PUBLIC "${PROJECT_SOURCE_DIR}/include")
-target_link_libraries(rechigros_image_cache PUBLIC rechigros_platform stb_headers miniz)
+target_include_directories(rechigros_image_cache PRIVATE
+  "${PROJECT_SOURCE_DIR}/src/render/asset"
+  "${RECHIGROS_DOWNLOAD_DIR}/wuffs")
+target_link_libraries(rechigros_image_cache PUBLIC rechigros_platform stb_headers miniz wuffs_headers)
 
 add_library(rechigros_render STATIC
   GameRenderer.cpp
@@ -31,9 +35,11 @@ add_library(rechigros_render STATIC
   fx/PauseBackdropPass.cpp
   fx/PrprChain.cpp
   fx/RpeNoisePass.cpp
+  fx/RpeNoiseMaterial.cpp
   scene/BackgroundBlur.cpp
   scene/PauseHudBlur.cpp
   scene/RevealCamera.cpp
+  scene/RpeCameraProjection.cpp
   scene/StageLayout.cpp
   scene/LinePass.cpp
   scene/NoteBatch.cpp

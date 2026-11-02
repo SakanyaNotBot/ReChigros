@@ -203,6 +203,39 @@ struct PlacedText {
   float inkTop{};
 };
 
+std::array<float, 2> hudElementPivot(HudElement element, bool useFix) {
+  if (!useFix) return {0.5F, 0.5F};
+  switch (element) {
+    case HudElement::Pause: return {0.0F, 0.0F};
+    case HudElement::Score: return {1.0F, 0.0F};
+    case HudElement::Bar: return {0.0F, 0.5F};
+    case HudElement::Name: return {0.0F, 1.0F};
+    case HudElement::Level: return {1.0F, 1.0F};
+    default: return {0.5F, 0.5F};
+  }
+}
+
+std::array<float, 2> transformedHudCentre(float centerX, float centerY, float width, float height,
+    HudElement element, const HudElementTransform& transform, bool useFix) {
+  const auto pivot = hudElementPivot(element, useFix);
+  const float pivotX = centerX + (pivot[0] - 0.5F) * width;
+  const float pivotY = centerY + (pivot[1] - 0.5F) * height;
+  const float scaleX = std::abs(transform.scaleX);
+  const float scaleY = std::abs(transform.scaleY);
+  float x = pivotX + (centerX - pivotX) * scaleX;
+  float y = pivotY + (centerY - pivotY) * scaleY;
+  if (transform.rotateDeg != 0.0F) {
+    const float radians = transform.rotateDeg * 3.14159265358979323846F / 180.0F;
+    const float cosine = std::cos(radians);
+    const float sine = std::sin(radians);
+    const float dx = x - pivotX;
+    const float dy = y - pivotY;
+    x = pivotX + dx * cosine - dy * sine;
+    y = pivotY + dx * sine + dy * cosine;
+  }
+  return {x + transform.translateX, y + transform.translateY};
+}
+
 // Draws one texture quad, applying the widget's attach-UI state and the HUD start/exit
 // root scale. Every string has its own texture, so the batch is flushed right away.
 void drawElementQuad(batch::SpriteBatch& batch, const gl::Texture& texture,
@@ -225,10 +258,11 @@ void drawElementQuad(batch::SpriteBatch& batch, const gl::Texture& texture,
   float vv1 = v1;
 
   if (transform.valid) {
-    const float scaleX = std::abs(transform.scaleX);
-    const float scaleY = std::abs(transform.scaleY);
-    w *= scaleX;
-    h *= scaleY;
+    const auto centre = transformedHudCentre(cx, cy, w, h, element, transform, transforms.useFix);
+    cx = centre[0];
+    cy = centre[1];
+    w *= std::abs(transform.scaleX);
+    h *= std::abs(transform.scaleY);
     rot += transform.rotateDeg;
     if (transform.scaleX < 0.0F) std::swap(uu0, uu1);
     if (transform.scaleY < 0.0F) std::swap(vv0, vv1);
@@ -236,8 +270,6 @@ void drawElementQuad(batch::SpriteBatch& batch, const gl::Texture& texture,
     g *= transform.green;
     b *= transform.blue;
     a *= transform.alpha;
-    cx += transform.translateX;
-    cy += transform.translateY;
   }
 
   // The start and exit animations scale the whole HUD vertically about the play
@@ -319,8 +351,6 @@ void drawComposedLabel(batch::SpriteBatch& batch, const HudCanvas& canvas, HudEl
   const auto& transform = transforms.element[static_cast<std::size_t>(element)];
   float scaleX = 1.0F;
   float scaleY = 1.0F;
-  float translateX = 0.0F;
-  float translateY = 0.0F;
   float r = red;
   float g = green;
   float b = blue;
@@ -328,8 +358,6 @@ void drawComposedLabel(batch::SpriteBatch& batch, const HudCanvas& canvas, HudEl
   if (transform.valid) {
     scaleX = std::abs(transform.scaleX);
     scaleY = std::abs(transform.scaleY);
-    translateX = transform.translateX;
-    translateY = transform.translateY;
     r *= transform.red;
     g *= transform.green;
     b *= transform.blue;
@@ -341,6 +369,14 @@ void drawComposedLabel(batch::SpriteBatch& batch, const HudCanvas& canvas, HudEl
   const float wholeHeight = static_cast<float>(metrics.values.textureHeight);
   const float wholeCenterX = baseLeft + wholeWidth * 0.5F;
   const float wholeCenterY = baseTop + wholeHeight * 0.5F;
+  float transformedWholeX = wholeCenterX;
+  float transformedWholeY = wholeCenterY;
+  if (transform.valid) {
+    const auto centre = transformedHudCentre(wholeCenterX, wholeCenterY, wholeWidth, wholeHeight,
+        element, transform, transforms.useFix);
+    transformedWholeX = centre[0];
+    transformedWholeY = centre[1];
+  }
   if (!(a > 0.002F) || !(scaleX > 0.0F) || !(scaleY > 0.0F)) return;
   const float textureWidth = static_cast<float>(strip.width);
   const float textureHeight = static_cast<float>(strip.height);
@@ -351,12 +387,10 @@ void drawComposedLabel(batch::SpriteBatch& batch, const HudCanvas& canvas, HudEl
     const float glyphTop = baseTop + static_cast<float>(placement.targetY);
     float width = static_cast<float>(placement.width) * scaleX;
     const float height = static_cast<float>(placement.height) * scaleY;
-    float centerX = wholeCenterX
-        + (glyphLeft + static_cast<float>(placement.width) * 0.5F - wholeCenterX) * scaleX
-        + translateX;
-    float centerY = wholeCenterY
-        + (glyphTop + static_cast<float>(placement.height) * 0.5F - wholeCenterY) * scaleY
-        + translateY;
+    float centerX = transformedWholeX
+        + (glyphLeft + static_cast<float>(placement.width) * 0.5F - wholeCenterX) * scaleX;
+    float centerY = transformedWholeY
+        + (glyphTop + static_cast<float>(placement.height) * 0.5F - wholeCenterY) * scaleY;
     centerY = canvas.rootY + (centerY - canvas.rootY) * canvas.rootScale;
     float scaledHeight = height * canvas.rootScale;
     centerX = canvas.reveal.x(centerX);
@@ -823,6 +857,12 @@ void drawFpsCounter(batch::SpriteBatch& batch, text::TextRenderer& text, const S
   }
 }
 } // namespace
+
+std::array<float, 2> hudElementCentreForTest(HudElement element, float centerX, float centerY,
+    float width, float height, const HudTransforms& transforms) {
+  return transformedHudCentre(centerX, centerY, width, height, element,
+      transforms.element[static_cast<std::size_t>(element)], transforms.useFix);
+}
 
 float hudUnit(const StageLayout& layout) noexcept {
   return layout.stage.height > 1.0e-6F ? layout.stage.height / 1000.0F : 1.0F;

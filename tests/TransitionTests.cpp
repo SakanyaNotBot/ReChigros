@@ -11,9 +11,11 @@
 #include "rechigros/render/fx/HitEffectMotion.hpp"
 #include "rechigros/render/scene/NoteBatch.hpp"
 #include "rechigros/render/fx/PrprChain.hpp"
+#include "rechigros/render/fx/RpeNoisePass.hpp"
 #include "rechigros/render/scene/HudPass.hpp"
 #include "rechigros/render/scene/PauseBackdrop.hpp"
 #include "rechigros/render/scene/RevealCamera.hpp"
+#include "rechigros/render/scene/RpeCameraProjection.hpp"
 #include "rechigros/render/scene/Transition.hpp"
 
 #include <algorithm>
@@ -161,6 +163,21 @@ int main() {
           OUTRO_LINE_COLLAPSE_DURATION_SEC), "lines are gone after the collapse");
   require(outroLinesVisible(true, 0.5F), "lines are visible before the collapse");
   require(outroLinesVisible(false, 5.0F), "lines are visible outside the exit");
+  require(storyboardVisibleDuringOutro(false, 2.0F)
+          && storyboardVisibleDuringOutro(true, OUTRO_LINE_COLLAPSE_START_SEC - 0.01F),
+      "storyboard lines keep their artwork before the final line collapse");
+  require(!storyboardVisibleDuringOutro(true, OUTRO_LINE_COLLAPSE_START_SEC)
+          && !storyboardVisibleDuringOutro(true, OUTRO_LINE_COLLAPSE_START_SEC + 0.35F),
+      "storyboard textures and text do not enter the final line collapse");
+  // The backdrop eases out before the collapse window, so scenery never shrinks with the
+  // judge-line canvas.
+  require(close(outroBackdropAlpha(false, 0.5F), 1.0F), "backdrop is opaque outside the exit");
+  require(close(outroBackdropAlpha(true, 0.0F), 1.0F), "backdrop starts opaque");
+  require(close(outroBackdropAlpha(true, OUTRO_LINE_COLLAPSE_START_SEC), 0.0F),
+      "backdrop is gone when the collapse starts");
+  require(outroBackdropAlpha(true, 0.5F) > 0.0F
+          && outroBackdropAlpha(true, 0.5F) < 1.0F,
+      "backdrop fades during the first half of the exit");
 
   // --- background transmission ------------------------------------------------
   // Gameplay with no dim: the artwork shows through at half strength.
@@ -247,6 +264,110 @@ int main() {
     // length is produced.
     const float ultraWide = rechigros::render::fx::DsGridPass::squareSidePixels(3440, 1440);
     require(ultraWide > 0.0F && std::isfinite(ultraWide), "an ultra-wide screen gives a finite side");
+  }
+
+  // --- attached HUD element pivots --------------------------------------------
+  {
+    HudTransforms transforms;
+    auto& scale = transforms.element[static_cast<std::size_t>(HudElement::Pause)];
+    scale.valid = true;
+    scale.scaleX = 2.0F;
+    scale.scaleY = 3.0F;
+    for (int element = 1; element < kHudElementCount; ++element) {
+      transforms.element[static_cast<std::size_t>(element)] = scale;
+    }
+    const std::array<std::pair<HudElement, std::array<float, 2>>, 7> cases{{
+        {HudElement::Pause, {110.0F, 120.0F}},
+        {HudElement::ComboNumber, {100.0F, 100.0F}},
+        {HudElement::ComboLabel, {100.0F, 100.0F}},
+        {HudElement::Score, {90.0F, 120.0F}},
+        {HudElement::Bar, {110.0F, 100.0F}},
+        {HudElement::Name, {110.0F, 80.0F}},
+        {HudElement::Level, {90.0F, 80.0F}},
+    }};
+    for (const auto& [element, expected] : cases) {
+      const auto centre = hudElementCentreForTest(element, 100.0F, 100.0F, 20.0F, 20.0F,
+          transforms);
+      if (!close(centre[0], expected[0]) || !close(centre[1], expected[1])) {
+        std::cerr << "HUD pivot " << static_cast<int>(element) << " got " << centre[0] << ","
+                  << centre[1] << " expected " << expected[0] << "," << expected[1] << '\n';
+      }
+      require(close(centre[0], expected[0]) && close(centre[1], expected[1]),
+          "each attached HUD element scales about its own anchor");
+    }
+    transforms.element[static_cast<std::size_t>(HudElement::Pause)].scaleX = 1.0F;
+    transforms.element[static_cast<std::size_t>(HudElement::Pause)].scaleY = 1.0F;
+    transforms.element[static_cast<std::size_t>(HudElement::Pause)].rotateDeg = 90.0F;
+    const auto rotated = hudElementCentreForTest(HudElement::Pause, 100.0F, 100.0F, 20.0F,
+        20.0F, transforms);
+    require(close(rotated[0], 80.0F) && close(rotated[1], 100.0F),
+        "the pause binding rotates about its top-left anchor");
+    transforms.useFix = false;
+    require(close(hudElementCentreForTest(HudElement::Name, 100.0F, 100.0F, 20.0F,
+        20.0F, transforms)[0], 100.0F), "the legacy centre-pivot setting remains available");
+  }
+  {
+    using rechigros::render::fx::invertedNoiseCoveredForTest;
+    for (int count = 0; count <= 6; ++count) {
+      require(invertedNoiseCoveredForTest(count) == (count % 2 != 0),
+          "inverted noise areas retain odd-overlap coverage");
+      require(invertedNoiseCoveredForTest(count, true) == (count == 1),
+          "single-inversion mode cancels every count above one");
+    }
+  }
+
+  // --- RPE camera projection ---------------------------------------------------
+  {
+    const auto layout = computeStageLayout(1920.0F, 1080.0F, 16.0F / 9.0F, false);
+    rechigros::game::RpeCameraFrame neutral;
+    neutral.active = true;
+    const auto neutralCamera = resolveRpeCamera(neutral, layout);
+    const auto expected = layout.stageProjection();
+    StageLayout projectedLayout = layout;
+    projectedLayout.cameraActive = true;
+    projectedLayout.cameraMatrix = neutralCamera.matrix;
+    const auto actual = projectedLayout.stageProjection();
+    const std::array<std::array<float, 2>, 4> points{{
+        {0.0F, 0.0F}, {960.0F, 540.0F}, {1920.0F, 1080.0F}, {100.0F, 700.0F}}};
+    for (const auto& point : points) {
+      const float x = point[0], y = point[1];
+      const float expectedX = expected.m[0] * x + expected.m[4] * y + expected.m[12];
+      const float expectedY = expected.m[1] * x + expected.m[5] * y + expected.m[13];
+      const float w = actual.m[3] * x + actual.m[7] * y + actual.m[15];
+      const float actualX = (actual.m[0] * x + actual.m[4] * y + actual.m[12]) / w;
+      const float actualY = (actual.m[1] * x + actual.m[5] * y + actual.m[13]) / w;
+      require(close(actualX, expectedX, 1.0e-5F) && close(actualY, expectedY, 1.0e-5F),
+          "the default RPE camera matches the orthographic projection");
+    }
+
+    rechigros::game::RpeCameraFrame perspective;
+    perspective.active = true;
+    perspective.x = 50.0;
+    perspective.y = -30.0;
+    perspective.z = 900.0;
+    perspective.yaw = 25.0;
+    perspective.pitch = -10.0;
+    perspective.roll = 8.0;
+    perspective.fov = 60.0;
+    const auto camera = resolveRpeCamera(perspective, layout);
+    const auto basis = perspective.basis();
+    const double dx = 120.0 - perspective.x;
+    const double dy = -40.0 - perspective.y;
+    const double dz = -perspective.z;
+    const double u = dx * basis[0][0] + dy * basis[0][1] + dz * basis[0][2];
+    const double v = dx * basis[1][0] + dy * basis[1][1] + dz * basis[1][2];
+    const double depth = dx * basis[2][0] + dy * basis[2][1] + dz * basis[2][2];
+    const double focal = 450.0 / std::tan(60.0 * 3.14159265358979323846 / 360.0);
+    const float x = 1920.0F * 0.5F + 120.0F * 1.2F;
+    const float y = 1080.0F * 0.5F + 40.0F * 1.2F;
+    const float clipX = camera.matrix.m[0] * x + camera.matrix.m[4] * y + camera.matrix.m[12];
+    const float clipY = camera.matrix.m[1] * x + camera.matrix.m[5] * y + camera.matrix.m[13];
+    const float clipW = camera.matrix.m[3] * x + camera.matrix.m[7] * y + camera.matrix.m[15];
+    require(close(clipW, static_cast<float>(depth), 1.0e-3F),
+        "the camera depth reaches the homogeneous W component");
+    require(close(clipX / clipW, static_cast<float>(u * focal / depth * 1.2 / 960.0), 1.0e-4F)
+        && close(clipY / clipW, static_cast<float>(v * focal / depth * 1.2 / 540.0), 1.0e-4F),
+        "perspective coordinates match the camera basis and focal length");
   }
 
   // --- shader preprocessing ---------------------------------------------------

@@ -626,7 +626,7 @@ std::string normalizeDifficultyText(const std::string& text) {
 
 std::string inferDifficultyPrefix(const std::filesystem::path& chartFile) {
   if (chartFile.empty()) return {};
-  std::string base = chartFile.stem().string();
+  std::string base = platform::pathToUtf8(chartFile.stem());
   std::string upper = base;
   std::transform(upper.begin(), upper.end(), upper.begin(),
       [](unsigned char character) { return static_cast<char>(std::toupper(character)); });
@@ -749,7 +749,7 @@ bool writeInfoJson(const std::filesystem::path& file, const ChartInfo& info) {
 }
 
 bool isChartCandidate(const std::filesystem::path& file) {
-  const std::string name = toLower(file.filename().string());
+  const std::string name = toLower(platform::pathToUtf8(file.filename()));
   if (name == "info.json" || name == "extra.json" || name == "respack.json"
       || name == "replay.json") {
     return false;

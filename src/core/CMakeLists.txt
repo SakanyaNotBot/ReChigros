@@ -14,7 +14,9 @@ add_library(rechigros_core STATIC
   OfficialLevelEffects.cpp
   PracticeJudgeWindows.cpp
   PrprEffect.cpp
+  RpeCamera.cpp
   RpeNoiseArea.cpp
+  RpeNoiseCoverage.cpp
   RpeTrajectory.cpp)
 
 target_include_directories(rechigros_core PUBLIC "${PROJECT_SOURCE_DIR}/include")

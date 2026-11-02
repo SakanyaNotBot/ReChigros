@@ -247,6 +247,7 @@ int main(){
     JudgeLine effectLine;
     effectLine.bpm = 120.0;
     effectLine.noteYControls.push_back(JudgeLine::NoteControlPoint{0.0F, 0.5F, 1});
+    effectLine.noteYControls.push_back(JudgeLine::NoteControlPoint{900.0F, 0.5F, 1});
     Note effectNote;
     effectNote.isHold = true;
     effectNote.isAbove = true;

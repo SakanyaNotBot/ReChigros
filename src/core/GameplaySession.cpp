@@ -162,6 +162,15 @@ float GameplaySession::touchPosition(const Note& note, float x, float y, double 
   auto* line = note.master;
   if (!line) return std::numeric_limits<float>::max();
   const auto view = stage();
+  if (chart_ != nullptr && chart_->rpeCamera.available()) {
+    const auto camera = chart_->rpeCamera.sample(chartTime);
+    const auto point = camera.planeAt(x, y, viewport_.width, viewport_.height,
+        view.height / 900.0F);
+    if (!point) return std::numeric_limits<float>::max();
+    const float scale = view.height / 900.0F;
+    x = view.left + view.width * 0.5F + static_cast<float>((*point)[0] * scale);
+    y = view.top + view.height * 0.5F - static_cast<float>((*point)[1] * scale);
+  }
   const auto state = line->fillState(chartTime, view.aspect);
   const auto lineX = view.left + state.xNorm * view.width;
   const auto lineY = view.top + state.yNorm * view.height;
@@ -190,6 +199,15 @@ float GameplaySession::judgeDistanceFromPosition(const Note& note, float x, floa
   auto* line = note.master;
   if (!line) return std::numeric_limits<float>::max();
   const auto view = stage();
+  if (chart_ != nullptr && chart_->rpeCamera.available()) {
+    const auto camera = chart_->rpeCamera.sample(chartTime);
+    const auto point = camera.planeAt(x, y, viewport_.width, viewport_.height,
+        view.height / 900.0F);
+    if (!point) return std::numeric_limits<float>::max();
+    const float scale = view.height / 900.0F;
+    x = view.left + view.width * 0.5F + static_cast<float>((*point)[0] * scale);
+    y = view.top + view.height * 0.5F - static_cast<float>((*point)[1] * scale);
+  }
   const auto state = line->fillState(chartTime, view.aspect);
   const auto lineX = view.left + state.xNorm * view.width;
   const auto lineY = view.top + state.yNorm * view.height;
@@ -298,6 +316,16 @@ bool GameplaySession::touchBlocked(std::int64_t id) const noexcept {
   return blockedTouchIds_.find(id) != blockedTouchIds_.end();
 }
 
+std::vector<GameplaySession::BlockedTouch> GameplaySession::liveTouches() const {
+  std::vector<BlockedTouch> result;
+  result.reserve(touches_.size());
+  for (const auto& [id, touch] : touches_) {
+    if (touch != nullptr) result.push_back({id, touch->x, touch->y});
+  }
+  std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
+  return result;
+}
+
 std::vector<std::array<float, 2>> GameplaySession::blockedTouchPositions() const {
   std::vector<std::array<float, 2>> positions;
   positions.reserve(blockedTouches_.size());
@@ -326,7 +354,7 @@ void GameplaySession::updateBlocks(double time, float frameDeltaSec) {
   // Zone state only feeds the per-finger touch block latch, so with no zone, or with no finger
   // down, nothing can be swallowed and no latch can survive; the renderer keeps its own zone
   // runtime for drawing, so skipping the pass here changes no drawn pixel either.
-  if (blocks_.empty() || touches_.empty()) {
+  if ((blocks_.empty() && (chart_ == nullptr || chart_->rpeNoiseAreas.empty())) || touches_.empty()) {
     blockedTouchIds_.clear();
     blockedTouchPulseSec_ = -1.0;
     publishBlockTouchState(time);
@@ -352,7 +380,22 @@ void GameplaySession::updateBlocks(double time, float frameDeltaSec) {
   for (auto& [id, touch] : touches_) {
     if (touch == nullptr) continue;
     if (blockedTouchIds_.find(id) == blockedTouchIds_.end()) {
-      if (!OfficialBlock::tryGetBlockingBlock(blocks_, touch->x, touch->y, view.height)) continue;
+      bool blocked = OfficialBlock::tryGetBlockingBlock(blocks_, touch->x, touch->y, view.height);
+      if (!blocked && chart_ != nullptr && !chart_->rpeNoiseAreas.empty()) {
+        game::RpeNoisePoint point{
+            (touch->x - view.left - view.width * 0.5F) * 1350.0 / view.width,
+            (view.top + view.height * 0.5F - touch->y) * 900.0 / view.height};
+        if (chart_->rpeCamera.available()) {
+          const auto camera = chart_->rpeCamera.sample(time);
+          const auto projected = camera.planeAt(touch->x, touch->y, viewport_.width,
+              viewport_.height, view.height / 900.0F);
+          if (projected) point = {(*projected)[0], (*projected)[1]};
+          else continue;
+        }
+        blocked = game::rpeNoiseTouchBlocked(chart_->rpeNoiseAreas, time, point,
+            view.height, chart_->rpeNoiseIgnoreTripleInversion, view.aspect);
+      }
+      if (!blocked) continue;
       blockedTouchIds_.insert(id);
     }
     blockedTouches_.push_back({id, touch->x, touch->y});

@@ -108,8 +108,18 @@ std::string stringValue(const json& source, std::initializer_list<const char*> k
   return value && value->is_string() ? value->get<std::string>() : std::move(fallback);
 }
 
-// Reads an RPE beat value: a number, or an array whose first two entries are a whole beat
-// and a numerator over the third, then quantises it to thousandths before scaling to ticks.
+std::string utf8Path(const std::filesystem::path& path) {
+  const auto text = path.generic_u8string();
+  return {text.begin(), text.end()};
+}
+
+std::string utf8ResourcePath(const std::filesystem::path& base, std::string_view relative) {
+  return utf8Path(base /
+      std::filesystem::path(std::u8string(relative.begin(), relative.end())));
+}
+
+// Beat triples retain their full precision so tempo changes and fractional event boundaries
+// are evaluated at the authored time rather than at a quantised beat.
 double parseBeat(const json* value) {
   if (!value || value->is_null()) return 0.0;
   double beat{};
@@ -138,8 +148,7 @@ double parseBeat(const json* value) {
     beat = 0.0;
   }
   if (!std::isfinite(beat)) beat = 0.0;
-  // Round half up rather than to nearest-even so the tie-break matches the source format.
-  return std::floor(beat * 1000.0 + 0.5) / 1000.0 * 32.0;
+  return beat * 32.0;
 }
 
 const json* eventTime(const json& event, bool start) {
@@ -257,6 +266,7 @@ std::vector<LineEvent> parseLineEvents(const json& source, const BpmConverter& b
       auto normalize = [](double value) {
         if (value == -1.0) value = -255.0;
         else if (value == -2.0) value = -510.0;
+        else value = std::trunc(value);
         if (value > 1.5 || value < -2.5) value /= 255.0;
         return value;
       };
@@ -480,6 +490,14 @@ int shaderIndexByName(std::string name) {
   for (std::size_t index = 0; index < normalized.size(); ++index) {
     if (normalized[index] == '-') normalized[index] = '_';
   }
+  std::string compact;
+  std::copy_if(normalized.begin(), normalized.end(), std::back_inserter(compact),
+      [](char c) { return c != '_'; });
+  if (compact == "radialblur") normalized = "radial_blur";
+  else if (compact == "circleblur") normalized = "circle_blur";
+  else if (compact == "oldtv") normalized = "old_tv";
+  else if (compact == "oilpainting") normalized = "oil_painting";
+  else if (compact == "heateffect") normalized = "heat_distortion";
   for (std::size_t index = 0; index < kShaderNames.size(); ++index) {
     if (normalized == kShaderNames[index]) return static_cast<int>(index);
   }
@@ -568,32 +586,53 @@ std::optional<PrprEffect> parseEffect(const json& source, const BpmConverter& bp
       effect.shader = kShaderNames[static_cast<std::size_t>(index)];
     }
   } else return std::nullopt;
+  if (boolean(source, {"clone"}, false)) {
+    const int index = shaderIndexByName(effect.shader);
+    if (index >= 0 && index < 10) effect.shader += "_2";
+  }
   effect.startTime = effectBeatSeconds(field(source, {"startTime", "start", "time1"}), bpm, lineFactor);
-  effect.endTime = effectBeatSeconds(field(source, {"endTime", "end", "time2"}), bpm, lineFactor);
-  if (effect.endTime <= effect.startTime) effect.endTime = std::numeric_limits<double>::infinity();
+  if (const auto* end = field(source, {"endTime", "end", "time2"})) {
+    effect.endTime = effectBeatSeconds(end, bpm, lineFactor);
+    if (effect.endTime < effect.startTime) effect.endTime = effect.startTime;
+  } else {
+    effect.endTime = effect.startTime;
+  }
   if (const auto* vars = object(source, {"vars"})) parseEffectVariables(*vars, bpm, lineFactor, effect);
   return effect;
 }
 
 void appendShaderEffects(const json& root, Chart& chart, const BpmConverter& bpm) {
-  const auto append = [&](const json& source, int defaultLine, double factor) {
-    if (auto effect = parseEffect(source, bpm, defaultLine, factor)) {
+  const auto append = [&](const json& source, int defaultLine, bool rootEntry) {
+    int line = integer(source, {"line"}, defaultLine);
+    if (rootEntry) {
+      const int count = static_cast<int>(chart.judgeLineList.size());
+      if (field(source, {"line"}) == nullptr) {
+        int index = -1;
+        if (const auto* shader = field(source, {"shader", "shaderType", "name"})) {
+          if (shader->is_number()) index = integer(source, {"shader"}, -1);
+          else if (shader->is_string()) index = shaderIndexByName(shader->get<std::string>());
+        }
+        if (boolean(source, {"clone"}, false) && index >= 0 && index < 10) index += 10;
+        line = std::max(0, index);
+      }
+      if (count > 0) line = (line % count + count) % count;
+      else line = 0;
+    }
+    const double factor = line >= 0 && static_cast<std::size_t>(line) < chart.judgeLineList.size()
+        ? chart.judgeLineList[static_cast<std::size_t>(line)]->bpmfactor : 1.0;
+    if (auto effect = parseEffect(source, bpm, line, factor)) {
+      effect->lineIndex = line;
       chart.prprEffects.push_back(std::move(*effect));
     }
   };
   for (const char* key : {"effects", "shaderEvents"}) {
     if (const auto* effects = array(root, {key})) {
-      for (const auto& item : *effects) {
-        const int line = integer(item, {"line"}, 0);
-        const double factor = line >= 0 && static_cast<std::size_t>(line) < chart.judgeLineList.size()
-            ? chart.judgeLineList[static_cast<std::size_t>(line)]->bpmfactor : 1.0;
-        append(item, line, factor);
-      }
+      for (const auto& item : *effects) append(item, -1, true);
     }
   }
   if (const auto* meta = object(root, {"META", "meta"})) {
     if (const auto* effects = array(*meta, {"effects"})) {
-      for (const auto& item : *effects) append(item, 0, 1.0);
+      for (const auto& item : *effects) append(item, -1, true);
     }
   }
   for (std::size_t index = 0; index < chart.judgeLineList.size(); ++index) {
@@ -602,9 +641,7 @@ void appendShaderEffects(const json& root, Chart& chart, const BpmConverter& bpm
     const auto* extended = object((*lines)[index], {"extended", "Extended"});
     if (extended == nullptr) continue;
     if (const auto* paints = array(*extended, {"paintEvents"})) {
-      for (const auto& item : *paints) {
-        append(item, static_cast<int>(index), chart.judgeLineList[index]->bpmfactor);
-      }
+      for (const auto& item : *paints) append(item, static_cast<int>(index), false);
     }
   }
   std::stable_sort(chart.prprEffects.begin(), chart.prprEffects.end(),
@@ -1104,13 +1141,8 @@ std::array<float, 3> rgb(const json* value, bool& valid) {
     return result;
   }
   if (!parsed) return result;
-  // The scale decision is taken once for the whole colour: a single component above 1 means
-  // all three are byte-valued, never a per-channel mix.
-  const bool byteValued =
-      components[0] > 1.0 || components[1] > 1.0 || components[2] > 1.0;
   for (std::size_t i = 0; i < 3; ++i) {
-    const double scaled = byteValued ? components[i] / 255.0 : components[i];
-    result[i] = std::clamp(static_cast<float>(scaled), 0.0F, 1.0F);
+    result[i] = std::clamp(static_cast<float>(components[i] / 255.0), 0.0F, 1.0F);
   }
   valid = true;
   return result;
@@ -1148,14 +1180,13 @@ std::optional<Note> parseNote(const json& source, const BpmConverter& bpm, doubl
   if (!std::isfinite(note.speed)) note.speed = 1.0;
   note.positionX = number(source, {"positionX", "x", "posX"}, 0.0) / (670.0 * (9.0 / 80.0));
   note.isFake = boolean(source, {"isFake", "fake"}, false);
-  // `size` and `xScale` feed the same field; non-finite or non-positive falls back to 1.
+  // Size changes only the horizontal scale; zero-sized notes are valid and are not drawn.
   const auto widthScale = number(source, {"size", "width", "xScale"}, 1.0);
   note.size = 1.0F;
-  note.xScale = static_cast<float>(std::isfinite(widthScale) && widthScale > 0.0 ? widthScale : 1.0);
-  note.xScale = std::isfinite(note.xScale) && note.xScale > 0.0F ? note.xScale : 1.0F;
+  note.xScale = static_cast<float>(std::isfinite(widthScale) ? widthScale : 1.0);
   auto alpha = number(source, {"alpha", "opacity"}, 1.0);
   if (!std::isfinite(alpha)) alpha = 1.0;
-  // Byte-scaled alphas (0..255) are detected by magnitude and normalised before clamping.
+  alpha = std::trunc(alpha);
   if (alpha > 1.5 || alpha < -2.5) alpha /= 255.0;
   if (alpha < 0.0) alpha = 0.0;
   if (alpha > 1.0) alpha = 1.0;
@@ -1186,10 +1217,7 @@ std::optional<Note> parseNote(const json& source, const BpmConverter& bpm, doubl
 bool noteAbove(const json& source, bool fallback) {
   if (field(source, {"isAbove"})) return boolean(source, {"isAbove"}, fallback);
   const auto* above = field(source, {"above"});
-  if (above && above->is_number()) {
-    const auto value = static_cast<int>(std::llround(above->get<double>()));
-    if (value == 1) return true; if (value == 2) return false; return value != 0;
-  }
+  if (above && above->is_number()) return above->get<double>() == 1.0;
   return boolean(source, {"above", "aboveLine"}, fallback);
 }
 
@@ -1257,7 +1285,11 @@ std::unique_ptr<JudgeLine> parseJudgeLine(const json& source, const BpmConverter
       {"judgeAreaControl", "judge_area_control", "judgementAreaControl", "judgmentAreaControl", "judgeRangeControl", "hitAreaControl", "areaControl"},
       {"judgeArea", "judge_area", "JudgeArea", "judgementArea", "judgmentArea", "hitArea", "hitRange", "judgeRange", "area"}, 1.0F);
   const auto texture = stringValue(source, {"Texture", "texture"});
-  if (!texture.empty() && texture != "line.png") line->texture = (baseDirectory / std::filesystem::path(texture)).string();
+  if (!texture.empty() && texture != "line.png") {
+    const auto path = (baseDirectory /
+        std::filesystem::path(std::u8string(texture.begin(), texture.end()))).generic_u8string();
+    line->texture.assign(path.begin(), path.end());
+  }
 
   const auto parseLayer = [&](const json& layerSource) {
     JudgeLine::EventLayer layer;
@@ -1344,9 +1376,10 @@ std::unique_ptr<JudgeLine> parseJudgeLine(const json& source, const BpmConverter
     if (const auto* texts = array(*extended, {"textEvents", "labelEvents"})) {
       for (const auto& item : *texts) if (item.is_object()) {
         const auto start = stringValue(item, {"start", "startValue", "startText", "text", "value", "label"});
-        if (start.empty()) continue; TextEvent event; event.startTime = bpm.normBeat(parseBeat(eventTime(item, true)), timeBase);
+        TextEvent event; event.startTime = bpm.normBeat(parseBeat(eventTime(item, true)), timeBase);
         event.endTime = bpm.normBeat(parseBeat(eventTime(item, false)), timeBase);
         event.text = start; event.endText = stringValue(item, {"end", "endValue", "endText"}, start);
+        event.hasEndText = true;
         parseEasing(event, item); line->judgeLineTextEvents.push_back(std::move(event));
       }
     }
@@ -1367,8 +1400,14 @@ std::unique_ptr<JudgeLine> parseJudgeLine(const json& source, const BpmConverter
       line->judgeLineInclineEvents.push_back(std::move(event));
     } else for (auto& event : line->judgeLineInclineEvents) { event.start += skew; event.end += skew; }
   }
-  line->textureIsGif = line->texture.size() >= 4
-      && line->texture.substr(line->texture.size() - 4) == ".gif";
+  line->textureIsGif = boolean(source, {"isGif", "IsGif"}, false);
+  if (!line->textureIsGif && line->texture.size() >= 4) {
+    const auto extension = line->texture.substr(line->texture.size() - 4);
+    line->textureIsGif = std::equal(extension.begin(), extension.end(), ".gif",
+        [](unsigned char first, unsigned char second) {
+          return std::tolower(first) == std::tolower(second);
+        });
+  }
   parseNotes(source, bpm, timeBase, *line);
   return line;
 }
@@ -1399,10 +1438,10 @@ Chart parseRoot(const json& root, const std::filesystem::path& baseDirectory) {
         line->rotateWithFather = chart.rpeVersion >= 163;
       }
       for (auto& note : line->notesAbove) {
-        if (!note.hitSound.empty()) note.hitSound = (baseDirectory / note.hitSound).generic_string();
+        if (!note.hitSound.empty()) note.hitSound = utf8ResourcePath(baseDirectory, note.hitSound);
       }
       for (auto& note : line->notesBelow) {
-        if (!note.hitSound.empty()) note.hitSound = (baseDirectory / note.hitSound).generic_string();
+        if (!note.hitSound.empty()) note.hitSound = utf8ResourcePath(baseDirectory, note.hitSound);
       }
       const auto attach = line->attachUiElementId;
       chart.judgeLineList.push_back(std::move(line));
@@ -1428,6 +1467,7 @@ Chart parseRoot(const json& root, const std::filesystem::path& baseDirectory) {
   if (const auto* global = field(root, {"globalEvents"})) {
     if (global->is_object()) chart.rpeGlobalEventsJson = global->dump();
   }
+  chart.rpeCamera = RpeCamera::parse(chart.rpeGlobalEventsJson, chart.bpmTimeline);
   appendShaderEffects(root, chart, bpm);
   chart.prepareRuntime();
   return chart;
@@ -1626,7 +1666,7 @@ Chart parseStreaming(std::string_view text, const std::filesystem::path& baseDir
     }
     for (auto* destination : {&line->notesAbove, &line->notesBelow}) {
       for (auto& note : *destination) {
-        if (!note.hitSound.empty()) note.hitSound = (baseDirectory / note.hitSound).generic_string();
+        if (!note.hitSound.empty()) note.hitSound = utf8ResourcePath(baseDirectory, note.hitSound);
       }
     }
   }

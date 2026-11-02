@@ -26,6 +26,7 @@
 #include <cstdio>
 #include <memory>
 #include <numbers>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -71,6 +72,7 @@ struct HoverSlot {
   bool held{};
 };
 std::array<HoverSlot, 10> gHoverSlots{};
+std::optional<render::RenderFrameInput> gCaptureFrameInput;
 
 // Whether the music is currently ducked by a zone. The audio filter and the level mod are only
 // told about changes, because both act on the transition rather than on every frame.
@@ -1653,7 +1655,7 @@ bool beginRun(AppContext& context, std::unique_ptr<game::Chart> chart,
     std::unordered_set<std::string> seenHitSounds;
     for (const auto* note : game.chart->allNotesSorted) {
       if (note->hitSound.empty() || !seenHitSounds.insert(note->hitSound).second) continue;
-      context.audio->loadHitSound(note->hitSound);
+      context.audio->loadHitSound(platform::pathFromUtf8(note->hitSound));
     }
     // A run started through the loading screen already has its music decoded, so the frame
     // that starts it only swaps the buffer in. The synchronous path still decodes here.
@@ -1803,7 +1805,8 @@ void gameEnterWithLoading(AppContext& context) {
           for (const auto* note : loaded.chart->allNotesSorted) {
             if (note == nullptr || note->hitSound.empty()) continue;
             if (!seen.insert(note->hitSound).second) continue;
-            auto buffer = audio::Decoder::decodeFile(note->hitSound, sampleRate);
+            auto buffer = audio::Decoder::decodeFile(
+                platform::pathFromUtf8(note->hitSound), sampleRate);
             if (!buffer.empty()) {
               loaded.hitSounds.emplace_back(note->hitSound, std::move(buffer));
             }
@@ -1817,7 +1820,8 @@ void gameEnterWithLoading(AppContext& context) {
 
 void pollChartLoad(AppContext& context) {
   auto& game = context.game;
-  if (!game.loading || !game.chartLoad.valid()) return;
+  if (!game.loading) return;
+  if (!game.chartLoad.valid() && !game.pendingRun.has_value()) return;
   // The panel gets one presented frame before any of the renderer's cost is paid, so the
   // screen that the press came from never freezes; the artwork decode then runs beside it.
   if (game.loadingFrames < 2) return;
@@ -1850,11 +1854,12 @@ void pollChartLoad(AppContext& context) {
     context.renderer->setSkinDirectory(skinDirectory);
     context.renderer->setBackgroundImage(context.play.bgFile);
   }
-  if (game.chartLoad.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
-  GameRuntime::LoadedRun loaded = game.chartLoad.get();
-  // The future is spent; keep the runtime from treating it as still running.
-  game.loading = false;
-  if (!loaded.chart) {
+  if (!game.pendingRun.has_value()) {
+    if (!game.chartLoad.valid()) return;
+    if (game.chartLoad.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+    game.pendingRun = game.chartLoad.get();
+  }
+  if (!game.pendingRun->chart) {
     context.loadError = gLoadingFailure != nullptr && !gLoadingFailure->empty()
         ? *gLoadingFailure
         : std::string("谱面加载失败");
@@ -1866,6 +1871,17 @@ void pollChartLoad(AppContext& context) {
     return;
   }
   gLoadingFailure.reset();
+  // A storyboard chart can own dozens of images and walk through them one per frame. Decode
+  // the complete set here, while the loading panel is still up, instead of decoding on the
+  // render thread the first time each line appears.
+  if (context.renderer != nullptr) {
+    context.renderer->prefetchChartTextures(*game.pendingRun->chart);
+    if (!context.renderer->gameplayTexturesReady()) return;
+  }
+  GameRuntime::LoadedRun loaded = std::move(*game.pendingRun);
+  game.pendingRun.reset();
+  // The future is spent; keep the runtime from treating it as still running.
+  game.loading = false;
   // Only the part that cannot leave the main thread is timed here: the parse already happened
   // on the worker, so this is what a press still costs the frame that consumes it.
   const auto startMark = std::chrono::steady_clock::now();
@@ -2229,8 +2245,28 @@ void gameRender(AppContext& context) {
   // The hover discs run on the wall clock so a paused chart does not freeze their fade, and a
   // finger that has been swallowed keeps its slot until it lifts.
   updateHoverSlots(context, context.nowSec, input.touches);
+  input.noiseTouchCount = 0;
+  for (const auto& touch : game.session.liveTouches()) {
+    if (input.noiseTouchCount >= static_cast<int>(input.noiseTouches.size())) break;
+    input.noiseTouches[input.noiseTouchCount++] = {touch.id, touch.x, touch.y};
+  }
+  if (context.captureGameplayRequested) gCaptureFrameInput = input;
   context.renderer->render(input, game.chart.get(), &judgement);
   game.gameplayFrameDrawn = true;
+}
+
+bool captureGameplayFrame(AppContext& context, int width, int height,
+    std::vector<std::uint8_t>& pixels) {
+  if (!gCaptureFrameInput || context.renderer == nullptr || !context.game.loaded ||
+      context.game.chart == nullptr) return false;
+  const bool begun = context.renderer->beginCapture(*gCaptureFrameInput,
+      context.game.chart.get(), width, height);
+  const bool captured = begun && context.renderer->captureFrame(*gCaptureFrameInput,
+      context.game.chart.get(), &context.game.session.judgement(), pixels);
+  context.renderer->endCapture();
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glViewport(0, 0, width, height);
+  return captured;
 }
 
 // The loading panel shown while a run's chart is being parsed. The reference puts a small

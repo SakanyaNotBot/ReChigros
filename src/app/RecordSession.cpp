@@ -743,7 +743,8 @@ void RecordSession::mixHitSounds(AppContext& context, std::vector<float>& mix,
     const audio::AudioBuffer* sound = &sounds.bankFor(type);
     if (!note->hitSound.empty()) {
       auto [entry, inserted] = customBanks.try_emplace(note->hitSound);
-      if (inserted) entry->second = audio::Decoder::decodeFile(note->hitSound, kAudioSampleRate);
+      if (inserted) entry->second =
+          audio::Decoder::decodeFile(platform::pathFromUtf8(note->hitSound), kAudioSampleRate);
       if (!entry->second.empty()) sound = &entry->second;
     }
     if (sound->empty()) continue;

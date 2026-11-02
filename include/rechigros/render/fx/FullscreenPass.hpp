@@ -37,7 +37,7 @@ public:
   FullscreenPass(const FullscreenPass&) = delete;
   FullscreenPass& operator=(const FullscreenPass&) = delete;
 
-  bool build(const char* fragmentSource) noexcept;
+  bool build(const char* fragmentSource, bool rpeViewport = false) noexcept;
   void release() noexcept;
 
   [[nodiscard]] bool valid() const noexcept { return program_.valid(); }

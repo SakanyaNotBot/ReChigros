@@ -321,6 +321,45 @@ void readEffectVariables(const json& varsNode, game::PrprEffect& effect,
         const json* startTimeNode = findFirst(key, {"startTime", "start"});
         const json* endTimeNode = findFirst(key, {"endTime", "end"});
         if (startTimeNode == nullptr || endTimeNode == nullptr) continue;
+        const json* startValueNode = key.contains("start") ? &key["start"] : nullptr;
+        const bool vector = startValueNode != nullptr && startValueNode->is_array();
+        if (vector) {
+          game::PrprVariableEvent event;
+          event.startTime = beatToSeconds(segments, parseBeatTriple(*startTimeNode));
+          event.endTime = beatToSeconds(segments, parseBeatTriple(*endTimeNode));
+          event.count = static_cast<int>(std::min<std::size_t>(4, startValueNode->size()));
+          const json* endValueNode = key.contains("end") ? &key["end"] : nullptr;
+          for (int index = 0; index < event.count; ++index) {
+            event.from[static_cast<std::size_t>(index)] =
+                readNumber((*startValueNode)[static_cast<std::size_t>(index)], 0.0);
+            event.to[static_cast<std::size_t>(index)] = endValueNode != nullptr
+                    && endValueNode->is_array()
+                    && static_cast<std::size_t>(index) < endValueNode->size()
+                ? readNumber((*endValueNode)[static_cast<std::size_t>(index)],
+                      event.from[static_cast<std::size_t>(index)])
+                : event.from[static_cast<std::size_t>(index)];
+          }
+          event.type = std::max(0, static_cast<int>(readNumber(
+              key.contains("easingType") ? key["easingType"] : json(), 1.0)) - 1);
+          const auto leftIt = key.find("easingLeft");
+          event.left = leftIt != key.end() ? static_cast<float>(readNumber(*leftIt, 0.0)) : 0.0F;
+          const auto rightIt = key.find("easingRight");
+          event.right = rightIt != key.end() ? static_cast<float>(readNumber(*rightIt, 1.0)) : 1.0F;
+          const auto bezierIt = key.find("bezier");
+          event.bezier = bezierIt != key.end() && static_cast<int>(readNumber(*bezierIt, 0.0)) == 1;
+          if (event.bezier) {
+            if (const auto pointsIt = key.find("bezierPoints");
+                pointsIt != key.end() && pointsIt->is_array() && pointsIt->size() >= 4) {
+              event.bezierPoints = {
+                  static_cast<float>(readNumber((*pointsIt)[0], 0.0)),
+                  static_cast<float>(readNumber((*pointsIt)[1], 0.0)),
+                  static_cast<float>(readNumber((*pointsIt)[2], 1.0)),
+                  static_cast<float>(readNumber((*pointsIt)[3], 1.0))};
+            }
+          }
+          variable.vectorEvents.push_back(std::move(event));
+          continue;
+        }
 
         game::LineEvent event;
         event.startTime = beatToSeconds(segments, parseBeatTriple(*startTimeNode));
@@ -353,6 +392,18 @@ void readEffectVariables(const json& varsNode, game::PrprEffect& effect,
           [](const game::LineEvent& first, const game::LineEvent& second) {
             return first.startTime < second.startTime;
           });
+      std::stable_sort(variable.vectorEvents.begin(), variable.vectorEvents.end(),
+          [](const game::PrprVariableEvent& first, const game::PrprVariableEvent& second) {
+            return first.startTime < second.startTime;
+          });
+      if (!variable.vectorEvents.empty()) {
+        variable.values.assign(
+            static_cast<std::size_t>(variable.vectorEvents.front().count), 0.0F);
+        for (int index = 0; index < variable.vectorEvents.front().count; ++index) {
+          variable.values[static_cast<std::size_t>(index)] =
+              variable.vectorEvents.front().from[static_cast<std::size_t>(index)];
+        }
+      }
     };
 
     if (value.is_number()) {
@@ -474,7 +525,7 @@ std::filesystem::path resolveUpwards(std::filesystem::path base, const std::file
 std::filesystem::path resolveResource(const std::filesystem::path& primaryBase,
     const std::filesystem::path& secondaryBase, const std::string& relativePath) {
   if (relativePath.empty()) return {};
-  const std::filesystem::path given(relativePath);
+  const std::filesystem::path given(std::u8string(relativePath.begin(), relativePath.end()));
   std::error_code error;
   if (given.is_absolute() && std::filesystem::exists(given, error)) return given;
   if (auto found = resolveUpwards(primaryBase, given, kResourceSearchDepth); !found.empty()) {
@@ -544,7 +595,8 @@ void applyLineCsv(game::Chart& chart, const std::filesystem::path& chartPath) {
   if (rows.empty()) return;
 
   // Rows may be scoped to a chart file name; unscoped rows always apply.
-  const auto chartName = chartPath.filename().string();
+  const auto chartNameUtf8 = chartPath.filename().u8string();
+  const std::string chartName(chartNameUtf8.begin(), chartNameUtf8.end());
   const auto chartStem = stripExtension(chartName);
   std::vector<const LineCsvRow*> candidates;
   std::unordered_set<std::string> namesInCsv;
@@ -581,7 +633,8 @@ void applyLineCsv(game::Chart& chart, const std::filesystem::path& chartPath) {
     if (!row->image.empty()) {
       const auto texture = resolveResource(csvDirectory, chartDirectory, row->image);
       if (!texture.empty()) {
-        line.texture = texture.string();
+        const auto textureUtf8 = texture.generic_u8string();
+        line.texture.assign(textureUtf8.begin(), textureUtf8.end());
         line.useOfficialScale = true;
       }
     }
@@ -694,20 +747,21 @@ bool isShaderFileName(const std::string& shader) {
 void loadShaderSources(game::Chart& chart, const std::filesystem::path& chartDirectory) {
   if (chart.prprEffects.empty()) return;
   for (const auto& effect : chart.prprEffects) {
+    const auto& authoredName = effect.sourceName.empty() ? effect.shader : effect.sourceName;
     std::string relative;
-    if (!effect.shader.empty() && effect.shader.front() == '/' && effect.shader.size() > 1) {
-      relative = effect.shader.substr(1);
-    } else if (isShaderFileName(effect.shader)) {
-      relative = effect.shader;
+    if (!authoredName.empty() && authoredName.front() == '/' && authoredName.size() > 1) {
+      relative = authoredName.substr(1);
+    } else if (isShaderFileName(authoredName)) {
+      relative = authoredName;
     } else {
       continue;
     }
-    if (chart.prprShaderSources.contains(effect.shader)) continue;
+    if (chart.prprShaderSources.contains(authoredName)) continue;
     const auto shaderFile = resolveResource(chart.packDir, chartDirectory, relative);
     if (shaderFile.empty() || !std::filesystem::is_regular_file(shaderFile)) continue;
     auto source = readFile(shaderFile);
     if (source.empty()) continue;
-    chart.prprShaderSources.emplace(effect.shader, std::move(source));
+    chart.prprShaderSources.emplace(authoredName, std::move(source));
   }
 }
 
@@ -746,7 +800,14 @@ void applyPrprExtra(game::Chart& chart, const std::filesystem::path& chartDirect
       if (shaderIt == item.end() || !shaderIt->is_string()) continue;
       game::PrprEffect effect;
       effect.shader = shaderIt->get<std::string>();
+      effect.sourceName = effect.shader;
+      effect.order = item.value("order", 0);
+      effect.lineIndex = item.value("line", 0);
       if (effect.shader.empty()) continue;
+      double lineFactor = 1.0;
+      if (effect.lineIndex >= 0 && static_cast<std::size_t>(effect.lineIndex) < chart.judgeLineList.size()) {
+        lineFactor = chart.judgeLineList[static_cast<std::size_t>(effect.lineIndex)]->bpmfactor;
+      }
 
       // Effect spans accept the `start`/`end` names first, then the `startTime`/`endTime`
       // pair; a missing end collapses onto the start.
@@ -754,8 +815,8 @@ void applyPrprExtra(game::Chart& chart, const std::filesystem::path& chartDirect
       const json* endIt = findFirst(item, {"end", "endTime"});
       const double startBeat = startIt != nullptr ? parseBeatTriple(*startIt) : 0.0;
       const double endBeat = endIt != nullptr ? parseBeatTriple(*endIt) : startBeat;
-      effect.startTime = beatToSeconds(segments, startBeat);
-      effect.endTime = beatToSeconds(segments, endBeat);
+      effect.startTime = beatToSeconds(segments, startBeat) * lineFactor;
+      effect.endTime = beatToSeconds(segments, endBeat) * lineFactor;
 
       if (const auto globalIt = item.find("global");
           globalIt != item.end() && globalIt->is_boolean()) {
@@ -767,6 +828,17 @@ void applyPrprExtra(game::Chart& chart, const std::filesystem::path& chartDirect
 
       if (const auto varsIt = item.find("vars"); varsIt != item.end()) {
         readEffectVariables(*varsIt, effect, segments);
+      }
+      for (auto& [name, variable] : effect.variables) {
+        (void)name;
+        for (auto& event : variable.events) {
+          event.startTime *= lineFactor;
+          event.endTime *= lineFactor;
+        }
+        for (auto& event : variable.vectorEvents) {
+          event.startTime *= lineFactor;
+          event.endTime *= lineFactor;
+        }
       }
       chart.prprEffects.push_back(std::move(effect));
     }

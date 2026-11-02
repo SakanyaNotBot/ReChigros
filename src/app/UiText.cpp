@@ -1,6 +1,7 @@
 #include "rechigros/app/UiText.hpp"
 
 #include "rechigros/platform/AssetManager.hpp"
+#include "rechigros/platform/FileSystem.hpp"
 #include "rechigros/render/gl/Gl.hpp"
 
 #include "imstb_truetype.h"
@@ -8,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <fstream>
 #include <unordered_map>
 
 namespace rechigros::app::ui {
@@ -68,6 +70,9 @@ struct KeyHash {
 struct UiFontCache::Impl {
   std::vector<std::uint8_t> fontData;
   stbtt_fontinfo info{};
+  std::vector<std::uint8_t> fallbackData;
+  stbtt_fontinfo fallbackInfo{};
+  bool fallbackValid{};
   bool valid{};
   bool ready{};
   GLuint texture{};
@@ -82,8 +87,17 @@ struct UiFontCache::Impl {
   std::vector<std::uint8_t> scratch;
   std::unordered_map<Key, Glyph, KeyHash> glyphs;
 
-  float emScale(float pixelSize) const {
-    return stbtt_ScaleForMappingEmToPixels(&info, pixelSize);
+  const stbtt_fontinfo* fontFor(std::uint32_t codepoint) const {
+    if (stbtt_FindGlyphIndex(&info, static_cast<int>(codepoint)) > 0) return &info;
+    if (fallbackValid &&
+        stbtt_FindGlyphIndex(&fallbackInfo, static_cast<int>(codepoint)) > 0) {
+      return &fallbackInfo;
+    }
+    return &info;
+  }
+
+  static float emScale(const stbtt_fontinfo* font, float pixelSize) {
+    return stbtt_ScaleForMappingEmToPixels(font, pixelSize);
   }
 
   const Glyph* rasterise(const Key& key, float pixelSize);
@@ -151,6 +165,23 @@ bool UiFontCache::initialize(const std::filesystem::path& assetRoot) {
     return false;
   }
   impl_->valid = true;
+  const auto fallbackPath = findSymbolFontPath();
+  if (!fallbackPath.empty()) {
+    std::error_code error;
+    const auto size = std::filesystem::file_size(fallbackPath, error);
+    if (!error && size > 0) {
+      impl_->fallbackData.resize(static_cast<std::size_t>(size));
+      std::ifstream input(fallbackPath, std::ios::binary);
+      if (input.read(reinterpret_cast<char*>(impl_->fallbackData.data()),
+              static_cast<std::streamsize>(size))) {
+        const int fallbackOffset =
+            stbtt_GetFontOffsetForIndex(impl_->fallbackData.data(), 0);
+        impl_->fallbackValid = fallbackOffset >= 0 &&
+            stbtt_InitFont(&impl_->fallbackInfo, impl_->fallbackData.data(), fallbackOffset) != 0;
+      }
+      if (!impl_->fallbackValid) impl_->fallbackData.clear();
+    }
+  }
   if (!render::gl::contextAvailable()) return false;
   GLuint texture = 0;
   glGenTextures(1, &texture);
@@ -177,6 +208,8 @@ void UiFontCache::shutdown() noexcept {
   }
   impl_->glyphs.clear();
   impl_->fontData.clear();
+  impl_->fallbackData.clear();
+  impl_->fallbackValid = false;
   impl_->valid = false;
   impl_->ready = false;
 }
@@ -222,7 +255,7 @@ float UiFontCache::ascent(float pixelSize) const {
   int descent = 0;
   int lineGap = 0;
   stbtt_GetFontVMetrics(&impl_->info, &ascent, &descent, &lineGap);
-  return static_cast<float>(ascent) * impl_->emScale(pixelSize);
+  return static_cast<float>(ascent) * Impl::emScale(&impl_->info, pixelSize);
 }
 
 float UiFontCache::descent(float pixelSize) const {
@@ -231,7 +264,7 @@ float UiFontCache::descent(float pixelSize) const {
   int descent = 0;
   int lineGap = 0;
   stbtt_GetFontVMetrics(&impl_->info, &ascent, &descent, &lineGap);
-  return static_cast<float>(-descent) * impl_->emScale(pixelSize);
+  return static_cast<float>(-descent) * Impl::emScale(&impl_->info, pixelSize);
 }
 
 float UiFontCache::lineGap(float pixelSize) const {
@@ -240,28 +273,30 @@ float UiFontCache::lineGap(float pixelSize) const {
   int descent = 0;
   int lineGap = 0;
   stbtt_GetFontVMetrics(&impl_->info, &ascent, &descent, &lineGap);
-  return static_cast<float>(lineGap) * impl_->emScale(pixelSize);
+  return static_cast<float>(lineGap) * Impl::emScale(&impl_->info, pixelSize);
 }
 
 float UiFontCache::advance(std::uint32_t codepoint, float pixelSize, bool bold) {
   const Glyph* item = glyph(codepoint, pixelSize, bold);
   if (item != nullptr) return item->advance;
   if (impl_ == nullptr || !impl_->valid) return 0.0F;
+  const stbtt_fontinfo* font = impl_->fontFor(codepoint);
   int advance = 0;
   int leftSideBearing = 0;
-  stbtt_GetCodepointHMetrics(&impl_->info, static_cast<int>(codepoint), &advance,
-      &leftSideBearing);
-  return static_cast<float>(advance) * impl_->emScale(pixelSize);
+  stbtt_GetCodepointHMetrics(font, static_cast<int>(codepoint), &advance, &leftSideBearing);
+  return static_cast<float>(advance) * Impl::emScale(font, pixelSize);
 }
 
 float UiFontCache::kerning(std::uint32_t left, std::uint32_t right, float pixelSize,
     bool bold) const {
   (void)bold;
   if (impl_ == nullptr || !impl_->valid) return 0.0F;
-  const int kern = stbtt_GetCodepointKernAdvance(&impl_->info, static_cast<int>(left),
+  const stbtt_fontinfo* font = impl_->fontFor(left);
+  if (font != impl_->fontFor(right)) return 0.0F;
+  const int kern = stbtt_GetCodepointKernAdvance(font, static_cast<int>(left),
       static_cast<int>(right));
   if (kern == 0) return 0.0F;
-  return static_cast<float>(kern) * impl_->emScale(pixelSize);
+  return static_cast<float>(kern) * Impl::emScale(font, pixelSize);
 }
 
 const UiFontCache::Glyph* UiFontCache::glyph(std::uint32_t codepoint, float pixelSize,
@@ -279,10 +314,11 @@ const UiFontCache::Glyph* UiFontCache::glyph(std::uint32_t codepoint, float pixe
 
 const UiFontCache::Glyph* UiFontCache::Impl::rasterise(const Key& key, float pixelSize) {
   const auto codepoint = static_cast<int>(key.codepoint);
-  const float scale = emScale(pixelSize);
+  const stbtt_fontinfo* font = fontFor(key.codepoint);
+  const float scale = emScale(font, pixelSize);
   int advance = 0;
   int leftSideBearing = 0;
-  stbtt_GetCodepointHMetrics(&info, codepoint, &advance, &leftSideBearing);
+  stbtt_GetCodepointHMetrics(font, codepoint, &advance, &leftSideBearing);
   Glyph result;
   result.advance = static_cast<float>(advance) * scale;
 
@@ -290,7 +326,7 @@ const UiFontCache::Glyph* UiFontCache::Impl::rasterise(const Key& key, float pix
   int y0 = 0;
   int x1 = 0;
   int y1 = 0;
-  stbtt_GetCodepointBitmapBox(&info, codepoint, scale, scale, &x0, &y0, &x1, &y1);
+  stbtt_GetCodepointBitmapBox(font, codepoint, scale, scale, &x0, &y0, &x1, &y1);
   const int glyphWidth = x1 - x0;
   const int glyphHeight = y1 - y0;
   if (glyphWidth <= 0 || glyphHeight <= 0) {
@@ -303,7 +339,7 @@ const UiFontCache::Glyph* UiFontCache::Impl::rasterise(const Key& key, float pix
 
   std::vector<std::uint8_t> bitmap(
       static_cast<std::size_t>(glyphWidth) * static_cast<std::size_t>(glyphHeight), 0);
-  stbtt_MakeCodepointBitmap(&info, bitmap.data(), glyphWidth, glyphHeight, glyphWidth, scale,
+  stbtt_MakeCodepointBitmap(font, bitmap.data(), glyphWidth, glyphHeight, glyphWidth, scale,
       scale, codepoint);
 
   // Synthesised bold. Stamping the glyph at whole-pixel offsets and keeping the largest coverage
@@ -397,6 +433,32 @@ const UiFontCache::Glyph* UiFontCache::Impl::rasterise(const Key& key, float pix
 UiFontCache& fontCache() {
   static UiFontCache cache;
   return cache;
+}
+
+std::filesystem::path findSymbolFontPath() {
+#if defined(_WIN32)
+  static const std::filesystem::path candidates[] = {
+      L"C:/Windows/Fonts/seguisym.ttf", L"C:/Windows/Fonts/arialuni.ttf"};
+#elif defined(__ANDROID__)
+  static const std::filesystem::path candidates[] = {
+      "/system/fonts/NotoSansSymbols2-Regular.ttf",
+      "/system/fonts/NotoSansSymbols-Regular-Subsetted2.ttf",
+      "/system/fonts/NotoSansSymbols-Regular-Subsetted.ttf",
+      "/system/fonts/NotoSansSymbols-Regular.ttf",
+      "/system/fonts/NotoSansCJK-Regular.ttc"};
+#elif defined(__APPLE__)
+  static const std::filesystem::path candidates[] = {
+      "/System/Library/Fonts/Supplemental/Apple Symbols.ttf",
+      "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"};
+#else
+  static const std::filesystem::path candidates[] = {
+      "/usr/share/fonts/opentype/noto/NotoSansSymbols2-Regular.ttf",
+      "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"};
+#endif
+  for (const auto& candidate : candidates) {
+    if (platform::fileExists(candidate)) return candidate;
+  }
+  return {};
 }
 
 } // namespace rechigros::app::ui

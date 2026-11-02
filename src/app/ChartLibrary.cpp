@@ -70,8 +70,10 @@ void foldSingleWrapperDirectories(const std::filesystem::path& root) {
 std::string relativize(const std::filesystem::path& base, const std::filesystem::path& file) {
   std::error_code error;
   const auto relative = std::filesystem::relative(file, base, error);
-  if (error || relative.empty()) return file.filename().string();
-  return relative.generic_string();
+  if (error || relative.empty()) return platform::pathToUtf8(file.filename());
+  auto utf8 = platform::pathToUtf8(relative);
+  std::replace(utf8.begin(), utf8.end(), '\\', '/');
+  return utf8;
 }
 
 std::filesystem::path resolveRelative(const std::filesystem::path& root,
@@ -151,41 +153,60 @@ bool isLikelyChartFile(const std::filesystem::path& file) {
   return looksLikeEditorChartText(readHead(file, 32 * 1024));
 }
 
-std::filesystem::path findPackChart(const std::filesystem::path& root,
+std::filesystem::path findPackChartIn(const std::vector<std::filesystem::path>& files,
     const std::filesystem::path& preferDirectory) {
   std::vector<std::filesystem::path> found;
-  for (const auto& file : listRegularFiles(root)) {
+  for (const auto& file : files) {
     if (isLikelyChartFile(file)) found.push_back(file);
+  }
+  return choosePreferredPath(found, preferDirectory);
+}
+
+std::filesystem::path findPackChart(const std::filesystem::path& root,
+    const std::filesystem::path& preferDirectory) {
+  return findPackChartIn(listRegularFiles(root), preferDirectory);
+}
+
+std::filesystem::path findPackAudioIn(const std::vector<std::filesystem::path>& files,
+    const std::filesystem::path& preferDirectory) {
+  std::vector<std::filesystem::path> found;
+  for (const auto& file : files) {
+    if (isAudioCandidate(file)) found.push_back(file);
   }
   return choosePreferredPath(found, preferDirectory);
 }
 
 std::filesystem::path findPackAudio(const std::filesystem::path& root,
     const std::filesystem::path& preferDirectory) {
+  return findPackAudioIn(listRegularFiles(root), preferDirectory);
+}
+
+std::filesystem::path findPackImageIn(const std::vector<std::filesystem::path>& files,
+    const std::filesystem::path& preferDirectory) {
   std::vector<std::filesystem::path> found;
-  for (const auto& file : listRegularFiles(root)) {
-    if (isAudioCandidate(file)) found.push_back(file);
+  for (const auto& file : files) {
+    if (isImageCandidate(file)) found.push_back(file);
   }
   return choosePreferredPath(found, preferDirectory);
 }
 
 std::filesystem::path findPackImage(const std::filesystem::path& root,
     const std::filesystem::path& preferDirectory) {
-  std::vector<std::filesystem::path> found;
-  for (const auto& file : listRegularFiles(root)) {
-    if (isImageCandidate(file)) found.push_back(file);
-  }
-  return choosePreferredPath(found, preferDirectory);
+  return findPackImageIn(listRegularFiles(root), preferDirectory);
 }
 
 
 std::filesystem::path findInfoFile(const std::filesystem::path& root) {
-  const auto canonical = root / "info.json";
-  if (platform::fileExists(canonical)) return canonical;
+  static constexpr const char* kNames[] = {"info.json", "info.yml", "info.yaml", "info.txt",
+      "info.csv"};
+  for (const char* name : kNames) {
+    const auto candidate = root / name;
+    if (platform::fileExists(candidate)) return candidate;
+  }
   const auto files = listRegularFiles(root);
   std::vector<std::filesystem::path> found;
   for (const auto& file : files) {
-    const std::string name = toLower(file.filename().string());
+    const std::string name = toLower(platform::pathToUtf8(file.filename()));
     if (name == "info.json" || name == "info.yml" || name == "info.yaml" || name == "info.txt"
         || name == "info.csv") {
       found.push_back(file);
@@ -194,32 +215,44 @@ std::filesystem::path findInfoFile(const std::filesystem::path& root) {
   return chooseShortestPath(found);
 }
 
-std::filesystem::path findChartFile(const std::filesystem::path& root) {
+std::filesystem::path findChartFileIn(const std::vector<std::filesystem::path>& files) {
   std::vector<std::filesystem::path> found;
-  for (const auto& file : listRegularFiles(root)) {
+  for (const auto& file : files) {
     if (isChartCandidate(file)) found.push_back(file);
   }
   return chooseShortestPath(found);
 }
 
-std::filesystem::path findAudioFile(const std::filesystem::path& root) {
+std::filesystem::path findChartFile(const std::filesystem::path& root) {
+  return findChartFileIn(listRegularFiles(root));
+}
+
+std::filesystem::path findAudioFileIn(const std::vector<std::filesystem::path>& files) {
   std::vector<std::filesystem::path> found;
-  for (const auto& file : listRegularFiles(root)) {
+  for (const auto& file : files) {
     if (isAudioCandidate(file)) found.push_back(file);
   }
   return chooseShortestPath(found);
 }
 
-std::filesystem::path findImageFile(const std::filesystem::path& root) {
+std::filesystem::path findAudioFile(const std::filesystem::path& root) {
+  return findAudioFileIn(listRegularFiles(root));
+}
+
+std::filesystem::path findImageFileIn(const std::vector<std::filesystem::path>& files) {
   std::vector<std::filesystem::path> found;
-  for (const auto& file : listRegularFiles(root)) {
+  for (const auto& file : files) {
     if (isImageCandidate(file)) found.push_back(file);
   }
   return chooseShortestPath(found);
 }
 
-std::filesystem::path findByInfoName(const std::filesystem::path& root, const std::string& name,
-    bool (*predicate)(const std::filesystem::path&)) {
+std::filesystem::path findImageFile(const std::filesystem::path& root) {
+  return findImageFileIn(listRegularFiles(root));
+}
+
+std::filesystem::path findByInfoNameIn(const std::vector<std::filesystem::path>& files,
+    const std::string& name, bool (*predicate)(const std::filesystem::path&)) {
   if (name.empty()) return {};
   std::string normalized = name;
   std::replace(normalized.begin(), normalized.end(), '\\', '/');
@@ -227,12 +260,17 @@ std::filesystem::path findByInfoName(const std::filesystem::path& root, const st
   const std::string fileName = slash == std::string::npos ? normalized : normalized.substr(slash + 1);
   if (fileName.empty()) return {};
   std::vector<std::filesystem::path> found;
-  for (const auto& file : listRegularFiles(root)) {
-    if (toLower(file.filename().string()) == toLower(fileName) && predicate(file)) {
+  for (const auto& file : files) {
+    if (toLower(platform::pathToUtf8(file.filename())) == toLower(fileName) && predicate(file)) {
       found.push_back(file);
     }
   }
   return chooseShortestPath(found);
+}
+
+std::filesystem::path findByInfoName(const std::filesystem::path& root, const std::string& name,
+    bool (*predicate)(const std::filesystem::path&)) {
+  return findByInfoNameIn(listRegularFiles(root), name, predicate);
 }
 
 std::int64_t lastModified(const std::filesystem::path& file) {
@@ -277,7 +315,9 @@ std::string hashFile(const std::filesystem::path& file, std::uint64_t& sizeOut) 
 
 std::string hashPath(const std::filesystem::path& path) {
   std::uint64_t hash = 1469598103934665603ULL;
-  for (const char character : path.generic_string()) {
+  const auto generic = path.generic_u8string();
+  const std::string encodedPath(generic.begin(), generic.end());
+  for (const char character : encodedPath) {
     hash ^= static_cast<unsigned char>(character);
     hash *= 1099511628211ULL;
   }
@@ -302,7 +342,7 @@ DetectedPack detectPack(const std::filesystem::path& root,
     const std::vector<std::filesystem::path>& extracted) {
   DetectedPack pack;
   const auto baseName = [](const std::filesystem::path& file) {
-    return toLower(file.filename().string());
+    return toLower(platform::pathToUtf8(file.filename()));
   };
 
   // First pass: match the conventional file names.
@@ -524,10 +564,18 @@ void ChartLibrary::warmUpAsync() {
 }
 
 bool ChartLibrary::ready() {
-  std::lock_guard<std::mutex> lock(indexMutex_);
-  if (loaded_) return true;
-  if (!warmUp_) return false;
-  return warmUp_->wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+  {
+    std::lock_guard<std::mutex> lock(indexMutex_);
+    if (loaded_) return true;
+    if (warmUp_ && warmUp_->wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+      return true;
+    }
+  }
+  // A delete, an import or a recorded score invalidates the index without starting a new
+  // scan. The list screen polls this predicate, so the next frame kicks the rebuild here
+  // instead of leaving the scanning placeholder up until the application restarts.
+  warmUpAsync();
+  return false;
 }
 
 const std::vector<ChartRecord>& ChartLibrary::records(bool force) {
@@ -587,12 +635,24 @@ std::optional<ChartRecord> ChartLibrary::loadRecordInternal(const std::string& i
   auto bgFile = resolveRelative(root, info.illustration);
   if (!bgFile.empty() && !platform::fileExists(bgFile)) bgFile.clear();
 
-  if (chartFile.empty()) chartFile = findByInfoName(root, info.chart, isChartCandidate);
-  if (musicFile.empty()) musicFile = findByInfoName(root, info.music, isAudioCandidate);
-  if (bgFile.empty()) bgFile = findByInfoName(root, info.illustration, isImageCandidate);
-  if (chartFile.empty()) chartFile = findChartFile(root);
-  if (musicFile.empty()) musicFile = findAudioFile(root);
-  if (bgFile.empty()) bgFile = findImageFile(root);
+  // The referenced names handle a conventional pack without walking its asset tree. Only a
+  // pack whose metadata leaves a reference out pays for one directory listing, and every
+  // fallback then reuses that same listing instead of walking the tree once per file kind.
+  std::vector<std::filesystem::path> files;
+  bool filesListed = false;
+  const auto listing = [&]() -> const std::vector<std::filesystem::path>& {
+    if (!filesListed) {
+      files = listRegularFiles(root);
+      filesListed = true;
+    }
+    return files;
+  };
+  if (chartFile.empty()) chartFile = findByInfoNameIn(listing(), info.chart, isChartCandidate);
+  if (musicFile.empty()) musicFile = findByInfoNameIn(listing(), info.music, isAudioCandidate);
+  if (bgFile.empty()) bgFile = findByInfoNameIn(listing(), info.illustration, isImageCandidate);
+  if (chartFile.empty()) chartFile = findChartFileIn(listing());
+  if (musicFile.empty()) musicFile = findAudioFileIn(listing());
+  if (bgFile.empty()) bgFile = findImageFileIn(listing());
 
   const auto canonicalInfo = root / "info.json";
   bool needsWrite = !platform::fileExists(canonicalInfo);
@@ -609,8 +669,13 @@ std::optional<ChartRecord> ChartLibrary::loadRecordInternal(const std::string& i
     needsWrite = true;
   }
   // The chart's own metadata block back-fills every field the metadata file left out, one
-  // field at a time; it is not gated on the song name being absent.
-  if (!chartFile.empty()) {
+  // field at a time; it is not gated on the song name being absent. Only the fields the
+  // list and the play action need justify parsing a whole chart: optional credits are
+  // already written into the canonical info at import time, and re-reading every chart for
+  // them made a large library scan take seconds.
+  if (!chartFile.empty()
+      && (info.name.empty() || (info.level.empty() && info.difficulty.empty())
+          || info.music.empty() || info.illustration.empty())) {
     const auto meta = readInfoFromChartFile(chartFile);
     const auto fill = [&needsWrite](std::string& target, const std::string& candidate) {
       if (!target.empty() || candidate.empty()) return;
@@ -627,7 +692,7 @@ std::optional<ChartRecord> ChartLibrary::loadRecordInternal(const std::string& i
     fill(info.illustration, meta.illustration);
   }
   if (info.name.empty()) {
-    info.name = chartFile.empty() ? id : chartFile.stem().string();
+    info.name = chartFile.empty() ? id : platform::pathToUtf8(chartFile.stem());
     needsWrite = true;
   }
   if (!info.hasChartOffset) {
@@ -676,7 +741,7 @@ ChartLibrary::ImportResult ChartLibrary::importZip(const std::filesystem::path& 
   try {
     platform::extractArchive(archive, temporary);
     foldSingleWrapperDirectories(temporary);
-    return installDirectory(temporary, id, archive.stem().string(), requireComplete);
+    return installDirectory(temporary, id, platform::pathToUtf8(archive.stem()), requireComplete);
   } catch (...) {
     platform::removeRecursively(temporary);
     throw;
@@ -699,7 +764,7 @@ ChartLibrary::ImportResult ChartLibrary::importDirectory(const std::filesystem::
         error);
     if (error) throw std::runtime_error("Cannot copy chart directory");
     foldSingleWrapperDirectories(temporary);
-    return installDirectory(temporary, id, absolute.filename().string(), false);
+    return installDirectory(temporary, id, platform::pathToUtf8(absolute.filename()), false);
   } catch (...) {
     platform::removeRecursively(temporary);
     throw;
@@ -892,7 +957,7 @@ std::filesystem::path sidecarDirectFile(
 }
 
 bool isInfoFileName(const std::filesystem::path& file) {
-  const std::string name = toLower(file.filename().string());
+  const std::string name = toLower(platform::pathToUtf8(file.filename()));
   return name == "info.json" || name == "info.yml" || name == "info.yaml" || name == "info.txt"
       || name == "info.csv";
 }

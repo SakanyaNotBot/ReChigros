@@ -99,6 +99,16 @@ bool outroLinesVisible(bool inOutro, float elapsedSec) noexcept {
   return elapsedSec < OUTRO_LINE_COLLAPSE_START_SEC + OUTRO_LINE_COLLAPSE_DURATION_SEC;
 }
 
+float outroBackdropAlpha(bool inOutro, float elapsedSec) noexcept {
+  if (!inOutro) return 1.0F;
+  const float progress = elapsedSec / std::max(0.001F, OUTRO_LINE_COLLAPSE_START_SEC);
+  return 1.0F - smoothStep01(progress);
+}
+
+bool storyboardVisibleDuringOutro(bool inOutro, float elapsedSec) noexcept {
+  return !inOutro || elapsedSec < OUTRO_LINE_COLLAPSE_START_SEC;
+}
+
 float introDimProgress(float introLineScaleValue, bool officialFormat) noexcept {
   const float decorHalfFactor = officialFormat ? 0.72F : (4000.0F / 1350.0F / 2.0F);
   const float reachScale = 0.5F / decorHalfFactor;

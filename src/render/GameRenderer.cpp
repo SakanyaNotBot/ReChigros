@@ -31,12 +31,14 @@
 #include "rechigros/render/scene/PauseHudBlur.hpp"
 #include "rechigros/render/fx/PrprChain.hpp"
 #include "rechigros/render/fx/RpeNoisePass.hpp"
+#include "fx/RpeNoiseMaterial.hpp"
 #include "rechigros/render/math/Mat4.hpp"
 #include "rechigros/render/scene/HudPass.hpp"
 #include "rechigros/render/scene/LinePass.hpp"
 #include "rechigros/render/scene/ChartDebugOverlay.hpp"
 #include "rechigros/render/scene/NoteBatch.hpp"
 #include "rechigros/render/scene/RevealCamera.hpp"
+#include "rechigros/render/scene/RpeCameraProjection.hpp"
 #include "rechigros/render/scene/StageLayout.hpp"
 #include "rechigros/render/scene/Transition.hpp"
 #include "rechigros/render/skin/SkinConfig.hpp"
@@ -98,6 +100,89 @@ void clearTarget(float red, float green, float blue, float alpha) {
   glClearColor(red, green, blue, alpha);
   glClear(GL_COLOR_BUFFER_BIT);
 }
+void drawStoryboardText(batch::SpriteBatch& batch, text::TextRenderer& text,
+    const scene::StageLayout& layout, const scene::LineFrame& frame, const scene::LineTint& tint,
+    float alpha, const gl::Texture& primaryTexture) {
+  if (frame.text.empty() || !(alpha > 0.0F)) return;
+  std::vector<std::string> sourceLines;
+  std::size_t begin = 0;
+  for (;;) {
+    const auto end = frame.text.find('\n', begin);
+    auto line = frame.text.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    sourceLines.push_back(std::move(line));
+    if (end == std::string::npos) break;
+    begin = end + 1;
+  }
+
+  struct TextLine {
+    text::TextTexture* texture{};
+  };
+  std::vector<TextLine> lines;
+  lines.reserve(sourceLines.size());
+  const float fontSize = layout.stage.width * (52.0F / 1350.0F);
+  if (frame.scaleX == 0.0F || frame.scaleY == 0.0F) return;
+  const float contentScale = std::max({1.0F, std::abs(frame.scaleX), std::abs(frame.scaleY)});
+  // Rasterise close to the on-screen size, but bucket the size and cap it: a storyboard line
+  // can animate its scale from 1x to 40x in a fraction of a second, and a fresh 2000px strip
+  // for every intermediate value fills the cache and reallocates GL textures every frame.
+  // A small number of 64px buckets covers that range; the residual GPU magnification stays
+  // mild for ordinary storyboard text and only grows for text that is already far off-screen.
+  constexpr float kMaxStoryboardRasterSize = 320.0F;
+  constexpr float kStoryboardRasterStep = 64.0F;
+  const float desiredSize = std::min(fontSize * contentScale, kMaxStoryboardRasterSize);
+  const float rasterFontSize = std::clamp(
+      std::ceil(std::max(16.0F, desiredSize) / kStoryboardRasterStep) * kStoryboardRasterStep,
+      16.0F, kMaxStoryboardRasterSize);
+  const float rasterScale = rasterFontSize / fontSize;
+  const float scaleX = frame.scaleX / rasterScale;
+  const float scaleY = frame.scaleY / rasterScale;
+  float ascent = 0.0F;
+  float descent = 0.0F;
+  float textWidth = 0.0F;
+  for (const auto& source : sourceLines) {
+    auto* texture = text.get(source, rasterFontSize);
+    lines.push_back({texture});
+    if (texture == nullptr) continue;
+    ascent = std::max(ascent, texture->ascentPx > 0.0F ? texture->ascentPx : rasterFontSize * 0.8F);
+    descent = std::max(descent, texture->descentPx > 0.0F ? texture->descentPx : rasterFontSize * 0.2F);
+    textWidth = std::max(textWidth, texture->advanceWidth);
+  }
+  if (lines.empty() || textWidth <= 0.0F) return;
+  const float lineHeight = std::max(1.0F, ascent + descent);
+  const float textHeight = lineHeight * static_cast<float>(lines.size());
+  const float radians = static_cast<float>(frame.rotateDeg) * 3.14159265358979323846F / 180.0F;
+  const float cosine = std::cos(radians);
+  const float sine = std::sin(radians);
+  for (std::size_t index = 0; index < lines.size(); ++index) {
+    const auto* glyphs = lines[index].texture;
+    if (glyphs == nullptr || glyphs->width <= 0 || glyphs->height <= 0) continue;
+    const float left = -textWidth * frame.anchorX;
+    const float top = -textHeight * (1.0F - frame.anchorY);
+    const float width = std::abs(static_cast<float>(glyphs->width) * scaleX);
+    const float height = std::abs(static_cast<float>(glyphs->height) * scaleY);
+    const float localX = (left + glyphs->inkLeft - 1.0F) * scaleX + width * 0.5F;
+    const float localY = (top + ascent + static_cast<float>(index) * lineHeight +
+        glyphs->inkTop - 1.0F) * scaleY + height * 0.5F;
+    const float centerX = frame.x + localX * cosine - localY * sine;
+    const float centerY = frame.y + localX * sine + localY * cosine;
+    const float u0 = scaleX < 0.0F ? 1.0F : 0.0F;
+    const float u1 = scaleX < 0.0F ? 0.0F : 1.0F;
+    const float v0 = scaleY < 0.0F ? 1.0F : 0.0F;
+    const float v1 = scaleY < 0.0F ? 0.0F : 1.0F;
+    const bool queued = batch.addQuadTextured(centerX, centerY, width, height,
+        frame.rotateDeg, tint.red, tint.green, tint.blue, alpha * tint.alpha, u0, v0, u1, v1,
+        glyphs->texture);
+    if (!queued) {
+      // Every extra sampler slot is occupied. Submit the batch and retry this glyph in a
+      // fresh one; plain lines and earlier text keep their relative order.
+      batch.flush(layout.stageProjection(), primaryTexture, nullptr);
+      batch.addQuadTextured(centerX, centerY, width, height, frame.rotateDeg, tint.red,
+          tint.green, tint.blue, alpha * tint.alpha, u0, v0, u1, v1, glyphs->texture);
+    }
+  }
+}
+
 } // namespace
 
 struct GameRenderer::Impl {
@@ -297,6 +382,7 @@ struct GameRenderer::Impl {
   // change the slice sizes, so this runs again whenever those settings change.
   void refreshHoldSheet();
   void prepareForChart(game::Chart* chart);
+  void prefetchLineTextures(const game::Chart& chart);
   void drawBackgroundPass(const scene::StageLayout& layout, float artworkAlpha, float dimAlpha,
       float sideArtworkAlpha, float sideDimAlpha, bool opening, bool deferSideColumns);
   // The fixed side columns of a letterboxed stage. They are a separate pass because one level
@@ -596,6 +682,18 @@ void GameRenderer::Impl::applyResPackSettings() {
   hitEffects.setSkin(hitSkin);
 }
 
+void GameRenderer::Impl::prefetchLineTextures(const game::Chart& chart) {
+  std::vector<std::filesystem::path> lineTextures;
+  lineTextures.reserve(chart.judgeLineList.size());
+  for (const auto& line : chart.judgeLineList) {
+    if (line == nullptr || line->texture.empty() || line->textureIsGif) continue;
+    lineTextures.push_back(platform::pathFromUtf8(line->texture));
+  }
+  std::sort(lineTextures.begin(), lineTextures.end());
+  lineTextures.erase(std::unique(lineTextures.begin(), lineTextures.end()), lineTextures.end());
+  if (!lineTextures.empty()) textures.beginPrefetchFiles(lineTextures);
+}
+
 void GameRenderer::Impl::prepareForChart(game::Chart* chart) {
   if (chart == nullptr) return;
   if (chart == loadedChart) return;
@@ -619,8 +717,17 @@ void GameRenderer::Impl::prepareForChart(game::Chart* chart) {
     chain.prepare(assets, chart->prprShaderSources, chart->prprEffects);
   }
   chain.setAuxTextures(effectGlitchMap, effectGlitchDogMap, effectWireNoise, effectDisplaceMap);
-  rpeNoise.prepare(chart->packDir, chart->rpeNoiseLayers);
-  rpeNoise.resize(width, height);
+  if (!chart->rpeNoiseAreas.empty()) {
+    rpeNoise.prepare(chart->packDir, chart->rpeNoiseLayers, assets, blockDisplaceMap,
+        blockSparkMap, blockNoiseMap);
+    rpeNoise.resize(width, height);
+  } else {
+    rpeNoise.release();
+  }
+  // Storyboard judge lines can cycle through dozens of textures (Bad Apple is one per
+  // frame). Decoding each one on the frame it first becomes visible shows up as a hitch in
+  // the play field, so hand the whole set to the background decoder before the run starts.
+  prefetchLineTextures(*chart);
   scene::buildLineDrawOrder(*chart, lineDrawOrder);
 }
 
@@ -812,21 +919,18 @@ void GameRenderer::Impl::drawLinePass(const RenderFrameInput& input, game::Chart
     return;
   }
 
-  // Outro: plain lines collapse towards the stage centre before the overlay takes over.
+  // Outro: plain lines hold their full length until the collapse window, then contract
+  // towards the stage centre before the overlay takes over.
   float outroScale = 1.0F;
   if (input.transition.inOutro) {
-    outroScale = scene::outroLineCollapseScale(true, input.transition.outroElapsedSec);
-    // Before the collapse window the lines keep their full length, so only a finished
-    // collapse may hide them.
-    if (!scene::outroLinesVisible(true, input.transition.outroElapsedSec) ||
-        (outroScale <= 0.001F && input.transition.outroElapsedSec >=
-             scene::OUTRO_LINE_COLLAPSE_START_SEC + scene::OUTRO_LINE_COLLAPSE_DURATION_SEC)) {
+    if (!scene::outroLinesVisible(true, input.transition.outroElapsedSec)) {
       batch.discard();
       return;
     }
     if (input.transition.outroElapsedSec >= scene::OUTRO_LINE_COLLAPSE_START_SEC) {
       // Inside the window the length is the collapse factor itself.
-      outroScale = std::max(0.001F, outroScale);
+      outroScale = std::max(0.001F,
+          scene::outroLineCollapseScale(true, input.transition.outroElapsedSec));
     }
   }
 
@@ -835,20 +939,37 @@ void GameRenderer::Impl::drawLinePass(const RenderFrameInput& input, game::Chart
     if (lineIndex < 0 || lineIndex >= static_cast<int>(chart->judgeLineList.size())) continue;
     const auto& line = *chart->judgeLineList[static_cast<std::size_t>(lineIndex)];
     if (line.attachUiElementId != 0) continue;
+    // Cover lines paint the stage backdrop (storyboard scenery, black plates and the like).
+    // The exit collapse belongs to the note canvas, so these lines leave with the backdrop
+    // instead of being squeezed with the judge-line canvas.
+    if (line.isCover && input.transition.inOutro &&
+        input.transition.outroElapsedSec >= scene::OUTRO_LINE_COLLAPSE_START_SEC) {
+      continue;
+    }
     const auto& frame = lineFrames[static_cast<std::size_t>(lineIndex)];
     if (!frame.valid || (frame.hideLine && !input.revealHiddenObjects)) continue;
+    const bool backdropLine = line.isCover || !line.texture.empty() || frame.hasTextEvents;
+    // Backdrop lines leave with the stage scenery: they fade over the first second of the
+    // exit, then the note canvas collapses without carrying the artwork or black plates.
+    if (backdropLine && input.transition.inOutro &&
+        input.transition.outroElapsedSec >= scene::OUTRO_LINE_COLLAPSE_START_SEC) {
+      continue;
+    }
+    const float backdropAlpha = backdropLine
+        ? scene::outroBackdropAlpha(input.transition.inOutro, input.transition.outroElapsedSec)
+        : 1.0F;
     const float alpha = scene::revealLineAlpha(frame.alphaRaw, frame.hideLine,
-        input.revealHiddenObjects, input.revealHiddenFloorAlpha);
+        input.revealHiddenObjects, input.revealHiddenFloorAlpha) * backdropAlpha;
     if (alpha <= 0.0F) continue;
 
     const float halfLength = official
-        ? layout.stage.height * scene::LINE_LENGTH_OFFICIAL * frame.scaleX
-        : layout.stage.width * scene::LINE_LENGTH_EDITOR * frame.scaleX;
+        ? layout.stage.height * scene::LINE_LENGTH_OFFICIAL * std::abs(frame.scaleX)
+        : layout.stage.width * scene::LINE_LENGTH_EDITOR * std::abs(frame.scaleX);
     // The judge-line-width setting scales only plain judge lines, like the reference;
     // storyboard textures and text lines keep their own size.
     const float lineWidth = official
-        ? layout.stage.height * scene::LINE_WIDTH_OFFICIAL * frame.scaleY * lineWidthScale
-        : layout.stage.height * scene::LINE_WIDTH_EDITOR * frame.scaleY * lineWidthScale;
+        ? layout.stage.height * scene::LINE_WIDTH_OFFICIAL * std::abs(frame.scaleY) * lineWidthScale
+        : layout.stage.height * scene::LINE_WIDTH_EDITOR * std::abs(frame.scaleY) * lineWidthScale;
 
     // The skin/indicator colour applies only to a plain line: a line with a colour event
     // uses the event colour, and a line that draws a texture or storyboard text keeps the
@@ -861,14 +982,12 @@ void GameRenderer::Impl::drawLinePass(const RenderFrameInput& input, game::Chart
       tint.green = frame.colorG;
       tint.blue = frame.colorB;
     }
-    // A storyboard line with a texture draws the texture instead of the plain quad;
-    // a line with text events draws its resolved text. Both keep the anchor and the
-    // line rotation. The reference hides these storyboard elements during the exit
-    // animation, leaving only the plain lines to collapse.
-    if (!input.transition.inOutro && !frame.hasTextEvents && !line.texture.empty()) {
+    const bool hideStoryboard = !scene::storyboardVisibleDuringOutro(input.transition.inOutro,
+        input.transition.outroElapsedSec);
+    if (!hideStoryboard && !frame.hasTextEvents && !line.texture.empty()) {
       // A GIF line texture advances frames with the visual clock, or pins a frame when a
       // GIF event supplies a position.
-      asset::AnimatedTexture* animated = asset::TextureCache::isGifPath(line.texture)
+      asset::AnimatedTexture* animated = (line.textureIsGif || asset::TextureCache::isGifPath(line.texture))
           ? textures.loadGifFile(line.texture)
           : nullptr;
       gl::Texture* texture = animated != nullptr
@@ -890,45 +1009,36 @@ void GameRenderer::Impl::drawLinePass(const RenderFrameInput& input, game::Chart
         float width = 0.0F;
         float height = 0.0F;
         if (line.rpeTextureScaleInPixels) {
-          width = texScaleX * baseScaleX;
-          height = texScaleX * baseScaleX;
+          width = std::abs(texScaleX) * baseScaleX;
+          height = std::abs(texScaleX) * baseScaleX;
         } else {
-          width = static_cast<float>(texture->width()) * baseScaleX * texScaleX;
-          height = static_cast<float>(texture->height()) * baseScaleX * texScaleY;
+          width = static_cast<float>(texture->width()) * baseScaleX * std::abs(texScaleX);
+          height = static_cast<float>(texture->height()) * baseScaleX * std::abs(texScaleY);
         }
         if (width > 0.0F && height > 0.0F) {
-          batch.begin();
-          batch.addQuadAnchored(frame.x, frame.y, width, height, frame.rotateDeg, tint.red,
-              tint.green, tint.blue, alpha, frame.anchorX, frame.anchorY, 0.0F, 0.0F, 1.0F, 1.0F);
-          batch.flush(projection, *texture, nullptr);
+          const float u0 = texScaleX < 0.0F ? 1.0F : 0.0F;
+          const float u1 = texScaleX < 0.0F ? 0.0F : 1.0F;
+          const float v0 = texScaleY < 0.0F ? 1.0F : 0.0F;
+          const float v1 = texScaleY < 0.0F ? 0.0F : 1.0F;
+          const bool queued = batch.addQuadAnchoredTextured(frame.x, frame.y, width, height,
+              frame.rotateDeg, tint.red, tint.green, tint.blue, alpha, frame.anchorX,
+              frame.anchorY, u0, v0, u1, v1, *texture);
+          if (!queued) {
+            // All extra sampler slots are taken. Submit the ordered batch and keep this
+            // image in the next one.
+            batch.flush(projection, textures.white(), nullptr);
+            batch.addQuadAnchoredTextured(frame.x, frame.y, width, height, frame.rotateDeg,
+                tint.red, tint.green, tint.blue, alpha, frame.anchorX, frame.anchorY, u0, v0,
+                u1, v1, *texture);
+          }
           continue;
         }
       }
-    } else if (!input.transition.inOutro && !frame.hasTextEvents && !frame.text.empty()) {
-      // Text is rasterised at 50 units in the 1350-wide authoring space, then scaled to
-      // the stage; a multi-line string scales so each line keeps the full size.
-      const float fontBaseSize = layout.stage.width * (50.0F / 1350.0F);
-      std::string normalized = frame.text;
-      std::replace(normalized.begin(), normalized.end(), '\n', '\n');
-      int lineCount = 1;
-      for (const char character : normalized) {
-        if (character == '\n') ++lineCount;
-      }
-      auto* glyphs = text.get(normalized, fontBaseSize);
-      if (glyphs != nullptr && glyphs->height > 0) {
-        const float targetHeight = fontBaseSize * static_cast<float>(lineCount);
-        const float scaleToTarget = targetHeight / static_cast<float>(glyphs->height);
-        const float width = static_cast<float>(glyphs->width) * scaleToTarget * frame.scaleX;
-        const float height = static_cast<float>(glyphs->height) * scaleToTarget * frame.scaleY;
-        if (width > 0.0F && height > 0.0F) {
-          batch.begin();
-          batch.addQuadAnchored(frame.x, frame.y, width, height, frame.rotateDeg, tint.red,
-              tint.green, tint.blue, alpha, frame.anchorX, frame.anchorY, 0.0F, 0.0F, 1.0F, 1.0F);
-          batch.flush(projection, glyphs->texture, nullptr);
-          continue;
-        }
-      }
+    } else if (!hideStoryboard && !frame.text.empty()) {
+      drawStoryboardText(batch, text, layout, frame, tint, alpha, textures.white());
+      continue;
     }
+    if (hideStoryboard && (!line.texture.empty() || frame.hasTextEvents)) continue;
     // A line that owns text events draws nothing once its text is empty.
     if (frame.hasTextEvents) continue;
 
@@ -1274,7 +1384,7 @@ void GameRenderer::Impl::drawHudPass(const RenderFrameInput& input,
       transform.valid = true;
       transform.translateX = (frame.xNorm - 0.5F) * layout.stage.width;
       transform.translateY = (frame.yNorm - 0.5F) * layout.stage.height;
-      transform.rotateDeg = -frame.rotateDeg;
+      transform.rotateDeg = frame.rotateDeg;
       transform.scaleX = frame.scaleX;
       transform.scaleY = frame.scaleY;
       // Negative alphas encode line visibility modes; an attached HUD widget simply
@@ -1587,6 +1697,7 @@ void GameRenderer::Impl::drawLevelEffectObjects(game::Chart* chart,
 
 gl::Texture* GameRenderer::Impl::applyStageScopedChain(game::Chart& chart, gl::Texture* input,
     const math::Rect& stageRect, double chartTimeSec) {
+  chain.setStageSize(stageRect.width, stageRect.height);
   std::vector<game::PrprEffect> scoped;
   for (const auto& effect : chart.prprEffects) {
     if (!effect.global) scoped.push_back(effect);
@@ -1651,8 +1762,16 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
   revealInput.hud.revealCameraActive = reveal.active;
   revealInput.hud.revealScale = reveal.scale;
 
+  const auto cameraFrame = chart != nullptr
+      ? chart->rpeCamera.sample(input.chartTimeSec) : game::RpeCameraFrame{};
+  const auto camera = scene::resolveRpeCamera(cameraFrame, layout);
+  layout.cameraIncludesUi = camera.active && camera.followChart;
+  layout.cameraMatrix = camera.matrix;
+
   scene::StageLayout sceneLayout = layout;
   sceneLayout.fieldScale = reveal.active ? reveal.scale : 1.0F;
+  sceneLayout.cameraActive = camera.active;
+  sceneLayout.cameraMatrix = camera.matrix;
   scene::StageLayout maskLayout = layout;
   maskLayout.stage = scene::revealStageRect(layout, reveal.active, reveal.scale);
 
@@ -1747,8 +1866,8 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
 
   if (chart != nullptr) {
     lineFrames.clear();
-    const math::Rect worldBounds = scene::revealViewportWorldBounds(
-        layout, reveal.active, reveal.scale);
+    const math::Rect worldBounds = camera.active ? camera.worldBounds
+        : scene::revealViewportWorldBounds(layout, reveal.active, reveal.scale);
     scene::LinePassParams lineParams;
     lineParams.chartTimeSec = input.chartTimeSec;
     lineParams.officialFormat = chart->formatVersion > 0;
@@ -1771,6 +1890,19 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
     if (confineToStage) {
       batch.setScissor(true, layout.stage.x, layout.stage.y,
           layout.stage.x + layout.stage.width, layout.stage.y + layout.stage.height);
+    }
+    if (useRpeNoise) {
+      gl::Texture* underlay = rpeNoise.draw(sceneFbo.color(), chart->rpeNoiseAreas,
+          chart->rpeNoiseLayers, input.chartTimeSec, maskLayout.stage.x, maskLayout.stage.y,
+          maskLayout.stage.width, maskLayout.stage.height, chart->rpeNoiseIgnoreTripleInversion, {},
+          camera.active ? &cameraFrame : nullptr, camera.viewScale, 1);
+      if (underlay != nullptr && underlay->id() != sceneFbo.color().id()) {
+        sceneFbo.bind();
+        glViewport(0, 0, width, height);
+        glDisable(GL_BLEND);
+        fx::BlitPass::instance().draw(*underlay, 1.0F, 1.0F, 1.0F, 1.0F, false);
+        bindDefaultBlend();
+      }
     }
     // The native ClickBad copies live on the Background sorting layer, under the judge line
     // and under every note sprite, so they are submitted before the line pass.
@@ -1971,9 +2103,16 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
     bool hudShaded = false;
     const auto compositeRpeNoise = [&](gl::Texture* source) {
       if (!useRpeNoise || source == nullptr) return source;
+      std::vector<fx::RpeNoiseTouch> noiseTouches;
+      noiseTouches.reserve(static_cast<std::size_t>(input.noiseTouchCount));
+      for (int index = 0; index < input.noiseTouchCount; ++index) {
+        const auto& touch = input.noiseTouches[index];
+        noiseTouches.push_back({touch.id, touch.x, touch.y});
+      }
       gl::Texture* composited = rpeNoise.draw(*source, chart->rpeNoiseAreas,
           chart->rpeNoiseLayers, input.chartTimeSec, maskLayout.stage.x, maskLayout.stage.y,
-          maskLayout.stage.width, maskLayout.stage.height);
+          maskLayout.stage.width, maskLayout.stage.height, chart->rpeNoiseIgnoreTripleInversion,
+          noiseTouches, camera.active ? &cameraFrame : nullptr, camera.viewScale, 2);
       if (composited == nullptr || composited->id() == source->id()) return source;
       glBindFramebuffer(GL_FRAMEBUFFER, sceneFbo.fbo());
       glViewport(0, 0, width, height);
@@ -2149,6 +2288,10 @@ void GameRenderer::resetJudgementEffects(game::Chart* chart) {
   }
   impl_->badSpawned.assign(chart->allNotesSorted.size(), 0);
   impl_->clickEffects.reset(*chart);
+}
+
+void GameRenderer::prefetchChartTextures(const game::Chart& chart) {
+  if (impl_ != nullptr) impl_->prefetchLineTextures(chart);
 }
 
 void GameRenderer::prefetchGameplayTextures(const std::filesystem::path& skinDirectory) {

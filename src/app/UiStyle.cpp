@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <string>
 
 namespace rechigros::app::ui {
 namespace {
@@ -140,11 +141,23 @@ void drawPanel(ImDrawList* drawList, ImVec2 topLeft, ImVec2 bottomRight, float s
   }
 }
 
+namespace {
+std::string withoutVariationSelectors(const char* text) {
+  if (text == nullptr) return {};
+  std::string result(text);
+  for (std::size_t at = 0; (at = result.find("\xEF\xB8\x8F", at)) != std::string::npos;) {
+    result.erase(at, 3);
+  }
+  return result;
+}
+} // namespace
+
 void drawText(ImDrawList* drawList, ImVec2 position, float size, ImU32 color, const char* text) {
   if (drawList == nullptr || text == nullptr) return;
   ImFont* font = ImGui::GetFont();
   if (font == nullptr) return;
-  drawList->AddText(font, size, position, color, text);
+  const std::string owned = withoutVariationSelectors(text);
+  drawList->AddText(font, size, position, color, owned.c_str());
 }
 
 void drawTextCentered(ImDrawList* drawList, ImVec2 center, float size, ImU32 color,
@@ -152,15 +165,17 @@ void drawTextCentered(ImDrawList* drawList, ImVec2 center, float size, ImU32 col
   if (drawList == nullptr || text == nullptr) return;
   ImFont* font = ImGui::GetFont();
   if (font == nullptr) return;
-  const ImVec2 extent = font->CalcTextSizeA(size, 4096.0F, 0.0F, text);
+  const std::string owned = withoutVariationSelectors(text);
+  const ImVec2 extent = font->CalcTextSizeA(size, 4096.0F, 0.0F, owned.c_str());
   drawList->AddText(font, size, ImVec2(center.x - extent.x * 0.5F, center.y - extent.y * 0.5F),
-      color, text);
+      color, owned.c_str());
 }
 
 ImVec2 measureText(const char* text, float size) {
   ImFont* font = ImGui::GetFont();
   if (font == nullptr || text == nullptr) return ImVec2(0.0F, 0.0F);
-  return font->CalcTextSizeA(size, 4096.0F, 0.0F, text);
+  const std::string owned = withoutVariationSelectors(text);
+  return font->CalcTextSizeA(size, 4096.0F, 0.0F, owned.c_str());
 }
 
 bool skewButton(const char* id, const char* label, ImVec2 topLeft, ImVec2 size, float textSize,

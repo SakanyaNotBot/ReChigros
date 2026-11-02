@@ -745,7 +745,8 @@ void AudioEngine::installHitSounds(
 
 bool AudioEngine::loadHitSound(const std::filesystem::path& path) {
   if (path.empty() || !initialize()) return false;
-  const std::string key = path.generic_string();
+  const auto utf8 = path.generic_u8string();
+  const std::string key(utf8.begin(), utf8.end());
   {
     std::lock_guard<std::mutex> lock{impl_->customMutex_};
     if (impl_->customBanks_.contains(key)) return true;

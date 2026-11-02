@@ -85,18 +85,19 @@ double applyEasingImpl(double progress, const EasingSpec& event) noexcept {
   if (!std::isfinite(progress)) return 0.0;
   auto p = Easing::clamp01(progress);
   if (event.bezier && (hasBezierLut(event) || hasBezierPoints(event))) {
-    if (hasBezierLut(event)) return Easing::lookupBezierLut(event.bezierLut, p);
-    return Easing::cubicBezierYForX(p, event.bezierPoints[0], event.bezierPoints[1],
-        event.bezierPoints[2], event.bezierPoints[3]);
+    if (hasBezierPoints(event)) return Easing::cubicBezierYForX(p, event.bezierPoints[0],
+        event.bezierPoints[1], event.bezierPoints[2], event.bezierPoints[3]);
+    return Easing::lookupBezierLut(event.bezierLut, p);
   }
   const auto tweenId = Easing::rpeEasingToTweenId(event.type);
   auto left = std::isfinite(event.left) ? static_cast<double>(event.left) : 0.0;
   auto right = std::isfinite(event.right) ? static_cast<double>(event.right) : 1.0;
   left = Easing::clamp01(left);
   right = Easing::clamp01(right);
-  if (tweenId <= 2 || (std::abs(left) < 1e-5 && std::abs(right - 1.0) < 1e-5) || left >= right) {
+  if (tweenId <= 2 || (std::abs(left) < 1e-5 && std::abs(right - 1.0) < 1e-5)) {
     return Easing::applyTween(tweenId, p);
   }
+  if (std::abs(left - right) < 1e-12) return p;
   return Easing::clampedTween(tweenId, p, left, right);
 }
 
@@ -104,18 +105,19 @@ double applyRawRpeEasingImpl(double progress, const EasingSpec& event) noexcept 
   if (!std::isfinite(progress)) return 0.0;
   const auto p = Easing::clamp01(progress);
   if (event.bezier && (hasBezierLut(event) || hasBezierPoints(event))) {
-    if (hasBezierLut(event)) return Easing::lookupBezierLut(event.bezierLut, p);
-    return Easing::cubicBezierYForX(p, event.bezierPoints[0], event.bezierPoints[1],
-        event.bezierPoints[2], event.bezierPoints[3]);
+    if (hasBezierPoints(event)) return Easing::cubicBezierYForX(p, event.bezierPoints[0],
+        event.bezierPoints[1], event.bezierPoints[2], event.bezierPoints[3]);
+    return Easing::lookupBezierLut(event.bezierLut, p);
   }
   const auto tweenId = Easing::rpeRawEasingToTweenId(event.type);
   auto left = std::isfinite(event.left) ? static_cast<double>(event.left) : 0.0;
   auto right = std::isfinite(event.right) ? static_cast<double>(event.right) : 1.0;
   left = Easing::clamp01(left);
   right = Easing::clamp01(right);
-  if (tweenId <= 2 || (std::abs(left) < 1e-5 && std::abs(right - 1.0) < 1e-5) || left >= right) {
+  if (tweenId <= 2 || (std::abs(left) < 1e-5 && std::abs(right - 1.0) < 1e-5)) {
     return Easing::applyTween(tweenId, p);
   }
+  if (std::abs(left - right) < 1e-12) return p;
   return Easing::clampedTween(tweenId, p, left, right);
 }
 
@@ -464,6 +466,10 @@ double getMoveEventVal2(double time, const std::vector<MoveEvent>& events, Event
 bool getColorVal(double time, const std::vector<ColorEvent>& events, EventCursor& cursor,
     std::array<float, 3>& out) noexcept {
   if (events.empty()) return false;
+  if (time < events.front().startTime) {
+    out = {events.front().startR, events.front().startG, events.front().startB};
+    return true;
+  }
   const auto size = static_cast<int>(events.size());
   int index = cursor.index;
   if (index < 0 || index >= size) index = 0;
@@ -521,6 +527,10 @@ bool getColorVal(double time, const std::vector<ColorEvent>& events, EventCursor
 
 bool getColorVal(double time, const std::vector<ColorEvent>& events, std::array<float, 3>& out) noexcept {
   if (events.empty()) return false;
+  if (time < events.front().startTime) {
+    out = {events.front().startR, events.front().startG, events.front().startB};
+    return true;
+  }
   bool hasLast = false;
   for (std::size_t i = 0; i < events.size(); ++i) {
     const auto& event = events[i];
@@ -691,6 +701,30 @@ std::string stripStaticTextMarkers(const std::string& text) {
   return replaceAll(text, "%T%", "");
 }
 
+std::vector<std::string> utf8Characters(const std::string& text) {
+  std::vector<std::string> result;
+  for (std::size_t index = 0; index < text.size();) {
+    const auto lead = static_cast<unsigned char>(text[index]);
+    std::size_t length = 1;
+    if ((lead & 0xE0U) == 0xC0U) length = 2;
+    else if ((lead & 0xF0U) == 0xE0U) length = 3;
+    else if ((lead & 0xF8U) == 0xF0U) length = 4;
+    length = std::min(length, text.size() - index);
+    result.push_back(text.substr(index, length));
+    index += length;
+  }
+  return result;
+}
+
+std::string joinCharacters(const std::vector<std::string>& characters, std::size_t begin,
+    std::size_t end) {
+  std::string result;
+  for (auto index = begin; index < end && index < characters.size(); ++index) {
+    result += characters[index];
+  }
+  return result;
+}
+
 std::string calculateTextValue(const std::string& start, const std::string& end, double progress) {
   if (start.find("%P%") != std::string::npos && end.find("%P%") != std::string::npos) {
     const double startNumeric = parseDoubleOrNaN(replaceAll(start, "%P%", ""));
@@ -698,27 +732,23 @@ std::string calculateTextValue(const std::string& start, const std::string& end,
     if (std::isfinite(startNumeric) && std::isfinite(endNumeric)) {
       const double value = startNumeric + (endNumeric - startNumeric) * progress;
       if (std::rint(startNumeric) == startNumeric && std::rint(endNumeric) == endNumeric) {
-        return formatInteger(std::floor(value));
+        return formatInteger(std::trunc(value));
       }
       return formatThreeDecimals(value);
     }
   }
   if (start.find("%T%") != std::string::npos && end.find("%T%") != std::string::npos) {
-    const std::string startBase = replaceAll(start, "%T%", "");
-    const std::string endBase = replaceAll(end, "%T%", "");
+    const auto startBase = utf8Characters(replaceAll(start, "%T%", ""));
+    const auto endBase = utf8Characters(replaceAll(end, "%T%", ""));
     if (!startBase.empty() || !endBase.empty()) {
       const auto maxLength = std::max(startBase.size(), endBase.size());
-      auto between = static_cast<long long>(std::floor(static_cast<double>(maxLength) * progress));
-      if (between < 0) between = 0;
-      if (between > static_cast<long long>(maxLength)) between = static_cast<long long>(maxLength);
+      const auto between = static_cast<std::size_t>(std::clamp(
+          std::floor(static_cast<double>(maxLength) * progress), 0.0,
+          static_cast<double>(maxLength)));
       std::string result;
-      result.reserve(maxLength);
-      for (std::size_t i = 0; i < maxLength; ++i) {
-        if (static_cast<long long>(i) < between) {
-          result.push_back(i < endBase.size() ? endBase[i] : ' ');
-        } else {
-          result.push_back(i < startBase.size() ? startBase[i] : ' ');
-        }
+      for (std::size_t index = 0; index < maxLength; ++index) {
+        if (index < between) result += index < endBase.size() ? endBase[index] : " ";
+        else result += index < startBase.size() ? startBase[index] : " ";
       }
       return result;
     }
@@ -726,15 +756,22 @@ std::string calculateTextValue(const std::string& start, const std::string& end,
   const auto startsWith = [](const std::string& value, const std::string& prefix) {
     return value.size() >= prefix.size() && value.compare(0, prefix.size(), prefix) == 0;
   };
+  const auto startCharacters = utf8Characters(start);
+  const auto endCharacters = utf8Characters(end);
   if (startsWith(start, end)) {
-    const auto startIndex = static_cast<std::size_t>(std::floor(
-        static_cast<double>(start.size() - end.size()) * (1.0 - progress)));
-    return end + start.substr(end.size(), startIndex);
+    const auto remaining = startCharacters.size() - endCharacters.size();
+    const auto keep = static_cast<std::size_t>(std::clamp(
+        std::floor(static_cast<double>(remaining) * (1.0 - progress)), 0.0,
+        static_cast<double>(remaining)));
+    return end + joinCharacters(startCharacters, endCharacters.size(), endCharacters.size() + keep);
   }
   if (startsWith(end, start)) {
-    const auto endIndex = static_cast<std::size_t>(std::floor(
-        static_cast<double>(end.size() - start.size()) * progress));
-    return start + end.substr(start.size(), endIndex);
+    const auto remaining = endCharacters.size() - startCharacters.size();
+    const auto reveal = static_cast<std::size_t>(std::clamp(
+        std::floor(static_cast<double>(remaining) * progress), 0.0,
+        static_cast<double>(remaining)));
+    return start + joinCharacters(endCharacters, startCharacters.size(),
+        startCharacters.size() + reveal);
   }
   return progress >= 1.0 ? end : start;
 }

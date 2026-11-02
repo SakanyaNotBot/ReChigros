@@ -135,10 +135,6 @@ double bezierSampleX(double a1, double a2, double t) {
   return 3.0 * u * u * t * a1 + 3.0 * u * t * t * a2 + t * t * t;
 }
 
-double bezierSlopeX(double a1, double a2, double t) {
-  const double u = 1.0 - t;
-  return 3.0 * u * u * a1 + 6.0 * u * t * (a2 - a1) + 3.0 * t * t * (1.0 - a2);
-}
 } // namespace
 
 double clamp01(double value) noexcept {
@@ -255,16 +251,17 @@ double clampedTween(int tweenId, double progress, double left, double right) noe
   progress = clamp01(progress);
   left = clamp01(left);
   right = clamp01(right);
-  if (tweenId <= 2 || (std::abs(left) < 1e-5 && std::abs(right - 1.0) < 1e-5) || left >= right) {
+  if (tweenId <= 2 || (std::abs(left) < 1e-5 && std::abs(right - 1.0) < 1e-5)) {
     return applyTween(tweenId, progress);
   }
+  if (std::abs(left - right) < 1e-12) return progress;
   const double arg = left + (right - left) * progress;
   const double easedArg = applyTween(tweenId, arg);
   const double easedLeft = applyTween(tweenId, left);
   const double easedRight = applyTween(tweenId, right);
   const double denominator = easedRight - easedLeft;
-  if (std::abs(denominator) < 1e-9) return progress;
-  return clamp01((easedArg - easedLeft) / denominator);
+  if (std::abs(denominator) < 1e-12) return progress;
+  return (easedArg - easedLeft) / denominator;
 }
 
 double intClampedTween(int tweenId, double progress, double left, double right) noexcept {
@@ -289,46 +286,33 @@ double cubicBezierYForX(double x, double x1, double y1, double x2, double y2) no
   if (!std::isfinite(y1)) y1 = 0.0;
   if (!std::isfinite(x2)) x2 = 1.0;
   if (!std::isfinite(y2)) y2 = 1.0;
+  if (x <= 0.0) return 0.0;
+  if (x >= 1.0) return 1.0;
   if (std::abs(x1 - y1) < 1e-9 && std::abs(x2 - y2) < 1e-9) return x;
 
-  constexpr int TABLE_SIZE = 21;
-  constexpr double STEP = 1.0 / (TABLE_SIZE - 1);
-  double sampleTable[TABLE_SIZE];
-  for (int i = 0; i < TABLE_SIZE; ++i) sampleTable[i] = bezierSampleX(x1, x2, i * STEP);
-
-  int id = static_cast<int>(x / STEP);
-  if (id >= TABLE_SIZE - 1) id = TABLE_SIZE - 2;
-  double dist = (x - sampleTable[id]) / (sampleTable[id + 1] - sampleTable[id]);
-  if (!std::isfinite(dist)) dist = 0.0;
-  const double initT = STEP * (id + dist);
-
-  const double slope = bezierSlopeX(x1, x2, initT);
-  double t = initT;
-  constexpr double SLOPE_EPS = 1e-7;
-  constexpr double NEWTON_MIN_STEP = 1e-3;
-  if (slope <= SLOPE_EPS) {
-    t = initT;
-  } else if (slope >= NEWTON_MIN_STEP) {
-    t = initT;
-    for (int i = 0; i < 4; ++i) {
-      const double currentSlope = bezierSlopeX(x1, x2, t);
-      if (currentSlope <= SLOPE_EPS) break;
-      const double diff = bezierSampleX(x1, x2, t) - x;
-      t -= diff / currentSlope;
-    }
+  double parameter = 0.0;
+  if (x1 == 0.0 && x2 == 0.0) {
+    parameter = std::cbrt(x);
+  } else if (x1 == 1.0 && x2 == 1.0) {
+    parameter = 1.0 - std::cbrt(1.0 - x);
   } else {
-    double low = STEP * id;
-    double high = STEP * (id + 1);
-    t = (low + high) / 2.0;
-    for (int i = 0; i < 10; ++i) {
-      const double diff = bezierSampleX(x1, x2, t) - x;
-      if (std::abs(diff) <= 1e-7) break;
-      if (diff > 0.0) high = t;
-      else low = t;
-      t = (low + high) / 2.0;
+    const bool reverse = x > 0.5;
+    const double target = reverse ? 1.0 - x : x;
+    const double first = reverse ? 1.0 - x2 : x1;
+    const double second = reverse ? 1.0 - x1 : x2;
+    double low = 0.0;
+    double high = 1.0;
+    for (int iteration = 0; iteration < 40; ++iteration) {
+      const double middle = (low + high) * 0.5;
+      if (bezierSampleX(first, second, middle) < target) low = middle;
+      else high = middle;
     }
+    parameter = (low + high) * 0.5;
+    if (reverse) parameter = 1.0 - parameter;
   }
-  return bezierSampleX(y1, y2, t);
+  return parameter > 0.5
+      ? 1.0 - bezierSampleX(1.0 - y2, 1.0 - y1, 1.0 - parameter)
+      : bezierSampleX(y1, y2, parameter);
 }
 
 std::vector<float> buildBezierLut(const std::array<float, 4>& points, int size) {

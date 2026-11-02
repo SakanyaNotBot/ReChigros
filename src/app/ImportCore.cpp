@@ -34,7 +34,7 @@ std::string lowerExtension(const std::filesystem::path& path) {
 }
 
 std::string lowerFileName(const std::filesystem::path& path) {
-  std::string name = path.filename().string();
+  std::string name = platform::pathToUtf8(path.filename());
   std::transform(name.begin(), name.end(), name.begin(),
       [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
   return name;
@@ -249,7 +249,7 @@ ImportOutcome importLooseChartFiles(ChartLibrary& library,
   // The pack is built in a staging folder with the metadata the reference derives from
   // the pickers: the song name comes from the audio file, the rest from the chart.
   ChartInfo info;
-  info.name = musicFile.stem().string();
+  info.name = platform::pathToUtf8(musicFile.stem());
   const auto copy = [&](const std::filesystem::path& source) {
     const auto target = staging / source.filename();
     std::filesystem::copy_file(source, target,
@@ -263,9 +263,9 @@ ImportOutcome importLooseChartFiles(ChartLibrary& library,
     platform::removeRecursively(staging);
     return {false, "处理压缩包失败：无法写入临时目录", {}};
   }
-  info.chart = chartTarget.filename().string();
-  info.music = musicTarget.filename().string();
-  info.illustration = bgTarget.filename().string();
+  info.chart = platform::pathToUtf8(chartTarget.filename());
+  info.music = platform::pathToUtf8(musicTarget.filename());
+  info.illustration = platform::pathToUtf8(bgTarget.filename());
   (void)writeInfoJson(staging / "info.json", info);
 
   try {
@@ -339,7 +339,7 @@ SkinImportOutcome importSkinPackage(const std::filesystem::path& archive,
     // Display name: the first skin metadata file found in the package decides it.
     std::string displayName;
     for (const auto& entry : entries) {
-      const std::string name = lowerFileName(std::filesystem::path(entry.name));
+      const std::string name = lowerFileName(platform::pathFromUtf8(entry.name));
       if (name != "skin.json" && name != "info.yml" && name != "info.yaml") continue;
       const auto bytes = platform::readArchiveEntry(archive, entry.name);
       if (bytes.empty()) continue;
@@ -351,9 +351,9 @@ SkinImportOutcome importSkinPackage(const std::filesystem::path& archive,
       if (!displayName.empty()) break;
     }
     std::string folderName = platform::sanitiseFileName(
-        displayName.empty() ? archive.stem().string() : displayName);
+        displayName.empty() ? platform::pathToUtf8(archive.stem()) : displayName);
     if (folderName.empty()) folderName = "skin";
-    const auto destination = skinsRoot / folderName;
+    const auto destination = skinsRoot / platform::pathFromUtf8(folderName);
     platform::removeRecursively(destination);
     std::error_code error;
     std::filesystem::create_directories(destination, error);
@@ -364,12 +364,12 @@ SkinImportOutcome importSkinPackage(const std::filesystem::path& archive,
     std::size_t written = 0;
     for (const auto& entry : entries) {
       if (!entry.name.empty() && entry.name.back() == '/') continue;
-      const auto leaf = platform::sanitiseFileName(
-          std::filesystem::path(entry.name).filename().string());
+      const auto leaf = platform::sanitiseFileName(platform::pathToUtf8(
+          platform::pathFromUtf8(entry.name).filename()));
       if (leaf.empty()) continue;
       const auto bytes = platform::readArchiveEntry(archive, entry.name);
       if (bytes.empty()) continue;
-      if (!platform::writeBinaryFile(destination / leaf, bytes)) {
+      if (!platform::writeBinaryFile(destination / platform::pathFromUtf8(leaf), bytes)) {
         platform::removeRecursively(destination);
         return {false, "导入皮肤失败：无法写入皮肤文件", {}};
       }

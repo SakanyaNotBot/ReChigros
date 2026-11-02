@@ -6,6 +6,7 @@
 #include "rechigros/game/ClickEffectItem.hpp"
 #include "rechigros/game/OfficialLevelEffects.hpp"
 #include "rechigros/game/RpeNoiseArea.hpp"
+#include "rechigros/game/RpeCamera.hpp"
 
 #include <array>
 #include <deque>
@@ -38,6 +39,7 @@ public:
   std::vector<RpeNoiseLayer> rpeNoiseLayers;
   bool rpeNoiseIgnoreTripleInversion{};
   std::string rpeGlobalEventsJson;
+  RpeCamera rpeCamera;
   double chartEndTimeSec{};
   // Chart identity used to match a level effect: the normalized chart digest and the
   // display song name. Both are optional; an empty value simply never matches.

@@ -319,6 +319,69 @@ function Assert-RpeHoldFrame($Case) {
   return 0
 }
 
+function Read-Pixel($Path, $X, $Y) {
+  $image = [System.Drawing.Bitmap]::FromFile($Path)
+  try { return $image.GetPixel($X, $Y) } finally { $image.Dispose() }
+}
+
+function Assert-NoiseRendering {
+  $normal = Join-Path $Fixtures 'rpe_noise\chart.json'
+  $overlap = Join-Path $Fixtures 'rpe_noise_overlap.json'
+  $skinned = Join-Path $Fixtures 'rpe_noise_skin\chart.json'
+  $base = Invoke-ProbeRender 'noise-base' $normal @('--time', '10.0')
+  $active = Invoke-ProbeRender 'noise-active' $normal @('--time', '0.0')
+  $odd = Invoke-ProbeRender 'noise-odd-overlap' $overlap @('--time', '0.0')
+  $custom = Invoke-ProbeRender 'noise-skin' $skinned @('--time', '0.0')
+  if ($null -in @($base, $active, $odd, $custom)) { return 1 }
+  $customPixel = Read-Pixel $custom 640 300
+  $outsideBefore = Read-Pixel $base 640 40
+  $outsideAfter = Read-Pixel $active 640 40
+  if ($outsideBefore.ToArgb() -ne $outsideAfter.ToArgb()) {
+    Write-Host '[FAIL] noise-outside: the material changed pixels outside the field'
+    return 1
+  }
+  if ((Measure-RegionDifference $active $base 280 150 720 400) -lt 1.0) {
+    Write-Host '[FAIL] noise-material: active and disabled fields have no material difference'
+    return 1
+  }
+  if ((Measure-RegionDifference $active $odd 500 240 280 160) -gt 0.5) {
+    Write-Host '[FAIL] noise-odd-overlap: three inverted overlaps do not retain coverage'
+    return 1
+  }
+  if ((Measure-RegionDifference $odd $base 800 140 140 160) -lt 1.0) {
+    Write-Host '[FAIL] noise-layers: the second layer is not preserved in the final image'
+    return 1
+  }
+  if ([Math]::Abs($customPixel.R - 26) -gt 3 -or
+      [Math]::Abs($customPixel.G - 255) -gt 3 -or [Math]::Abs($customPixel.B - 140) -gt 3) {
+    Write-Host "[FAIL] noise-skin: unexpected two-pass colour $customPixel"
+    return 1
+  }
+  Write-Host '[ok]   noise-transparency, odd-overlap and two-pass skin'
+  return 0
+}
+
+function Assert-RpeLineEvents {
+  $chart = Join-Path $Fixtures 'rpe_line_extended.json'
+  $red = Invoke-ProbeRender 'rpe-line-red-long' $chart @('--time', '0.25', '--frames', '1')
+  $green = Invoke-ProbeRender 'rpe-line-green-short' $chart @('--time', '0.75', '--frames', '1')
+  if ($null -in @($red, $green)) { return 1 }
+  $redCentre = Read-Pixel $red 640 360
+  $greenCentre = Read-Pixel $green 640 360
+  if ($redCentre.R -lt 250 -or $redCentre.G -gt 5 -or $redCentre.B -gt 5 -or
+      $greenCentre.R -gt 5 -or $greenCentre.G -lt 250 -or $greenCentre.B -gt 5) {
+    Write-Host "[FAIL] rpe-line-events: wrong colours $redCentre -> $greenCentre"
+    return 1
+  }
+  $lengthChange = Measure-RegionDifference $red $green 0 350 500 20
+  if ($lengthChange -lt 1.0) {
+    Write-Host '[FAIL] rpe-line-events: the shortened line did not change its extent'
+    return 1
+  }
+  Write-Host '[ok]   rpe-line-events: colour and scaleX events reach the final pixels'
+  return 0
+}
+
 $plain = Join-Path $Fixtures 'plain.json'
 $redzone = Join-Path $Fixtures 'redzone.json'
 $redzoneShader = Join-Path $Fixtures 'redzone_shader_pack\chart.json'
@@ -548,6 +611,8 @@ $failures += Assert-HoldEffect 'hold-rpe-early' $holdFxRpe 0.90 201.6
 $failures += Assert-HoldEffect 'hold-rpe-exact' $holdFxRpe 1.00 288.0
 $failures += Assert-HoldEffect 'hold-rpe-late' $holdFxRpe 1.05 288.0
 foreach ($case in $rpeHoldCases) { $failures += Assert-RpeHoldFrame $case }
+$failures += Assert-NoiseRendering
+$failures += Assert-RpeLineEvents
 
 if ($failures -ne 0) {
   Write-Host "$failures render case(s) did not reach the picture"

@@ -191,7 +191,7 @@ JudgeLine::State JudgeLine::fillState(double second,float aspect){
 }
 float JudgeLine::calcNoteControl(float height,int type,float fallback)const noexcept{
   const std::vector<NoteControlPoint>* list=nullptr; switch(type){case 0:list=&noteAlphaControls;break;case 1:list=&noteScaleControls;break;case 2:list=&noteXControls;break;case 3:list=&noteYControls;break;case 4:list=&noteSkewControls;break;case 5:list=&noteJudgeAreaControls;break;default:return fallback;}
-  if(list->empty())return fallback;
+  if(list->size()<=1)return fallback;
   if(height<=list->front().y)return list->front().value;
   if(height>=list->back().y||std::isnan(height))return list->back().value;
   const auto it=std::lower_bound(list->begin(),list->end(),height,[](const auto& point,float value){return point.y<value;});const auto& b=*it;const auto& a=*(it-1);if(b.y-a.y<=1e-6F)return b.value;

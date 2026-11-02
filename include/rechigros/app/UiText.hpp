@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -62,5 +63,8 @@ private:
 
 // Process-wide cache used by the interface helpers.
 UiFontCache& fontCache();
+
+// System font carrying symbol and pictogram glyphs absent from the bundled UI font.
+[[nodiscard]] std::filesystem::path findSymbolFontPath();
 
 } // namespace rechigros::app::ui

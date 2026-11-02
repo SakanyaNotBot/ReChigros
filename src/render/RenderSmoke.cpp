@@ -12,6 +12,7 @@
 
 #include <SDL3/SDL.h>
 #include <stb_image_write.h>
+#include <nlohmann/json.hpp>
 
 #include <vector>
 
@@ -36,14 +37,30 @@
 #endif
 
 namespace {
+
+std::string chartTitle(const std::filesystem::path& chartPath) {
+  try {
+    std::ifstream input(chartPath, std::ios::binary);
+    const auto root = nlohmann::json::parse(input, nullptr, false);
+    const auto meta = root.find("META");
+    if (meta == root.end() || !meta->is_object()) return {};
+    const auto name = meta->find("name");
+    return name != meta->end() && name->is_string() ? name->get<std::string>() : std::string{};
+  } catch (...) {
+    return {};
+  }
+}
+
 struct Options {
   std::filesystem::path chartPath;
   std::filesystem::path outputPath{"render-smoke.png"};
   std::filesystem::path assetRoot{"assets"};
+  std::filesystem::path backgroundImage;
   int frames{3};
   int width{1280};
   int height{720};
   double chartTime{4.0};
+  double duration{};
   std::string songName;
   std::string levelName;
   std::string skinDirectory;
@@ -67,8 +84,10 @@ struct Options {
   bool pauseMenu{false};
   float pauseElapsedSec{0.3F};
   float outroProgress{0.0F};
+  double outroElapsed{std::numeric_limits<double>::quiet_NaN()};
   // Draws the frame-rate readout so the HUD number composer can be captured.
   bool showFps{false};
+  bool lineState{};
   // Drops the hold-body bursts so a frame can be compared with and without them.
   bool holdBodyBursts{true};
   double holdHitTime{std::numeric_limits<double>::quiet_NaN()};
@@ -102,6 +121,10 @@ Options parseOptions(int argc, char** argv) {
       options.height = std::max(16, std::atoi(next().c_str()));
     } else if (flag == "--time") {
       options.chartTime = std::atof(next().c_str());
+    } else if (flag == "--duration") {
+      options.duration = std::atof(next().c_str());
+    } else if (flag == "--background") {
+      options.backgroundImage = next();
     } else if (flag == "--skin") {
       options.skinDirectory = next();
     } else if (flag == "--song") {
@@ -126,8 +149,12 @@ Options parseOptions(int argc, char** argv) {
       options.pauseElapsedSec = static_cast<float>(std::atof(next().c_str()));
     } else if (flag == "--outro") {
       options.outroProgress = static_cast<float>(std::atof(next().c_str()));
+    } else if (flag == "--outro-elapsed") {
+      options.outroElapsed = std::atof(next().c_str());
     } else if (flag == "--show-fps") {
       options.showFps = true;
+    } else if (flag == "--line-state") {
+      options.lineState = true;
     } else if (flag == "--no-hold-bursts") {
       options.holdBodyBursts = false;
     } else if (flag == "--hold-hit-time") {
@@ -221,10 +248,25 @@ int main(int argc, char** argv) {
     }
     std::cout << "Loaded chart: " << chart->judgeLineList.size() << " lines, "
               << chart->allNotesSorted.size() << " notes, "
-              << chart->prprEffects.size() << " storyboard effects\n";
+              << chart->prprEffects.size() << " storyboard effects, end="
+              << chart->chartEndTimeSec << '\n';
     for (const auto& effect : chart->prprEffects) {
       std::cout << "  effect shader=" << effect.shader << " [" << effect.startTime << ", "
                 << effect.endTime << "] vars=" << effect.variables.size() << "\n";
+    }
+    if (options.lineState) {
+      std::cout << std::fixed << std::setprecision(6);
+      for (std::size_t index = 0; index < chart->judgeLineList.size(); ++index) {
+        const auto& line = chart->judgeLineList[index];
+        if (line == nullptr) continue;
+        const auto state = line->fillState(options.chartTime, 16.0F / 9.0F);
+        std::cout << "line-state " << index << ' '
+                  << (state.xNorm - 0.5F) * 1350.0F << ' ' << (0.5F - state.yNorm) * 900.0F << ' '
+                  << state.rotateDeg << ' ' << state.alpha * 255.0F << ' '
+                  << state.scaleX << ' ' << state.scaleY << ' '
+                  << state.colorR * 255.0F << ' ' << state.colorG * 255.0F << ' '
+                  << state.colorB * 255.0F << '\n';
+      }
     }
 
     rechigros::render::GameRenderer renderer;
@@ -235,6 +277,7 @@ int main(int argc, char** argv) {
     } else {
       // A skin directory overrides the material settings the built-in pack provides.
       if (!options.skinDirectory.empty()) renderer.setSkinDirectory(options.skinDirectory);
+      if (!options.backgroundImage.empty()) renderer.setBackgroundImage(options.backgroundImage);
       // Driving the session in autoplay first gives judged notes, so the smoke frame
       // exercises the hit-effect pass instead of an untouched chart.
       rechigros::game::GameplaySession session;
@@ -277,9 +320,16 @@ int main(int argc, char** argv) {
       // The progress bar follows the music position, so the smoke frame reports the current
       // playhead against the chart length.
       input.hud.playheadSec = options.chartTime;
-      input.hud.totalDurationSec = std::max(1.0, chart->chartEndTimeSec);
+      input.hud.totalDurationSec = options.duration > 0.0
+          ? options.duration : std::max(1.0, chart->chartEndTimeSec);
       input.hud.comboLabel = "COMBO";
-      input.hud.outroProgress = options.outroProgress;
+      input.transition.inOutro = std::isfinite(options.outroElapsed);
+      input.transition.outroElapsedSec = std::isfinite(options.outroElapsed)
+          ? static_cast<float>(std::max(0.0, options.outroElapsed)) : 0.0F;
+      input.hud.outroProgress = input.transition.inOutro
+          ? static_cast<float>(std::clamp(input.transition.outroElapsedSec / (40.0F / 60.0F),
+              0.0F, 1.0F))
+          : options.outroProgress;
       input.hud.showFps = options.showFps;
       input.hud.fps = 144.0F;
       input.apfcIndicator = options.apfc;
@@ -295,7 +345,7 @@ int main(int argc, char** argv) {
       input.storyMode = options.storyMode;
       input.chartReveal = options.chartReveal;
       input.showHitParticles = !options.noHitEffects;
-      input.songName = options.songName;
+      input.songName = options.songName.empty() ? chartTitle(options.chartPath) : options.songName;
       input.levelName = options.levelName;
       // Hold-body bursts produced while the session was driven to this chart time. The
       // renderer draws one burst per entry, so a hold frame can be inspected headlessly.

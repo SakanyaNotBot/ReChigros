@@ -54,6 +54,9 @@ public:
   void setAuxTextures(gl::Texture* glitchMap, gl::Texture* glitchDogMap, gl::Texture* wireNoise,
       gl::Texture* displaceMap) noexcept;
   void setFrozenNoiseClock(bool frozen) noexcept { frozenNoiseClock_ = frozen; }
+  void setStageSize(float width, float height) noexcept {
+    stageLogicalWidth_ = height > 1.0e-6F ? width * 900.0F / height : 1350.0F;
+  }
 
 private:
   struct Program {
@@ -93,6 +96,7 @@ private:
   std::unique_ptr<gl::Framebuffer> bloomTarget_;
   // Boxed because FullscreenPass owns GL handles and is intentionally not movable.
   std::unordered_map<std::string, std::unique_ptr<Program>> programs_;
+  float stageLogicalWidth_{1350.0F};
   gl::Texture* glitchMap_{};
   gl::Texture* glitchDogMap_{};
   gl::Texture* wireNoise_{};

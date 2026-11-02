@@ -44,6 +44,11 @@ bool portablePrSource(const game::PrprEffect& effect) {
 }
 
 std::string effectProgramKey(const game::PrprEffect& effect) {
+  const auto& authored = effect.sourceName.empty() ? effect.shader : effect.sourceName;
+  const std::string source = lowercase(authored);
+  const bool fileBacked = (!source.empty() && source.front() == '/')
+      || source.ends_with(".glsl") || source.ends_with(".frag") || source.ends_with(".fs");
+  if (fileBacked) return "file:" + authored;
   return effect.shader + (portablePrSource(effect) ? ":pr" : "");
 }
 
@@ -121,11 +126,36 @@ void setUniformArray(gl::ShaderProgram& program, const std::string& name,
     const std::vector<float>& values) {
   const int location = program.uniform(name.c_str());
   if (location < 0 || values.empty()) return;
-  switch (values.size()) {
-    case 1: glUniform1f(location, values[0]); break;
-    case 2: glUniform2f(location, values[0], values[1]); break;
-    case 3: glUniform3f(location, values[0], values[1], values[2]); break;
-    default: glUniform4f(location, values[0], values[1], values[2], values[3]); break;
+  float adjusted[4]{values[0], values.size() > 1 ? values[1] : 0.0F,
+      values.size() > 2 ? values[2] : 0.0F, values.size() > 3 ? values[3] : 0.0F};
+  if (values.size() == 4) {
+    const bool byteColor = name == "color" || name.ends_with("Color")
+        || std::any_of(values.begin(), values.end(), [](float value) { return std::abs(value) > 1.0F; });
+    if (byteColor && std::any_of(values.begin(), values.end(),
+            [](float value) { return std::abs(value) > 1.0F; })) {
+      for (float& value : adjusted) value /= 255.0F;
+    }
+  }
+  const int type = program.uniformType(name.c_str());
+  if (type == GL_INT || type == GL_BOOL || type == GL_SAMPLER_2D) {
+    glUniform1i(location, static_cast<int>(adjusted[0]));
+    return;
+  }
+  if (type == GL_FLOAT) {
+    glUniform1f(location, adjusted[0]);
+    return;
+  }
+  if (type == GL_FLOAT_VEC2) {
+    if (name == "offset" && values.size() == 1) glUniform2f(location, 0.0F, 0.0F);
+    else if (values.size() >= 2) glUniform2f(location, adjusted[0], adjusted[1]);
+    return;
+  }
+  if (type == GL_FLOAT_VEC3) {
+    if (values.size() >= 3) glUniform3f(location, adjusted[0], adjusted[1], adjusted[2]);
+    return;
+  }
+  if (type == GL_FLOAT_VEC4 && values.size() >= 4) {
+    glUniform4f(location, adjusted[0], adjusted[1], adjusted[2], adjusted[3]);
   }
 }
 
@@ -246,6 +276,27 @@ UniformDefaults parseUniformDefaults(const std::string& source) {
     if (type == "vec4" && values.size() > 4) values.resize(4);
     defaults.emplace(name, std::move(values));
   }
+  return defaults;
+}
+
+const UniformDefaults& rpeUniformDefaults() {
+  static const UniformDefaults defaults{
+      {"sampleCount", {3}}, {"power", {0.03F}}, {"size", {3}}, {"rate", {0.6F}},
+      {"speed", {1}}, {"blockCount", {30.5F}}, {"colorRate", {0.01F}}, {"factor", {1}},
+      {"seed", {81}}, {"centerX", {0.5F}}, {"centerY", {0.5F}}, {"progress", {0.2F}},
+      {"width", {0.1F}}, {"distortion", {0.8F}}, {"expand", {10}}, {"extend", {0.25F}},
+      {"radius", {15}}, {"frequency", {10}}, {"amplitude", {0.02F}}, {"speedx", {1}},
+      {"speedy", {1}}, {"snowCount", {100}}, {"direction", {1, 0}}, {"threshold", {0.5F}},
+      {"intensity", {1}}, {"density", {1}}, {"lightpos", {0.5F, 0.5F}},
+      {"fogColor", {0.5F, 0.5F, 0.5F, 1}}, {"fogStart", {0}}, {"fogEnd", {1}},
+      {"segments", {8}}, {"center", {0.5F, 0.5F}}, {"angle", {0}},
+      {"hologramColor", {0, 1, 1, 1}}, {"burnColor", {1, 0.2F, 0, 1}}, {"zoom", {1}},
+      {"offset", {1}}, {"rotation", {0}}, {"numBolts", {5}}, {"flashDuration", {0.1F}},
+      {"rainColor", {0.4F, 0.6F, 1, 1}}, {"height", {1}}, {"strength", {1}},
+      {"blurRadius", {1}}, {"exposure", {1}}, {"decay", {1}}, {"weight", {0.5F}},
+      {"hueShift", {0}}, {"saturationShift", {0}}, {"valueShift", {0}},
+      {"color1", {0, 0, 0, 1}}, {"color2", {1, 1, 1, 1}},
+  };
   return defaults;
 }
 
@@ -443,9 +494,15 @@ void PrprChain::prepare(const std::filesystem::path& assetRoot,
   programs_.clear();
 
   std::vector<std::string> keys;
+  std::unordered_map<std::string, std::string> authoredNames;
+  std::unordered_map<std::string, std::string> presetNames;
+  std::unordered_map<std::string, bool> portableNames;
   for (const auto& effect : effects) {
     const std::string key = effectProgramKey(effect);
     if (key.empty()) continue;
+    authoredNames[key] = effect.sourceName.empty() ? effect.shader : effect.sourceName;
+    presetNames[key] = effect.shader;
+    portableNames[key] = portablePrSource(effect);
     if (std::find(keys.begin(), keys.end(), key) == keys.end()) keys.push_back(key);
   }
 
@@ -471,15 +528,19 @@ void PrprChain::prepare(const std::filesystem::path& assetRoot,
   }
 
   for (const auto& key : keys) {
-    const bool portable = key.size() > 3 && key.compare(key.size() - 3, 3, ":pr") == 0;
-    const std::string shaderKey = portable ? key.substr(0, key.size() - 3) : key;
+    const bool portable = (key.size() > 3 && key.compare(key.size() - 3, 3, ":pr") == 0)
+        || portableNames.at(key);
+    const auto& authoredName = authoredNames.at(key);
+    const std::string shaderKey = key.starts_with("file:") ? presetNames.at(key)
+        : key.size() > 3 && key.compare(key.size() - 3, 3, ":pr") == 0
+            ? key.substr(0, key.size() - 3) : key;
     std::string source;
     // A pack may reference its own shader with or without the leading slash the format
     // allows, so both spellings are tried before falling back to the bundled presets.
-    if (const auto it = chartSources.find(shaderKey); it != chartSources.end()) {
+    if (const auto it = chartSources.find(authoredName); it != chartSources.end()) {
       source = it->second;
-    } else if (shaderKey.size() > 1 && shaderKey.front() == '/') {
-      if (const auto it = chartSources.find(shaderKey.substr(1)); it != chartSources.end()) {
+    } else if (authoredName.size() > 1 && authoredName.front() == '/') {
+      if (const auto it = chartSources.find(authoredName.substr(1)); it != chartSources.end()) {
         source = it->second;
       }
     }
@@ -515,7 +576,13 @@ void PrprChain::prepare(const std::filesystem::path& assetRoot,
 
     auto program = std::make_unique<Program>();
     program->defaults = parseUniformDefaults(source);
-    program->valid = program->pass.build(preparePresetSource(source).c_str());
+    if (!key.starts_with("official_")) {
+      for (const auto& [name, values] : rpeUniformDefaults()) {
+        program->defaults.emplace(name, values);
+      }
+    }
+    program->valid = program->pass.build(preparePresetSource(source).c_str(),
+        !key.starts_with("official_"));
     if (program->valid) {
       // The prpr vertex shader declares UVScale; every pass must set it to (1,1)
       // or the sample collapses into the centre texel.
@@ -575,8 +642,9 @@ void PrprChain::applyPass(const game::PrprEffect& effect, Program& program, gl::
   shader.set2f("rpeRectMax", 1.0F, 1.0F);
   shader.set2f("UVScale", 1.0F, 1.0F);
   shader.set1f("time", static_cast<float>(chartTimeSec));
+  shader.set1f("u_time", static_cast<float>(chartTimeSec));
   shader.set2f("screenSize", static_cast<float>(input->width()), static_cast<float>(input->height()));
-  shader.set2f("resolution", static_cast<float>(input->width()), static_cast<float>(input->height()));
+  shader.set2f("resolution", stageLogicalWidth_, 900.0F);
 
   // Auxiliary samplers used by the chapter-9 presets.
   if (glitchMap_ != nullptr) {
@@ -652,14 +720,17 @@ void PrprChain::applyPassScissored(const game::PrprEffect& effect, Program& prog
   shader.set1i("screenTexture", 0);
   shader.set1i("u_texture", 0);
   shader.set1i("u_texture_legacy", 0);
-  shader.set2f("rpeRectMin", 0.0F, 0.0F);
-  shader.set2f("rpeRectMax", 1.0F, 1.0F);
-  // The quad still covers the whole target; the scissor decides which fragments survive,
-  // so the coordinates stay in the same 0..1 space as the full-frame passes.
+  shader.set2f("rpeRectMin", static_cast<float>(x) / output.width(),
+      static_cast<float>(y) / output.height());
+  shader.set2f("rpeRectMax", static_cast<float>(x + width) / output.width(),
+      static_cast<float>(y + height) / output.height());
+  // The scissor clips writes, while these uniforms keep shader coordinates local to the stage.
   shader.set2f("UVScale", 1.0F, 1.0F);
   shader.set1f("time", static_cast<float>(chartTimeSec));
+  shader.set1f("u_time", static_cast<float>(chartTimeSec));
   shader.set2f("screenSize", static_cast<float>(input->width()),
       static_cast<float>(input->height()));
+  shader.set2f("resolution", stageLogicalWidth_, 900.0F);
 
   if (glitchMap_ != nullptr) {
     glActiveTexture(GL_TEXTURE1);
