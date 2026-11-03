@@ -480,6 +480,41 @@ gl::Texture* RpeNoisePass::run(Resource& resource, const Channel& channel, gl::T
   return current;
 }
 
+double RpeNoisePass::touchReleaseSeconds(
+    const Resource& resource, const game::RpeNoiseLayer& layer) const {
+  double release = 0.1;
+  if (const auto found = resource.parameterDefaults.find("touchReleaseDuration");
+      found != resource.parameterDefaults.end() && !found->second.empty()) {
+    release = std::max(0.0F, found->second.front());
+  }
+  if (const auto found = layer.parameters.find("touchReleaseDuration");
+      found != layer.parameters.end() && !found->second.empty()) {
+    release = std::max(0.0F, found->second.front());
+  }
+  return release;
+}
+
+std::vector<RpeNoiseTouch> RpeNoisePass::normalizedTouches(
+    const std::vector<RpeNoiseTouch>& touches) const {
+  std::vector<RpeNoiseTouch> normalized;
+  normalized.reserve(touches.size());
+  for (const auto& touch : touches) {
+    normalized.push_back({touch.id, touch.x / width_, 1.0F - touch.y / height_});
+  }
+  return normalized;
+}
+
+void RpeNoisePass::updateTouches(const std::vector<RpeNoiseTouch>& touches,
+    double chartTimeSec, const std::vector<game::RpeNoiseLayer>& layers) {
+  if (!timelines_ || width_ <= 0 || height_ <= 0) return;
+  const auto normalized = normalizedTouches(touches);
+  for (std::size_t index = 0; index < layers.size() && index < resources_.size(); ++index) {
+    if (!resources_[index]) continue;
+    timelines_->entries[layers[index].id].update(normalized, chartTimeSec,
+        touchReleaseSeconds(*resources_[index], layers[index]));
+  }
+}
+
 gl::Texture* RpeNoisePass::draw(gl::Texture& scene,
     const std::vector<game::RpeNoiseArea>& areas,
     const std::vector<game::RpeNoiseLayer>& layers, double chartTimeSec, float stageX,
@@ -515,22 +550,14 @@ gl::Texture* RpeNoisePass::draw(gl::Texture& scene,
     const Channel& channel = layers[index].channel == "low" && resource.hasLow
         ? resource.low : resource.normal;
     const bool custom = !resource.skin.empty() && !channel.passes.empty();
-    double release = 0.1;
-    if (const auto found = resource.parameterDefaults.find("touchReleaseDuration");
-        found != resource.parameterDefaults.end() && !found->second.empty()) {
-      release = std::max(0.0F, found->second.front());
-    }
-    if (const auto found = layers[index].parameters.find("touchReleaseDuration");
-        found != layers[index].parameters.end() && !found->second.empty()) {
-      release = std::max(0.0F, found->second.front());
-    }
-    std::vector<RpeNoiseTouch> normalizedTouches;
-    normalizedTouches.reserve(touches.size());
-    for (const auto& touch : touches) {
-      normalizedTouches.push_back({touch.id, touch.x / width_, 1.0F - touch.y / height_});
-    }
-    const auto& timeline = timelines_->entries[layers[index].id].update(normalizedTouches,
-        chartTimeSec, release);
+    const auto normalized = normalizedTouches(touches);
+    auto& timelineEntry = timelines_->entries[layers[index].id];
+    // The underlay pass deliberately carries no touches; updating the timeline with that
+    // empty list would release held fingers, and the composite pass would then revive them
+    // from a fade that had already started. Only touch-aware passes advance it.
+    const auto& timeline = (layerMask & 2) != 0
+        ? timelineEntry.update(normalized, chartTimeSec, touchReleaseSeconds(resource, layers[index]))
+        : timelineEntry.samples();
     if (custom && (layerMask & 2) != 0) {
       const int maskWidth = std::max(1, static_cast<int>(width_ * channel.blockMaskScaleX));
       const int maskHeight = std::max(1, static_cast<int>(height_ * channel.blockMaskScaleY));

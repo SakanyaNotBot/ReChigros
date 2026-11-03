@@ -1448,6 +1448,15 @@ void drawPauseOverlay(AppContext& context) {
 // touch even after it leaves the zone, so the glow does not blink out mid-drag.
 void updateHoverSlots(const AppContext& context, double nowSec,
     render::RenderFrameInput::TouchState& out) {
+  // Pointer events arrive in window coordinates while the renderer lays the stage out in
+  // drawable pixels. On a high-density display those differ, and the hover would land beside
+  // the finger even with the shader-space fix.
+  const float scaleX = context.windowWidth > 0
+      ? static_cast<float>(context.drawableWidth) / static_cast<float>(context.windowWidth)
+      : 1.0F;
+  const float scaleY = context.windowHeight > 0
+      ? static_cast<float>(context.drawableHeight) / static_cast<float>(context.windowHeight)
+      : 1.0F;
   const auto& blocked = context.game.session.blockedTouches();
   for (auto& slot : gHoverSlots) slot.held = false;
   for (const auto& touch : blocked) {
@@ -1497,8 +1506,8 @@ void updateHoverSlots(const AppContext& context, double nowSec,
     }
     if (!(slot.scale > 0.0) || out.count >= 10) continue;
     auto& point = out.points[out.count++];
-    point.x = slot.x;
-    point.y = slot.y;
+    point.x = slot.x * scaleX;
+    point.y = slot.y * scaleY;
     point.scale = static_cast<float>(std::clamp(slot.scale, 0.0, 1.0));
   }
 }
@@ -2239,8 +2248,19 @@ void gameRender(AppContext& context) {
   input.holdBodyBursts = game.session.takeHoldBodyBursts();
   input.holdHeadBursts = game.session.takeHoldHeadBursts();
   // Swallowed fingers: zone pulses are drawn where they are, and the composite lights the same
-  // points. The session reports both, so the two never disagree about which touch is held.
+  // points. The session reports both in window coordinates; the renderer works in drawable
+  // pixels, so scale them at the boundary.
+  const float touchScaleX = context.windowWidth > 0
+      ? static_cast<float>(context.drawableWidth) / static_cast<float>(context.windowWidth)
+      : 1.0F;
+  const float touchScaleY = context.windowHeight > 0
+      ? static_cast<float>(context.drawableHeight) / static_cast<float>(context.windowHeight)
+      : 1.0F;
   input.blockedTouchPositions = game.session.blockedTouchPositions();
+  for (auto& point : input.blockedTouchPositions) {
+    point[0] *= touchScaleX;
+    point[1] *= touchScaleY;
+  }
   input.blockedTouchPulseSec = game.session.blockedTouchPulseSec();
   // The hover discs run on the wall clock so a paused chart does not freeze their fade, and a
   // finger that has been swallowed keeps its slot until it lifts.
@@ -2248,7 +2268,8 @@ void gameRender(AppContext& context) {
   input.noiseTouchCount = 0;
   for (const auto& touch : game.session.liveTouches()) {
     if (input.noiseTouchCount >= static_cast<int>(input.noiseTouches.size())) break;
-    input.noiseTouches[input.noiseTouchCount++] = {touch.id, touch.x, touch.y};
+    input.noiseTouches[input.noiseTouchCount++] = {
+        touch.id, touch.x * touchScaleX, touch.y * touchScaleY};
   }
   if (context.captureGameplayRequested) gCaptureFrameInput = input;
   context.renderer->render(input, game.chart.get(), &judgement);
@@ -2472,9 +2493,13 @@ void gamePointerMove(AppContext& context, std::int64_t pointerId, float x, float
 void gamePointerUp(AppContext& context, std::int64_t pointerId) {
   auto& game = context.game;
   if (!game.loaded) return;
-  if (game.pause != GameRuntime::Pause::None) return;
-  if (game.replayPlayback || game.autoplay) return;
-  recordTouch(context, ReplayTouchEvent::Kind::Up, pointerId, 0.0F, 0.0F);
+  // A release must always end the press. Pausing or reaching the outro used to skip this
+  // path, which left the finger in the session; a later zone then revived the stale hover
+  // even though the finger was already up. Record the up for a manual run so a replay keeps
+  // the same touch lifetime.
+  if (!game.replayPlayback && !game.autoplay) {
+    recordTouch(context, ReplayTouchEvent::Kind::Up, pointerId, 0.0F, 0.0F);
+  }
   game.session.touchUp(pointerId);
   ++context.forwardedPointerEvents;
 }

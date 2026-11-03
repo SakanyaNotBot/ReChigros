@@ -524,10 +524,9 @@ int main(int argc, char** argv) {
             touch.count = 1;
             // Inside the active strip the probe builds (x 0.86..1.0): the hover term only
             // modulates the block body, so a point outside every zone would change nothing
-            // and the comparison below would prove nothing. The space is a height of one
-            // with x running to the aspect ratio, matching the shader's own comparison.
-            const float aspect = static_cast<float>(width) / static_cast<float>(height);
-            touch.points[0].x = 0.93F * aspect;
+            // and the comparison below would prove nothing. touchPos.x is a width fraction;
+            // the shader turns it into the height-normalised comparison space itself.
+            touch.points[0].x = 0.93F;
             touch.points[0].y = 0.5F;
             touch.realTimeSec = 1.25;
             // Report the uniform locations first: an upload to a location of -1 is silently

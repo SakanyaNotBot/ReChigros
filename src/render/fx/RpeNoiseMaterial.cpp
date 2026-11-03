@@ -94,6 +94,13 @@ const std::vector<RpeNoiseTouchSample>& RpeNoiseTouchTimeline::update(
       found->startScale = 0.0F;
       found->endScale = 1.0F;
       found->scale = 0.0F;
+    } else if (!found->held) {
+      // The same finger came back before the release animation retired its slot. Grow it
+      // from the current scale again; leaving endScale at zero would fade a held touch out.
+      found->held = true;
+      found->start = seconds;
+      found->startScale = found->scale;
+      found->endScale = 1.0F;
     }
     found->x = touch.x;
     found->y = touch.y;

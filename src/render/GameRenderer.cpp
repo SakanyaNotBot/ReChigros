@@ -293,6 +293,8 @@ struct GameRenderer::Impl {
   std::vector<fx::BlockMaskQuad> maskQuadsB;
   // Held-point staging for the composite's hover channel, reused between frames.
   std::vector<fx::BlockOverlay::HoverPoint> hoverPoints;
+  // RPE noise touch staging, reused every frame even while no noise layer is drawn.
+  std::vector<fx::RpeNoiseTouch> rpeNoiseTouches;
   // Replaces the finished frame inside a red zone; the inline silhouettes are skipped
   // while it is active so the two paths never draw the same zone twice.
   fx::BlockCompositePass blockComposite;
@@ -1746,6 +1748,20 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       : (input.aspectRatio > 0.0F ? input.aspectRatio : 16.0F / 9.0F);
   scene::StageLayout layout = scene::computeStageLayout(
       static_cast<float>(width), static_cast<float>(height), targetAspect, fullscreenStage);
+  // The RPE noise timeline is advanced on every frame, not only when a layer is drawn.
+  // A finger released during a gap otherwise stays latched in the timeline and its hover
+  // pops back when the next layer opens, even though the finger is already up.
+  rpeNoiseTouches.clear();
+  if (chart != nullptr && !chart->rpeNoiseAreas.empty()) {
+    rpeNoiseTouches.reserve(static_cast<std::size_t>(input.noiseTouchCount));
+    for (int index = 0; index < input.noiseTouchCount; ++index) {
+      const auto& touch = input.noiseTouches[index];
+      rpeNoiseTouches.push_back({touch.id, touch.x, touch.y});
+    }
+    if (rpeNoise.ready()) {
+      rpeNoise.updateTouches(rpeNoiseTouches, input.chartTimeSec, chart->rpeNoiseLayers);
+    }
+  }
   // Demo mode reflects the play field about the stage centre. The reflection lives in the
   // stage projection, so notes, judge lines and hit effects all move with it while the HUD
   // (projected with `projection()`) keeps its unmirrored layout.
@@ -1776,14 +1792,19 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
   maskLayout.stage = scene::revealStageRect(layout, reveal.active, reveal.scale);
 
   // The screen-space composite resamples the finished frame inside a red zone, so it
-  // needs that frame as a texture while it writes into the caller's target. Any frame
-  // with a zone on screen therefore takes the offscreen route, with or without a
-  // storyboard chain. Zones are culled on the cached live-window query: the pass is a
-  // full-screen resample and must not run on frames that show none.
+  // needs that frame as a texture while it writes into the caller's target. A frame with
+  // a zone on screen takes the offscreen route, with or without a storyboard chain; so
+  // does a frame with a swallowed finger still held, because the touch glow is emitted by
+  // the same composite and has to survive gaps between zones.
   const bool anyZoneVisible = chart != nullptr && !chart->blockAreaList.empty()
       && !input.transition.inIntro && input.chartTimeSec >= 0.0
       && chart->hasLiveBlock(input.chartTimeSec);
-  const bool useBlockComposite = anyZoneVisible && blockComposite.ready() &&
+  // A swallowed finger keeps its hover slot until it lifts, even when no zone is live.
+  // The composite has to keep running for those frames because the touch glow is added
+  // outside the zone body; gating it on live zones alone made the special touch disappear
+  // during gaps and reappear when the next zone opened.
+  const bool anyBlockHover = input.touches.count > 0;
+  const bool useBlockComposite = (anyZoneVisible || anyBlockHover) && blockComposite.ready() &&
       blockComposite.allocated() && sceneFbo.valid();
 
   // A chart with storyboard effects renders into an offscreen target first so the
@@ -2042,11 +2063,12 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       const float safeWidth = std::max(1.0F, static_cast<float>(width));
       const float safeHeight = std::max(1.0F, static_cast<float>(height));
       touch.count = std::clamp(input.touches.count, 0, 10);
-      // The shader compares against `uv * screenSize / screenSize.y`, so its space is a height
-      // of one with x running to the aspect ratio. Sending plain 0..1 fractions would put the
-      // point at the wrong place on any stage that is not square.
+      // The shipped shader compares `tpos.x` (a height fraction, 0..aspect) against
+      // `touchPos.x * aspect`. touchPos.x is therefore a width fraction (0..1), not a height
+      // fraction; dividing it by the height shifted the hover right by roughly a third of
+      // the screen on a 16:9 view.
       for (int index = 0; index < touch.count; ++index) {
-        touch.points[index].x = input.touches.points[index].x / safeHeight;
+        touch.points[index].x = input.touches.points[index].x / safeWidth;
         touch.points[index].y = (safeHeight - input.touches.points[index].y) / safeHeight;
       }
       // The shine runs on wall time, so a paused chart does not freeze it.
@@ -2103,16 +2125,10 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
     bool hudShaded = false;
     const auto compositeRpeNoise = [&](gl::Texture* source) {
       if (!useRpeNoise || source == nullptr) return source;
-      std::vector<fx::RpeNoiseTouch> noiseTouches;
-      noiseTouches.reserve(static_cast<std::size_t>(input.noiseTouchCount));
-      for (int index = 0; index < input.noiseTouchCount; ++index) {
-        const auto& touch = input.noiseTouches[index];
-        noiseTouches.push_back({touch.id, touch.x, touch.y});
-      }
       gl::Texture* composited = rpeNoise.draw(*source, chart->rpeNoiseAreas,
           chart->rpeNoiseLayers, input.chartTimeSec, maskLayout.stage.x, maskLayout.stage.y,
           maskLayout.stage.width, maskLayout.stage.height, chart->rpeNoiseIgnoreTripleInversion,
-          noiseTouches, camera.active ? &cameraFrame : nullptr, camera.viewScale, 2);
+          rpeNoiseTouches, camera.active ? &cameraFrame : nullptr, camera.viewScale, 2);
       if (composited == nullptr || composited->id() == source->id()) return source;
       glBindFramebuffer(GL_FRAMEBUFFER, sceneFbo.fbo());
       glViewport(0, 0, width, height);

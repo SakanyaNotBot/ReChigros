@@ -1015,9 +1015,10 @@ The second mask's alpha carries the hover coverage (178 = 0.7 against a cleared 
 2009 pixels lit), and `build/block-probe/09b_touch.png` shows the glow inside the zone.
 
 **Wiring summary.** `BlockCompositePass::TouchState` (held points plus wall clock) is fed from
-`RenderFrameInput::touches`; `GameRenderer` converts the points into the shader's space
-(`uv * screenSize / screenSize.y`); `ShaderProgram::set2fv` uploads the `touchPos[MAX_TOUCH]`
-array; `BlockOverlay::appendHoverQuads` writes the coverage into the second mask's alpha channel.
+`RenderFrameInput::touches`; `GameRenderer` sends x as a width fraction and y as a height
+fraction measured from the bottom, which is the space the shader's `touchPos.x * aspect`
+comparison expects; `ShaderProgram::set2fv` uploads the `touchPos[MAX_TOUCH]` array;
+`BlockOverlay::appendHoverQuads` writes the coverage into the second mask's alpha channel.
 
 **Not covered.** The probe drives the shader with a synthetic scene and a synthetic point. The
 real hover sprite (`official_textures/TouchHover.png`) is not sampled: the composite's own SDF

@@ -44,7 +44,20 @@ public:
       const game::RpeCameraFrame* camera = nullptr, float cameraViewScale = 1.0F,
       int layerMask = 3);
 
+  // Advances every layer's touch timeline whether or not its zone is currently drawn. A
+  // release during a gap must be observed, otherwise the old hover survives unseen and pops
+  // back when the next zone opens.
+  void updateTouches(const std::vector<RpeNoiseTouch>& touches, double chartTimeSec,
+      const std::vector<game::RpeNoiseLayer>& layers);
+
 private:
+  struct Resource;
+
+  [[nodiscard]] double touchReleaseSeconds(
+      const Resource& resource, const game::RpeNoiseLayer& layer) const;
+  [[nodiscard]] std::vector<RpeNoiseTouch> normalizedTouches(
+      const std::vector<RpeNoiseTouch>& touches) const;
+
   struct TargetSpec {
     float scaleX{1.0F};
     float scaleY{1.0F};

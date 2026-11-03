@@ -34,6 +34,9 @@ class RpeNoiseTouchTimeline final {
 public:
   const std::vector<RpeNoiseTouchSample>& update(const std::vector<RpeNoiseTouch>& touches,
       double seconds, double releaseDuration);
+  [[nodiscard]] const std::vector<RpeNoiseTouchSample>& samples() const noexcept {
+    return samples_;
+  }
   void reset();
 
 private:
