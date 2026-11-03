@@ -554,10 +554,12 @@ gl::Texture* RpeNoisePass::draw(gl::Texture& scene,
     auto& timelineEntry = timelines_->entries[layers[index].id];
     // The underlay pass deliberately carries no touches; updating the timeline with that
     // empty list would release held fingers, and the composite pass would then revive them
-    // from a fade that had already started. Only touch-aware passes advance it.
+    // from a fade that had already started. Only touch-aware passes advance it, and only
+    // they receive the samples.
+    static const std::vector<RpeNoiseTouchSample> noTouches;
     const auto& timeline = (layerMask & 2) != 0
         ? timelineEntry.update(normalized, chartTimeSec, touchReleaseSeconds(resource, layers[index]))
-        : timelineEntry.samples();
+        : noTouches;
     if (custom && (layerMask & 2) != 0) {
       const int maskWidth = std::max(1, static_cast<int>(width_ * channel.blockMaskScaleX));
       const int maskHeight = std::max(1, static_cast<int>(height_ * channel.blockMaskScaleY));
