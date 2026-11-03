@@ -299,32 +299,34 @@ void testPlayheadInterpolation() {
   using namespace rechigros::audio;
 
   // Before any callback has run, the reported position is the stored one.
-  require(close(mixer::estimatePlayheadFrames(0.0, 0, 1.0F, 0.0, 48000.0, 123.0), 123.0),
-      "no callback history returns the committed position");
+  require(close(mixer::estimatePlayheadFrames(123.0, 0, 1.0F, 0.0, 48000.0), 123.0),
+      "no callback history holds the callback start");
 
   // Half of a 256-frame callback at normal speed lands mid-window.
   const double halfway = mixer::estimatePlayheadFrames(
-      1000.0, 256, 1.0F, 128.0 / 48000.0, 48000.0, 1256.0);
+      1000.0, 256, 1.0F, 128.0 / 48000.0, 48000.0);
   require(close(halfway, 1128.0, 1e-6), "playhead interpolates within a callback");
 
   // Interpolation must never run past the frames the callback produced.
   const double overshoot = mixer::estimatePlayheadFrames(
-      1000.0, 256, 1.0F, 10.0, 48000.0, 1256.0);
+      1000.0, 256, 1.0F, 10.0, 48000.0);
   require(close(overshoot, 1256.0), "playhead is bounded by the callback end");
 
-  // It must also never run past the committed playhead when that is smaller.
-  const double clamped = mixer::estimatePlayheadFrames(
-      1000.0, 256, 1.0F, 10.0, 48000.0, 1100.0);
-  require(close(clamped, 1100.0), "playhead is bounded by the committed position");
+  // A callback is mixed before its audio reaches the device, so the published counter still
+  // holds the start while the estimate may run to the end of the window being produced.
+  // Pinning it to the published value would freeze the clock for the whole callback.
+  const double producing = mixer::estimatePlayheadFrames(
+      1000.0, 256, 1.0F, 128.0 / 48000.0, 48000.0);
+  require(producing > 1000.0, "playhead dead-reckons across the callback being mixed");
 
   // At double speed the playhead advances twice as fast.
   const double fast = mixer::estimatePlayheadFrames(
-      0.0, 256, 2.0F, 128.0 / 48000.0, 48000.0, 512.0);
+      0.0, 256, 2.0F, 128.0 / 48000.0, 48000.0);
   require(close(fast, 256.0, 1e-6), "playhead interpolation follows playback speed");
 
   // Negative elapsed time cannot rewind the reported position.
   const double negative = mixer::estimatePlayheadFrames(
-      500.0, 256, 1.0F, -1.0, 48000.0, 756.0);
+      500.0, 256, 1.0F, -1.0, 48000.0);
   require(close(negative, 500.0), "negative elapsed time clamps at the callback start");
 }
 

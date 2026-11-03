@@ -102,9 +102,14 @@ float GameplaySession::fingerWorldScale() const noexcept {
   return std::isfinite(scale) && scale > 1e-6F ? scale : 1.0F;
 }
 
-void GameplaySession::touchDown(std::int64_t id, float x, float y) {
+void GameplaySession::touchDown(std::int64_t id, float x, float y, bool started) {
   const auto scale = fingerWorldScale();
-  touches_[id] = std::make_unique<Touch>(x, y, x / scale, (viewport_.height - y) / scale);
+  auto touch = std::make_unique<Touch>(x, y, x / scale, (viewport_.height - y) / scale);
+  // A finger that was already on the glass when the pause began is seated without a fresh
+  // press edge: it can hold a body and catch a drag, but it does not click a tap note that
+  // happens to sit under it at the resume point.
+  touch->started = started;
+  touches_[id] = std::move(touch);
 }
 
 void GameplaySession::touchMove(std::int64_t id, float x, float y) noexcept {

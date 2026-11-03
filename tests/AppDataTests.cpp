@@ -1097,58 +1097,88 @@ void testSmoothingClock() {
     require(clock.valid(), "the clock is valid after the first reading");
   }
 
-  // A steady stream: the drawing clock must be monotonic and free of the reporting steps that
-  // the raw value would show. The invariant the reference guarantees is a bound relative to
-  // the *reported* position, not to wall time: with a stream that only reports on whole
-  // seconds the reported value itself is up to a second behind, and the clock is anchored to
-  // it, so a comparison against wall time would measure the stream's quantisation, not the
-  // smoothing.
+  // A stream that reports every frame only needs a tiny correction: the output advances one
+  // frame time per frame and stays within a couple of milliseconds of the report.
   {
     SmoothingClock clock;
     clock.reset(0.0, 0.0);
-    double worstFromReported = 0.0;
-    double largestStep = 0.0;
     double previous = 0.0;
+    double worst = 0.0;
     for (int frame = 1; frame <= 240; ++frame) {
       const double nowSec = static_cast<double>(frame) / 60.0;
-      // The stream reports its position only on whole seconds.
-      const double reported = std::floor(nowSec);
-      const double drawn = clock.advance(reported, nowSec, 1.0);
+      const double drawn = clock.advance(nowSec, nowSec, 1.0);
       require(drawn + 1.0e-9 >= previous, "the drawing clock never runs backwards");
-      largestStep = std::max(largestStep, std::abs(drawn - previous));
+      worst = std::max(worst, std::abs(drawn - nowSec));
       previous = drawn;
-      worstFromReported = std::max(worstFromReported, std::abs(drawn - reported));
     }
-    require(worstFromReported <= SmoothingClock::kMaxDeviationSec + 1.0e-9,
-        "the drawing clock stays within the documented band of the reported position");
+    require(worst <= 0.020, "a per-frame report is tracked within 20 ms");
+    require(std::abs(previous - 4.0) < 0.020, "the clock advances at the frame rate");
   }
 
-  // With a stream that advances in short steps, which is what a real audio callback
-  // produces, the emitted clock must follow the frame cadence rather than the report cadence:
-  // the average advance per frame is one frame time, and most frames move less than the
-  // report step would. The band around the reported position still bounds individual frames,
-  // which is deliberate — it is what keeps the drawing clock from drifting away from the
-  // judged one.
+  // A report every four frames (15 Hz), which is what a stuttering backend produces: the clock
+  // keeps moving between reports instead of freezing on the last one, and never steps back.
   {
     SmoothingClock clock;
     clock.reset(0.0, 0.0);
     double totalAdvance = 0.0;
     double previous = 0.0;
     int frames = 0;
-    for (int frame = 1; frame <= 120; ++frame) {
+    double worstLag = 0.0;
+    for (int frame = 1; frame <= 240; ++frame) {
       const double nowSec = static_cast<double>(frame) / 60.0;
-      // A report every four frames, quantised to 15 Hz.
       const double reported = std::floor(nowSec * 15.0) / 15.0;
       const double drawn = clock.advance(reported, nowSec, 1.0);
+      require(drawn + 1.0e-9 >= previous, "a stepped report never moves the clock back");
       totalAdvance += drawn - previous;
       previous = drawn;
+      worstLag = std::max(worstLag, std::abs(drawn - reported));
       ++frames;
     }
     const double meanAdvance = totalAdvance / frames;
     require(std::abs(meanAdvance - 1.0 / 60.0) < 0.002,
         "the drawing clock advances at the frame rate on average");
-    require(std::abs(previous - 2.0) < 0.020,
-        "the drawing clock keeps up with the stream over two seconds");
+    require(std::abs(previous - 4.0) < 0.030, "the drawing clock keeps up with the stream");
+    require(worstLag <= 0.100, "a stepped report is tracked within one report interval");
+  }
+
+  // A late report must not freeze the picture: the clock keeps advancing at a reduced rate
+  // until the stream catches up, and the catch-up itself must not step backwards.
+  {
+    SmoothingClock clock;
+    clock.reset(0.0, 0.0);
+    double previous = 0.0;
+    for (int frame = 1; frame <= 60; ++frame) {
+      const double nowSec = static_cast<double>(frame) / 60.0;
+      const double drawn = clock.advance(0.6, nowSec, 1.0);
+      require(drawn + 1.0e-9 >= previous, "a stalled report does not move the clock back");
+      require(drawn >= nowSec * 0.4, "a stalled report still advances the clock");
+      previous = drawn;
+    }
+    for (int frame = 61; frame <= 240; ++frame) {
+      const double nowSec = static_cast<double>(frame) / 60.0;
+      const double drawn = clock.advance(nowSec, nowSec, 1.0);
+      require(drawn + 1.0e-9 >= previous, "the catch-up never steps backwards");
+      previous = drawn;
+    }
+    require(std::abs(previous - 4.0) < 0.030, "the clock re-locks after a stall");
+  }
+
+  // Real streams report with small backward jitter around the callback boundary. The drawing
+  // clock is a presentation clock, so it must hold through that jitter instead of stepping
+  // back: a one-frame regression is exactly the twitch this clock exists to prevent.
+  {
+    SmoothingClock clock;
+    clock.reset(0.0, 0.0);
+    double previous = 0.0;
+    for (int frame = 1; frame <= 480; ++frame) {
+      const double nowSec = static_cast<double>(frame) / 120.0;
+      const double drift = std::sin(static_cast<double>(frame) * 0.37) * 0.003;
+      const double reported = nowSec * 0.2 + drift;
+      const double drawn = clock.advance(reported, nowSec, 0.2);
+      require(drawn + 1.0e-9 >= previous, "the drawing clock holds through backward jitter");
+      previous = drawn;
+    }
+    require(std::abs(previous - 0.8) < 0.030, "the drawing clock tracks a jittered stream");
   }
 
   // A seek backwards past the discontinuity threshold snaps to the new position and drops the
@@ -1204,7 +1234,6 @@ void testSmoothingClock() {
     require(next > 5.2 && next < 5.25, "the clock keeps advancing from the seek point");
   }
 }
-
 } // namespace
 
 int main() {

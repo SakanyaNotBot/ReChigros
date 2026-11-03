@@ -581,6 +581,48 @@ bool Application::stepRecording(AppContext& context) {
   return false;
 }
 
+// Drops judgement touches whose finger SDL no longer tracks. The event stream is the primary
+// source of touch lifetimes, but a platform is allowed to lose a release (a cancelled gesture,
+// a window transition, an id reused while the old press was still latched). Reconciling
+// against SDL's own finger table keeps such a contact from judging and lighting the noise
+// field until the next pause clears the session.
+static void reconcileGameTouches(AppContext& context) {
+  if (context.screen != Screen::Game || context.heldPointers.empty()) return;
+  // Replay touches are synthesised from the file, not from SDL fingers.
+  if (context.game.replayPlayback) return;
+  auto& session = context.game.session;
+  const auto touches = session.liveTouches();
+  bool hasDeviceTouch = false;
+  for (const auto& touch : touches) {
+    if (touch.id >= 0) {
+      hasDeviceTouch = true;
+      break;
+    }
+  }
+  if (!hasDeviceTouch) return;
+
+  std::unordered_set<std::int64_t> alive;
+  int deviceCount = 0;
+  SDL_TouchID* devices = SDL_GetTouchDevices(&deviceCount);
+  if (deviceCount <= 0) {
+    SDL_free(devices);
+    return;
+  }
+  for (int index = 0; index < deviceCount; ++index) {
+    int fingerCount = 0;
+    SDL_Finger** fingers = SDL_GetTouchFingers(devices[index], &fingerCount);
+    for (int finger = 0; finger < fingerCount; ++finger) {
+      if (fingers[finger] != nullptr) alive.insert(static_cast<std::int64_t>(fingers[finger]->id));
+    }
+    SDL_free(fingers);
+  }
+  SDL_free(devices);
+
+  for (const auto& touch : touches) {
+    if (touch.id >= 0 && !alive.contains(touch.id)) gamePointerUp(context, touch.id);
+  }
+}
+
 int Application::run() {
   if (!initialize()) return 1;
   bool running = true;
@@ -617,6 +659,8 @@ int Application::run() {
     app_->fps = smoothedFps_;
 
     processEvents(running);
+    // A touch the platform cancelled without an UP is released here, before this frame judges.
+    reconcileGameTouches(*app_);
     // Time spent in event dispatch is otherwise invisible: it sits between the frame start
     // and the swap, so a stall there is attributed to neither the scene nor the present.
     if (!frameStatsPath_.empty()) {
@@ -1593,7 +1637,12 @@ void Application::handleEvent(const SDL_Event& event, bool& running) {
       return;
     case SDL_EVENT_FINGER_DOWN:
     case SDL_EVENT_FINGER_MOTION:
-    case SDL_EVENT_FINGER_UP: {
+    case SDL_EVENT_FINGER_UP:
+    // A cancelled gesture (the platform took the touches over, or a finger id was reused)
+    // arrives as CANCELED for every pointer and never as an UP. Treating it as anything other
+    // than a release leaves those fingers latched in the session forever, which is exactly the
+    // ghost contact that only a pause used to clear.
+    case SDL_EVENT_FINGER_CANCELED: {
       int width = 0;
       int height = 0;
       SDL_GetWindowSize(window_, &width, &height);

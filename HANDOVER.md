@@ -912,7 +912,7 @@ $adb='D:\Studio-SDK\platform-tools\adb.exe'
 | `src/chart/` | 三种格式解析器 |
 | `src/platform/AssetManager.cpp` | 打包资源读取 |
 | `platform/android/app/src/main/java/com/wuying/chigros/MainActivity.java` | 安卓入口、导入、选择器桥接、启动参数 |
-| `src/app/SmoothingClock.cpp` | 绘制时钟（60 帧 bias 滚动平均，±10ms 钳制） |
+| `src/app/SmoothingClock.cpp` | 绘制时钟（按帧推进 + 不超过 50% 帧进度的有界修正，严格单调；seek/恢复时吸附） |
 | `src/app/RecordSession.cpp` | 录像会话：逐帧离屏渲染 + 编码驱动 + 进度/取消 |
 | `src/app/VideoEncoder.cpp` | ffmpeg 管道封装、音轨第二路输入、诊断日志 |
 | `src/app/RenderScreen.cpp` | 渲染设置页 + 进度条遮盖层 |

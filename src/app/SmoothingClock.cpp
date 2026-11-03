@@ -8,12 +8,8 @@ namespace rechigros::app {
 void SmoothingClock::reset(double reportedSec, double nowSec) noexcept {
   valid_ = true;
   value_ = reportedSec;
-  referencePlayheadSec_ = reportedSec;
-  referenceTimeSec_ = nowSec;
+  lastAdvanceSec_ = nowSec;
   lastReportedSec_ = reportedSec;
-  index_ = 0;
-  count_ = 0;
-  sum_ = 0.0;
 }
 
 double SmoothingClock::advance(double reportedSec, double nowSec, double speed) noexcept {
@@ -22,49 +18,36 @@ double SmoothingClock::advance(double reportedSec, double nowSec, double speed) 
     return value_;
   }
 
-  const double elapsed = nowSec - referenceTimeSec_;
-  const double predicted = referencePlayheadSec_ + elapsed * speed;
-  const double bias = predicted - reportedSec;
+  // A frame interval can be zero after a clock reset and can be long after a stall; both are
+  // handled by the same bound. A non-positive speed is not a playback state, so the nominal
+  // rate is used rather than freezing the field.
+  const double dt = std::clamp(nowSec - lastAdvanceSec_, 0.0, 0.25);
+  lastAdvanceSec_ = nowSec;
+  const double rate = std::isfinite(speed) && speed > 0.0 ? speed : 1.0;
+  const double base = dt * rate;
 
-  // Rolling average of the error, held in a ring buffer so the window costs no shifting.
-  if (count_ < kHistorySize) {
-    history_[index_] = bias;
-    sum_ += bias;
-    ++count_;
-  } else {
-    sum_ -= history_[index_];
-    history_[index_] = bias;
-    sum_ += bias;
-  }
-  index_ = (index_ + 1) % kHistorySize;
-  const double averageBias = count_ == 0 ? 0.0 : sum_ / count_;
-
-  const double difference = reportedSec - lastReportedSec_;
-  const bool nonFinite = !std::isfinite(predicted) || !std::isfinite(reportedSec);
-  const bool discontinuity = !nonFinite
-      && (difference < -kJumpBackwardSec || std::abs(difference) > kBigJumpSec);
-  if (nonFinite) {
-    // A reading that is not a number carries no information. Keeping the last good position
-    // is the only option that leaves the frame drawable; snapping to it would emit a
-    // not-a-number and blank the play field.
+  if (!std::isfinite(reportedSec)) {
+    // A reading that is not a number carries no information. Coasting at the playback rate
+    // leaves the frame drawable; snapping to it would blank the play field.
+    value_ += base;
     return value_;
   }
-  if (discontinuity) {
-    // Snapping and clearing the window is the only correct answer here: the prediction is
-    // derived from a position that no longer applies.
-    value_ = reportedSec;
-    referencePlayheadSec_ = reportedSec;
-    referenceTimeSec_ = nowSec;
-    index_ = 0;
-    count_ = 0;
-    sum_ = 0.0;
-  } else {
-    value_ = std::clamp(predicted - averageBias, reportedSec - kMaxDeviationSec,
-        reportedSec + kMaxDeviationSec);
-    // Continue from the emitted value so the correction never accumulates.
-    referencePlayheadSec_ = value_;
-    referenceTimeSec_ = nowSec;
+
+  const double difference = reportedSec - lastReportedSec_;
+  if (difference < -kJumpBackwardSec || difference > kBigJumpSec) {
+    // A seek or a restart: the prediction was derived from a position that no longer applies.
+    reset(reportedSec, nowSec);
+    return value_;
   }
+
+  // First-order tracking: advance at the playback rate, then correct a bounded fraction of the
+  // distance to the reported position. During a late report the correction is negative and the
+  // clock coasts; it never freezes and never runs backwards, because the correction can remove
+  // at most half of the frame's advance.
+  const double error = reportedSec - (value_ + base);
+  const double maxCorrection = base * kCorrectionShare;
+  const double correction = std::clamp(error * kCorrectionGain, -maxCorrection, maxCorrection);
+  value_ = std::max(value_, value_ + base + correction);
   lastReportedSec_ = reportedSec;
   return value_;
 }

@@ -110,6 +110,16 @@ StageRect touchStage(const AppContext& context) {
   return rect;
 }
 
+// Demo mode mirrors the play field horizontally, so the input has to be mirrored to match:
+// a touch inside the stage is reflected around its centre, and a touch outside is left
+// alone (it belongs to the surrounding chrome, not the play field).
+float mirrorTouchX(const AppContext& context, float x) {
+  if (!context.game.mirrorX) return x;
+  const auto stage = touchStage(context);
+  if (x < stage.left || x > stage.left + stage.width) return x;
+  return stage.left + (stage.left + stage.width - x);
+}
+
 render::scene::StageLayout renderStage(const AppContext& context) {
   return render::scene::computeStageLayout(static_cast<float>(context.drawableWidth),
       static_cast<float>(context.drawableHeight), 16.0F / 9.0F, false);
@@ -267,6 +277,55 @@ void recordTouch(AppContext& context, ReplayTouchEvent::Kind kind, std::int64_t 
   event.y = std::clamp((y - stage.top) / stage.height, 0.0F, 1.0F);
   event.timeSec = game.chartTimeSec;
   game.recorded.entries.push_back(event);
+}
+
+// Keeps the physical pointer set in step with the events. The coordinates are stored before
+// mirroring so a re-seated touch goes through the same transformation as a fresh press.
+void trackHeldPointer(AppContext& context, std::int64_t id, float x, float y) {
+  for (auto& pointer : context.heldPointers) {
+    if (pointer.id != id) continue;
+    pointer.x = x;
+    pointer.y = y;
+    return;
+  }
+  // A touch stack never holds more than a handful of pointers; the bound only protects the
+  // list from a platform that leaks ids.
+  constexpr std::size_t kMaxHeldPointers = 32;
+  if (context.heldPointers.size() >= kMaxHeldPointers) context.heldPointers.erase(
+      context.heldPointers.begin());
+  context.heldPointers.push_back({id, x, y});
+}
+
+// Moves an already tracked pointer. A motion for an unknown id is ignored, exactly like the
+// reference: a finger whose press was never seen is not re-created from a motion sample.
+void updateHeldPointer(AppContext& context, std::int64_t id, float x, float y) {
+  for (auto& pointer : context.heldPointers) {
+    if (pointer.id != id) continue;
+    pointer.x = x;
+    pointer.y = y;
+    return;
+  }
+}
+
+void releaseHeldPointer(AppContext& context, std::int64_t id) {
+  std::erase_if(context.heldPointers,
+      [id](const HeldPointer& pointer) { return pointer.id == id; });
+}
+
+// Re-seats every pointer that is still pressed into the session. A session rebuild (resume,
+// restart) drops its touches because the chart clock jumps, but the finger never left the
+// glass: without this a hold breaks on resume and a finger resting on a drag cannot catch it.
+void reseatHeldTouches(AppContext& context) {
+  auto& game = context.game;
+  if (!game.loaded || game.replayPlayback || game.autoplay) return;
+  for (const auto& pointer : context.heldPointers) {
+    if (game.session.hasTouch(pointer.id)) continue;
+    const float x = mirrorTouchX(context, pointer.x);
+    game.session.touchDown(pointer.id, x, pointer.y, false);
+    // The session's own touch lifetime is what a legacy replay reproduces, so the re-seated
+    // press is recorded as a fresh down.
+    recordTouch(context, ReplayTouchEvent::Kind::Down, pointer.id, x, pointer.y);
+  }
 }
 
 void finishGame(AppContext& context) {
@@ -926,7 +985,14 @@ void setPracticeSpeed(AppContext& context, float speed) {
   auto& game = context.game;
   game.musicSpeed = std::clamp(speed, kPracticeSpeedMin, kPracticeSpeedMax);
   gPracticeSpeed = game.musicSpeed;
+  game.session.setMusicSpeed(game.musicSpeed);
   if (context.audio != nullptr) context.audio->setPlaybackSpeed(game.musicSpeed);
+  // A speed change alters the rate the drawing clock predicts at. Restarting it from the
+  // current playhead keeps the old rate out of the correction window, so the picture does not
+  // lurch while the average re-converges.
+  game.smoothClock.reset(game.playheadSec, context.nowSec);
+  game.smoothClockValid = true;
+  game.smoothedPlayheadSec = game.playheadSec;
 }
 
 void updatePracticeFineScrub(AppContext& context) {
@@ -1641,6 +1707,7 @@ bool beginRun(AppContext& context, std::unique_ptr<game::Chart> chart,
   if (game.chart->levelEffects != nullptr) game.chart->levelEffects->resetChallenge();
   game.session.setChart(game.chart.get(), game.challenge);
   game.session.setAutoplay(game.autoplay);
+  game.session.setMusicSpeed(game.musicSpeed);
   // The duck and the level-mod latch follow the session's own swallowed-finger edge. The
   // context outlives the session, so capturing it is safe for the whole run.
   game.session.setBlockTouchObserver(
@@ -1716,6 +1783,9 @@ bool beginRun(AppContext& context, std::unique_ptr<game::Chart> chart,
   // as the reference instead of correcting against the previous run's position.
   game.smoothClockValid = false;
   game.smoothedPlayheadSec = 0.0;
+  // A restart keeps the fingers that never left the glass; they join the new session now, so
+  // an ongoing hold is already held when the opening buffer finishes.
+  reseatHeldTouches(context);
   return true;
 }
 
@@ -1751,7 +1821,12 @@ bool gameEnter(AppContext& context) {
 std::shared_ptr<std::string> gLoadingFailure;
 
 void gameEnterWithLoading(AppContext& context) {
+  // Restarting from the pause menu goes through gameLeave, but the finger that pressed the
+  // plate (and any other finger still on the glass) has to survive into the new run.
+  auto held = std::move(context.heldPointers);
+  context.heldPointers.clear();
   gameLeave(context);
+  context.heldPointers = std::move(held);
   auto& game = context.game;
   game = GameRuntime{};
   game.loading = true;
@@ -1908,6 +1983,9 @@ void pollChartLoad(AppContext& context) {
 void gameLeave(AppContext& context) {
   auto& game = context.game;
   game.session.cancelTouches();
+  // Leaving the play field ends every press with it: a pointer that is still down belongs to
+  // the screen that takes over, not to a session that no longer exists.
+  context.heldPointers.clear();
   resetRunFeedbackState(context);
   if (context.audio != nullptr) {
     context.audio->stop();
@@ -2006,6 +2084,7 @@ void gameUpdate(AppContext& context, float frameDeltaSec) {
             game.pauseResumesFromZero = false;
             game.pausePlayheadValid = false;
             releaseRunFromZero(context);
+            reseatHeldTouches(context);
             return;
           }
           // Resuming rewinds to the playhead captured when the pause began. The audio stream
@@ -2022,6 +2101,10 @@ void gameUpdate(AppContext& context, float frameDeltaSec) {
             game.smoothedPlayheadSec = game.playheadSec;
           }
           game.pausePlayheadValid = false;
+          // The pause cleared the session's touches, but fingers that are still on the glass
+          // have to take part in the resumed run: a hold keeps its finger and a drag under a
+          // resting finger is caught immediately.
+          reseatHeldTouches(context);
           if (context.audio != nullptr && game.musicLoaded) context.audio->play();
         }
       }
@@ -2387,7 +2470,11 @@ void gameTogglePause(AppContext& context) {
     game.pausePlayheadValid = true;
     game.pauseResumesFromZero = beforeGameplay;
     gPauseMenuOpenSec = context.nowSec;
-    game.session.cancelTouches();
+    // The pause freezes the chart, not the fingers. Clearing the touches here would release
+    // every hold and drop every drag, so only the press edge is cleared: a settled finger
+    // keeps its place, its hold and its zone latch, and it is not a fresh click when play
+    // resumes.
+    game.session.settleTouches();
     if (context.audio != nullptr && game.musicLoaded) {
       if (beforeGameplay) {
         context.audio->restartPaused();
@@ -2403,17 +2490,10 @@ void gameTogglePause(AppContext& context) {
   }
 }
 
-// Demo mode mirrors the play field horizontally, so the input has to be mirrored to match:
-// a touch inside the stage is reflected around its centre, and a touch outside is left
-// alone (it belongs to the surrounding chrome, not the play field).
-float mirrorTouchX(const AppContext& context, float x) {
-  if (!context.game.mirrorX) return x;
-  const auto stage = touchStage(context);
-  if (x < stage.left || x > stage.left + stage.width) return x;
-  return stage.left + (stage.left + stage.width - x);
-}
-
 bool gamePointerDown(AppContext& context, std::int64_t pointerId, float x, float y) {
+  // The physical press is tracked before any state gate: a finger placed during the pause menu
+  // or the loading panel is still on the glass when play resumes.
+  trackHeldPointer(context, pointerId, x, y);
   auto& game = context.game;
   if (!game.loaded || game.finished || game.inOutro) return false;
 
@@ -2480,17 +2560,23 @@ bool gamePointerDown(AppContext& context, std::int64_t pointerId, float x, float
 }
 
 void gamePointerMove(AppContext& context, std::int64_t pointerId, float x, float y) {
+  updateHeldPointer(context, pointerId, x, y);
   auto& game = context.game;
   if (!game.loaded || game.finished || game.inOutro) return;
-  if (game.pause != GameRuntime::Pause::None || game.inIntro) return;
   if (game.replayPlayback || game.autoplay) return;
   x = mirrorTouchX(context, x);
-  recordTouch(context, ReplayTouchEvent::Kind::Move, pointerId, x, y);
+  // A pressed finger keeps its position current even while the chart is frozen. The reference
+  // updates every active touch on every move event, so a finger slid around the pause screen is
+  // where it is when play resumes instead of snapping back to where the pause began. The move
+  // is neither judged nor recorded while time is standing still.
   game.session.touchMove(pointerId, x, y);
+  if (game.pause != GameRuntime::Pause::None || game.inIntro) return;
+  recordTouch(context, ReplayTouchEvent::Kind::Move, pointerId, x, y);
   ++context.forwardedPointerEvents;
 }
 
 void gamePointerUp(AppContext& context, std::int64_t pointerId) {
+  releaseHeldPointer(context, pointerId);
   auto& game = context.game;
   if (!game.loaded) return;
   // A release must always end the press. Pausing or reaching the outro used to skip this
@@ -2510,10 +2596,15 @@ void gameCancelTouches(AppContext& context) {
 
 void gameFocusLost(AppContext& context) {
   auto& game = context.game;
+  // The platform cancels every pointer when focus leaves; keeping them would resurrect a finger
+  // that is no longer on the glass after the run resumes.
+  context.heldPointers.clear();
   if (game.loaded && game.pause == GameRuntime::Pause::None && !game.finished) {
     gameTogglePause(context);
   }
-  game.session.settleTouches();
+  // Unlike an in-app pause, this one is accompanied by a cancelled gesture: no UP will ever
+  // arrive for these fingers, so the session has to drop them outright.
+  game.session.cancelTouches();
 }
 
 void gameToggleAutoplay(AppContext& context) {

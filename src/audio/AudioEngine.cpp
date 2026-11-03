@@ -99,6 +99,16 @@ struct Voice {
   bool active{};
 };
 
+/// One audio callback window, published as a unit so a reader can dead-reckon the music
+/// position without ever combining fields from two different callbacks.
+struct CallbackAnchor {
+  double startFrames{};
+  std::int64_t startNanos{};
+  std::int64_t startOutputFrames{};
+  std::int32_t frameCount{};
+  float speed{1.0F};
+};
+
 void mixSilence(float* output, std::uint32_t frameCount) noexcept {
   std::memset(output, 0, static_cast<std::size_t>(frameCount) * kOutputChannels * sizeof(float));
 }
@@ -142,7 +152,19 @@ struct AudioEngine::Impl final {
     config.aaudio.contentType = ma_aaudio_content_type_music;
     config.opensl.streamType = ma_opensl_stream_type_media;
 
-    if (ma_device_init(nullptr, &config, &device_) != MA_SUCCESS) return false;
+    // The default iOS category is play-and-record, which routes playback through the earpiece,
+    // keeps the input side of the session alive and can raise a microphone prompt the first
+    // time a chart starts. A game shipping its own music belongs in the playback category.
+    if (!contextOpen_) {
+      ma_context_config contextConfig = ma_context_config_init();
+#if defined(__APPLE__)
+      contextConfig.coreaudio.sessionCategory = ma_ios_session_category_playback;
+#endif
+      if (ma_context_init(nullptr, 0, &contextConfig, &context_) != MA_SUCCESS) return false;
+      contextOpen_ = true;
+    }
+
+    if (ma_device_init(&context_, &config, &device_) != MA_SUCCESS) return false;
 
     deviceOpen_ = true;
     {
@@ -167,10 +189,15 @@ struct AudioEngine::Impl final {
 
   void closeDevice() {
     std::lock_guard<std::mutex> lock{deviceMutex_};
-    if (!deviceOpen_) return;
-    ma_device_uninit(&device_);
-    deviceOpen_ = false;
+    if (deviceOpen_) {
+      ma_device_uninit(&device_);
+      deviceOpen_ = false;
+    }
     running_.store(false, std::memory_order_release);
+    if (contextOpen_) {
+      ma_context_uninit(&context_);
+      contextOpen_ = false;
+    }
   }
 
   bool startDevice() {
@@ -255,6 +282,8 @@ struct AudioEngine::Impl final {
 
     const double playhead = playheadFrames_.load(std::memory_order_acquire);
     if (playhead >= 0.0) playheadFrames_.store(playhead * scale, std::memory_order_release);
+    const double display = seekDisplayFrames_.load(std::memory_order_acquire);
+    if (display >= 0.0) seekDisplayFrames_.store(display * scale, std::memory_order_release);
   }
 
   // -- audio thread ----------------------------------------------------
@@ -288,6 +317,29 @@ struct AudioEngine::Impl final {
 
   void flushVoices() {
     for (auto& voice : voices_) voice = Voice{};
+  }
+
+  // -- callback anchor -------------------------------------------------
+
+  /// Publishes the callback window. Only the audio thread writes it, so the odd/even
+  /// sequence has a single writer; readers retry when they land mid-write.
+  void publishAnchor(const CallbackAnchor& anchor) noexcept {
+    anchorSequence_.fetch_add(1, std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_release);
+    anchor_ = anchor;
+    std::atomic_thread_fence(std::memory_order_release);
+    anchorSequence_.fetch_add(1, std::memory_order_relaxed);
+  }
+
+  [[nodiscard]] bool readAnchor(CallbackAnchor& out) const noexcept {
+    for (int attempt = 0; attempt < 4; ++attempt) {
+      const auto before = anchorSequence_.load(std::memory_order_acquire);
+      if ((before & 1U) != 0) continue;
+      out = anchor_;
+      std::atomic_thread_fence(std::memory_order_acquire);
+      if (anchorSequence_.load(std::memory_order_relaxed) == before) return true;
+    }
+    return false;
   }
 
   Voice* claimVoice() {
@@ -327,19 +379,23 @@ struct AudioEngine::Impl final {
   /// Number of output frames the device is estimated to have consumed by now,
   /// used to place a trigger on the frame the caller is hearing.
   std::int64_t estimateGeneratedOutputFrameNow() const noexcept {
-    const auto startNs = callbackStartNanos_.load(std::memory_order_acquire);
-    const auto startOutput = callbackStartOutputFrames_.load(std::memory_order_acquire);
     const auto endOutput = generatedOutputFrames_.load(std::memory_order_acquire);
-    const auto callbackFrames = callbackFrameCount_.load(std::memory_order_acquire);
     const auto rate = sampleRate_.load(std::memory_order_acquire);
-    if (startNs == 0 || callbackFrames <= 0 || rate == 0) return endOutput;
+    CallbackAnchor anchor;
+    if (rate == 0 || !readAnchor(anchor) || anchor.startNanos == 0 || anchor.frameCount <= 0) {
+      return endOutput;
+    }
 
-    const double elapsed = static_cast<double>(nowNanoseconds() - startNs) * 1.0e-9;
-    double generated = static_cast<double>(startOutput) + elapsed * static_cast<double>(rate);
+    const double elapsed = static_cast<double>(nowNanoseconds() - anchor.startNanos) * 1.0e-9;
+    double generated = static_cast<double>(anchor.startOutputFrames)
+        + elapsed * static_cast<double>(rate);
     const double maximum = std::min(
-        static_cast<double>(startOutput + callbackFrames), static_cast<double>(endOutput));
+        static_cast<double>(anchor.startOutputFrames + anchor.frameCount),
+        static_cast<double>(endOutput));
     if (generated > maximum) generated = maximum;
-    if (generated < static_cast<double>(startOutput)) generated = static_cast<double>(startOutput);
+    if (generated < static_cast<double>(anchor.startOutputFrames)) {
+      generated = static_cast<double>(anchor.startOutputFrames);
+    }
     return static_cast<std::int64_t>(std::llround(generated));
   }
 
@@ -400,11 +456,11 @@ struct AudioEngine::Impl final {
     const float targetCutoff = lowPassEnabled_.load(std::memory_order_relaxed)
         ? LowPassFilter::kClosedCutoffHz : LowPassFilter::kOpenCutoffHz;
 
-    callbackStartFrames_.store(position, std::memory_order_release);
-    callbackStartNanos_.store(nowNanoseconds(), std::memory_order_release);
-    callbackFrameCount_.store(static_cast<std::int32_t>(frameCount), std::memory_order_release);
-    callbackSpeed_.store(speed, std::memory_order_release);
-    callbackStartOutputFrames_.store(callbackStartOutputFrames, std::memory_order_release);
+    publishAnchor({position, nowNanoseconds(), callbackStartOutputFrames,
+        static_cast<std::int32_t>(frameCount), speed});
+    // The anchor now describes the audible window, so a seek no longer needs its own
+    // display position.
+    seekDisplayFrames_.store(kNoSeek, std::memory_order_release);
 
     const float* music = musicFrames > 0 ? music_.data() : nullptr;
     std::size_t outputIndex = 0;
@@ -460,6 +516,7 @@ struct AudioEngine::Impl final {
     const auto rate = sampleRate_.load(std::memory_order_acquire);
     if (rate == 0) {
       playheadFrames_.store(0.0, std::memory_order_release);
+      seekDisplayFrames_.store(0.0, std::memory_order_release);
       return;
     }
 
@@ -474,11 +531,7 @@ struct AudioEngine::Impl final {
 
     seekTargetFrames_.store(frames, std::memory_order_release);
     playheadFrames_.store(frames, std::memory_order_release);
-    callbackStartFrames_.store(frames, std::memory_order_release);
-    callbackStartNanos_.store(nowNanoseconds(), std::memory_order_release);
-    callbackFrameCount_.store(0, std::memory_order_release);
-    callbackStartOutputFrames_.store(
-        generatedOutputFrames_.load(std::memory_order_relaxed), std::memory_order_release);
+    seekDisplayFrames_.store(frames, std::memory_order_release);
     playheadResetPending_.store(true, std::memory_order_release);
   }
 
@@ -486,20 +539,23 @@ struct AudioEngine::Impl final {
     const auto rate = sampleRate_.load(std::memory_order_acquire);
     if (rate == 0) return 0.0;
 
+    // A seek is reflected immediately, before the next callback publishes an anchor.
+    const double seekFrames = seekDisplayFrames_.load(std::memory_order_acquire);
+    if (seekFrames >= 0.0) return seekFrames / static_cast<double>(rate);
+
     const double endFrames = playheadFrames_.load(std::memory_order_acquire);
     const bool audible = playing_.load(std::memory_order_relaxed)
         && !paused_.load(std::memory_order_relaxed);
     if (!audible) return endFrames / static_cast<double>(rate);
 
-    const auto startNs = callbackStartNanos_.load(std::memory_order_acquire);
-    const auto callbackFrames = callbackFrameCount_.load(std::memory_order_acquire);
-    if (startNs == 0 || callbackFrames <= 0) return endFrames / static_cast<double>(rate);
+    CallbackAnchor anchor;
+    if (!readAnchor(anchor) || anchor.startNanos == 0 || anchor.frameCount <= 0) {
+      return endFrames / static_cast<double>(rate);
+    }
 
-    const double elapsed = static_cast<double>(nowNanoseconds() - startNs) * 1.0e-9;
-    const double estimate = mixer::estimatePlayheadFrames(
-        callbackStartFrames_.load(std::memory_order_acquire), callbackFrames,
-        callbackSpeed_.load(std::memory_order_acquire), elapsed,
-        static_cast<double>(rate), endFrames);
+    const double elapsed = static_cast<double>(nowNanoseconds() - anchor.startNanos) * 1.0e-9;
+    const double estimate = mixer::estimatePlayheadFrames(anchor.startFrames, anchor.frameCount,
+        anchor.speed, elapsed, static_cast<double>(rate));
     return estimate / static_cast<double>(rate);
   }
 
@@ -508,7 +564,9 @@ struct AudioEngine::Impl final {
   mutable std::mutex deviceMutex_;
   mutable std::mutex stateMutex_;
   ma_device device_{};
+  ma_context context_{};
   bool deviceOpen_{};
+  bool contextOpen_{};
 
   std::atomic<bool> running_{false};
   std::atomic<bool> deviceLost_{false};
@@ -555,15 +613,15 @@ struct AudioEngine::Impl final {
   std::array<Voice, kMaxVoices> voices_{};
   LowPassFilter lowPass_;
 
-  // Playhead and callback anchors shared with caller threads.
+  // Playhead shared with caller threads. The callback window is published as one unit by the
+  // audio thread; `seekDisplayFrames_` covers the interval between a seek and the callback that
+  // adopts it.
   std::atomic<double> playheadFrames_{0.0};
   std::atomic<double> seekTargetFrames_{kNoSeek};
-  std::atomic<double> callbackStartFrames_{0.0};
-  std::atomic<std::int64_t> callbackStartNanos_{0};
-  std::atomic<std::int64_t> callbackStartOutputFrames_{0};
+  std::atomic<double> seekDisplayFrames_{kNoSeek};
+  std::atomic<std::uint32_t> anchorSequence_{0};
+  CallbackAnchor anchor_{};
   std::atomic<std::int64_t> generatedOutputFrames_{0};
-  std::atomic<std::int32_t> callbackFrameCount_{0};
-  std::atomic<float> callbackSpeed_{1.0F};
 
   std::atomic<float> playbackSpeed_{1.0F};
   std::atomic<float> musicVolume_{1.0F};
@@ -612,10 +670,7 @@ void AudioEngine::shutdown() {
   }
   impl_->playheadFrames_.store(0.0, std::memory_order_release);
   impl_->seekTargetFrames_.store(kNoSeek, std::memory_order_release);
-  impl_->callbackStartFrames_.store(0.0, std::memory_order_release);
-  impl_->callbackStartNanos_.store(0, std::memory_order_release);
-  impl_->callbackFrameCount_.store(0, std::memory_order_release);
-  impl_->callbackSpeed_.store(1.0F, std::memory_order_release);
+  impl_->seekDisplayFrames_.store(kNoSeek, std::memory_order_release);
   impl_->generatedOutputFrames_.store(0, std::memory_order_release);
   impl_->closeDevice();
 }
@@ -791,13 +846,10 @@ bool AudioEngine::installDecodedMusic(AudioBuffer decoded, const std::filesystem
     impl_->musicKey_ = musicFileKey(source, impl_->sampleRate_.load(std::memory_order_acquire));
   }
   impl_->playheadFrames_.store(0.0, std::memory_order_release);
-  impl_->seekTargetFrames_.store(kNoSeek, std::memory_order_release);
-  impl_->callbackStartFrames_.store(0.0, std::memory_order_release);
-  impl_->callbackStartNanos_.store(0, std::memory_order_release);
-  impl_->callbackFrameCount_.store(0, std::memory_order_release);
-  impl_->callbackSpeed_.store(
-      mixer::clampSpeed(impl_->playbackSpeed_.load(std::memory_order_relaxed)),
-      std::memory_order_release);
+  // A seek target of zero makes the first callback start at the top even if it raced the
+  // buffer swap, and the display position follows immediately.
+  impl_->seekTargetFrames_.store(0.0, std::memory_order_release);
+  impl_->seekDisplayFrames_.store(0.0, std::memory_order_release);
   impl_->musicLooping_.store(false, std::memory_order_release);
   impl_->playheadResetPending_.store(true, std::memory_order_release);
   return true;
@@ -806,6 +858,11 @@ bool AudioEngine::installDecodedMusic(AudioBuffer decoded, const std::filesystem
 void AudioEngine::play() {
   impl_->repairDevice();
   if (impl_->suspended_.load(std::memory_order_acquire)) return;
+  // The callback anchor still describes the window that was playing when the engine paused.
+  // Reporting the position playback stopped at until the next callback replaces it avoids a
+  // one-buffer jump forward followed by a snap back when the stream restarts.
+  impl_->seekDisplayFrames_.store(impl_->playheadFrames_.load(std::memory_order_acquire),
+      std::memory_order_release);
   impl_->playing_.store(true, std::memory_order_release);
   impl_->paused_.store(false, std::memory_order_release);
   impl_->startDevice();

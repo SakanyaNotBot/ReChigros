@@ -505,6 +505,61 @@ int runSelfTest() {
     gameLeave(context);
   }
 
+  // A finger that never leaves the glass has to keep judging across a pause. The pause settles
+  // the press edge but keeps the touch, and a finger placed while the menu is up is seated on
+  // resume. Without both, a hold breaks, a drag under the finger cannot be caught, and the
+  // finger stays dead until it is lifted and pressed again.
+  if (chartLoaded) {
+    AppContext context(work / "held-touch-resume");
+    context.play.chartFile = chartPath;
+    context.play.autoplay = false;
+    context.screen = Screen::Game;
+    context.settings.aspectRatio = 16.0F / 9.0F;
+    const bool started = gameEnter(context);
+    const auto step = [&](int frames) {
+      for (int frame = 0; frame < frames; ++frame) {
+        context.nowSec += 1.0 / 60.0;
+        gameUpdate(context, 1.0F / 60.0F);
+      }
+    };
+    step(120);
+    const std::int64_t heldId = 77;
+    gamePointerDown(context, heldId, 640.0F, 360.0F);
+    const bool seated = context.game.session.hasTouch(heldId);
+    // Open the pause with a second finger; the held one never lifts.
+    gamePointerDown(context, 78, 40.0F, 40.0F);
+    gamePointerUp(context, 78);
+    gamePointerDown(context, 79, 40.0F, 40.0F);
+    gamePointerUp(context, 79);
+    const bool opened = context.game.pause == GameRuntime::Pause::Menu;
+    const bool retained = opened && context.game.session.hasTouch(heldId);
+    // A different finger placed while the menu is up is not a session touch yet.
+    const std::int64_t pausedId = 81;
+    context.nowSec += 1.0;
+    gamePointerDown(context, pausedId, 200.0F, 200.0F);
+    const bool heldWhilePaused = !context.game.session.hasTouch(pausedId);
+    // Continue with a third finger.
+    gamePointerDown(context, 80, 773.0F, 360.0F);
+    gamePointerUp(context, 80);
+    step(200);
+    const bool resumed = context.game.pause == GameRuntime::Pause::None && context.game.loaded;
+    const bool kept = resumed && context.game.session.hasTouch(heldId);
+    const bool seatedPaused = resumed && context.game.session.hasTouch(pausedId);
+    gamePointerUp(context, heldId);
+    gamePointerUp(context, pausedId);
+    const bool released = !context.game.session.hasTouch(heldId)
+        && !context.game.session.hasTouch(pausedId) && context.heldPointers.empty();
+    report(started && seated && retained && heldWhilePaused && kept && seatedPaused && released,
+        "a finger held through a pause keeps judging after the resume",
+        "seated=" + std::to_string(seated ? 1 : 0) + ", retained="
+            + std::to_string(retained ? 1 : 0) + ", paused="
+            + std::to_string(heldWhilePaused ? 1 : 0) + ", kept="
+            + std::to_string(kept ? 1 : 0) + ", seatedPaused="
+            + std::to_string(seatedPaused ? 1 : 0) + ", released="
+            + std::to_string(released ? 1 : 0));
+    gameLeave(context);
+  }
+
   // Headless gameplay: autoplay and a miss-only manual run.
   if (chartLoaded) {
     bool gameplayOk = false;

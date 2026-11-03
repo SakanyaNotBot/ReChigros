@@ -159,6 +159,16 @@ struct CalibrationMarker {
   double ageSec{};
 };
 
+// One pointer that is physically pressed. The set is maintained for the whole application,
+// independently of the judgement session, so a finger that stays down across a pause, a
+// restart or a cancelled gesture still has a known position and can be seated into the new
+// session instead of going dead until it is lifted and pressed again.
+struct HeldPointer {
+  std::int64_t id{};
+  float x{};
+  float y{};
+};
+
 // Calibration screen state. Audio is a two second loop; the falling note is a
 // pure function of the loop position, so entering the screen only loads audio.
 struct CalibrationRuntime {
@@ -235,6 +245,10 @@ struct AppContext {
   bool manageMode{};
   int settingsTab{};
   int libraryTab{};
+  // Pointers currently held on the glass, in window coordinates. Filled by the gameplay
+  // input path and consulted when a session is rebuilt (resume, restart) so a finger that
+  // never left the screen keeps judging.
+  std::vector<HeldPointer> heldPointers;
 
   // Level-effect challenge state of the current run: the bad+miss and miss totals the effect
   // was last told about, and whether a finger was holding a red zone on the previous frame.

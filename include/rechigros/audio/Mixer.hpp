@@ -89,19 +89,23 @@ inline void accumulate(StereoSample& target, const float* frames, std::int64_t f
 }
 
 /// Smooths the playhead between audio callbacks. The result is the read position
-/// `elapsedSeconds` after a callback that started at `startFrames`, bounded by both
-/// the frames produced in that callback and the latest committed playhead.
+/// `elapsedSeconds` after a callback that started at `startFrames`, bounded by the
+/// frames that callback produces. The buffer being mixed is already committed to the
+/// device, so dead-reckoning to its end is valid even though the playhead counter is
+/// only published once the mix returns. Bounding by the last published counter instead
+/// would pin the playhead to the callback's start for its whole duration, which turns a
+/// large buffer into a visible staircase.
 inline double estimatePlayheadFrames(double startFrames, std::int32_t callbackFrames,
-    float speed, double elapsedSeconds, double sampleRate, double endFrames) noexcept {
-  if (callbackFrames <= 0 || sampleRate <= 0.0) return endFrames;
+    float speed, double elapsedSeconds, double sampleRate) noexcept {
+  if (callbackFrames <= 0 || sampleRate <= 0.0) return startFrames;
   const float boundedSpeed = clampSpeed(speed);
   double generated = elapsedSeconds * sampleRate;
   if (!std::isfinite(generated) || generated < 0.0) generated = 0.0;
   if (generated > static_cast<double>(callbackFrames)) generated = static_cast<double>(callbackFrames);
 
   double estimate = startFrames + generated * static_cast<double>(boundedSpeed);
-  double maximum = startFrames + static_cast<double>(callbackFrames) * static_cast<double>(boundedSpeed);
-  if (maximum > endFrames) maximum = endFrames;
+  const double maximum =
+      startFrames + static_cast<double>(callbackFrames) * static_cast<double>(boundedSpeed);
   if (estimate > maximum) estimate = maximum;
   if (estimate < 0.0) estimate = 0.0;
   return estimate;

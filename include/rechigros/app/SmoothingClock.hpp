@@ -2,25 +2,26 @@
 
 namespace rechigros::app {
 
-// Corrects the drawing clock against the audio stream's reported position.
+// Keeps the drawing clock locked to the audio stream without copying its reporting steps.
 //
-// The audio backend reports where playback is only once per callback, so drawing straight
-// from that value makes the play field advance in steps with jitter in between. This keeps a
-// running average of the error between a predicted position and the reported one, and
-// subtracts that average: the prediction is smooth by construction and the average absorbs a
-// constant offset between the two clocks.
+// The audio backend reports its position once per callback, and a callback can be late or
+// arrive in a burst, so drawing straight from the report makes the play field freeze and jump.
+// This advances the clock at the playback rate on every frame and applies a bounded correction
+// towards the report: a late report slows the clock, an early one speeds it up, and neither can
+// move it backwards. Judgement keeps using the audio position itself, so the correction never
+// moves a hit window.
 //
-// Two properties keep it safe. The output is clamped to a small band around the reported
-// position, so the drawing clock can never drift visibly away from the judged one; and a
-// seek, restart or resume is detected as a jump and snaps the clock instead of averaging
-// across the discontinuity, which would smear the jump over the whole window.
+// A seek, a restart or the jump out of a pause is a different case: it is detected as a
+// discontinuity and snaps the clock, because easing across it would smear the jump over a
+// second of play.
 class SmoothingClock final {
 public:
-  // Frames in the averaging window. Short enough to follow a real drift, long enough to
-  // absorb the reporting interval.
-  static constexpr int kHistorySize = 60;
-  // The drawing clock stays within this distance of the reported position.
-  static constexpr double kMaxDeviationSec = 0.010;
+  // Largest fraction of a frame's advance that a correction may add or remove. Keeping half
+  // means a stalled report makes the clock coast at half speed instead of freezing outright.
+  static constexpr double kCorrectionShare = 0.5;
+  // Response of the correction to the measured error. Half converges within a few frames while
+  // leaving the motion smooth.
+  static constexpr double kCorrectionGain = 0.5;
   // A backwards jump larger than this is a seek or a restart.
   static constexpr double kJumpBackwardSec = 0.1;
   // Any jump larger than this in either direction is a discontinuity.
@@ -37,13 +38,8 @@ public:
   [[nodiscard]] double value() const noexcept { return value_; }
 
 private:
-  double history_[kHistorySize]{};
-  int index_{};
-  int count_{};
-  double sum_{};
-  double referencePlayheadSec_{};
-  double referenceTimeSec_{};
   double lastReportedSec_{};
+  double lastAdvanceSec_{};
   double value_{};
   bool valid_{};
 };

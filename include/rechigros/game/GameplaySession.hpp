@@ -38,7 +38,7 @@ public:
   [[nodiscard]] double musicSpeed() const noexcept { return musicSpeed_; }
   void setAutoplay(bool value) noexcept;
 
-  void touchDown(std::int64_t id, float x, float y);
+  void touchDown(std::int64_t id, float x, float y, bool started = true);
   void touchMove(std::int64_t id, float x, float y) noexcept;
   void touchUp(std::int64_t id) noexcept;
   void cancelTouches() noexcept;
@@ -110,6 +110,11 @@ public:
     return blockedTouches_;
   }
   [[nodiscard]] std::vector<BlockedTouch> liveTouches() const;
+  // Whether a pointer id already has a live touch. Re-seating a held pointer must not reset
+  // the touch that is already judging.
+  [[nodiscard]] bool hasTouch(std::int64_t id) const noexcept {
+    return touches_.find(id) != touches_.end();
+  }
 
   // Receives the swallowed-finger edge. The audio duck and the effect chain both react to the
   // transition rather than the level, and the session is the only place that knows the edge:
