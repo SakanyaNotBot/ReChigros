@@ -90,9 +90,9 @@ jobs:
           path: |
             third_party/cache
             build/ios/_deps
-          key: ios-deps-${{ runner.os }}-${{ hashFiles('cmake/Dependencies.cmake', 'CMakeLists.txt') }}
+          key: ios-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('cmake/Dependencies.cmake', 'CMakeLists.txt') }}
           restore-keys: |
-            ios-deps-${{ runner.os }}-
+            ios-deps-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Configure CMake project
         env:
