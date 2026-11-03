@@ -2,6 +2,13 @@ cmake_minimum_required(VERSION 3.20)
 
 project(ReChigros VERSION 0.1.0 LANGUAGES C CXX)
 
+# miniaudio's iOS backend is Objective-C; the language has to be enabled before a
+# translation unit can be marked OBJC. Apple's toolchain always provides a compiler,
+# while MSVC does not, so the language stays off on the other hosts.
+if(APPLE)
+  enable_language(OBJC)
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

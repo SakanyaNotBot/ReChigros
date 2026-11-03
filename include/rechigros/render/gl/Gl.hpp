@@ -6,7 +6,9 @@
 #ifdef RECHIGROS_GLES
 # ifdef __APPLE__
 #  include <OpenGLES/ES3/gl.h>
-#  include <OpenGLES/ES3/glext.h>
+#  if __has_include(<OpenGLES/ES3/glext.h>)
+#   include <OpenGLES/ES3/glext.h>
+#  endif
 # else
 #  include <GLES3/gl3.h>
 # endif
@@ -15,6 +17,17 @@
 #endif
 
 namespace rechigros::render::gl {
+
+#ifdef RECHIGROS_GLES
+// The timer query tokens come from the extension header, which recent Apple SDKs may
+// omit even though the entry points remain available through SDL_GL_GetProcAddress.
+# ifndef GL_TIME_ELAPSED_EXT
+#  define GL_TIME_ELAPSED_EXT 0x88BF
+# endif
+# ifndef GL_GPU_DISJOINT_EXT
+#  define GL_GPU_DISJOINT_EXT 0x8FBB
+# endif
+#endif
 
 // The shader language version every generated program starts with.
 #ifdef RECHIGROS_GLES

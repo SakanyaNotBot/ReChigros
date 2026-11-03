@@ -6,6 +6,10 @@
 
 #include "imstb_truetype.h"
 
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -447,9 +451,16 @@ std::filesystem::path findSymbolFontPath() {
       "/system/fonts/NotoSansSymbols-Regular.ttf",
       "/system/fonts/NotoSansCJK-Regular.ttc"};
 #elif defined(__APPLE__)
+#if TARGET_OS_IPHONE
+  static const std::filesystem::path candidates[] = {
+      "/System/Library/Fonts/Core/AppleSymbols.ttf",
+      "/System/Library/Fonts/Apple Symbols.ttf",
+      "/System/Library/Fonts/Core/ArialUnicode.ttf"};
+#else
   static const std::filesystem::path candidates[] = {
       "/System/Library/Fonts/Supplemental/Apple Symbols.ttf",
       "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"};
+#endif
 #else
   static const std::filesystem::path candidates[] = {
       "/usr/share/fonts/opentype/noto/NotoSansSymbols2-Regular.ttf",

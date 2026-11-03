@@ -4,6 +4,10 @@
 
 #include <SDL3/SDL_log.h>
 
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
@@ -661,8 +665,14 @@ bool TextRenderer::initialize(const std::filesystem::path& assetRoot) {
       "/system/fonts/NotoSansSymbols-Regular-Subsetted.ttf",
       "/system/fonts/NotoSansSymbols-Regular.ttf", "/system/fonts/NotoSansCJK-Regular.ttc"};
 #elif defined(__APPLE__)
+#if TARGET_OS_IPHONE
+  candidates = {"/System/Library/Fonts/Core/AppleSymbols.ttf",
+      "/System/Library/Fonts/Apple Symbols.ttf",
+      "/System/Library/Fonts/Core/ArialUnicode.ttf"};
+#else
   candidates = {"/System/Library/Fonts/Supplemental/Apple Symbols.ttf",
       "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"};
+#endif
 #else
   candidates = {"/usr/share/fonts/opentype/noto/NotoSansSymbols2-Regular.ttf",
       "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"};

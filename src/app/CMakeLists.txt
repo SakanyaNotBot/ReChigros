@@ -74,6 +74,12 @@ target_compile_definitions(ReChigros PRIVATE RECHIGROS_VERSION="${PROJECT_VERSIO
 if(ANDROID OR IOS)
   target_compile_definitions(ReChigros PRIVATE RECHIGROS_GLES=1)
 endif()
+if(IOS)
+  # The audio implementation is Objective-C; the runtime is not linked automatically
+  # through a static archive, so name it on the executable as well.
+  find_library(RECHIGROS_OBJC_LIBRARY objc REQUIRED)
+  target_link_libraries(ReChigros PRIVATE "${RECHIGROS_OBJC_LIBRARY}")
+endif()
 
 if(APPLE AND NOT IOS)
   set_target_properties(ReChigros PROPERTIES MACOSX_BUNDLE TRUE MACOSX_BUNDLE_GUI_IDENTIFIER com.wuying.chigros)
@@ -93,9 +99,17 @@ if(IOS)
   set_source_files_properties("${PROJECT_SOURCE_DIR}/platform/ios/LaunchScreen.storyboard" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
 endif()
 
+if(IOS)
+  # An iOS bundle keeps its executable at the .app root, so the bundle directory is the
+  # location SDL_GetBasePath reports and where the assets belong. macOS keeps them beside
+  # the executable inside Contents/MacOS.
+  set(RECHIGROS_ASSET_DESTINATION "$<TARGET_BUNDLE_DIR:ReChigros>/assets")
+else()
+  set(RECHIGROS_ASSET_DESTINATION "$<TARGET_FILE_DIR:ReChigros>/assets")
+endif()
 if(NOT ANDROID)
   add_custom_command(TARGET ReChigros POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:ReChigros>/assets")
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/assets" "${RECHIGROS_ASSET_DESTINATION}")
 endif()
 
 # Batch check for the file import flows. It only links the import logic and the library /

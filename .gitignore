@@ -34,6 +34,8 @@ xcuserdata/
 
 # Local delivery artifacts copied out of the disposable build tree
 /artifacts/
+# IPA downloaded by the remote iOS builder
+/dist/
 /platform/android/artifacts/
 
 

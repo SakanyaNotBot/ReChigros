@@ -261,7 +261,7 @@ bool Application::initialize() {
   SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
 
   SDL_WindowFlags windowFlags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
-#if defined(__ANDROID__) || defined(__IPHONEOS__)
+#if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IPHONE)
   windowFlags |= SDL_WINDOW_FULLSCREEN;
 #else
   // Automated runs exercise the real GL context and event loop without putting a

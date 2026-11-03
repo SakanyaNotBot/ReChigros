@@ -1,0 +1,216 @@
+/*
+ * Objectively: Ultra-lightweight object oriented framework for GNU C.
+ * Copyright (C) 2014 Jay Dolan <jay@jaydolan.com>
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty. In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ * claim that you wrote the original software. If you use this software
+ * in a product, an acknowledgment in the product documentation would be
+ * appreciated but is not required.
+ *
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ * misrepresented as being the original software.
+ *
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+#pragma once
+
+#include <Objectively/Condition.h>
+#include <Objectively/Object.h>
+#include <Objectively/Operation.h>
+#include <Objectively/ThreadPool.h>
+
+/**
+ * @file
+ * @brief OperationQueues provide threads of execution for Operations.
+ */
+
+typedef struct OperationQueue OperationQueue;
+typedef struct OperationQueueInterface OperationQueueInterface;
+
+/**
+ * @brief OperationQueues provide threads of execution for Operations.
+ * @extends Object
+ * @ingroup Concurrency
+ */
+struct OperationQueue {
+
+  /**
+   * @brief The superclass.
+   */
+  Object object;
+
+  /**
+   * @brief The interface type.
+   * @protected
+   */
+  OperationQueueInterface *interface[0];
+
+  /**
+   * @brief A condition signaled on `addOperation` and `removeOperation`.
+   * @private
+   */
+  Condition *condition;
+
+  /**
+   * @brief `true` when this queue is being deallocated, which ends its ThreadFunctions.
+   * @private
+   */
+  bool isCancelled;
+
+  /**
+   * @brief When `true`, the queue will not `start` any new Operations.
+   * @remarks Read-only; use `suspend` and `resume`, which notify the queue's
+   * Threads of the transition.
+   */
+  bool isSuspended;
+
+  /**
+   * @brief The Operations.
+   * @private
+   */
+  Array *operations;
+
+  /**
+   * @brief The backing ThreadPool, with one Thread per concurrently executing Operation.
+   * @private
+   */
+  ThreadPool *threadPool;
+};
+
+/**
+ * @brief The OperationQueue interface.
+ */
+struct OperationQueueInterface {
+
+  /**
+   * @brief The superclass interface.
+   */
+  ObjectInterface objectInterface;
+
+  /**
+   * @fn void OperationQueue::addOperation(OperationQueue *self, Operation *operation)
+   * @brief Adds an Operation to this queue.
+   * @param self The OperationQueue.
+   * @param operation The Operation to add.
+   * @memberof OperationQueue
+   */
+  void (*addOperation)(OperationQueue *self, Operation *operation);
+
+  /**
+   * @fn Operation * OperationQueue::addOperationWithFunction(OperationQueue *self, OperationFunction *function, ident data)
+   * @brief Adds an Operation to this queue.
+   * @param self The OperationQueue.
+   * @param function The OperationFunction to add.
+   * @param data The user data.
+   * @return The Operation, which should be released when no longer required.
+   * @memberof OperationQueue
+   */
+  Operation *(*addOperationWithFunction)(OperationQueue *self, OperationFunction function, ident data);
+
+  /**
+   * @fn void OperationQueue::cancelAllOperations(OperationQueue *self)
+   * @brief Cancels all pending Operations residing within this Queue.
+   * @param self The OperationQueue.
+   * @memberof OperationQueue
+   */
+  void (*cancelAllOperations)(OperationQueue *self);
+
+  /**
+   * @static
+   * @fn OperationQueue* OperationQueue::currentQueue(void)
+   * @return The current OperationQueue, or `NULL` if none can be determined.
+   * @remarks This method should only be called from a synchronous Operation that was dispatched
+   * via an OperationQueue. This method uses thread-local storage.
+   * @memberof OperationQueue
+   */
+  OperationQueue *(*currentQueue)(void);
+
+  /**
+   * @fn OperationQueue *OperationQueue::init(OperationQueue *self)
+   * @brief Initializes this OperationQueue as a serial queue.
+   * @param self The OperationQueue.
+   * @return The initialized OperationQueue, or `NULL` on error.
+   * @remarks Serial queues run one Operation at a time. Use
+   * `initWithMaxConcurrentOperations` for concurrency.
+   * @memberof OperationQueue
+   */
+  OperationQueue *(*init)(OperationQueue *self);
+
+  /**
+   * @fn OperationQueue *OperationQueue::initWithMaxConcurrentOperations(OperationQueue *self, size_t maxConcurrentOperations)
+   * @brief Initializes this OperationQueue with the given concurrency.
+   * @param self The OperationQueue.
+   * @param maxConcurrentOperations The number of Operations to run concurrently,
+   * which MUST be at least one.
+   * @return The initialized OperationQueue, or `NULL` on error.
+   * @memberof OperationQueue
+   */
+  OperationQueue *(*initWithMaxConcurrentOperations)(OperationQueue *self, size_t maxConcurrentOperations);
+
+  /**
+   * @fn size_t OperationQueue::operationCount(const OperationQueue *self)
+   * @param self The OperationQueue.
+   * @return The instantaneous `count` of this OperationQueue's Operations.
+   * @memberof OperationQueue
+   */
+  size_t (*operationCount)(const OperationQueue *self);
+
+  /**
+   * @fn Array *OperationQueue::operations(const OperationQueue *self)
+   * @param self The OperationQueue.
+   * @return An instantaneous copy of this OperationQueue's Operations.
+   * @memberof OperationQueue
+   */
+  Array *(*operations)(const OperationQueue *self);
+
+  /**
+   * @fn void OperationQueue::removeOperation(OperationQueue *self, Operation *operation)
+   * @brief Removes the Operation from this queue.
+   * @param self The OperationQueue.
+   * @param operation The Operation to remove.
+   * @memberof OperationQueue
+   */
+  void (*removeOperation)(OperationQueue *self, Operation *operation);
+
+  /**
+   * @fn void OperationQueue::resume(OperationQueue *self)
+   * @brief Resumes this queue, allowing it to `start` Operations again.
+   * @param self The OperationQueue.
+   * @memberof OperationQueue
+   */
+  void (*resume)(OperationQueue *self);
+
+  /**
+   * @fn void OperationQueue::suspend(OperationQueue *self)
+   * @brief Suspends this queue, preventing it from starting any new Operations.
+   * @param self The OperationQueue.
+   * @remarks Operations already executing run to completion.
+   * @memberof OperationQueue
+   */
+  void (*suspend)(OperationQueue *self);
+
+  /**
+   * @fn void OperationQueue::waitUntilAllOperationsAreFinished(OperationQueue *self)
+   * @brief Waits until all Operations submitted to this queue have finished.
+   * @param self The OperationQueue.
+   * @memberof OperationQueue
+   */
+  void (*waitUntilAllOperationsAreFinished)(OperationQueue *self);
+};
+
+/**
+ * @fn Class *OperationQueue::_OperationQueue(void)
+ * @brief The OperationQueue archetype.
+ * @return The OperationQueue Class.
+ * @memberof OperationQueue
+ */
+OBJECTIVELY_EXPORT Class *_OperationQueue(void);
