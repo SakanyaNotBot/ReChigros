@@ -1,0 +1,99 @@
+/*
+ * Objectively: Ultra-lightweight object oriented framework for GNU C.
+ * Copyright (C) 2014 Jay Dolan <jay@jaydolan.com>
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty. In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ * claim that you wrote the original software. If you use this software
+ * in a product, an acknowledgment in the product documentation would be
+ * appreciated but is not required.
+ *
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ * misrepresented as being the original software.
+ *
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+#pragma once
+
+#include <Objectively/Object.h>
+#include <Objectively/String.h>
+
+/**
+ * @file
+ * @brief Encapsulation for error conditions.
+ */
+
+typedef struct Error Error;
+typedef struct ErrorInterface ErrorInterface;
+
+/**
+ * @brief Encapsulation for error conditions.
+ * @extends Object
+ */
+struct Error {
+
+  /**
+   * @brief The superclass.
+   */
+  Object object;
+
+  /**
+   * @brief The interface type.
+   * @protected
+   */
+  ErrorInterface *interface[0];
+
+  /**
+   * @brief The error code.
+   */
+  int code;
+
+  /**
+   * @brief The error domain.
+   */
+  String *domain;
+
+  /**
+   * @brief The error message.
+   */
+  String *message;
+};
+
+/**
+ * @brief The Error interface.
+ */
+struct ErrorInterface {
+
+  /**
+   * @brief The superclass interface.
+   */
+  ObjectInterface objectInterface;
+
+  /**
+   * @fn Error *Error::initWithDomain(Error *self, String *domain, int code, String *message)
+   * @brief Initializes an Error with the given details.
+   * @param self The Error.
+   * @param domain The Error domain (required).
+   * @param code The error code.
+   * @param message The error message.
+   * @return The initialized Error, or `NULL` on error.
+   * @memberof Error
+   */
+  Error *(*initWithDomain)(Error *self, String *domain, int code, String *message);
+};
+
+/**
+ * @fn Class *Error::_Error(void)
+ * @brief The Error archetype.
+ * @return The Error Class.
+ * @memberof Error
+ */
+OBJECTIVELY_EXPORT Class *_Error(void);

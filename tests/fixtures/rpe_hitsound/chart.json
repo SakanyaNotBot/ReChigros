@@ -1,0 +1,13 @@
+{
+  "META": {"RPEVersion": 220, "offset": 0, "name": "Custom hit sound"},
+  "BPMList": [{"bpm": 120, "startTime": [0, 0, 1]}],
+  "judgeLineList": [{
+    "bpmfactor": 1,
+    "eventLayers": [{
+      "alphaEvents": [{"startTime": [0, 0, 1], "endTime": [64, 0, 1], "start": 255, "end": 255}]
+    }],
+    "notes": [
+      {"type": 1, "startTime": [8, 0, 1], "positionX": 0, "hitsound": "custom.wav"}
+    ]
+  }]
+}

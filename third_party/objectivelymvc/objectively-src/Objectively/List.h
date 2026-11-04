@@ -1,0 +1,274 @@
+/*
+ * Objectively: Ultra-lightweight object oriented framework for GNU C.
+ * Copyright (C) 2014 Jay Dolan <jay@jaydolan.com>
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty. In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ * claim that you wrote the original software. If you use this software
+ * in a product, an acknowledgment in the product documentation would be
+ * appreciated but is not required.
+ *
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ * misrepresented as being the original software.
+ *
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+#pragma once
+
+#include <Objectively/Object.h>
+
+/**
+ * @file
+ * @brief Doubly-linked lists of raw C pointers.
+ */
+
+typedef struct List List;
+typedef struct ListInterface ListInterface;
+typedef struct ListNode ListNode;
+
+/**
+ * @brief The ListEnumerator function type.
+ * @param list The List.
+ * @param node The current node.
+ * @param data User data.
+ * @return True to stop enumeration, false to continue.
+ */
+typedef bool (*ListEnumerator)(const List *list, ListNode *node, ident data);
+
+/**
+ * @brief A node in a List.
+ */
+struct ListNode {
+  ident element;
+  ListNode *prev;
+  ListNode *next;
+};
+
+/**
+ * @brief Doubly-linked lists of raw C pointers.
+ * @extends Object
+ * @ingroup Collections
+ */
+struct List {
+
+  /**
+   * @brief The superclass.
+   */
+  Object object;
+
+  /**
+   * @brief The interface type.
+   * @protected
+   */
+  ListInterface *interface[0];
+
+  /**
+   * @brief The number of elements.
+   */
+  size_t count;
+
+  /**
+   * @brief The head node.
+   */
+  ListNode *head;
+
+  /**
+   * @brief The tail node.
+   */
+  ListNode *tail;
+
+  /**
+   * @brief Optional destructor called when an element is removed.
+   */
+  Consumer destroy;
+};
+
+/**
+ * @brief The List interface.
+ */
+struct ListInterface {
+
+  /**
+   * @brief The superclass interface.
+   */
+  ObjectInterface objectInterface;
+
+  /**
+   * @fn void List::append(List *self, const ident element)
+   * @brief Appends the given element to the tail of this List.
+   * @param self The List.
+   * @param element The element to append.
+   * @memberof List
+   */
+  void (*append)(List *self, const ident element);
+
+  /**
+   * @fn bool List::contains(const List *self, const ident element)
+   * @param self The List.
+   * @param element The element to search for (pointer equality).
+   * @return True if this List contains the given element.
+   * @memberof List
+   */
+  bool (*contains)(const List *self, const ident element);
+
+  /**
+   * @fn void List::enumerate(const List *self, ListEnumerator enumerator, ident data)
+   * @brief Enumerates this List with the given function.
+   * @param self The List.
+   * @param enumerator The enumerator function.
+   * @param data User data.
+   * @memberof List
+   */
+  void (*enumerate)(const List *self, ListEnumerator enumerator, ident data);
+
+  /**
+   * @fn void List::filter(List *self, Predicate predicate, ident data)
+   * @brief Filters this List in place using `predicate`.
+   * @param self The List.
+   * @param predicate The Predicate.
+   * @param data User data.
+   * @memberof List
+   */
+  void (*filter)(List *self, Predicate predicate, ident data);
+
+  /**
+   * @fn List *List::filteredList(const List *self, Predicate predicate, ident data)
+   * @brief Returns a new List containing elements of this List that pass `predicate`.
+   * @param self The List.
+   * @param predicate The Predicate.
+   * @param data User data.
+   * @return A new filtered List.
+   * @memberof List
+   */
+  List *(*filteredList)(const List *self, Predicate predicate, ident data);
+
+  /**
+   * @fn ident List::find(const List *self, Predicate predicate, ident data)
+   * @param self The List.
+   * @param predicate The Predicate.
+   * @param data User data.
+   * @return The first element to pass `predicate`, or NULL.
+   * @memberof List
+   */
+  ident (*find)(const List *self, Predicate predicate, ident data);
+
+  /**
+   * @fn List *List::init(List *self)
+   * @brief Initializes this List.
+   * @param self The List.
+   * @return The initialized List, or NULL on error.
+   * @memberof List
+   */
+  List *(*init)(List *self);
+
+  /**
+   * @fn void List::insertAfter(List *self, ListNode *node, const ident element)
+   * @brief Inserts an element after the given node.
+   * @param self The List.
+   * @param node The node to insert after, or NULL to prepend.
+   * @param element The element to insert.
+   * @memberof List
+   */
+  void (*insertAfter)(List *self, ListNode *node, const ident element);
+
+  /**
+   * @fn void List::map(List *self, Functor functor, ident data)
+   * @brief Transforms the elements in this List in place using `functor`.
+   * @param self The List.
+   * @param functor The Functor.
+   * @param data User data.
+   * @memberof List
+   */
+  void (*map)(List *self, Functor functor, ident data);
+
+  /**
+   * @fn List *List::mappedList(const List *self, Functor functor, ident data)
+   * @brief Returns a new List containing the elements of this List transformed by `functor`.
+   * @param self The List.
+   * @param functor The Functor.
+   * @param data User data.
+   * @return A new mapped List.
+   * @memberof List
+   */
+  List *(*mappedList)(const List *self, Functor functor, ident data);
+
+  /**
+   * @fn ListNode *List::nodeForElement(const List *self, const ident element)
+   * @param self The List.
+   * @param element The element to find (pointer equality).
+   * @return The first node whose data matches, or NULL.
+   * @memberof List
+   */
+  ListNode *(*nodeForElement)(const List *self, const ident element);
+
+  /**
+   * @fn void List::prepend(List *self, const ident element)
+   * @brief Prepends the given element to the head of this List.
+   * @param self The List.
+   * @param element The element to prepend.
+   * @memberof List
+   */
+  void (*prepend)(List *self, const ident element);
+
+  /**
+   * @fn ident List::reduce(const List *self, Reducer reducer, ident accumulator, ident data)
+   * @param self The List.
+   * @param reducer The Reducer.
+   * @param accumulator The initial accumulator value.
+   * @param data User data.
+   * @return The reduction result.
+   * @memberof List
+   */
+  ident (*reduce)(const List *self, Reducer reducer, ident accumulator, ident data);
+
+  /**
+   * @fn void List::removeAll(List *self)
+   * @brief Removes all elements from this List.
+   * @param self The List.
+   * @memberof List
+   */
+  void (*removeAll)(List *self);
+
+  /**
+   * @fn void List::remove(List *self, const ident element)
+   * @brief Removes the first occurrence of element from this List.
+   * @param self The List.
+   * @param element The element to remove.
+   * @memberof List
+   */
+  void (*remove)(List *self, const ident element);
+
+  /**
+   * @fn void List::removeNode(List *self, ListNode *node)
+   * @brief Removes the given node from this List.
+   * @param self The List.
+   * @param node The node to remove.
+   * @memberof List
+   */
+  void (*removeNode)(List *self, ListNode *node);
+
+  /**
+   * @fn void List::sort(List *self, Comparator comparator)
+   * @brief Sorts this List in-place using the given comparator.
+   * @param self The List.
+   * @param comparator The Comparator.
+   * @memberof List
+   */
+  void (*sort)(List *self, Comparator comparator);
+};
+
+/**
+ * @fn Class *List::_List(void)
+ * @brief The List archetype.
+ * @return The List Class.
+ * @memberof List
+ */
+OBJECTIVELY_EXPORT Class *_List(void);

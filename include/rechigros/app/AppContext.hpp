@@ -1,0 +1,278 @@
+#pragma once
+
+#include "rechigros/app/ChartLibrary.hpp"
+#include "rechigros/app/CoverCache.hpp"
+#include "rechigros/audio/Decoder.hpp"
+#include "rechigros/app/RecordSession.hpp"
+#include "rechigros/app/Replay.hpp"
+#include "rechigros/app/Settings.hpp"
+#include "rechigros/app/SmoothingClock.hpp"
+#include "rechigros/game/GameplaySession.hpp"
+#include "rechigros/game/PracticeJudgeWindows.hpp"
+#include "rechigros/game/PlayResult.hpp"
+
+#include <chrono>
+#include <filesystem>
+#include <functional>
+#include <future>
+#include <memory>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace rechigros::audio {
+class AudioEngine;
+}
+namespace rechigros::render {
+class GameRenderer;
+}
+
+namespace rechigros::app {
+
+enum class Screen { Home, Library, Detail, Game, Result, Calibration, Settings, Render };
+
+// Everything needed to start one gameplay run.
+struct PlaySetup {
+  std::string chartId;
+  std::string songName;
+  std::string difficulty;
+  std::filesystem::path chartFile;
+  std::filesystem::path musicFile;
+  std::filesystem::path bgFile;
+  int chartOffsetMs{};
+  int audioOffsetMs{};
+  bool practice{};
+  bool replayMode{};
+  std::filesystem::path replayFile;
+  bool autoplay{};
+  bool challenge{};
+  bool mirrorX{};
+  float musicSpeed{1.0F};
+  float scrollSpeed{1.0F};
+};
+
+// Per-run gameplay state owned by the application shell.
+struct GameRuntime {
+  std::unique_ptr<game::Chart> chart;
+  game::GameplaySession session;
+  bool loaded{};
+  // A dense chart takes a few hundred milliseconds to read, parse and prepare, and the screen
+  // that starts a run shows a loading panel while that happens on a worker thread. The runtime
+  // is not usable until the panel clears.
+  bool loading{};
+  double loadingElapsedSec{};
+  // Frames the panel has been on screen. The renderer start waits for one full presented
+  // frame so the panel is visible before its initialization touches the frame.
+  int loadingFrames{};
+  std::chrono::steady_clock::time_point loadingStartedAt{};
+  std::chrono::steady_clock::time_point loadingPanelPresentedAt{};
+  bool loadingPanelDrawn{};
+  bool loadingPanelPresented{};
+  bool gameplayFrameDrawn{};
+  bool gameplayFramePresented{};
+  // What the loader produced. The chart is always present when the load succeeded; the music
+  // buffer is only filled when the worker decoded it, which is the case for a music-backed run.
+  struct LoadedRun {
+    std::unique_ptr<game::Chart> chart;
+    bool musicDecoded{};
+    audio::AudioBuffer music;
+    // Chart-specific hit sounds decoded by the load worker, so beginRun installs them
+    // instead of decoding each one on the frame that starts play.
+    std::vector<std::pair<std::string, audio::AudioBuffer>> hitSounds;
+  };
+  // Filled by the worker; empty once consumed. The future yields no chart on failure, with the
+  // reason left in loadingError.
+  std::future<LoadedRun> chartLoad;
+  // A finished load waiting for its storyboard textures to finish decoding. The loading panel
+  // stays up instead of letting the first frames decode images on the render thread.
+  std::optional<LoadedRun> pendingRun;
+  std::string loadingError;
+  // The run the loader was started for. The settings and mode are captured when it starts so
+  // the worker and the frame that consumes it agree even if the library changes underneath.
+  PlaySetup loadingPlay;
+  bool started{};
+  bool inIntro{true};
+  bool inOutro{};
+  bool finished{};
+  // Set once the settlement backdrop has been prepared for this run, so the one-off cost is
+  // paid during the exit instead of on the settlement page's first frame.
+  bool outroBlurPrepared{};
+  double introElapsedSec{};
+  double outroElapsedSec{};
+  double chartTimeSec{};
+  double playheadSec{};
+  // Playhead used for drawing. The audio cursor reports the stream position only a few times
+  // per second, so drawing straight from it makes notes step instead of glide. `smoothClock`
+  // corrects it; judgement keeps using `playheadSec`, so the correction never moves a hit
+  // window.
+  double smoothedPlayheadSec{};
+  SmoothingClock smoothClock;
+  bool smoothClockValid{};
+  double visualTimeSec{};
+  double userOffsetSec{};
+  double chartOffsetSec{};
+  double musicDurationSec{};
+  double lastChartTimeSec{};
+  double stalledSec{};
+  float frameDeltaSec{};
+  bool musicLoaded{};
+  // Pause state machine: menu -> countdown -> play. The countdown ends the pause outright;
+  // there is no intermediate state between "countdown finished" and "playing".
+  enum class Pause : int { None, Menu, Countdown };
+  Pause pause{Pause::None};
+  double pauseElapsedSec{};
+  double pausePlayheadSec{};
+  // Set while the frozen playhead is meaningful. A pause before gameplay freezes it at zero,
+  // and the resume releases there instead of seeking to a stale position.
+  bool pausePlayheadValid{};
+  // True when the paused run releases at zero rather than at its frozen playhead.
+  bool pauseResumesFromZero{};
+  int countdown{};
+  double countdownElapsedSec{};
+  // Practice seeking and per-attempt judgement windows.
+  double seekRequestSec{-1.0};
+  game::PracticeJudgeWindows practiceWindows;
+  // Replay recording/playback.
+  bool replayPlayback{};
+  std::size_t replayCursor{};
+  ReplayData playback;
+  std::vector<game::JudgementEvent> judgementEvents;
+  bool recording{};
+  ReplayData recorded;
+  // Judgement popup driven by HUD count changes.
+  int popupJudgement{-1};
+  double popupAgeSec{};
+  int lastCounts[4]{};
+  bool hudVisible{true};
+  bool debugOverlay{};
+  bool autoplay{};
+  bool challenge{};
+  bool practice{};
+  bool mirrorX{};
+  float musicSpeed{1.0F};
+  float scrollSpeed{1.0F};
+};
+
+struct CalibrationMarker {
+  double yNorm{};
+  double ageSec{};
+};
+
+// One pointer that is physically pressed. The set is maintained for the whole application,
+// independently of the judgement session, so a finger that stays down across a pause, a
+// restart or a cancelled gesture still has a known position and can be seated into the new
+// session instead of going dead until it is lifted and pressed again.
+struct HeldPointer {
+  std::int64_t id{};
+  float x{};
+  float y{};
+};
+
+// Calibration screen state. Audio is a two second loop; the falling note is a
+// pure function of the loop position, so entering the screen only loads audio.
+struct CalibrationRuntime {
+  bool audioLoaded{};
+  float offsetMs{};
+  double previousLoopTime{-1.0};
+  std::vector<CalibrationMarker> markers;
+  // The page the calibration screen was opened from. It is kept apart from the settings page's
+  // own return target: that one describes where leaving the settings page goes, and reusing it
+  // for the calibration exit sent the player back into the settings page they had just left.
+  Screen returnTo{Screen::Settings};
+};
+
+// Play-mode overrides applied on top of whatever a chart's own setup produces. Used by the
+// headless verification runs to exercise the practice, challenge and mirror paths.
+struct PlayOverrides {
+  bool practice{};
+  bool challenge{};
+  bool mirrorX{};
+  bool autoplay{};
+};
+
+struct AppContext {
+  explicit AppContext(std::filesystem::path dataRoot);
+
+  // Copies the example chart that ships with the build into the library, once. A packaged
+  // build cannot read its own assets as files, so without this the library starts empty.
+  void seedBundledSample();
+
+  std::filesystem::path dataRoot;
+  std::filesystem::path settingsFile;
+  Settings settings;
+  PlayOverrides playOverrides;
+  ChartLibrary library;
+  ReplayStore replays;
+  TextureCache textures;
+  audio::AudioEngine* audio{};
+  render::GameRenderer* renderer{};
+  // Creates the gameplay renderer on first use instead of paying for it during launch.
+  std::function<void()> ensureRenderer;
+  // Advances the two-stage renderer startup: the first call starts the artwork decode, later
+  // calls upload it once the decode has finished. Returns true when the renderer is usable,
+  // so the loading screen can animate between the stages.
+  std::function<bool()> advanceRenderer;
+
+  Screen screen{Screen::Home};
+  Screen settingsReturn{Screen::Home};
+  Screen detailReturn{Screen::Library};
+  Screen renderReturn{Screen::Detail};
+  // Set while the chart shown by the recording page is loaded only for that page. Leaving the
+  // page has to release it again, because the recording page is not a play session.
+  bool renderChartPrepared{};
+  // The recording in progress, if any. It lives on the context because the interface, the render
+  // loop and the shutdown path all reach it.
+  RecordSession recording;
+  bool quitRequested{};
+  // A run started with an explicit replay output path records even when the stored
+  // preference has replay recording disabled. It lives outside the gameplay state so a
+  // new run's reset cannot clear it.
+  bool recordRequested{};
+  bool settingsDirty{};
+  float displayDpi{380.0F};
+  int windowWidth{1280};
+  int windowHeight{720};
+  int drawableWidth{1280};
+  int drawableHeight{720};
+  float fps{};
+  double nowSec{};
+  double deltaSec{};
+
+  std::string activeChartId;
+  std::string searchQuery;
+  std::vector<std::string> selectedIds;
+  bool manageMode{};
+  int settingsTab{};
+  int libraryTab{};
+  // Pointers currently held on the glass, in window coordinates. Filled by the gameplay
+  // input path and consulted when a session is rebuilt (resume, restart) so a finger that
+  // never left the screen keeps judging.
+  std::vector<HeldPointer> heldPointers;
+
+  // Level-effect challenge state of the current run: the bad+miss and miss totals the effect
+  // was last told about, and whether a finger was holding a red zone on the previous frame.
+  int levelEffectBadMissCount{};
+  int levelEffectMissCount{};
+  bool levelEffectTouchingBlock{};
+
+  PlaySetup play;
+  GameRuntime game;
+  CalibrationRuntime calibration;
+  game::PlayResult lastResult;
+  ReplayMeta lastReplayMeta;
+  bool lastRunHasReplay{};
+  bool lastRunWasReplay{};
+  bool lastRunRecorded{}; // recording was active
+  std::string savedReplayId;
+
+  std::string toastText;
+  double toastDeadlineSec{};
+  std::string loadError;
+  // Pointer events that reached gameplay input; used by the batch verification mode.
+  int forwardedPointerEvents{};
+  int totalNotesJudgedForBatch{};
+  bool captureGameplayRequested{};
+};
+
+} // namespace rechigros::app

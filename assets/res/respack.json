@@ -1,0 +1,14 @@
+{
+  "name": "Chigros",
+  "holdAtlas": [50, 52.5],
+  "holdAtlasMH": [50, 95],
+  "hitFx": [5, 6],
+  "hitFxScale": 0.95,
+  "hitFxDuration": 0.5,
+  "hitFxRotate": false,
+  "hitFxTinted": true,
+  "hideParticles": false,
+  "holdKeepHead": false,
+  "holdRepeat": false,
+  "holdCompact": false
+}

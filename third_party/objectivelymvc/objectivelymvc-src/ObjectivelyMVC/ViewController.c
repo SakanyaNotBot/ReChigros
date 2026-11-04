@@ -1,0 +1,352 @@
+/*
+ * ObjectivelyMVC: Object oriented MVC framework for SDL3 and C.
+ * Copyright (C) 2014 Jay Dolan <jay@jaydolan.com>
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty. In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ * claim that you wrote the original software. If you use this software
+ * in a product, an acknowledgment in the product documentation would be
+ * appreciated but is not required.
+ *
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ * misrepresented as being the original software.
+ *
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+#include <assert.h>
+
+#include "ViewController.h"
+
+#define _Class _ViewController
+
+#pragma mark - Object
+
+/**
+ * @see Object::dealloc(Object *)
+ */
+static void dealloc(Object *self) {
+
+  ViewController *this = (ViewController *) self;
+
+  release(this->childViewControllers);
+  release(this->view);
+
+  super(Object, self, dealloc);
+}
+
+#pragma mark - ViewController
+
+/**
+ * @fn void ViewController::addChildViewController(ViewController *self, ViewController *childViewController)
+ * @memberof ViewController
+ */
+static void addChildViewController(ViewController *self, ViewController *childViewController) {
+
+  assert(childViewController);
+
+  ViewController *that = retain(childViewController);
+
+  $(childViewController, removeFromParentViewController);
+
+  $(self->childViewControllers, addObject, childViewController);
+  childViewController->parentViewController = self;
+
+  $(self, loadViewIfNeeded);
+  $(childViewController, loadViewIfNeeded);
+
+  if (self->view->window) {
+    $(childViewController, viewWillAppear);
+  }
+
+  $(self->view, addSubview, childViewController->view);
+  $(childViewController->view, updateBindings, NULL);
+
+  if (self->view->window) {
+    $(childViewController, viewDidAppear);
+  }
+
+  release(that);
+}
+
+/**
+ * @fn ViewController *ViewController::init(ViewController *self)
+ * @memberof ViewController
+ */
+static ViewController *init(ViewController *self) {
+
+  self = (ViewController *) super(Object, self, init);
+  if (self) {
+    self->childViewControllers = $$(Array, arrayWithCapacity, 0);
+    assert(self->childViewControllers);
+  }
+
+  return self;
+}
+
+/**
+ * @fn void ViewController::loadView(ViewController *self)
+ * @memberof ViewController
+ */
+static void loadView(ViewController *self) {
+
+  View *view = $(alloc(View), initWithFrame, NULL);
+  assert(view);
+
+  $(view, addClassName, "viewController");
+
+  $(self, setView, view);
+  release(view);
+}
+
+/**
+ * @fn void ViewController::loadViewIfNeeded(ViewController *self)
+ * @memberof ViewController
+ */
+static void loadViewIfNeeded(ViewController *self) {
+
+  if (self->view == NULL) {
+    $(self, loadView);
+  }
+
+  assert(self->view);
+  assert(self->view->viewController == self);
+}
+
+/**
+ * @fn void ViewController::moveToParentViewController(ViewController *self, ViewController *parentViewController)
+ * @memberof ViewController
+ */
+static void moveToParentViewController(ViewController *self, ViewController *parentViewController) {
+
+  ViewController *this = retain(self);
+
+  $(self, removeFromParentViewController);
+
+  if (parentViewController) {
+    $(parentViewController, addChildViewController, self);
+  }
+
+  release(this);
+}
+
+/**
+ * @fn void ViewController::removeChildViewController(ViewController *self, ViewController *childViewController)
+ * @memberof ViewController
+ */
+static void removeChildViewController(ViewController *self, ViewController *childViewController) {
+
+  assert(childViewController);
+  assert(childViewController->parentViewController == self);
+
+  ViewController *that = retain(childViewController);
+
+  $(self->childViewControllers, removeObject, childViewController);
+  childViewController->parentViewController = NULL;
+
+  $(childViewController, viewWillDisappear);
+  $(childViewController->view, removeFromSuperview);
+  $(childViewController, viewDidDisappear);
+
+  release(that);
+}
+
+/**
+ * @fn void ViewController::removeFromParentViewController(ViewController *self)
+ * @memberof ViewController
+ */
+static void removeFromParentViewController(ViewController *self) {
+
+  if (self->parentViewController) {
+    $(self->parentViewController, removeChildViewController, self);
+  }
+}
+
+/**
+ * @brief ArrayEnumerator for respondToEvent recursion.
+ */
+static void respondToEvent_enumerate(const Array *array, ident obj, ident data) {
+  $((ViewController *) obj, respondToEvent, (const SDL_Event *) data);
+}
+
+/**
+ * @fn void ViewController::respondToEvent(ViewController *self, const SDL_Event *event)
+ * @memberof ViewController
+ */
+static void respondToEvent(ViewController *self, const SDL_Event *event) {
+  $((Array *) self->childViewControllers, enumerate, respondToEvent_enumerate, (ident) event);
+}
+
+/**
+ * @brief ArrayEnumerator for renderDeviceDidReset recursion.
+ */
+static void renderDeviceDidReset_enumerate(const Array *array, ident obj, ident data) {
+  $((ViewController *) obj, renderDeviceDidReset);
+}
+
+/**
+ * @fn void ViewController::renderDeviceDidReset(ViewController *self)
+ * @memberof ViewController
+ */
+static void renderDeviceDidReset(ViewController *self) {
+  
+  $(self->view, renderDeviceDidReset);
+  
+  $((Array *) self->childViewControllers, enumerate, renderDeviceDidReset_enumerate, NULL);
+}
+
+/**
+ * @brief ArrayEnumerator for renderDeviceWillReset recursion.
+ */
+static void renderDeviceWillReset_enumerate(const Array *array, ident obj, ident data) {
+  $((ViewController *) obj, renderDeviceWillReset);
+}
+
+/**
+ * @fn void ViewController::renderDeviceWillReset(ViewController *self)
+ * @memberof ViewController
+ */
+static void renderDeviceWillReset(ViewController *self) {
+  
+  $(self->view, renderDeviceWillReset);
+  
+  $((Array *) self->childViewControllers, enumerate, renderDeviceWillReset_enumerate, NULL);
+}
+
+/**
+ * @fn void ViewController::setView(ViewController *self, View *view)
+ * @memberof ViewController
+ */
+static void setView(ViewController *self, View *view) {
+
+  if (view != self->view) {
+
+    if (self->view) {
+      self->view->viewController = NULL;
+      release(self->view);
+    }
+
+    if (view) {
+      self->view = retain(view);
+      self->view->viewController = self;
+    } else {
+      self->view = NULL;
+    }
+  }
+}
+
+/**
+ * @brief ArrayEnumerator for viewDidAppear recursion.
+ */
+static void viewDidAppear_enumerate(const Array *array, ident obj, ident data) {
+  $((ViewController *) obj, viewDidAppear);
+}
+
+/**
+ * @fn void ViewController::viewDidAppear(ViewController *self)
+ * @memberof ViewController
+ */
+static void viewDidAppear(ViewController *self) {
+  $((Array *) self->childViewControllers, enumerate, viewDidAppear_enumerate, NULL);
+}
+
+/**
+ * @brief ArrayEnumerator for viewDidDisappear recursion.
+ */
+static void viewDidDisappear_enumerate(const Array *array, ident obj, ident data) {
+  $((ViewController *) obj, viewDidDisappear);
+}
+
+/**
+ * @fn void ViewController::viewDidDisappear(ViewController *self)
+ * @memberof ViewController
+ */
+static void viewDidDisappear(ViewController *self) {
+  $((Array *) self->childViewControllers, enumerate, viewDidDisappear_enumerate, NULL);
+}
+
+/**
+ * @brief ArrayEnumerator for viewWillAppear recursion.
+ */
+static void viewWillAppear_enumerate(const Array *array, ident obj, ident data) {
+  $((ViewController *) obj, viewWillAppear);
+}
+
+/**
+ * @fn void ViewController::viewWillAppear(ViewController *self)
+ * @memberof ViewController
+ */
+static void viewWillAppear(ViewController *self) {
+  $((Array *) self->childViewControllers, enumerate, viewWillAppear_enumerate, NULL);
+}
+
+/**
+ * @brief ArrayEnumerator for viewWillDisappear recursion.
+ */
+static void viewWillDisappear_enumerate(const Array *array, ident obj, ident data) {
+  $((ViewController *) obj, viewWillDisappear);
+}
+
+/**
+ * @fn void ViewController::viewWillDisappear(ViewController *self)
+ * @memberof ViewController
+ */
+static void viewWillDisappear(ViewController *self) {
+  $((Array *) self->childViewControllers, enumerate, viewWillDisappear_enumerate, NULL);
+}
+
+#pragma mark - Class lifecycle
+
+/**
+ * @see Class::initialize(Class *)
+ */
+static void initialize(Class *clazz) {
+
+  ((ObjectInterface *) clazz->interface)->dealloc = dealloc;
+
+  ((ViewControllerInterface *) clazz->interface)->addChildViewController = addChildViewController;
+  ((ViewControllerInterface *) clazz->interface)->init = init;
+  ((ViewControllerInterface *) clazz->interface)->loadView = loadView;
+  ((ViewControllerInterface *) clazz->interface)->loadViewIfNeeded = loadViewIfNeeded;
+  ((ViewControllerInterface *) clazz->interface)->moveToParentViewController = moveToParentViewController;
+  ((ViewControllerInterface *) clazz->interface)->removeChildViewController = removeChildViewController;
+  ((ViewControllerInterface *) clazz->interface)->removeFromParentViewController = removeFromParentViewController;
+  ((ViewControllerInterface *) clazz->interface)->respondToEvent = respondToEvent;
+  ((ViewControllerInterface *) clazz->interface)->renderDeviceDidReset = renderDeviceDidReset;
+  ((ViewControllerInterface *) clazz->interface)->renderDeviceWillReset = renderDeviceWillReset;
+  ((ViewControllerInterface *) clazz->interface)->setView = setView;
+  ((ViewControllerInterface *) clazz->interface)->viewDidAppear = viewDidAppear;
+  ((ViewControllerInterface *) clazz->interface)->viewDidDisappear = viewDidDisappear;
+  ((ViewControllerInterface *) clazz->interface)->viewWillAppear = viewWillAppear;
+  ((ViewControllerInterface *) clazz->interface)->viewWillDisappear = viewWillDisappear;
+}
+
+/**
+ * @fn Class *ViewController::_ViewController(void)
+ * @memberof ViewController
+ */
+Class *_ViewController(void) {
+  static Class *clazz;
+  static Once once;
+
+  do_once(&once, {
+    clazz = _initialize(&(const ClassDef) {
+      .name = "ViewController",
+      .superclass = _Object(),
+      .instanceSize = sizeof(ViewController),
+      .interfaceSize = sizeof(ViewControllerInterface),
+      .initialize = initialize,
+    });
+  });
+
+  return clazz;
+}
+
+#undef _Class

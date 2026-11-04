@@ -1,0 +1,62 @@
+{
+  "style": {
+    "autoresizing-mask": "fill"
+  },
+  "subviews": [
+    {
+      "class": "StackView",
+      "identifier": "debug",
+      "classNames": [
+        "container"
+      ],
+      "style": {
+        "autoresizing-mask": "fit"
+      },
+      "subviews": [
+        {
+          "class": "Text",
+          "identifier": "statistics"
+        },
+    {
+      "class": "Text",
+      "identifier": "path",
+      "lineWrap": true
+    },
+        {
+          "class": "Text",
+          "identifier": "description"
+        },
+        {
+          "class": "TableView",
+          "identifier": "selectors",
+          "columns": [
+            {
+              "identifier": "Selectors"
+            }
+          ]
+        },
+        {
+          "class": "TableView",
+          "identifier": "computedStyle",
+          "columns": [
+            {
+              "identifier": "Attribute"
+            },
+            {
+              "identifier": "Value"
+            }
+          ]
+        },
+    {
+      "class": "TableView",
+      "identifier": "warnings",
+      "columns": [
+      {
+        "identifier": "Warnings"
+      }
+      ]
+    }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "bpm": [ { "startTime": 0, "bpm": 120 } ],
+  "effects": [
+    {
+      "shader": "official_vignette_plus",
+      "start": 0,
+      "end": 1000,
+      "global": true,
+      "vars": {
+        "vignetteRadius": 0.22, "vignetteDarkness": 1.0, "vignetteSmoothness": 0.35,
+        "vignetteNoiseBrightness": 3.0, "vignetteNoiseSaturation": 1.0,
+        "vignetteNoiseSampleRate": 0.5, "vignetteLineOpacity": 0.0
+      }
+    }
+  ]
+}

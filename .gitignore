@@ -1,0 +1,69 @@
+# Build output
+/build/
+/dist/
+/artifacts/
+/perf-final/
+/test-scratch/
+/import-check-data/
+__pycache__/
+*.pyc
+
+# Vendored dependencies are fetched by CMake; only the interface framework is shipped here.
+/third_party/*
+!/third_party/objectivelymvc/
+
+# IDE and editor state
+/.idea/
+/.vs/
+/.vscode/
+*.user
+CMakeUserPresets.json
+xcuserdata/
+*.xcuserstate
+
+# Android build and local configuration
+platform/android/.gradle/
+platform/android/build/
+platform/android/app/build/
+platform/android/app/.cxx/
+platform/android/local.properties
+platform/android/.kotlin/
+/platform/android/artifacts/
+
+# Apple build output
+platform/ios/build/
+platform/ios/DerivedData/
+
+# Build products
+*.apk
+*.aab
+*.ipa
+*.exe
+*.dll
+*.so
+*.dylib
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# Logs and crash dumps
+*.log
+hs_err_pid*.log
+replay_pid*.log
+
+# Signing material and local secrets
+.env
+.env.*
+*.keystore
+*.jks
+keystore.properties
+*.p12
+*.pfx
+*.pem
+*.key
+*.mobileprovision
+
+# Local working notes (reference paths, machine-specific debugging)
+/ATTENTION.md

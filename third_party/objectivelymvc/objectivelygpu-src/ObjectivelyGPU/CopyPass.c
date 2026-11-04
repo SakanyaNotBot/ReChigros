@@ -1,0 +1,215 @@
+/*
+ * ObjectivelyGPU: Object oriented graphics framework for SDL3 and C.
+ * Copyright (C) 2026 Jay Dolan <jay@jaydolan.com>
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty. In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ * claim that you wrote the original software. If you use this software
+ * in a product, an acknowledgment in the product documentation would be
+ * appreciated but is not required.
+ *
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ * misrepresented as being the original software.
+ *
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+#include <assert.h>
+#include <string.h>
+
+#include "CommandBuffer.h"
+#include "CopyPass.h"
+#include "QueryPool.h"
+#include "RenderDevice.h"
+#include "TransferBuffer.h"
+
+#define _Class _CopyPass
+
+#pragma mark - Object
+
+/**
+ * @see Object::dealloc(Object *)
+ */
+static void dealloc(Object *self) {
+
+  CopyPass *this = (CopyPass *) self;
+  if (this->pass) {
+    SDL_EndGPUCopyPass(this->pass);
+  }
+
+  if (this->commands) {
+    this->commands->pass = NULL;
+  }
+
+  super(Object, self, dealloc);
+}
+
+#pragma mark - CopyPass
+
+/**
+ * @fn void CopyPass::copyBufferToBuffer(const CopyPass *self, const SDL_GPUBufferLocation *src, const SDL_GPUBufferLocation *dst, Uint32 size, bool cycle)
+ * @memberof CopyPass
+ */
+static void copyBufferToBuffer(const CopyPass *self, const SDL_GPUBufferLocation *src, const SDL_GPUBufferLocation *dst, Uint32 size, bool cycle) {
+  SDL_CopyGPUBufferToBuffer(self->pass, src, dst, size, cycle);
+}
+
+/**
+ * @fn void CopyPass::copyTextureToTexture(const CopyPass *self, const SDL_GPUTextureLocation *src, const SDL_GPUTextureLocation *dst, Uint32 w, Uint32 h, Uint32 d, bool cycle)
+ * @memberof CopyPass
+ */
+static void copyTextureToTexture(const CopyPass *self, const SDL_GPUTextureLocation *src, const SDL_GPUTextureLocation *dst, Uint32 w, Uint32 h, Uint32 d, bool cycle) {
+  SDL_CopyGPUTextureToTexture(self->pass, src, dst, w, h, d, cycle);
+}
+
+/**
+ * @fn void CopyPass::downloadBuffer(const CopyPass *self, const SDL_GPUBufferRegion *src, const SDL_GPUTransferBufferLocation *dst)
+ * @memberof CopyPass
+ */
+static void downloadBuffer(const CopyPass *self, const SDL_GPUBufferRegion *src, const SDL_GPUTransferBufferLocation *dst) {
+  SDL_DownloadFromGPUBuffer(self->pass, src, dst);
+}
+
+/**
+ * @fn void CopyPass::downloadTexture(const CopyPass *self, const SDL_GPUTextureRegion *src, const SDL_GPUTextureTransferInfo *dst)
+ * @memberof CopyPass
+ */
+static void downloadTexture(const CopyPass *self, const SDL_GPUTextureRegion *src, const SDL_GPUTextureTransferInfo *dst) {
+  SDL_DownloadFromGPUTexture(self->pass, src, dst);
+}
+
+/**
+ * @fn void CopyPass::downloadQueryResults(const CopyPass *self, QueryPool *pool, Uint32 firstQuery, Uint32 count, const SDL_GPUTransferBufferLocation *dst)
+ * @memberof CopyPass
+ */
+static void downloadQueryResults(const CopyPass *self, QueryPool *pool, Uint32 firstQuery, Uint32 count, const SDL_GPUTransferBufferLocation *dst) {
+
+  assert(pool);
+
+#ifdef SDL_GPU_QUERY_API
+  if (pool->pool) {
+    SDL_DownloadGPUQueryResults(self->pass, pool->pool, firstQuery, count, (SDL_GPUTransferBufferLocation *) dst);
+    return;
+  }
+#endif
+
+  // Occlusion queries are unsupported: no GPU work will ever populate `dst`, so
+  // write a "not occluded" sentinel for every requested result directly, rather
+  // than leaving the destination uninitialized (which callers would likely
+  // misread as "occluded", incorrectly culling everything).
+  Uint64 *results = SDL_MapGPUTransferBuffer(self->commands->device->device, dst->transfer_buffer, false);
+  GPU_Assert(results, "SDL_MapGPUTransferBuffer");
+
+  for (Uint32 i = 0; i < count; i++) {
+    results[(dst->offset / sizeof(Uint64)) + i] = 1;
+  }
+  SDL_UnmapGPUTransferBuffer(self->commands->device->device, dst->transfer_buffer);
+}
+
+/**
+ * @fn CopyPass *CopyPass::init(CopyPass *self, CommandBuffer *commands, SDL_GPUCopyPass *pass)
+ * @memberof CopyPass
+ */
+static CopyPass *init(CopyPass *self, CommandBuffer *commands, SDL_GPUCopyPass *pass) {
+
+  self = (CopyPass *) super(Object, self, init);
+  if (self) {
+    self->commands = commands;
+    assert(self->commands);
+    self->pass = pass;
+    assert(self->pass);
+  }
+
+  return self;
+}
+
+/**
+ * @fn void CopyPass::uploadBuffer(const CopyPass *self, const SDL_GPUTransferBufferLocation *src, const SDL_GPUBufferRegion *dst, bool cycle)
+ * @memberof CopyPass
+ */
+static void uploadBuffer(const CopyPass *self, const SDL_GPUTransferBufferLocation *src, const SDL_GPUBufferRegion *dst, bool cycle) {
+  SDL_UploadToGPUBuffer(self->pass, src, dst, cycle);
+}
+
+/**
+ * @fn void CopyPass::uploadData(const CopyPass *self, SDL_GPUBuffer *dst, const void *data, Uint32 size, Uint32 offset, bool cycle)
+ * @memberof CopyPass
+ */
+static void uploadData(const CopyPass *self, SDL_GPUBuffer *dst, const void *data, Uint32 size, Uint32 offset, bool cycle) {
+  assert(self);
+  assert(dst);
+  assert(data);
+  assert(size);
+
+  TransferBuffer *staging = $(self->commands->device, createTransferBuffer, &(SDL_GPUTransferBufferCreateInfo) {
+    .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+    .size = size,
+  });
+
+  $(staging, write, data, size, false);
+
+  SDL_UploadToGPUBuffer(self->pass,
+    &(SDL_GPUTransferBufferLocation) { .transfer_buffer = staging->buffer },
+    &(SDL_GPUBufferRegion) { .buffer = dst, .offset = offset, .size = size },
+    cycle);
+
+  release(staging);
+}
+
+/**
+ * @fn void CopyPass::uploadTexture(const CopyPass *self, const SDL_GPUTextureTransferInfo *src, const SDL_GPUTextureRegion *dst, bool cycle)
+ * @memberof CopyPass
+ */
+static void uploadTexture(const CopyPass *self, const SDL_GPUTextureTransferInfo *src, const SDL_GPUTextureRegion *dst, bool cycle) {
+  SDL_UploadToGPUTexture(self->pass, src, dst, cycle);
+}
+
+#pragma mark - Class lifecycle
+
+/**
+ * @see Class::initialize(Class *)
+ */
+static void initialize(Class *clazz) {
+
+  ((ObjectInterface *) clazz->interface)->dealloc = dealloc;
+
+  ((CopyPassInterface *) clazz->interface)->copyBufferToBuffer = copyBufferToBuffer;
+  ((CopyPassInterface *) clazz->interface)->copyTextureToTexture = copyTextureToTexture;
+  ((CopyPassInterface *) clazz->interface)->downloadBuffer = downloadBuffer;
+  ((CopyPassInterface *) clazz->interface)->downloadTexture = downloadTexture;
+  ((CopyPassInterface *) clazz->interface)->downloadQueryResults = downloadQueryResults;
+  ((CopyPassInterface *) clazz->interface)->init = init;
+  ((CopyPassInterface *) clazz->interface)->uploadBuffer = uploadBuffer;
+  ((CopyPassInterface *) clazz->interface)->uploadData = uploadData;
+  ((CopyPassInterface *) clazz->interface)->uploadTexture = uploadTexture;
+}
+
+/**
+ * @fn Class *CopyPass::_CopyPass(void)
+ * @memberof CopyPass
+ */
+Class *_CopyPass(void) {
+  static Class *clazz;
+  static Once once;
+
+  do_once(&once, {
+    clazz = _initialize(&(const ClassDef) {
+      .name            = "CopyPass",
+      .superclass      = _Object(),
+      .instanceSize    = sizeof(CopyPass),
+      .interfaceSize   = sizeof(CopyPassInterface),
+      .initialize      = initialize,
+    });
+  });
+
+  return clazz;
+}
+
+#undef _Class

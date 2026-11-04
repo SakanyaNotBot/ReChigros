@@ -1,0 +1,133 @@
+set(RECHIGROS_APP_SOURCES
+  main.cpp
+  Application.cpp
+  CommonScreens.cpp
+  LibraryScreen.cpp
+  DetailScreen.cpp
+  SettingsScreen.cpp
+  CalibrationScreen.cpp
+  ResultScreen.cpp
+  GameScreen.cpp
+  ScreenCommon.cpp
+  UiStyle.cpp
+  UiText.cpp
+  UiLayout.cpp
+  CaptureHarness.cpp
+  TriGridBackdrop.cpp
+  CoverCache.cpp
+  SmoothingClock.cpp
+  VideoEncoder.cpp
+  VideoEncoderPlatform.cpp
+  RecordSession.cpp
+  RenderScreen.cpp
+  InfoFile.cpp
+  Settings.cpp
+  ChartLibrary.cpp
+  Replay.cpp
+  ImportCore.cpp
+  ImportDialogs.cpp
+  SelfTest.cpp)
+
+# The ObjectivelyMVC-backed settings screen exists only when the framework is built, which
+# the MSVC tree cannot do (the framework is GNU C). The source is plain C, so it is added as
+# C, matching the framework's own compilation unit.
+if(TARGET objectivelymvc)
+  list(APPEND RECHIGROS_APP_SOURCES MvcSettings.c MvcSettingsBridge.cpp)
+endif()
+
+if(ANDROID)
+  add_library(ReChigros SHARED ${RECHIGROS_APP_SOURCES})
+  set_target_properties(ReChigros PROPERTIES OUTPUT_NAME main)
+else()
+  add_executable(ReChigros ${RECHIGROS_APP_SOURCES})
+endif()
+
+if(TARGET objectivelymvc)
+  # All three framework archives are named explicitly: they reference each other in both
+  # directions (Theme pulls Objectively; the GPU device pulls Objectively's Object), and the
+  # static linker only resolves symbols that are still pending when it reaches an archive.
+  target_link_libraries(ReChigros PRIVATE objectivelymvc objectivelygpu objectively)
+endif()
+target_include_directories(ReChigros PRIVATE "${PROJECT_SOURCE_DIR}/include")
+target_link_libraries(ReChigros PRIVATE
+  ${RECHIGROS_SDL_TARGET}
+  rechigros_core
+  rechigros_chart
+  rechigros_audio
+  rechigros_render
+  rechigros_platform
+  imgui
+  nlohmann_json_headers
+  stb_headers
+  miniz_headers)
+if(TARGET miniz)
+  target_link_libraries(ReChigros PRIVATE miniz)
+endif()
+if(TARGET SDL3::SDL3main)
+  target_link_libraries(ReChigros PRIVATE SDL3::SDL3main)
+endif()
+if(NOT ANDROID AND NOT IOS)
+  target_link_libraries(ReChigros PRIVATE glad_gl_core_33)
+endif()
+
+target_compile_definitions(ReChigros PRIVATE RECHIGROS_VERSION="${PROJECT_VERSION}")
+if(ANDROID OR IOS)
+  target_compile_definitions(ReChigros PRIVATE RECHIGROS_GLES=1)
+endif()
+if(IOS)
+  # The audio implementation is Objective-C; the runtime is not linked automatically
+  # through a static archive, so name it on the executable as well.
+  find_library(RECHIGROS_OBJC_LIBRARY objc REQUIRED)
+  target_link_libraries(ReChigros PRIVATE "${RECHIGROS_OBJC_LIBRARY}")
+endif()
+
+if(APPLE AND NOT IOS)
+  set_target_properties(ReChigros PROPERTIES MACOSX_BUNDLE TRUE MACOSX_BUNDLE_GUI_IDENTIFIER com.wuying.chigros)
+endif()
+if(IOS)
+  set_target_properties(ReChigros PROPERTIES
+    MACOSX_BUNDLE TRUE
+    MACOSX_BUNDLE_INFO_PLIST "${PROJECT_SOURCE_DIR}/platform/ios/Info.plist"
+    XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.wuying.chigros"
+    XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+    XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "13.0"
+    XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "AppIcon")
+  target_sources(ReChigros PRIVATE
+    "${PROJECT_SOURCE_DIR}/platform/ios/Assets.xcassets"
+    "${PROJECT_SOURCE_DIR}/platform/ios/LaunchScreen.storyboard")
+  set_source_files_properties("${PROJECT_SOURCE_DIR}/platform/ios/Assets.xcassets" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+  set_source_files_properties("${PROJECT_SOURCE_DIR}/platform/ios/LaunchScreen.storyboard" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+endif()
+
+if(IOS)
+  # An iOS bundle keeps its executable at the .app root, so the bundle directory is the
+  # location SDL_GetBasePath reports and where the assets belong. macOS keeps them beside
+  # the executable inside Contents/MacOS.
+  set(RECHIGROS_ASSET_DESTINATION "$<TARGET_BUNDLE_DIR:ReChigros>/assets")
+else()
+  set(RECHIGROS_ASSET_DESTINATION "$<TARGET_FILE_DIR:ReChigros>/assets")
+endif()
+if(NOT ANDROID)
+  add_custom_command(TARGET ReChigros POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/assets" "${RECHIGROS_ASSET_DESTINATION}")
+endif()
+
+# Batch check for the file import flows. It only links the import logic and the library /
+# replay persistence it drives, so it runs without a window or a GL context.
+if(NOT ANDROID AND NOT IOS)
+  add_executable(rechigros_import_check
+    ImportCheck.cpp
+    ImportCore.cpp
+    ChartLibrary.cpp
+    InfoFile.cpp
+    Replay.cpp)
+  target_include_directories(rechigros_import_check PRIVATE "${PROJECT_SOURCE_DIR}/include")
+  target_link_libraries(rechigros_import_check PRIVATE
+    rechigros_platform
+    rechigros_image_cache
+    nlohmann_json_headers
+    miniz_headers)
+  if(TARGET miniz)
+    target_link_libraries(rechigros_import_check PRIVATE miniz)
+  endif()
+endif()

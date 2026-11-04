@@ -1,0 +1,205 @@
+/*
+ * ObjectivelyMVC: Object oriented MVC framework for SDL3 and C.
+ * Copyright (C) 2014 Jay Dolan <jay@jaydolan.com>
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty. In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ * claim that you wrote the original software. If you use this software
+ * in a product, an acknowledgment in the product documentation would be
+ * appreciated but is not required.
+ *
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ * misrepresented as being the original software.
+ *
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+#pragma once
+
+#include <Objectively/Array.h>
+
+#include <ObjectivelyMVC/Text.h>
+
+/**
+ * @file
+ * @brief Controls are Views which capture and respond to events.
+ */
+
+/**
+ * @defgroup Controls Controls
+ * @brief Controls are Views which capture and respond to events.
+ */
+
+/**
+ * @brief Control bevel styles, for drawing depressed or raised bevels.
+ */
+typedef enum {
+  ControlBevelNone,
+  ControlBevelInset,
+  ControlBevelOutset
+} ControlBevel;
+
+OBJECTIVELYMVC_EXPORT const EnumName ControlBevelNames[];
+
+/**
+ * @brief Control selection styles, for Controls that support user selection.
+ */
+typedef enum {
+  ControlSelectionNone,
+  ControlSelectionSingle,
+  ControlSelectionMultiple
+} ControlSelection;
+
+OBJECTIVELYMVC_EXPORT const EnumName ControlSelectionNames[];
+
+/**
+ * @brief Control states, which are bit-masked.
+ */
+typedef enum {
+  ControlStateDefault = 0x0,
+  ControlStateHighlighted = 0x1,
+  ControlStateSelected = 0x2,
+  ControlStateFocused = 0x4,
+  ControlStateDisabled = 0x10,
+} ControlState;
+
+OBJECTIVELYMVC_EXPORT const EnumName ControlStateNames[];
+
+typedef struct Control Control;
+typedef struct ControlInterface ControlInterface;
+
+/**
+ * @brief Controls are Views which capture and respond to events.
+ * @extends View
+ * @ingroup Controls
+ */
+struct Control {
+
+  /**
+   * @brief The superclass.
+   */
+  View view;
+
+  /**
+   * @brief The interface type.
+   * @protected
+   */
+  ControlInterface *interface[0];
+
+  /**
+   * @brief The ControlBevel.
+   * @styled
+   */
+  ControlBevel bevel;
+
+  /**
+   * @brief The bevel color for the shadowed edges.
+   * @styled
+   */
+  SDL_Color bevelDarkColor;
+
+  /**
+   * @brief The bevel color for the lit edges.
+   * @styled
+   */
+  SDL_Color bevelLightColor;
+
+  /**
+   * @brief The bit mask of ControlState.
+   */
+  unsigned int state;
+
+  /**
+   * @brief The ControlSelection.
+   * @styled
+   */
+  ControlSelection selection;
+};
+
+/**
+ * @brief The Control interface.
+ */
+struct ControlInterface {
+
+  /**
+   * @brief The superclass interface.
+   */
+  ViewInterface viewInterface;
+
+  /**
+   * @fn bool Control::captureEvent(Control *self, const SDL_Event *event)
+   * @brief Captures a given event, potentially altering the state of this Control.
+   * @param self The Control.
+   * @param event The event.
+   * @return True if the Event was captured, false otherwise.
+   * @remarks Subclasses should override this method to capture events.
+   * @memberof Control
+   */
+  bool (*captureEvent)(Control *self, const SDL_Event *event);
+
+  /**
+   * @fn Control Control::initWithFrame(Control *self, const SDL_Rect *frame)
+   * @brief Initializes this Control with the specified frame and style.
+   * @param self The Control.
+   * @param frame The frame.
+   * @return The intialized Control, or `NULL` on error.
+   * @memberof Control
+   */
+  Control *(*initWithFrame)(Control *self, const SDL_Rect *frame);
+
+  /**
+   * @fn bool Control::isDisabled(const Control *self)
+   * @param self The Control.
+   * @return True if this Control is disabled, false otherwise.
+   * @memberof Control
+   */
+  bool (*isDisabled)(const Control *self);
+
+  /**
+   * @fn bool Control::isFocused(const Control *self)
+   * @param self The Control.
+   * @return True if this Control is focused, false otherwise.
+   * @memberof Control
+   */
+  bool (*isFocused)(const Control *self);
+
+  /**
+   * @fn bool Control::isHighlighted(const Control *self)
+   * @param self The Control.
+   * @return True if this Control is highlighted, false otherwise.
+   * @memberof Control
+   */
+  bool (*isHighlighted)(const Control *self);
+
+  /**
+   * @fn bool Control::isSelected(const Control *self)
+   * @param self The Control.
+   * @return True if this Control is selected, false otherwise.
+   * @memberof Control
+   */
+  bool (*isSelected)(const Control *self);
+
+  /**
+   * @fn void Control::stateDidChange(Control *self)
+   * @brief Called when the state of this Control changes.
+   * @param self The Control.
+   * @remarks Subclasses may implement this method to handle discrete state changes.
+   * @memberof Control
+   */
+  void (*stateDidChange)(Control *self);
+};
+
+/**
+ * @fn Class *Control::_Control(void)
+ * @brief The Control archetype.
+ * @return The Control Class.
+ * @memberof Control
+ */
+OBJECTIVELYMVC_EXPORT Class *_Control(void);

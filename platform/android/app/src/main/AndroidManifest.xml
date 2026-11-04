@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Recordings and replay exports go to the shared media folders so the gallery and any file
+         browser can find them without the player moving the file. Releases that predate scoped
+         storage gate shared writes behind this permission, and it is not granted on install. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+    <application
+        android:allowBackup="true"
+        android:hardwareAccelerated="true"
+        android:icon="@drawable/icon"
+        android:label="ReChigros"
+        android:theme="@style/AppTheme">
+        <activity
+            android:name=".MainActivity"
+            android:alwaysRetainTaskState="true"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
+            android:exported="true"
+            android:launchMode="singleInstance"
+            android:screenOrientation="landscape">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" android:mimeType="application/zip" />
+                <data android:scheme="content" android:mimeType="application/json" />
+                <data android:scheme="content" android:mimeType="text/plain" />
+                <data android:scheme="content" android:mimeType="application/octet-stream" />
+            </intent-filter>
+            <!-- Chart, replay and resource packages opened from a file manager arrive as
+                 file:// paths, so each extension the importer understands needs its own
+                 filter; a file:// URI carries no MIME type for the system to match on. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="*"
+                    android:scheme="file"
+                    android:mimeType="*/*"
+                    android:pathPattern=".*\\.cgrp" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="*"
+                    android:scheme="file"
+                    android:mimeType="*/*"
+                    android:pathPattern=".*\\.zip" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="*"
+                    android:scheme="file"
+                    android:mimeType="*/*"
+                    android:pathPattern=".*\\.pez" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

@@ -1,0 +1,907 @@
+/*
+ * ObjectivelyMVC: Object oriented MVC framework for SDL3 and C.
+ * Copyright (C) 2014 Jay Dolan <jay@jaydolan.com>
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty. In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ * claim that you wrote the original software. If you use this software
+ * in a product, an acknowledgment in the product documentation would be
+ * appreciated but is not required.
+ *
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ * misrepresented as being the original software.
+ *
+ * 3. This notice may not be removed or altered from any source distribution.
+ */
+
+#include <assert.h>
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <Objectively/Vector.h>
+#include <ObjectivelyGPU/CopyPass.h>
+#include <ObjectivelyGPU/Mathlib.h>
+#include <ObjectivelyGPU/RenderPass.h>
+
+#include "Renderer.h"
+#include "View.h"
+#include "Window.h"
+
+#include "../Assets/Renderer.frag.dxil.h"
+#include "../Assets/Renderer.frag.metal.h"
+#include "../Assets/Renderer.frag.spv.h"
+#include "../Assets/Renderer.vert.dxil.h"
+#include "../Assets/Renderer.vert.metal.h"
+#include "../Assets/Renderer.vert.spv.h"
+
+/**
+ * @brief @c ResourceProvider for loading shaders from @c xxd headers.
+ */
+static Data *shaderResourceProvider(const char *name) {
+
+  Data *data = NULL;
+
+  if (!strcmp("Renderer.frag.dxil", name)) {
+    data = $(alloc(Data), initWithConstMemory, Renderer_frag_dxil, Renderer_frag_dxil_len);
+  } else if (!strcmp("Renderer.frag.metal", name)) {
+    data = $(alloc(Data), initWithConstMemory, Renderer_frag_metal, Renderer_frag_metal_len);
+  } else if (!strcmp("Renderer.frag.spv", name)) {
+    data = $(alloc(Data), initWithConstMemory, Renderer_frag_spv, Renderer_frag_spv_len);
+  } else if (!strcmp("Renderer.vert.dxil", name)) {
+    data = $(alloc(Data), initWithConstMemory, Renderer_vert_dxil, Renderer_vert_dxil_len);
+  } else if (!strcmp("Renderer.vert.metal", name)) {
+    data = $(alloc(Data), initWithConstMemory, Renderer_vert_metal, Renderer_vert_metal_len);
+  } else if (!strcmp("Renderer.vert.spv", name)) {
+    data = $(alloc(Data), initWithConstMemory, Renderer_vert_spv, Renderer_vert_spv_len);
+  }
+
+  return data;
+}
+
+#define _Class _Renderer
+
+#pragma mark - Object
+
+/**
+ * @see Object::dealloc(Object *)
+ */
+static void dealloc(Object *self) {
+
+  Renderer *this = (Renderer *) self;
+
+  this->commands = NULL;
+
+  release(this->white);
+  release(this->sampler);
+  release(this->vertexBuffer);
+  release(this->transferBuffer);
+  release(this->pipeline);
+
+  release(this->vertices);
+  release(this->drawArrays);
+  release(this->device);
+
+  super(Object, self, dealloc);
+}
+
+#pragma mark - Renderer
+
+/**
+ * @fn void Renderer::beginFrame(Renderer *self)
+ * @memberof Renderer
+ */
+static void beginFrame(Renderer *self) {
+  $(self, beginFrameWith, self->device->commands, self->device->framebuffer);
+}
+
+/**
+ * @fn void Renderer::beginFrameWith(Renderer *self, CommandBuffer *commands, Framebuffer *framebuffer)
+ * @memberof Renderer
+ */
+static void beginFrameWith(Renderer *self, CommandBuffer *commands, Framebuffer *framebuffer) {
+
+  assert(commands);
+  assert(framebuffer);
+
+  self->commands = commands;
+  self->framebuffer = framebuffer;
+
+  $(self->vertices, removeAll);
+  $(self->drawArrays, removeAll);
+
+  self->scissor = MakeRect(0, 0, framebuffer->size.w, framebuffer->size.h);
+}
+
+/**
+ * @brief Fills six vertices covering `rect` as two triangles, tagged so the fragment shader
+ * shades them as a rounded rectangle of the given radius and stroke width.
+ * @details The first triangle is the half above the bottom-left to top-right diagonal.
+ */
+static void roundedRectVertices(MVC_Vertex *verts, const SDL_FRect *rect, int radius, int stroke, const SDL_FRect *uv) {
+
+  const float x1 = rect->x,           y1 = rect->y;
+  const float x2 = rect->x + rect->w, y2 = rect->y + rect->h;
+
+  const float u1 = uv ? uv->x : 0.0f,         v1 = uv ? uv->y : 0.0f;
+  const float u2 = uv ? uv->x + uv->w : 0.0f, v2 = uv ? uv->y + uv->h : 0.0f;
+
+  const vec4 shapeRect = { { (x1 + x2) * 0.5f, (y1 + y2) * 0.5f, rect->w * 0.5f, rect->h * 0.5f } };
+  const vec2 shape = { { (float) radius, (float) stroke } };
+
+  verts[0] = (MVC_Vertex) { { { x1, y1 } }, { { u1, v1 } }, { 0 }, shapeRect, shape };
+  verts[1] = (MVC_Vertex) { { { x2, y1 } }, { { u2, v1 } }, { 0 }, shapeRect, shape };
+  verts[2] = (MVC_Vertex) { { { x1, y2 } }, { { u1, v2 } }, { 0 }, shapeRect, shape };
+  verts[3] = (MVC_Vertex) { { { x2, y1 } }, { { u2, v1 } }, { 0 }, shapeRect, shape };
+  verts[4] = (MVC_Vertex) { { { x2, y2 } }, { { u2, v2 } }, { 0 }, shapeRect, shape };
+  verts[5] = (MVC_Vertex) { { { x1, y2 } }, { { u1, v2 } }, { 0 }, shapeRect, shape };
+}
+
+/**
+ * @brief Resolves the normalized texture coordinates of `src` within `texture`, or of the
+ * whole texture when `src` is `NULL`.
+ */
+static SDL_FRect textureRegion(const Texture *texture, const SDL_Rect *src) {
+
+  if (src == NULL || texture == NULL) {
+    return (SDL_FRect) { 0.0f, 0.0f, 1.0f, 1.0f };
+  }
+
+  const float w = (float) texture->size.w, h = (float) texture->size.h;
+
+  return (SDL_FRect) { src->x / w, src->y / h, src->w / w, src->h / h };
+}
+
+/**
+ * @brief The color at `x, y` for a gradient of `angle` degrees across `bounds`.
+ * @details `angle` is measured clockwise from south, so `0` fills downwards and `90` to the
+ * right. The interpolant is the point's projection onto the gradient axis, normalized by the
+ * extent of `bounds` along that axis, which makes the color an affine function of position:
+ * barycentric interpolation across the triangle then reproduces the gradient exactly, at any
+ * angle, from colors assigned only at the vertices.
+ */
+static SDL_Color gradientColor(float x, float y, const SDL_FRect *bounds, int angle,
+                               const SDL_Color *from, const SDL_Color *to) {
+
+  const float radians = float_radians((float) angle);
+  const float dx = sinf(radians), dy = cosf(radians);
+
+  const float cx = bounds->x + bounds->w * 0.5f;
+  const float cy = bounds->y + bounds->h * 0.5f;
+
+  // the extent of the bounds along the axis, which is the box's support in that direction
+  const float extent = fabsf(bounds->w * dx) + fabsf(bounds->h * dy);
+
+  float t = 0.5f;
+  if (extent > 0.001f) {
+    t = 0.5f + ((x - cx) * dx + (y - cy) * dy) / extent;
+    t = t < 0.f ? 0.f : (t > 1.f ? 1.f : t);
+  }
+
+  return (SDL_Color) {
+    (Uint8) (from->r + (to->r - from->r) * t + 0.5f),
+    (Uint8) (from->g + (to->g - from->g) * t + 0.5f),
+    (Uint8) (from->b + (to->b - from->b) * t + 0.5f),
+    (Uint8) (from->a + (to->a - from->a) * t + 0.5f),
+  };
+}
+
+/**
+ * @brief Appends the quads stroking `points`, of `width`, optionally closing the loop.
+ * @remarks Each segment is stroked as its own quad, centered on the segment. The joints are
+ * therefore not mitered; at the one and two pixel widths borders actually use, the notch is
+ * smaller than a pixel.
+ */
+static void strokePolyline(const Renderer *self, const SDL_Point *points, size_t count,
+                           bool closed, float width, const SDL_Color *color) {
+
+  const size_t segments = closed ? count : count - 1;
+
+  MVC_Vertex verts[16 * 6];
+  const size_t batchSize = lengthof(verts) / 6;
+
+  for (size_t s = 0; s < segments; ) {
+
+    const size_t batch = min(segments - s, batchSize);
+
+    for (size_t i = 0; i < batch; i++, s++) {
+
+      const SDL_Point *a = &points[s], *b = &points[(s + 1) % count];
+
+      const float ax = (float) a->x, ay = (float) a->y;
+      const float bx = (float) b->x, by = (float) b->y;
+
+      const float dx = bx - ax, dy = by - ay;
+      const float len = sqrtf(dx * dx + dy * dy);
+
+      float nx = 0.0f, ny = 0.0f;
+      if (len > 0.001f) {
+        nx = (-dy / len) * width * 0.5f;
+        ny = ( dx / len) * width * 0.5f;
+      }
+
+      MVC_Vertex *v = &verts[i * 6];
+      v[0] = (MVC_Vertex) { { { ax - nx, ay - ny } }, { { 0.0f, 0.0f } }, { 0 } };
+      v[1] = (MVC_Vertex) { { { ax + nx, ay + ny } }, { { 0.0f, 0.0f } }, { 0 } };
+      v[2] = (MVC_Vertex) { { { bx - nx, by - ny } }, { { 0.0f, 0.0f } }, { 0 } };
+      v[3] = (MVC_Vertex) { { { ax + nx, ay + ny } }, { { 0.0f, 0.0f } }, { 0 } };
+      v[4] = (MVC_Vertex) { { { bx + nx, by + ny } }, { { 0.0f, 0.0f } }, { 0 } };
+      v[5] = (MVC_Vertex) { { { bx - nx, by - ny } }, { { 0.0f, 0.0f } }, { 0 } };
+    }
+
+    $(self, pushDrawArrays, verts, batch * 6, NULL, color);
+  }
+}
+
+/**
+ * @fn void Renderer::drawBevel(const Renderer *self, const SDL_Rect *rect, int radius, int width, const SDL_Color *topLeft, const SDL_Color *bottomRight)
+ * @memberof Renderer
+ */
+static void drawBevel(const Renderer *self, const SDL_Rect *rect, int radius, int width,
+                      const SDL_Color *topLeft, const SDL_Color *bottomRight) {
+
+  assert(rect);
+
+  SDL_FRect frect;
+  SDL_RectToFRect(rect, &frect);
+
+  MVC_Vertex verts[6];
+  roundedRectVertices(verts, &frect, radius, width, NULL);
+
+  $(self, pushDrawArrays, verts, 3, NULL, topLeft);
+  $(self, pushDrawArrays, verts + 3, 3, NULL, bottomRight);
+}
+
+/**
+ * @fn void Renderer::drawLine(const Renderer *self, const SDL_Point *points, const SDL_Color *color)
+ * @memberof Renderer
+ */
+static void drawLine(const Renderer *self, const SDL_Point *points, const SDL_Color *color) {
+
+  assert(points);
+
+  $(self, drawLines, points, 2, color);
+}
+
+/**
+ * @fn void Renderer::drawLines(const Renderer *self, const SDL_Point *points, size_t count, const SDL_Color *color)
+ * @memberof Renderer
+ */
+static void drawLines(const Renderer *self, const SDL_Point *points, size_t count, const SDL_Color *color) {
+
+  assert(points);
+  assert(color);
+
+  if (count < 2) {
+    return;
+  }
+
+  strokePolyline(self, points, count, false, 1.f, color);
+}
+
+/**
+ * @fn void Renderer::drawPolygon(const Renderer *self, const SDL_Point *points, size_t count, int width, const SDL_Color *color)
+ * @memberof Renderer
+ */
+static void drawPolygon(const Renderer *self, const SDL_Point *points, size_t count, int width,
+                        const SDL_Color *color) {
+
+  assert(points);
+  assert(color);
+
+  if (count < 3 || width < 1) {
+    return;
+  }
+
+  strokePolyline(self, points, count, true, (float) width, color);
+}
+
+/**
+ * @fn void Renderer::drawPolygonFilled(const Renderer *self, const SDL_Point *points, size_t count, int angle, const SDL_Color *from, const SDL_Color *to)
+ * @memberof Renderer
+ */
+static void drawPolygonFilled(const Renderer *self, const SDL_Point *points, size_t count,
+                              int angle, const SDL_Color *from, const SDL_Color *to) {
+
+  assert(points);
+  assert(from);
+
+  if (count < 3) {
+    return;
+  }
+
+  SDL_FRect bounds = { (float) points[0].x, (float) points[0].y, 0.f, 0.f };
+  float x2 = bounds.x, y2 = bounds.y;
+
+  for (size_t i = 1; i < count; i++) {
+    bounds.x = min(bounds.x, (float) points[i].x);
+    bounds.y = min(bounds.y, (float) points[i].y);
+    x2 = max(x2, (float) points[i].x);
+    y2 = max(y2, (float) points[i].y);
+  }
+
+  bounds.w = x2 - bounds.x;
+  bounds.h = y2 - bounds.y;
+
+  // a convex polygon triangulates as a fan from its first vertex
+  const size_t triangles = count - 2;
+
+  MVC_Vertex verts[16 * 3];
+  const size_t batchSize = lengthof(verts) / 3;
+
+  for (size_t t = 0; t < triangles; ) {
+
+    const size_t batch = min(triangles - t, batchSize);
+
+    for (size_t i = 0; i < batch; i++, t++) {
+
+      const SDL_Point *p[3] = { &points[0], &points[t + 1], &points[t + 2] };
+
+      for (size_t j = 0; j < 3; j++) {
+
+        const float x = (float) p[j]->x, y = (float) p[j]->y;
+
+        verts[i * 3 + j] = (MVC_Vertex) { { { x, y } }, { { 0.f, 0.f } },
+          to ? gradientColor(x, y, &bounds, angle, from, to) : *from
+        };
+      }
+    }
+
+    $(self, pushDrawArrays, verts, batch * 3, NULL, NULL);
+  }
+}
+
+/**
+ * @fn void Renderer::drawRect(const Renderer *self, const SDL_Rect *rect, const SDL_Color *color)
+ * @memberof Renderer
+ */
+static void drawRect(const Renderer *self, const SDL_Rect *rect, const SDL_Color *color) {
+
+  assert(rect);
+
+  const SDL_Point points[5] = {
+    { rect->x,           rect->y           },
+    { rect->x + rect->w, rect->y           },
+    { rect->x + rect->w, rect->y + rect->h },
+    { rect->x,           rect->y + rect->h },
+    { rect->x,           rect->y           },
+  };
+
+  $(self, drawLines, points, 5, color);
+}
+
+/**
+ * @fn void Renderer::drawRectFilled(const Renderer *self, const SDL_Rect *rect, const SDL_Color *color)
+ * @memberof Renderer
+ */
+static void drawRectFilled(const Renderer *self, const SDL_Rect *rect, const SDL_Color *color) {
+
+  assert(rect);
+
+  const float x1 = (float) rect->x,           y1 = (float) rect->y;
+  const float x2 = (float) rect->x + rect->w, y2 = (float) rect->y + rect->h;
+
+  const MVC_Vertex verts[6] = {
+    { { { x1, y1 } }, { { 0.0f, 0.0f } }, { 0 } },
+    { { { x2, y1 } }, { { 0.0f, 0.0f } }, { 0 } },
+    { { { x1, y2 } }, { { 0.0f, 0.0f } }, { 0 } },
+    { { { x2, y1 } }, { { 0.0f, 0.0f } }, { 0 } },
+    { { { x2, y2 } }, { { 0.0f, 0.0f } }, { 0 } },
+    { { { x1, y2 } }, { { 0.0f, 0.0f } }, { 0 } },
+  };
+
+  $(self, pushDrawArrays, verts, 6, NULL, color);
+}
+
+/**
+ * @fn void Renderer::drawRoundedRect(const Renderer *self, const SDL_Rect *rect, int radius, int width, const SDL_Color *color)
+ * @memberof Renderer
+ */
+static void drawRoundedRect(const Renderer *self, const SDL_Rect *rect, int radius, int width, const SDL_Color *color) {
+
+  assert(rect);
+
+  SDL_FRect frect;
+  SDL_RectToFRect(rect, &frect);
+
+  MVC_Vertex verts[6];
+  roundedRectVertices(verts, &frect, radius, width, NULL);
+
+  $(self, pushDrawArrays, verts, 6, NULL, color);
+}
+
+/**
+ * @fn void Renderer::drawRoundedRectFilled(const Renderer *self, const SDL_Rect *rect, int radius, const SDL_Color *color)
+ * @memberof Renderer
+ */
+static void drawRoundedRectFilled(const Renderer *self, const SDL_Rect *rect, int radius, const SDL_Color *color) {
+
+  assert(rect);
+
+  SDL_FRect frect;
+  SDL_RectToFRect(rect, &frect);
+
+  MVC_Vertex verts[6];
+  roundedRectVertices(verts, &frect, radius, 0, NULL);
+
+  $(self, pushDrawArrays, verts, 6, NULL, color);
+}
+
+/**
+ * @fn void Renderer::drawRoundedRectGradientFilled(const Renderer *self, const SDL_Rect *rect, int radius, int angle, const SDL_Color *from, const SDL_Color *to)
+ * @memberof Renderer
+ */
+static void drawRoundedRectGradientFilled(const Renderer *self, const SDL_Rect *rect, int radius,
+                                          int angle, const SDL_Color *from, const SDL_Color *to) {
+
+  assert(rect);
+  assert(from);
+  assert(to);
+
+  SDL_FRect frect;
+  SDL_RectToFRect(rect, &frect);
+
+  MVC_Vertex verts[6];
+  roundedRectVertices(verts, &frect, radius, 0, NULL);
+
+  for (size_t i = 0; i < lengthof(verts); i++) {
+    verts[i].color = gradientColor(verts[i].position.x, verts[i].position.y, &frect, angle, from, to);
+  }
+
+  $(self, pushDrawArrays, verts, lengthof(verts), NULL, NULL);
+}
+
+/**
+ * @fn void Renderer::drawRoundedTexture(const Renderer *self, Texture *texture, const SDL_FRect *dest, int radius, const SDL_Color *color)
+ * @memberof Renderer
+ */
+static void drawRoundedTexture(const Renderer *self, Texture *texture, const SDL_FRect *dest, int radius, const SDL_Color *color) {
+  $(self, drawRoundedTextureRegion, texture, NULL, dest, radius, color);
+}
+
+/**
+ * @fn void Renderer::drawRoundedTextureRegion(const Renderer *self, Texture *texture, const SDL_Rect *src, const SDL_FRect *dest, int radius, const SDL_Color *color)
+ * @memberof Renderer
+ */
+static void drawRoundedTextureRegion(const Renderer *self, Texture *texture, const SDL_Rect *src, const SDL_FRect *dest, int radius, const SDL_Color *color) {
+
+  assert(dest);
+
+  const SDL_FRect uv = textureRegion(texture, src);
+
+  MVC_Vertex verts[6];
+  roundedRectVertices(verts, dest, radius, 0, &uv);
+
+  $(self, pushDrawArrays, verts, 6, texture, color);
+}
+
+/**
+ * @fn void Renderer::drawTexture(const Renderer *self, Texture *texture, const SDL_FRect *dest, const SDL_Color *color)
+ * @memberof Renderer
+ */
+static void drawTexture(const Renderer *self, Texture *texture, const SDL_FRect *dest, const SDL_Color *color) {
+  $(self, drawTextureRegion, texture, NULL, dest, color);
+}
+
+/**
+ * @fn void Renderer::drawTextureRegion(const Renderer *self, Texture *texture, const SDL_Rect *src, const SDL_FRect *dest, const SDL_Color *color)
+ * @memberof Renderer
+ */
+static void drawTextureRegion(const Renderer *self, Texture *texture, const SDL_Rect *src, const SDL_FRect *dest, const SDL_Color *color) {
+
+  assert(dest);
+
+  const float x1 = dest->x,            y1 = dest->y;
+  const float x2 = dest->x + dest->w,  y2 = dest->y + dest->h;
+
+  const SDL_FRect uv = textureRegion(texture, src);
+
+  const float u1 = uv.x,         v1 = uv.y;
+  const float u2 = uv.x + uv.w,  v2 = uv.y + uv.h;
+
+  const MVC_Vertex verts[6] = {
+    { { { x1, y1 } }, { { u1, v1 } }, { 0 } },
+    { { { x2, y1 } }, { { u2, v1 } }, { 0 } },
+    { { { x1, y2 } }, { { u1, v2 } }, { 0 } },
+    { { { x2, y1 } }, { { u2, v1 } }, { 0 } },
+    { { { x2, y2 } }, { { u2, v2 } }, { 0 } },
+    { { { x1, y2 } }, { { u1, v2 } }, { 0 } },
+  };
+
+  $(self, pushDrawArrays, verts, 6, texture, color);
+}
+
+/**
+ * @fn void Renderer::drawView(Renderer *self, View *view)
+ * @memberof Renderer
+ */
+static void drawView(Renderer *self, View *view) {
+
+  assert(view);
+
+  const SDL_Rect clippingFrame = $(view, clippingFrame);
+  if (clippingFrame.w && clippingFrame.h) {
+
+    // The scissor enforces clipsSubviews, so it comes from the nearest clipping ancestor
+    // rather than from this View's own frame: siblings then share a scissor, which is one of
+    // the two conditions under which pushDrawArrays merges their draw calls.
+    const View *superview = view->superview;
+    while (superview && !superview->clipsSubviews) {
+      superview = superview->superview;
+    }
+
+    if (superview) {
+      const SDL_Rect scissor = $(superview, clippingFrame);
+      $(self, setClippingFrame, &scissor);
+    } else {
+      $(self, setClippingFrame, NULL);
+    }
+
+    $(view, render, self);
+  }
+}
+
+/**
+ * @fn void Renderer::endFrame(Renderer *self)
+ * @memberof Renderer
+ */
+static void endFrame(Renderer *self) {
+
+  Framebuffer *framebuffer = self->framebuffer;
+  assert(framebuffer);
+
+  const SDL_GPUColorTargetInfo colorTarget = $(framebuffer, colorTargetInfo, 0, SDL_GPU_LOADOP_LOAD, SDL_GPU_STOREOP_STORE);
+
+  const size_t vertexCount = self->vertices->count;
+
+  CopyPass *copyPass = $(self->commands, beginCopyPass);
+
+  if (vertexCount > 0) {
+    const Uint32 vertexSize = (Uint32) (vertexCount * sizeof(MVC_Vertex));
+
+    if (vertexCount > self->vertexBufferCapacity) {
+      release(self->vertexBuffer);
+      self->vertexBuffer = $(self->device, createBuffer, &(SDL_GPUBufferCreateInfo) {
+        .usage = SDL_GPU_BUFFERUSAGE_VERTEX,
+        .size = vertexSize
+      });
+
+      release(self->transferBuffer);
+      self->transferBuffer = $(self->device, createTransferBuffer, &(SDL_GPUTransferBufferCreateInfo) {
+        .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+        .size = vertexSize,
+      });
+
+      self->vertexBufferCapacity = (Uint32) vertexCount;
+    }
+
+    $(self->transferBuffer, write, self->vertices->elements, vertexSize, true);
+
+    $(copyPass, uploadBuffer,
+      &(SDL_GPUTransferBufferLocation) { .transfer_buffer = self->transferBuffer->buffer },
+      &(SDL_GPUBufferRegion) { .buffer = self->vertexBuffer->buffer, .size = vertexSize },
+      true);
+  }
+
+  release(copyPass);
+
+  RenderPass *renderPass = $(self->commands, beginRenderPass, &colorTarget, 1, NULL);
+
+  $(renderPass, setViewport, &(SDL_GPUViewport){
+    .x = 0.0f, .y = 0.0f,
+    .w = (float) framebuffer->size.w, .h = (float) framebuffer->size.h,
+    .min_depth = 0.0f, .max_depth = 1.0f,
+  });
+
+  int winW, winH;
+  SDL_GetWindowSize(self->device->window, &winW, &winH);
+  const mat4 projection = mat4_ortho(0.f, (float) winW, (float) winH, 0.f, -1.f, 1.f);
+  $(self->commands, pushVertexUniformData, 0, projection.f, sizeof(projection));
+
+  $(renderPass, bindPipeline, self->pipeline);
+
+  // the vertex buffer is created only once something has been drawn into the frame, so a
+  // frame that drew nothing has none to bind
+  if (vertexCount) {
+
+    $(renderPass, bindVertexBuffers, 0, &(SDL_GPUBufferBinding) { .buffer = self->vertexBuffer->buffer }, 1);
+
+    for (size_t i = 0; i < self->drawArrays->count; i++) {
+      const MVC_DrawArrays *draw = VectorElement(self->drawArrays, MVC_DrawArrays, i);
+
+      $(renderPass, setScissor, &draw->scissor);
+
+      $(renderPass, bindFragmentSamplers, 0, &(SDL_GPUTextureSamplerBinding) {
+        .texture = draw->texture->texture, .sampler = self->sampler->sampler,
+      }, 1);
+
+      $(renderPass, drawPrimitives, draw->vertexCount, 1, draw->firstVertex, 0);
+    }
+  }
+
+  release(renderPass);
+
+  self->commands = NULL;
+  self->framebuffer = NULL;
+}
+
+/**
+ * @fn Renderer *Renderer::initWithDevice(Renderer *self, RenderDevice *device)
+ * @memberof Renderer
+ */
+static Renderer *initWithDevice(Renderer *self, RenderDevice *device) {
+
+  self = (Renderer *) super(Object, self, init);
+  if (self) {
+    self->device = retain(device);
+    assert(self->device);
+
+    self->vertices = $(alloc(Vector), initWithSize, sizeof(MVC_Vertex));
+    assert(self->vertices);
+
+    self->drawArrays = $(alloc(Vector), initWithSize, sizeof(MVC_DrawArrays));
+    assert(self->drawArrays);
+  }
+
+  return self;
+}
+
+/**
+ * @fn void Renderer::pushDrawArrays(const Renderer *self, const MVC_Vertex *verts, size_t count, Texture *texture, const SDL_Color *color)
+ * @memberof Renderer
+ */
+static void pushDrawArrays(const Renderer *self, const MVC_Vertex *verts, size_t count, Texture *texture, const SDL_Color *color) {
+
+  assert(verts);
+
+  const MVC_DrawArrays draw = {
+    .firstVertex = (Uint32) self->vertices->count,
+    .vertexCount = (Uint32) count,
+    .texture     = texture ? texture : self->white,
+    .scissor     = self->scissor,
+  };
+
+  Vector *vertices = self->vertices;
+
+  if (vertices->count + count > vertices->capacity) {
+    $(vertices, resize, max(vertices->capacity * 2, vertices->count + count));
+  }
+
+  MVC_Vertex *out = VectorElement(vertices, MVC_Vertex, vertices->count);
+  for (size_t i = 0; i < count; i++) {
+    out[i] = verts[i];
+    if (color) {
+      out[i].color = *color;
+    }
+  }
+
+  vertices->count += count;
+
+  // If this drawArrays is contiguous with the last one, combine them into a single call
+  
+  if (self->drawArrays->count) {
+    MVC_DrawArrays *last = VectorElement(self->drawArrays, MVC_DrawArrays, self->drawArrays->count - 1);
+    if (last->texture == draw.texture && SDL_RectsEqual(&last->scissor, &draw.scissor)) {
+      last->vertexCount += draw.vertexCount;
+    } else {
+      $(self->drawArrays, add, (MVC_DrawArrays *) &draw);
+    }
+  } else {
+    $(self->drawArrays, add, (MVC_DrawArrays *) &draw);
+  }
+}
+
+/**
+ * @fn void Renderer::renderDeviceDidReset(Renderer *self)
+ * @memberof Renderer
+ */
+static void renderDeviceDidReset(Renderer *self) {
+
+  Shader *vertexShader = $(self->device, loadShader, "Renderer.vert", &(SDL_GPUShaderCreateInfo) {
+    .stage = SDL_GPU_SHADERSTAGE_VERTEX,
+    .num_uniform_buffers = 1,
+  });
+
+  Shader *fragmentShader = $(self->device, loadShader, "Renderer.frag", &(SDL_GPUShaderCreateInfo) {
+    .stage = SDL_GPU_SHADERSTAGE_FRAGMENT,
+    .num_samplers = 1,
+  });
+
+  const SDL_GPUVertexBufferDescription vertexBufferInfo = {
+    .slot = 0,
+    .pitch = sizeof(MVC_Vertex),
+    .input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX,
+    .instance_step_rate = 0,
+  };
+
+  const SDL_GPUColorTargetDescription colorTarget = {
+    .format = $(self->device, getSwapchainTextureFormat),
+    .blend_state = {
+      .enable_blend = true,
+      .color_blend_op = SDL_GPU_BLENDOP_ADD,
+      .alpha_blend_op = SDL_GPU_BLENDOP_ADD,
+      .src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA,
+      .dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+      .src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE,
+      .dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+    },
+  };
+
+  const SDL_GPUGraphicsPipelineCreateInfo pipelineInfo = {
+    .vertex_shader = vertexShader->shader,
+    .fragment_shader = fragmentShader->shader,
+    .vertex_input_state = {
+      .vertex_buffer_descriptions = &vertexBufferInfo,
+      .num_vertex_buffers = 1,
+      .vertex_attributes = (SDL_GPUVertexAttribute[]) {
+        {
+          .location = 0,
+          .buffer_slot = 0,
+          .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
+          .offset = offsetof(MVC_Vertex, position)
+        },
+        {
+          .location = 1,
+          .buffer_slot = 0,
+          .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
+          .offset = offsetof(MVC_Vertex, uv)
+        },
+        {
+          .location = 2,
+          .buffer_slot = 0,
+          .format = SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4_NORM,
+          .offset = offsetof(MVC_Vertex, color)
+        },
+        {
+          .location = 3,
+          .buffer_slot = 0,
+          .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4,
+          .offset = offsetof(MVC_Vertex, rect)
+        },
+        {
+          .location = 4,
+          .buffer_slot = 0,
+          .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
+          .offset = offsetof(MVC_Vertex, shape)
+        },
+      },
+      .num_vertex_attributes = 5,
+    },
+    .primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
+    .rasterizer_state = {
+      .fill_mode = SDL_GPU_FILLMODE_FILL,
+      .cull_mode = SDL_GPU_CULLMODE_NONE,
+      .front_face = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE,
+    },
+    .target_info = {
+      .color_target_descriptions = &colorTarget,
+      .num_color_targets = 1,
+    },
+  };
+
+  self->pipeline = $(self->device, createGraphicsPipeline, &pipelineInfo);
+
+  release(vertexShader);
+  release(fragmentShader);
+
+  self->sampler = $(self->device, createSampler, &(const SDL_GPUSamplerCreateInfo) {
+    .min_filter = SDL_GPU_FILTER_LINEAR,
+    .mag_filter = SDL_GPU_FILTER_LINEAR,
+    .mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR,
+    .address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+    .address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+    .address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+  });
+
+  const Uint8 white[4] = { 255, 255, 255, 255 };
+
+  self->white = $(self->device, createTexture, &(const SDL_GPUTextureCreateInfo) {
+    .type = SDL_GPU_TEXTURETYPE_2D,
+    .format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+    .usage = SDL_GPU_TEXTUREUSAGE_SAMPLER,
+    .width = 1,
+    .height = 1,
+    .layer_count_or_depth = 1,
+    .num_levels = 1,
+  }, white);
+}
+
+/**
+ * @fn void Renderer::renderDeviceWillReset(Renderer *self)
+ * @memberof Renderer
+ */
+static void renderDeviceWillReset(Renderer *self) {
+
+  self->commands = NULL;
+
+  self->white = release(self->white);
+  self->sampler = release(self->sampler);
+
+  self->vertexBuffer = release(self->vertexBuffer);
+  self->transferBuffer = release(self->transferBuffer);
+  self->vertexBufferCapacity = 0;
+
+  self->pipeline = release(self->pipeline);
+
+  $(self->vertices, removeAll);
+  $(self->drawArrays, removeAll);
+}
+
+/**
+ * @fn void Renderer::setClippingFrame(Renderer *self, const SDL_Rect *clippingFrame)
+ * @memberof Renderer
+ */
+static void setClippingFrame(Renderer *self, const SDL_Rect *clippingFrame) {
+
+  if (clippingFrame) {
+    self->scissor = MVC_TransformToWindow(self->device->window, clippingFrame);
+  } else {
+    self->scissor = MakeRect(0, 0, self->framebuffer->size.w, self->framebuffer->size.h);
+  }
+}
+
+#pragma mark - Class lifecycle
+
+/**
+ * @see Class::initialize(Class *)
+ */
+static void initialize(Class *clazz) {
+
+  ((ObjectInterface *) clazz->interface)->dealloc = dealloc;
+
+  ((RendererInterface *) clazz->interface)->beginFrame = beginFrame;
+  ((RendererInterface *) clazz->interface)->beginFrameWith = beginFrameWith;
+  ((RendererInterface *) clazz->interface)->drawBevel = drawBevel;
+  ((RendererInterface *) clazz->interface)->drawLine = drawLine;
+  ((RendererInterface *) clazz->interface)->drawLines = drawLines;
+  ((RendererInterface *) clazz->interface)->drawPolygon = drawPolygon;
+  ((RendererInterface *) clazz->interface)->drawPolygonFilled = drawPolygonFilled;
+  ((RendererInterface *) clazz->interface)->drawRect = drawRect;
+  ((RendererInterface *) clazz->interface)->drawRectFilled = drawRectFilled;
+  ((RendererInterface *) clazz->interface)->drawRoundedRect = drawRoundedRect;
+  ((RendererInterface *) clazz->interface)->drawRoundedRectFilled = drawRoundedRectFilled;
+  ((RendererInterface *) clazz->interface)->drawRoundedRectGradientFilled = drawRoundedRectGradientFilled;
+  ((RendererInterface *) clazz->interface)->drawRoundedTexture = drawRoundedTexture;
+  ((RendererInterface *) clazz->interface)->drawRoundedTextureRegion = drawRoundedTextureRegion;
+  ((RendererInterface *) clazz->interface)->drawTexture = drawTexture;
+  ((RendererInterface *) clazz->interface)->drawTextureRegion = drawTextureRegion;
+  ((RendererInterface *) clazz->interface)->drawView = drawView;
+  ((RendererInterface *) clazz->interface)->endFrame = endFrame;
+  ((RendererInterface *) clazz->interface)->initWithDevice = initWithDevice;
+  ((RendererInterface *) clazz->interface)->pushDrawArrays = pushDrawArrays;
+  ((RendererInterface *) clazz->interface)->renderDeviceDidReset = renderDeviceDidReset;
+  ((RendererInterface *) clazz->interface)->renderDeviceWillReset = renderDeviceWillReset;
+  ((RendererInterface *) clazz->interface)->setClippingFrame = setClippingFrame;
+
+  $$(Resource, addResourceProvider, shaderResourceProvider);
+}
+
+/**
+ * @fn Class *Renderer::_Renderer(void)
+ * @memberof Renderer
+ */
+Class *_Renderer(void) {
+  static Class *clazz;
+  static Once once;
+
+  do_once(&once, {
+    clazz = _initialize(&(const ClassDef) {
+      .name            = "Renderer",
+      .superclass      = _Object(),
+      .instanceSize    = sizeof(Renderer),
+      .interfaceSize   = sizeof(RendererInterface),
+      .initialize      = initialize,
+    });
+  });
+
+  return clazz;
+}
+
+#undef _Class

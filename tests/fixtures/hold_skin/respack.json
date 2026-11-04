@@ -1,0 +1,7 @@
+{
+  "holdAtlas": [40, 60],
+  "holdAtlasMH": [40, 80],
+  "holdRepeat": true,
+  "holdKeepHead": true,
+  "holdCompact": true
+}
