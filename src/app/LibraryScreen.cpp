@@ -6,6 +6,7 @@
 #include "rechigros/app/Screens.hpp"
 #include "rechigros/app/UiLayout.hpp"
 #include "rechigros/app/UiStyle.hpp"
+#include "rechigros/platform/FileDialog.hpp"
 #include "rechigros/platform/FileSystem.hpp"
 
 #include <imgui.h>
@@ -1068,10 +1069,11 @@ void drawDialog(const ScreenMap& map, AppContext& context, int pageCount) {
       buttonCount = 2;
       break;
     case DialogState::Kind::ImportSource:
-      buttons[0] = DialogButton{"压缩包", true, 1};
-      buttons[1] = DialogButton{"文件夹", true, 2};
-      buttons[2] = DialogButton{"散文件", true, 3};
-      buttonCount = 3;
+      buttons[buttonCount++] = DialogButton{"压缩包", true, 1};
+      if (platform::FileDialog::supportsChartFolder()) {
+        buttons[buttonCount++] = DialogButton{"文件夹", true, 2};
+      }
+      buttons[buttonCount++] = DialogButton{"散文件", true, 3};
       break;
     case DialogState::Kind::DeleteConfirm:
       buttons[0] = DialogButton{"取消", false, 0};

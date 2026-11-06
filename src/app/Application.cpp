@@ -12,6 +12,7 @@
 #include "rechigros/audio/AudioEngine.hpp"
 #include "rechigros/game/OfficialLevelEffects.hpp"
 #include "rechigros/platform/AssetManager.hpp"
+#include "rechigros/platform/FileDialog.hpp"
 #include "rechigros/platform/FileSystem.hpp"
 #include "rechigros/render/GameRenderer.hpp"
 #include "rechigros/render/gl/Gl.hpp"
@@ -388,10 +389,19 @@ bool Application::initialize() {
           static_cast<float>(std::max(1, windowHeight)) / 415.0F),
       1.0F, 2.0F);
   // Interface labels are drawn through the glyph cache below, which rasterises at the final
-  // pixel size. This atlas only serves the immediate-mode widgets (text fields, tooltips), so
-  // it is built at a fixed density instead of following the window scale; that keeps the
-  // embedded CJK range in a 2048-square atlas at every window size.
-  const float fontDensity = 1.75F;
+  // pixel size. The ImGui atlas serves the immediate-mode widgets (text fields, tooltips); its
+  // rasterizer density follows the drawable/window ratio so a high-density backbuffer is not
+  // presented with a 1x glyph texture. The floor of 1.75 preserves the previous reference
+  // density on ordinary displays.
+  int fontPixelWidth = 0;
+  int fontPixelHeight = 0;
+  SDL_GetWindowSizeInPixels(window_, &fontPixelWidth, &fontPixelHeight);
+  const float framebufferDensity = (windowWidth > 0 && windowHeight > 0)
+      ? std::min(static_cast<float>(fontPixelWidth) / static_cast<float>(windowWidth),
+            static_cast<float>(fontPixelHeight) / static_cast<float>(windowHeight))
+      : 1.0F;
+  const float fontDensity = std::max(1.75F,
+      std::isfinite(framebufferDensity) ? framebufferDensity : 1.0F);
   {
     // A packaged build keeps its assets inside the package rather than on disk, so the
     // font is materialised to a readable path first.
@@ -741,6 +751,18 @@ int Application::run() {
         if (record.bgFile.empty()) continue;
         (void)app_->textures.textureFor(record.bgFile, 320);
         ++requested;
+      }
+    }
+    // An asynchronous picker answers through its own queue instead of blocking the UI. Its
+    // answer is consumed here, after the launch surface has settled, so opening a package
+    // never runs inside the draw that opened the picker.
+    if (renderedFrames_ >= kDropStableFrames) {
+      while (auto picked = platform::takePickerResult()) {
+        const std::string payload =
+            picked->tag + "|" + platform::pathToUtf8(picked->path);
+        if (!handlePickerResult(*app_, payload)) {
+          handleIncomingPath(*app_, picked->path);
+        }
       }
     }
     // A drop or picker answer can start an import that takes a moment. During the launch

@@ -29,10 +29,12 @@ void bindUnit0(unsigned int id) noexcept {
 Texture::~Texture() { reset(); }
 
 Texture::Texture(Texture&& other) noexcept
-    : id_(other.id_), width_(other.width_), height_(other.height_), linear_(other.linear_) {
+    : id_(other.id_), width_(other.width_), height_(other.height_), linear_(other.linear_),
+      mipmapped_(other.mipmapped_) {
   other.id_ = 0;
   other.width_ = 0;
   other.height_ = 0;
+  other.mipmapped_ = false;
 }
 
 Texture& Texture::operator=(Texture&& other) noexcept {
@@ -42,9 +44,11 @@ Texture& Texture::operator=(Texture&& other) noexcept {
     width_ = other.width_;
     height_ = other.height_;
     linear_ = other.linear_;
+    mipmapped_ = other.mipmapped_;
     other.id_ = 0;
     other.width_ = 0;
     other.height_ = 0;
+    other.mipmapped_ = false;
   }
   return *this;
 }
@@ -55,12 +59,14 @@ void Texture::reset() noexcept {
     id_ = 0;
     width_ = 0;
     height_ = 0;
+    mipmapped_ = false;
     return;
   }
   if (id_ != 0) glDeleteTextures(1, &id_);
   id_ = 0;
   width_ = 0;
   height_ = 0;
+  mipmapped_ = false;
 }
 
 float Texture::aspect() const noexcept {
@@ -73,9 +79,12 @@ void Texture::setFilter(bool linear) noexcept {
   linear_ = linear;
   if (id_ == 0) return;
   bindUnit0(id_);
-  const GLint mode = linear ? GL_LINEAR : GL_NEAREST;
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, mode);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mode);
+  const GLint magMode = linear ? GL_LINEAR : GL_NEAREST;
+  const GLint minMode = mipmapped_
+      ? (linear ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST)
+      : magMode;
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, minMode);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, magMode);
 }
 
 void Texture::setWrapRepeat(bool repeatS, bool repeatT) noexcept {
@@ -103,6 +112,7 @@ bool Texture::uploadRgba(int width, int height, const std::uint8_t* pixels) noex
   if (id_ == 0) return false;
   width_ = width;
   height_ = height;
+  mipmapped_ = false;
   bindUnit0(id_);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -120,6 +130,7 @@ bool Texture::uploadDualChannel(int width, int height, const std::uint8_t* pixel
   if (id_ == 0) return false;
   width_ = width;
   height_ = height;
+  mipmapped_ = false;
   bindUnit0(id_);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -141,6 +152,7 @@ bool Texture::allocateStorage(int width, int height, bool dualChannel) noexcept 
   if (id_ == 0) return false;
   width_ = width;
   height_ = height;
+  mipmapped_ = false;
   bindUnit0(id_);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -179,6 +191,7 @@ bool Texture::allocateEmpty(int width, int height) noexcept {
   if (id_ == 0) return false;
   width_ = width;
   height_ = height;
+  mipmapped_ = false;
   bindUnit0(id_);
   // Render targets are fully sampled by later passes, so their initial content must be
   // defined. Passing a null data pointer leaves the image undefined: drivers differ, and
@@ -190,10 +203,20 @@ bool Texture::allocateEmpty(int width, int height) noexcept {
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, linear_ ? GL_LINEAR : GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, linear_ ? GL_LINEAR : GL_NEAREST);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
       zeroed.data());
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
   return true;
+}
+
+void Texture::generateMipmaps() noexcept {
+  if (!contextAvailable() || id_ == 0 || mipmapped_) return;
+  bindUnit0(id_);
+  glGenerateMipmap(GL_TEXTURE_2D);
+  mipmapped_ = true;
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+      linear_ ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, linear_ ? GL_LINEAR : GL_NEAREST);
 }
 
 void Texture::updateRgba(int width, int height, const std::uint8_t* pixels) noexcept {
@@ -201,6 +224,12 @@ void Texture::updateRgba(int width, int height, const std::uint8_t* pixels) noex
   if (id_ == 0 || width != width_ || height != height_) {
     uploadRgba(width, height, pixels);
     return;
+  }
+  // A sub-image update invalidates the mip chain. Fall back to level zero until the
+  // caller rebuilds the chain; sampling stale higher levels would mix old content in.
+  if (mipmapped_) {
+    mipmapped_ = false;
+    setFilter(linear_);
   }
   bindUnit0(id_);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 4);

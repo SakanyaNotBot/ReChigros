@@ -51,7 +51,8 @@ struct RenderFrameInput {
   float judgeLineWidth{1.0F};
   // Renders the play field into a half-resolution target and upscales it.
   bool lowResolutionMode{false};
-  // Renders through a full-resolution offscreen target and resolves it with FXAA.
+  // Renders the play field into a multisampled offscreen target. When multisampling is
+  // unavailable, a full-resolution FXAA resolve is the fallback.
   bool antialias{false};
   // Skips the storyboard/level-effect shader chain entirely.
   bool disableChartShader{false};
@@ -226,6 +227,10 @@ public:
   void setBackgroundImage(const std::filesystem::path& image);
   void shutdown() noexcept;
   void resize(int width, int height) noexcept;
+  // Allocates the multisample scene target while the caller can hide the cost (the
+  // loading screen), or releases it when antialiasing is off. Rendering allocates it
+  // lazily when this was not called.
+  void prepareAntialias(bool enabled) noexcept;
 
   // Renders one gameplay frame into the currently bound target.
   void render(const RenderFrameInput& input, game::Chart* chart,

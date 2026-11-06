@@ -313,13 +313,34 @@ std::string hashFile(const std::filesystem::path& file, std::uint64_t& sizeOut) 
   return text;
 }
 
-std::string hashPath(const std::filesystem::path& path) {
-  std::uint64_t hash = 1469598103934665603ULL;
-  const auto generic = path.generic_u8string();
-  const std::string encodedPath(generic.begin(), generic.end());
-  for (const char character : encodedPath) {
-    hash ^= static_cast<unsigned char>(character);
+void hashBytes(std::uint64_t& hash, const char* data, std::size_t size) {
+  for (std::size_t index = 0; index < size; ++index) {
+    hash ^= static_cast<unsigned char>(data[index]);
     hash *= 1099511628211ULL;
+  }
+}
+
+// The identity of a directory import is its content, not the path it was copied to. A
+// picker hands the same folder a fresh temporary name on every selection, and the loose
+// file flow always stages through a new directory; both must still recognize an installed
+// pack instead of adding a second copy with a different id.
+std::string hashDirectory(const std::filesystem::path& directory) {
+  std::uint64_t hash = 1469598103934665603ULL;
+  for (const auto& file : platform::listFiles(directory)) {
+    const auto relative = file.lexically_relative(directory);
+    const auto generic = relative.generic_u8string();
+    hashBytes(hash, reinterpret_cast<const char*>(generic.data()), generic.size());
+    const char separator = '\0';
+    hashBytes(hash, &separator, 1);
+
+    std::ifstream input(file, std::ios::binary);
+    if (!input) throw std::runtime_error("Cannot read chart file: " + platform::pathToUtf8(file));
+    std::array<char, 64 * 1024> buffer{};
+    while (input) {
+      input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+      const auto count = static_cast<std::size_t>(input.gcount());
+      hashBytes(hash, buffer.data(), count);
+    }
   }
   char text[32];
   std::snprintf(text, sizeof(text), "%016llx", static_cast<unsigned long long>(hash));
@@ -751,9 +772,15 @@ ChartLibrary::ImportResult ChartLibrary::importZip(const std::filesystem::path& 
 ChartLibrary::ImportResult ChartLibrary::importDirectory(const std::filesystem::path& directory) {
   if (!platform::directoryExists(directory)) throw std::runtime_error("Directory not found");
   const auto absolute = std::filesystem::weakly_canonical(directory);
-  const std::string id = hashPath(absolute);
+  const std::string id = hashDirectory(absolute);
   std::error_code error;
   std::filesystem::create_directories(packsRoot_, error);
+  const auto destination = packsRoot_ / id;
+  if (std::filesystem::is_directory(destination, error)) {
+    if (auto existing = loadRecordInternal(id); existing && existing->complete()) {
+      return ImportResult{std::move(*existing), false};
+    }
+  }
   const auto temporary = packsRoot_ / (id + ".tmp");
   platform::removeRecursively(temporary);
   std::filesystem::create_directories(temporary, error);

@@ -742,6 +742,9 @@ struct ScreenState {
     double start{};
   };
   std::vector<ToggleAnimation> toggleAnimations;
+  // A native picker is opened after the page has finished drawing, not from inside the row
+  // that was pressed. The next draw owns the toast and the replay list refresh.
+  ActionKind pendingImport{ActionKind::None};
 };
 
 ScreenState& screenState() {
@@ -932,7 +935,7 @@ void drawSlider(const DrawContext& draw, const Block& block, float left, float t
   const std::string text = formatSliderValue(block, value);
   const float valueBoxWidth = m.dp(128.0F);
   const float valueBoxHeight = m.dp(30.0F);
-  const float valueTextSize = fittedSizeDp(m, text, 15.0F, valueBoxWidth - m.dp(8.0F),
+  const float valueTextSize = fittedSizeDp(m, text, 15.0F, valueBoxWidth - m.dp(16.0F),
       valueBoxHeight, false);
   const float valueCenterY = top + m.dp(14.0F) + headHeight * 0.5F;
   {
@@ -943,6 +946,7 @@ void drawSlider(const DrawContext& draw, const Block& block, float left, float t
     style.align = ui::HAlign::Right;
     style.valign = ui::VAlign::Middle;
     style.paddingLeftDp = 8.0F;
+    style.paddingRightDp = 8.0F;
     const float boxHeight = m.lineBox(valueTextSize);
     const ui::Box box = m.pixelBox(left + draw.rowWidth - valueBoxWidth,
         valueCenterY - boxHeight * 0.5F, left + draw.rowWidth,
@@ -1170,8 +1174,15 @@ void drawDual(const DrawContext& draw, const Block& block, float left, float top
         break;
     }
   };
-  if (leftPressed) runAction(block.act);
-  if (rightPressed) runAction(block.act2);
+  const auto dispatch = [&](ActionKind kind) {
+    if (kind == ActionKind::SkinImport || kind == ActionKind::ReplayImport) {
+      screenState().pendingImport = kind;
+      return;
+    }
+    runAction(kind);
+  };
+  if (leftPressed) dispatch(block.act);
+  if (rightPressed) dispatch(block.act2);
 }
 
 void drawReplayRow(const DrawContext& draw, const Block& block, float left, float top) {
@@ -1846,8 +1857,10 @@ void drawDialogs(AppContext& context, const Metrics& m, const BackButtonLayout& 
         if (!data) {
           notify(context, "回放文件无法读取");
         } else {
-          const std::string id = context.replays.save(*data);
-          notify(context, id.empty() ? "回放导入失败" : "回放已导入");
+          bool duplicate = false;
+          const std::string id = context.replays.save(*data, &duplicate);
+          notify(context, id.empty() ? (duplicate ? "本地已存在该回放" : "回放导入失败")
+                                     : "回放已导入");
         }
         dialogs.replayImportOpen = false;
         ImGui::CloseCurrentPopup();
@@ -2066,6 +2079,21 @@ void drawSettingsScreen(AppContext& context) {
   drawSkinSelectDialog(context, m, drawList, context.nowSec);
 
   ui::endFullscreenWindow();
+
+  // Run a native picker only after every row and dialog has been drawn. On a platform whose
+  // picker blocks, the wait no longer sits in the middle of the settings row's draw call.
+  const ActionKind pendingImport = state.pendingImport;
+  state.pendingImport = ActionKind::None;
+  switch (pendingImport) {
+    case ActionKind::SkinImport:
+      (void)importSkinFromDialog(context);
+      break;
+    case ActionKind::ReplayImport:
+      (void)importReplayFromDialog(context);
+      break;
+    default:
+      break;
+  }
 }
 
 std::vector<std::array<float, 4>> registeredSettingsControlRects() {

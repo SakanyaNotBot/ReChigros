@@ -22,7 +22,6 @@ using Json = nlohmann::json;
 
 constexpr const char* kChartSuccess = "谱面导入成功";
 constexpr const char* kChartExists = "本地已存在该谱面";
-constexpr const char* kChartPickRequired = "请先选择音乐、谱面与背景";
 constexpr const char* kReplaySuccess = "回放导入成功";
 constexpr const char* kSkinSuccess = "皮肤导入成功";
 
@@ -188,6 +187,43 @@ std::string skinNameFromConfig(const std::string& text, bool isJson) {
 
 } // namespace
 
+PackageKind classifyPackageArchive(const std::filesystem::path& archive) {
+  if (!platform::fileExists(archive)) return PackageKind::Unknown;
+  // The replay container uses its own extension, so it is identified before the archive
+  // is opened; a corrupt file then reports a replay error instead of a chart error.
+  if (lowerExtension(archive) == ".cgrp") return PackageKind::Replay;
+
+  std::vector<platform::ArchiveEntry> entries;
+  try {
+    entries = platform::listArchive(archive);
+  } catch (const std::exception&) {
+    return PackageKind::Unknown;
+  }
+  if (entries.empty()) return PackageKind::Unknown;
+
+  bool hasReplay = false;
+  bool hasSkinConfig = false;
+  bool hasInfo = false;
+  bool hasSkinAsset = false;
+  for (const auto& entry : entries) {
+    const auto name = lowerFileName(platform::pathFromUtf8(entry.name));
+    if (name == "replay.json") {
+      hasReplay = true;
+    } else if (name == "respack.json" || name == "skin.json") {
+      hasSkinConfig = true;
+    } else if (name == "info.yml" || name == "info.yaml") {
+      hasInfo = true;
+    } else if (name == "click.png" || name == "hit_fx.png" || name == "drag.png"
+        || name == "flick.png" || name == "hold.png") {
+      hasSkinAsset = true;
+    }
+  }
+  if (hasReplay) return PackageKind::Replay;
+  // A resource pack has a material table, or the skin metadata beside its note artwork.
+  if (hasSkinConfig || (hasInfo && hasSkinAsset)) return PackageKind::Skin;
+  return PackageKind::Chart;
+}
+
 ImportOutcome importChartPackage(ChartLibrary& library, const std::filesystem::path& archive,
     bool requireComplete) {
   if (!platform::fileExists(archive)) {
@@ -224,49 +260,67 @@ ImportOutcome importChartDirectory(ChartLibrary& library,
 
 ImportOutcome importLooseChartFiles(ChartLibrary& library,
     const std::vector<std::filesystem::path>& files) {
-  std::filesystem::path chartFile;
-  std::filesystem::path musicFile;
-  std::filesystem::path bgFile;
+  std::vector<std::filesystem::path> charts;
+  std::vector<std::filesystem::path> audioTracks;
+  std::vector<std::filesystem::path> images;
   for (const auto& file : files) {
     if (!platform::fileExists(file)) continue;
-    if (chartFile.empty() && isChartCandidate(file)) {
-      chartFile = file;
-    } else if (musicFile.empty() && isAudioCandidate(file)) {
-      musicFile = file;
-    } else if (bgFile.empty() && isImageCandidate(file)) {
-      bgFile = file;
+    if (isChartCandidate(file)) {
+      charts.push_back(file);
+    } else if (isAudioCandidate(file)) {
+      audioTracks.push_back(file);
+    } else if (isImageCandidate(file)) {
+      images.push_back(file);
     }
   }
-  if (chartFile.empty() || musicFile.empty() || bgFile.empty()) {
-    return {false, kChartPickRequired, {}};
-  }
+
+  // A loose import is a chart document, an audio track and an illustration selected as
+  // three independent files. Requiring one of each keeps an accidental extra selection
+  // from silently choosing the wrong track or artwork.
+  if (charts.empty()) return {false, "请选择谱面文件（.json/.pec/.rpe）", {}};
+  if (charts.size() > 1) return {false, "只能选择一个谱面文件", {}};
+  if (audioTracks.empty()) return {false, "请选择音频文件", {}};
+  if (audioTracks.size() > 1) return {false, "只能选择一个音频文件", {}};
+  if (images.empty()) return {false, "请选择背景图片", {}};
+  if (images.size() > 1) return {false, "只能选择一张背景图片", {}};
+
+  const auto chartFile = charts.front();
+  const auto musicFile = audioTracks.front();
+  const auto bgFile = images.front();
 
   const auto staging = scratchDirectory("loose-chart");
   std::error_code error;
   std::filesystem::create_directories(staging, error);
   if (error) return {false, "处理压缩包失败：无法创建临时目录", {}};
 
-  // The pack is built in a staging folder with the metadata the reference derives from
-  // the pickers: the song name comes from the audio file, the rest from the chart.
+  // The staging names are fixed by role. The song name is taken from the chart metadata,
+  // with the audio file name as the fallback used by charts that carry no metadata block.
+  const auto meta = readInfoFromChartFile(chartFile);
   ChartInfo info;
-  info.name = platform::pathToUtf8(musicFile.stem());
-  const auto copy = [&](const std::filesystem::path& source) {
-    const auto target = staging / source.filename();
+  info.name = meta.name.empty() ? platform::pathToUtf8(musicFile.stem()) : meta.name;
+  bool copyFailed = false;
+  const auto copy = [&](const std::filesystem::path& source, const char* stem) {
+    const auto target = staging / (std::string(stem) + source.extension().string());
+    std::error_code copyError;
     std::filesystem::copy_file(source, target,
-        std::filesystem::copy_options::overwrite_existing, error);
+        std::filesystem::copy_options::overwrite_existing, copyError);
+    if (copyError) copyFailed = true;
     return target;
   };
-  const auto chartTarget = copy(chartFile);
-  const auto musicTarget = copy(musicFile);
-  const auto bgTarget = copy(bgFile);
-  if (error) {
+  const auto chartTarget = copy(chartFile, "chart");
+  const auto musicTarget = copy(musicFile, "music");
+  const auto bgTarget = copy(bgFile, "background");
+  if (copyFailed) {
     platform::removeRecursively(staging);
     return {false, "处理压缩包失败：无法写入临时目录", {}};
   }
   info.chart = platform::pathToUtf8(chartTarget.filename());
   info.music = platform::pathToUtf8(musicTarget.filename());
   info.illustration = platform::pathToUtf8(bgTarget.filename());
-  (void)writeInfoJson(staging / "info.json", info);
+  if (!writeInfoJson(staging / "info.json", info)) {
+    platform::removeRecursively(staging);
+    return {false, "处理压缩包失败：无法写入元数据", {}};
+  }
 
   try {
     const auto result = library.importDirectory(staging);
@@ -315,7 +369,11 @@ ImportOutcome importReplayArchive(const std::filesystem::path& archive, ReplaySt
       return {false, "导入回放失败：回放文件损坏", {}};
     }
     if (data->meta.timestampMs <= 0) data->meta.timestampMs = nowMilliseconds();
-    const std::string id = replays.save(*data);
+    bool duplicate = false;
+    const std::string id = replays.save(*data, &duplicate);
+    if (duplicate) {
+      return {false, "本地已存在该回放", {}, true};
+    }
     if (id.empty()) {
       return {false, "导入回放失败：无法创建回放目录", {}};
     }

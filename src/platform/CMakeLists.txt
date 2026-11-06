@@ -8,6 +8,14 @@ if(IOS)
   # The document picker is Objective-C++ and needs the UIKit view controller SDL owns, so
   # it lives beside the shared dialog sources rather than in a generic branch.
   target_sources(rechigros_platform PRIVATE FileDialogIOS.mm)
+  # The picker retains its delegate and security-scoped URL across calls; automatic
+  # reference counting keeps those lifetimes correct instead of leaking one object per pick.
+  set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/FileDialogIOS.mm"
+    PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+  # The Xcode generator reads source options through the target's per-file build flags;
+  # this setting covers generators that do not forward the source property.
+  set_target_properties(rechigros_platform PROPERTIES
+    XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC "YES")
 endif()
 target_include_directories(rechigros_platform PUBLIC "${PROJECT_SOURCE_DIR}/include")
 target_link_libraries(rechigros_platform PUBLIC ${RECHIGROS_SDL_TARGET} miniz)

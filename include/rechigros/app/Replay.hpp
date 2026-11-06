@@ -98,9 +98,9 @@ public:
 
   [[nodiscard]] const std::filesystem::path& root() const noexcept { return root_; }
 
-  // Persists the replay and returns the generated identifier. An empty string
-  // means the write failed.
-  [[nodiscard]] std::string save(const ReplayData& data);
+  // Persists the replay and returns the generated identifier. An empty string means the
+  // replay was refused as a duplicate (duplicate set to true) or the write failed.
+  [[nodiscard]] std::string save(const ReplayData& data, bool* duplicate = nullptr);
 
   // Scans the store; returns saved replays newest first.
   [[nodiscard]] std::vector<ReplayInfo> list() const;

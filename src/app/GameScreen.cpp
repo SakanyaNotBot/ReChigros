@@ -1657,6 +1657,8 @@ bool beginRun(AppContext& context, std::unique_ptr<game::Chart> chart,
   // setup that has to touch OpenGL, and doing it at launch made the backdrop's first scan stall.
   if (context.renderer != nullptr) {
     context.renderer->resize(context.drawableWidth, context.drawableHeight);
+    context.renderer->prepareAntialias(
+        context.settings.antialias && !context.settings.lowResolutionMode);
   }
 
   // Resolve once so the scene and the mixer use the same selection. A skin only overrides

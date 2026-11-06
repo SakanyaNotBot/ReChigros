@@ -423,7 +423,12 @@ float drawLabel(ImDrawList* drawList, const Canvas& c, const Box& designBox, std
   if (style.align == HAlign::Center) {
     x = rect.min.x + boxWidth * 0.5F - textWidth * 0.5F;
   } else if (style.align == HAlign::Right) {
-    x = rect.max.x - paddingRight - textWidth;
+    // Keep the final glyph inside the clip rectangle. The text width above is the sum of
+    // advances, while a glyph's rasterised quad can end a fraction of a pixel beyond its
+    // advance (and ImGui's clip rectangle is converted to whole device pixels). A one-density-
+    // unit guard prevents a right-aligned value such as "1.0" from losing the last sliver of
+    // its final zero when the label box ends at the viewport or a panel edge.
+    x = rect.max.x - paddingRight - textWidth - c.dp(1.0F);
   }
   float baseline = rect.min.y + (ascent + descent) * 0.5F;
   if (style.valign == VAlign::Top) {
