@@ -318,51 +318,11 @@ GridGeometry computeGrid(const ScreenMap& map) {
 // Card drawing
 // ---------------------------------------------------------------------------
 
-// Draws the card name. Moving marquee text fades out along the view edge the way the
-// reference label does; the fade is composed from a few clipped draws at increasing alpha
-// because the shared label renderer has no gradient mask.
+// Draws the card name. The shared label pass owns the marquee motion and the continuous
+// edge fade; the card only supplies the label box and its text style.
 void drawCardName(ImDrawList* drawList, const ScreenMap& map, const ui::Box& designBox,
     const std::string& text, const ui::TextStyle& style, double nowSec) {
-  const float availablePx = designBox.width() * map.scale
-      - map.px(style.paddingLeftDp) - map.px(style.paddingRightDp);
-  const float textWidthPx = ui::labelWidth(map.canvas, text, style.sizeDp, style.bold) * map.scale;
-  if (!style.marquee || textWidthPx <= availablePx || style.fadingEdgeDp <= 0.0F) {
-    ui::drawLabel(drawList, map.canvas, designBox, text, style, nowSec);
-    return;
-  }
-  const ui::PxRect rect = ui::toPixels(map.canvas, designBox);
-  const float fadePx = map.px(style.fadingEdgeDp);
-  const float contentLeft = rect.min.x + map.px(style.paddingLeftDp);
-  const float contentRight = rect.max.x - map.px(style.paddingRightDp);
-  const bool leftFade = nowSec > 1.0;
-  if (fadePx <= 1.0F || contentRight - contentLeft <= (leftFade ? 2.0F : 1.0F) * fadePx) {
-    ui::drawLabel(drawList, map.canvas, designBox, text, style, nowSec);
-    return;
-  }
-  const auto drawClipped = [&](float x0, float x1, int alpha) {
-    if (x1 - x0 <= 0.5F) return;
-    ui::TextStyle faded = style;
-    faded.color = (style.color & ~IM_COL32_A_MASK)
-        | (static_cast<ImU32>(std::clamp(alpha, 0, 255)) << IM_COL32_A_SHIFT);
-    drawList->PushClipRect(ImVec2(x0, rect.min.y), ImVec2(x1, rect.max.y), true);
-    ui::drawLabel(drawList, map.canvas, designBox, text, faded, nowSec);
-    drawList->PopClipRect();
-  };
-  constexpr int kLayers = 12;
-  const float slice = fadePx / static_cast<float>(kLayers);
-  // Full-strength middle band first, then the gradient bands towards each edge.
-  drawClipped(leftFade ? contentLeft + fadePx : contentLeft,
-      contentRight - fadePx, 255);
-  for (int layer = 0; layer < kLayers; ++layer) {
-    const int alpha = static_cast<int>(std::lround(
-        255.0F * static_cast<float>(kLayers - layer) / static_cast<float>(kLayers + 1)));
-    const float bandStart = contentRight - static_cast<float>(layer + 1) * slice;
-    drawClipped(bandStart, bandStart + slice, alpha);
-    if (leftFade) {
-      const float leftBand = contentLeft + static_cast<float>(layer) * slice;
-      drawClipped(leftBand, leftBand + slice, alpha);
-    }
-  }
+  ui::drawLabel(drawList, map.canvas, designBox, text, style, nowSec);
 }
 
 void drawChartCard(const ScreenMap& map, AppContext& context, const ChartRecord& record,

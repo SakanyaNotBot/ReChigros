@@ -112,7 +112,8 @@ float measureRun(std::string_view text, float pixelSize, bool bold) {
 }
 
 void drawRun(ImDrawList* drawList, std::string_view text, float x, float baseline, float pixelSize,
-    bool bold, ImU32 color) {
+    bool bold, ImU32 color, float fadeLeft = 0.0F, float fadeRight = 0.0F,
+    float fadeWidth = 0.0F) {
   UiFontCache& fonts = fontCache();
   const std::uint64_t texture = fonts.textureId();
   if (texture == 0) return;
@@ -140,8 +141,26 @@ void drawRun(ImDrawList* drawList, std::string_view text, float x, float baselin
                 * scale.x) / scale.x,
             std::round((baseline + (glyph->offsetY + glyph->height) / scale.y)
                 * scale.y) / scale.y);
+        const int firstVertex = drawList->VtxBuffer.Size;
         drawList->AddImage(static_cast<ImTextureID>(texture), min, max,
             ImVec2(glyph->u0, glyph->v0), ImVec2(glyph->u1, glyph->v1), color);
+        if (fadeWidth > 0.0F && fadeRight > fadeLeft) {
+          // Apply the marquee fade to the generated glyph vertices rather than clipping
+          // the run into a stack of horizontal bands. Four vertex alphas interpolate across
+          // each glyph, so the result is a continuous edge gradient even where a glyph
+          // straddles the fade boundary.
+          for (int vertex = firstVertex; vertex < drawList->VtxBuffer.Size; ++vertex) {
+            ImDrawVert& destination = drawList->VtxBuffer[vertex];
+            const float leftAmount = (destination.pos.x - fadeLeft) / fadeWidth;
+            const float rightAmount = (fadeRight - destination.pos.x) / fadeWidth;
+            const float amount = std::clamp(std::min(leftAmount, rightAmount), 0.0F, 1.0F);
+            if (amount >= 1.0F) continue;
+            const int alpha = static_cast<int>((destination.col >> IM_COL32_A_SHIFT) & 0xFFU);
+            const int faded = static_cast<int>(std::lround(alpha * amount));
+            destination.col = (destination.col & ~IM_COL32_A_MASK)
+                | (static_cast<ImU32>(faded) << IM_COL32_A_SHIFT);
+          }
+        }
       }
     }
     pen += fonts.advance(codepoint, pixelSize, bold) / scale.x;
@@ -450,8 +469,11 @@ float drawLabel(ImDrawList* drawList, const Canvas& c, const Box& designBox, std
       if (offset < 0.0F) offset = 0.0F;
     }
     const float startX = rect.min.x + paddingLeft - offset;
-    drawRun(drawList, text, startX, baseline, pixelSize, style.bold, style.color);
-    drawRun(drawList, text, startX + travel, baseline, pixelSize, style.bold, style.color);
+    const float fadeWidth = c.dp(style.fadingEdgeDp);
+    drawRun(drawList, text, startX, baseline, pixelSize, style.bold, style.color,
+        rect.min.x, rect.max.x, fadeWidth);
+    drawRun(drawList, text, startX + travel, baseline, pixelSize, style.bold, style.color,
+        rect.min.x, rect.max.x, fadeWidth);
   } else {
     drawRun(drawList, text, x, baseline, pixelSize, style.bold, style.color);
   }
