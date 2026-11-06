@@ -68,6 +68,15 @@ constexpr int kNoteTypeDrag = 2;
 constexpr int kNoteTypeHold = 3;
 constexpr int kNoteTypeFlick = 4;
 
+// Scene multisampling supersedes the final FXAA pass for geometric edges. Mobile targets
+// already have a high pixel density and are bandwidth constrained, so two samples there
+// keep the cost bounded while the desktop path uses four.
+#ifdef RECHIGROS_GLES
+constexpr int kMsaaSamples = 2;
+#else
+constexpr int kMsaaSamples = 4;
+#endif
+
 // Head textures paint in this order so drag sits behind taps and flicks on top.
 constexpr int kHeadDrawOrder[3] = {kNoteTypeDrag, kNoteTypeTap, kNoteTypeFlick};
 
@@ -126,13 +135,13 @@ void drawStoryboardText(batch::SpriteBatch& batch, text::TextRenderer& text,
   // Rasterise close to the on-screen size, but bucket the size and cap it: a storyboard line
   // can animate its scale from 1x to 40x in a fraction of a second, and a fresh 2000px strip
   // for every intermediate value fills the cache and reallocates GL textures every frame.
-  // A small number of 64px buckets covers that range; the residual GPU magnification stays
-  // mild for ordinary storyboard text and only grows for text that is already far off-screen.
+  // Four-pixel buckets keep the residual rescale below a few percent, so ordinary text is
+  // sampled almost 1:1 instead of being magnified from a coarser bucket.
   constexpr float kMaxStoryboardRasterSize = 320.0F;
-  constexpr float kStoryboardRasterStep = 64.0F;
+  constexpr float kStoryboardRasterStep = 4.0F;
   const float desiredSize = std::min(fontSize * contentScale, kMaxStoryboardRasterSize);
   const float rasterFontSize = std::clamp(
-      std::ceil(std::max(16.0F, desiredSize) / kStoryboardRasterStep) * kStoryboardRasterStep,
+      std::floor(std::max(16.0F, desiredSize) / kStoryboardRasterStep) * kStoryboardRasterStep,
       16.0F, kMaxStoryboardRasterSize);
   const float rasterScale = rasterFontSize / fontSize;
   const float scaleX = frame.scaleX / rasterScale;
@@ -142,6 +151,12 @@ void drawStoryboardText(batch::SpriteBatch& batch, text::TextRenderer& text,
   float textWidth = 0.0F;
   for (const auto& source : sourceLines) {
     auto* texture = text.get(source, rasterFontSize);
+    // Ordinary storyboard text is drawn at (or very close to) its raster size. Only the
+    // capped large sizes are minified enough to need a mip chain; using one at 1:1 would
+    // blend levels and make the glyphs softer.
+    if (texture != nullptr && desiredSize > rasterFontSize + 0.5F) {
+      texture->texture.generateMipmaps();
+    }
     lines.push_back({texture});
     if (texture == nullptr) continue;
     ascent = std::max(ascent, texture->ascentPx > 0.0F ? texture->ascentPx : rasterFontSize * 0.8F);
@@ -207,6 +222,7 @@ struct GameRenderer::Impl {
     pingFbo.reset();
     pongFbo.reset();
     aaFbo.reset();
+    msaaFbo.reset();
     halfResFbo.reset();
     batch.release();
     text.shutdown();
@@ -264,8 +280,10 @@ struct GameRenderer::Impl {
   gl::Framebuffer blockResultFbo;
   gl::Framebuffer pingFbo;
   gl::Framebuffer pongFbo;
-  // Antialias resolve target (full resolution) and the low-resolution scene target.
+  // Antialias resolve target (full resolution), the multisampled scene target, and the
+  // low-resolution scene target.
   gl::Framebuffer aaFbo;
+  gl::Framebuffer msaaFbo;
   gl::Framebuffer halfResFbo;
   fx::HitEffectField hitEffects;
   // Autoplay bursts, drawn from the chart's pre-rolled debris so the layout is stable.
@@ -533,6 +551,18 @@ void GameRenderer::Impl::loadGameplayTextures() {
       headTextureList.push_back(texture);
     }
   }
+  // Note heads are entire images and are routinely drawn smaller than their source
+  // resolution. Their mip chain keeps the silhouette from sampling a few texels at random,
+  // which is what produces the crawling staircase on long notes. The hold sheet itself is
+  // skipped: its UVs address head and tail sub-rectangles, and coarse mip levels would mix
+  // the two slices. Hold bodies are separate strips and are safe to mip.
+  for (gl::Texture* texture : headTextureList) {
+    if (texture != nullptr) texture->generateMipmaps();
+  }
+  for (gl::Texture* texture : holdBodies) {
+    if (texture != nullptr) texture->generateMipmaps();
+  }
+  if (defaultBackground != nullptr) defaultBackground->generateMipmaps();
   materialsLoaded = true;
 }
 
@@ -1558,6 +1588,7 @@ void GameRenderer::resize(int width, int height) noexcept {
   impl_->pingFbo.resize(impl_->width, impl_->height);
   impl_->pongFbo.resize(impl_->width, impl_->height);
   impl_->aaFbo.resize(impl_->width, impl_->height);
+  impl_->msaaFbo.reset();
   impl_->halfResFbo.resize(std::max(1, impl_->width / 2), std::max(1, impl_->height / 2));
   impl_->blockComposite.resize(impl_->width, impl_->height);
   impl_->rpeNoise.resize(impl_->width, impl_->height);
@@ -1568,6 +1599,16 @@ void GameRenderer::resize(int width, int height) noexcept {
   impl_->pauseBackdrop.warmUp(impl_->width, impl_->height);
   impl_->pauseHudBlur.warmUp(impl_->width, impl_->height);
   impl_->pauseBlurA.resize(impl_->width, impl_->height);
+}
+
+void GameRenderer::prepareAntialias(bool enabled) noexcept {
+  if (impl_ == nullptr) return;
+  if (!enabled) {
+    impl_->msaaFbo.reset();
+    return;
+  }
+  if (!impl_->initialized) return;
+  (void)impl_->msaaFbo.resizeMultisample(impl_->width, impl_->height, kMsaaSamples);
 }
 
 void GameRenderer::Impl::drawLevelEffectObjects(game::Chart* chart,
@@ -1809,8 +1850,8 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
 
   // A chart with storyboard effects renders into an offscreen target first so the
   // shader chain can process the whole play field. Zone composite precedes those effects;
-  // the low-resolution fallback and direct scene follow, with antialias around the paths
-  // that resolve through FXAA.
+  // the low-resolution fallback and direct scene follow, with a multisampled scene and a
+  // final FXAA resolve when antialiasing is on.
   const bool anyRpeNoiseVisible = applyEffects && chart != nullptr &&
       !chart->rpeNoiseAreas.empty() && input.chartTimeSec >= 0.0 &&
       std::any_of(chart->rpeNoiseAreas.begin(), chart->rpeNoiseAreas.end(),
@@ -1822,21 +1863,29 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       ((!input.disableChartShader && !chart->prprEffects.empty()) || useRpeNoise);
   const bool useLowRes = input.lowResolutionMode && !useEffects && !useBlockComposite &&
       halfResFbo.valid();
-  // The pause overlay is resolved through the antialias pass while it is up.
-  const bool pauseWantsAa = input.pause.mode != PauseMode::None;
-  const bool useAa = input.antialias && (pauseWantsAa || useEffects || useLowRes)
-      && aaFbo.valid();
-  const unsigned int sceneTarget = useAa ? aaFbo.fbo() : targetFbo;
-  if (useEffects || useBlockComposite) {
+  // AA is a final full-frame resolve. The scene is rasterised into a multisampled target
+  // first, then resolved into the single-sample canvas that effects, zones, the HUD and the
+  // pause overlay compose on. Low-resolution mode resolves its own upscale, so it skips
+  // multisampling and takes the FXAA path only.
+  const bool wantsAa = input.antialias && aaFbo.valid();
+  const bool useMsaa = wantsAa && !useLowRes &&
+      msaaFbo.resizeMultisample(width, height, kMsaaSamples);
+  const unsigned int sceneTarget = wantsAa ? aaFbo.fbo() : targetFbo;
+  const unsigned int baseTarget = useMsaa
+      ? msaaFbo.fbo()
+      : (useEffects || useBlockComposite
+            ? sceneFbo.fbo()
+            : (useLowRes ? halfResFbo.fbo() : sceneTarget));
+  if (useMsaa) {
+    msaaFbo.bind();
+  } else if (useEffects || useBlockComposite) {
     sceneFbo.bind();
-    glViewport(0, 0, width, height);
   } else if (useLowRes) {
     halfResFbo.bind();
-    glViewport(0, 0, std::max(1, width / 2), std::max(1, height / 2));
   } else {
     // The scene draws into the caller's target, so its binding and viewport are set here
     // rather than assumed: a previous frame may have left another target bound.
-    glBindFramebuffer(GL_FRAMEBUFFER, sceneTarget);
+    glBindFramebuffer(GL_FRAMEBUFFER, baseTarget);
     glViewport(0, 0, width, height);
   }
 
@@ -1988,6 +2037,19 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       ametrineVignette.draw(ametrineDarkness);
       gl::logErrors("scene.ametrineVignette");
     }
+  }
+
+  // The play field, including its hit effects and level vignette, is complete here. Resolve
+  // the multisampled scene once before every pass that samples or composes it. The HUD is
+  // added afterwards on the single-sample canvas: its glyph and icon edges are already
+  // filtered textures, while the geometry that benefits from MSAA is all in the scene.
+  if (useMsaa) {
+    gl::Framebuffer& resolved = (useEffects || useBlockComposite) ? sceneFbo : aaFbo;
+    if (msaaFbo.resolveTo(resolved)) {
+      resolved.bind();
+      glViewport(0, 0, width, height);
+    }
+    gl::logErrors("scene.msaaResolve");
   }
 
   // Tracks whether the HUD already became part of the frame the composite resamples, so
@@ -2227,6 +2289,9 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
       }
       RenderFrameInput frozen = input;
       frozen.pause.mode = PauseMode::None;
+      // The frozen copy is only input for the blur pass. Disabling AA keeps it from
+      // overwriting the outer frame's resolve target while the pause overlay is composed.
+      frozen.antialias = false;
       // The graded backdrop must not carry a HUD copy: the soft HUD is composited on
       // top instead, so the pause picture contains exactly one HUD layer.
       frozen.hud.visible = false;
@@ -2267,14 +2332,21 @@ void GameRenderer::Impl::drawScene(const RenderFrameInput& input, game::Chart* c
     }
   }
 
-  // The antialias path renders the whole gameplay frame (including the pause backdrop)
-  // into the full-resolution target, then resolves it with FXAA into the presented target.
-  if (useAa) {
+  // Multisampling already smoothed the scene's geometric edges. The composed canvas is
+  // copied unchanged rather than run through FXAA: FXAA blurs glyph textures, and HUD and
+  // storyboard text is already antialiased by the font rasteriser. Without multisampling
+  // (low-resolution mode or an unsupported target) FXAA is the only edge filter available.
+  if (wantsAa) {
     glBindFramebuffer(GL_FRAMEBUFFER, targetFbo);
     glViewport(0, 0, width, height);
     glDisable(GL_BLEND);
     clearTarget(0.0F, 0.0F, 0.0F, 1.0F);
-    fx::FxaaPass::instance().draw(aaFbo.color(), width, height);
+    if (useMsaa) {
+      fx::BlitPass::instance().ensure();
+      fx::BlitPass::instance().draw(aaFbo.color(), 1.0F, 1.0F, 1.0F, 1.0F, false);
+    } else {
+      fx::FxaaPass::instance().draw(aaFbo.color(), width, height);
+    }
     bindDefaultBlend();
     gl::logErrors("scene.antialias");
   }
@@ -2369,12 +2441,17 @@ void GameRenderer::setBackgroundImage(const std::filesystem::path& image) {
   impl_->backgroundPath = image;
   gl::Texture* loaded = image.empty() ? nullptr : impl_->textures.loadFile(image);
   impl_->useChartBackground = loaded != nullptr;
-  if (loaded != nullptr) impl_->background = loaded;
-  else {
+  if (loaded != nullptr) {
+    loaded->generateMipmaps();
+    impl_->background = loaded;
+  } else {
     if (impl_->defaultBackground == nullptr) {
       impl_->defaultBackground = impl_->textures.loadAsset("res/background.jpg");
     }
-    if (impl_->defaultBackground != nullptr) impl_->background = impl_->defaultBackground;
+    if (impl_->defaultBackground != nullptr) {
+      impl_->defaultBackground->generateMipmaps();
+      impl_->background = impl_->defaultBackground;
+    }
   }
   impl_->backgroundBlur.invalidate();
 }
@@ -2430,6 +2507,7 @@ bool GameRenderer::renderOffscreen(const RenderFrameInput& input, game::Chart* c
   impl_->pingFbo.resize(width, height);
   impl_->pongFbo.resize(width, height);
   impl_->aaFbo.resize(width, height);
+  impl_->msaaFbo.reset();
   impl_->halfResFbo.resize(std::max(1, width / 2), std::max(1, height / 2));
   impl_->blockComposite.resize(width, height);
   impl_->rpeNoise.resize(width, height);
@@ -2518,11 +2596,13 @@ void GameRenderer::applyCaptureSize(const RenderFrameInput& input, game::Chart* 
   impl_->pingFbo.resize(width, height);
   impl_->pongFbo.resize(width, height);
   impl_->aaFbo.resize(width, height);
+  impl_->msaaFbo.reset();
   impl_->halfResFbo.resize(std::max(1, width / 2), std::max(1, height / 2));
   impl_->blockComposite.resize(width, height);
   impl_->rpeNoise.resize(width, height);
   impl_->disableChartShaderSetting = input.disableChartShader;
   impl_->prepareForChart(chart);
+  prepareAntialias(input.antialias && !input.lowResolutionMode);
 }
 
 bool GameRenderer::captureFrame(const RenderFrameInput& input, game::Chart* chart,
@@ -2636,6 +2716,7 @@ void GameRenderer::endCapture() noexcept {
   impl_->pingFbo.resize(impl_->width, impl_->height);
   impl_->pongFbo.resize(impl_->width, impl_->height);
   impl_->aaFbo.resize(impl_->width, impl_->height);
+  impl_->msaaFbo.reset();
   impl_->halfResFbo.resize(std::max(1, impl_->width / 2), std::max(1, impl_->height / 2));
   impl_->blockComposite.resize(impl_->width, impl_->height);
   impl_->rpeNoise.resize(impl_->width, impl_->height);

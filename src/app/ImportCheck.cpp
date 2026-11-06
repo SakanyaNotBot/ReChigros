@@ -191,8 +191,13 @@ void checkLooseFiles(const std::filesystem::path& root, ChartLibrary& library) {
   }
   const ImportOutcome partial = rechigros::app::importLooseChartFiles(library,
       {folder / "loose-chart.json"});
-  report(!partial.imported && partial.message == "请先选择音乐、谱面与背景",
-      "loose file import requires every source", partial.message);
+  report(!partial.imported && partial.message == "请选择音频文件",
+      "loose file import names the missing audio track", partial.message);
+  const ImportOutcome duplicate = rechigros::app::importLooseChartFiles(library,
+      {folder / "loose-chart.json", folder / "loose-music.ogg", folder / "loose-cover.png"});
+  report(!duplicate.imported && duplicate.chartId == outcome.chartId
+          && duplicate.message == "本地已存在该谱面",
+      "loose file import deduplicates the same three files", duplicate.message);
 }
 
 void checkChartFolder(const std::filesystem::path& root, ChartLibrary& library) {
@@ -207,6 +212,15 @@ void checkChartFolder(const std::filesystem::path& root, ChartLibrary& library) 
       std::vector<std::uint8_t>(256, 'C'));
   const ImportOutcome outcome = rechigros::app::importChartDirectory(library, folder);
   report(outcome.imported, "chart folder import", outcome.message);
+
+  // The picker copies a folder to a new temporary path on every selection. The installed
+  // pack is identified by its content, so the same folder under another path is a duplicate.
+  const auto copied = root / "pack-folder-copy";
+  std::filesystem::copy(folder, copied, std::filesystem::copy_options::recursive, error);
+  const ImportOutcome duplicate = rechigros::app::importChartDirectory(library, copied);
+  report(!duplicate.imported && duplicate.chartId == outcome.chartId
+          && duplicate.message == "本地已存在该谱面",
+      "chart folder import is independent of its temporary path", duplicate.message);
 }
 
 void checkReplay(const std::filesystem::path& root, ReplayStore& replays) {
@@ -238,12 +252,28 @@ void checkReplay(const std::filesystem::path& root, ReplayStore& replays) {
     }
   }
 
-  // A plain replay document takes the same path.
+  // A plain replay document takes the same path. Shift its timestamp outside the duplicate
+  // window so it describes a second play rather than the same recording again.
   const auto plain = root / "plain-replay.json";
-  rechigros::platform::writeTextFile(plain, kReplayJson);
+  std::string plainJson = kReplayJson;
+  const std::string originalTimestamp = "\"timestamp\": 1729000000000";
+  const auto timestampAt = plainJson.find(originalTimestamp);
+  report(timestampAt != std::string::npos, "plain replay fixture has a timestamp");
+  if (timestampAt != std::string::npos) {
+    plainJson.replace(timestampAt, originalTimestamp.size(), "\"timestamp\": 1729000060000");
+  }
+  rechigros::platform::writeTextFile(plain, plainJson);
   const ImportOutcome plainOutcome = rechigros::app::importReplayArchive(plain, replays);
-  report(plainOutcome.imported, "plain replay import", plainOutcome.message);
+  report(plainOutcome.imported && !plainOutcome.duplicate, "plain replay import",
+      plainOutcome.message);
   report(replays.list().size() == 2, "plain replay stored",
+      "count=" + std::to_string(replays.list().size()));
+
+  const ImportOutcome plainDuplicate = rechigros::app::importReplayArchive(plain, replays);
+  report(!plainDuplicate.imported && plainDuplicate.duplicate
+          && plainDuplicate.message == "本地已存在该回放",
+      "duplicate plain replay is recognized", plainDuplicate.message);
+  report(replays.list().size() == 2, "duplicate plain replay is not stored again",
       "count=" + std::to_string(replays.list().size()));
 
   // A package without a replay document must be rejected with the reference wording.
@@ -273,6 +303,21 @@ void checkSkin(const std::filesystem::path& root, const std::filesystem::path& s
       "skin respack installed");
   report(rechigros::platform::fileExists(destination / "nested-image.png"),
       "skin nested asset flattened");
+}
+
+void checkClassification(const std::filesystem::path& root) {
+  report(rechigros::app::classifyPackageArchive(root / "chart-pack.zip")
+          == rechigros::app::PackageKind::Chart,
+      "archive classification: chart package");
+  report(rechigros::app::classifyPackageArchive(root / "replay.cgrp")
+          == rechigros::app::PackageKind::Replay,
+      "archive classification: replay package");
+  report(rechigros::app::classifyPackageArchive(root / "skin.zip")
+          == rechigros::app::PackageKind::Skin,
+      "archive classification: skin package");
+  report(rechigros::app::classifyPackageArchive(root / "missing.zip")
+          == rechigros::app::PackageKind::Unknown,
+      "archive classification: unreadable file");
 }
 
 } // namespace
@@ -305,6 +350,7 @@ int main(int argc, char** argv) {
   checkChartFolder(root, library);
   checkReplay(root, replays);
   checkSkin(root, skinsRoot);
+  checkClassification(root);
 
   const auto records = library.records(true);
   report(records.size() >= 3, "library holds every imported chart",

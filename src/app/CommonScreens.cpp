@@ -1,5 +1,7 @@
 #include "rechigros/app/AppContext.hpp"
 
+#include "ImportCore.hpp"
+#include "ImportDialogs.hpp"
 #include "rechigros/app/ScreenCommon.hpp"
 #include "rechigros/app/Screens.hpp"
 #include "rechigros/app/UiLayout.hpp"
@@ -26,6 +28,15 @@ std::string toLower(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(),
       [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
   return value;
+}
+
+// readReplayFile accepts any JSON object because the store uses it for its own documents.
+// An externally opened file must additionally carry replay metadata or recorded input; an
+// info/extra document that happens to parse as JSON is not a replay.
+bool looksLikeReplayDocument(const ReplayData& data) {
+  return data.meta.score != 0 || data.meta.timestampMs > 0
+      || !data.meta.songName.empty() || !data.meta.difficulty.empty()
+      || !data.judgements.empty() || !data.entries.empty();
 }
 
 std::filesystem::path resolveInside(const std::filesystem::path& directory,
@@ -394,19 +405,36 @@ void handleIncomingPath(AppContext& context, const std::filesystem::path& path) 
     return;
   }
   const std::string extension = toLower(path.extension().string());
+  const auto route = [&](const char* tag) {
+    return handlePickerResult(context,
+        std::string(tag) + "|" + platform::pathToUtf8(path));
+  };
   try {
     if (std::filesystem::is_directory(path, error)) {
-      const auto result = context.library.importDirectory(path);
-      notify(context, result.imported ? "谱面导入成功" : "本地已存在该谱面");
-      context.library.invalidate();
-      openChartDetail(context, result.record.id);
+      (void)route("chartdir");
       return;
     }
-    if (extension == ".zip") {
-      const auto result = context.library.importZip(path);
-      notify(context, result.imported ? "谱面导入成功" : "本地已存在该谱面");
-      context.library.invalidate();
-      openChartDetail(context, result.record.id);
+    if (extension == ".json") {
+      // A chart document starts as an ad-hoc pack; a replay document is installed into the
+      // replay store. The chart test runs first because a replay file is also a JSON object.
+      if (isChartCandidate(path)) {
+        startAdhocChart(context, path);
+      } else if (const auto replay = readReplayFile(path);
+          replay && looksLikeReplayDocument(*replay)) {
+        (void)route("replay");
+      } else {
+        notify(context, "不支持的文件类型");
+      }
+      return;
+    }
+    if (extension == ".zip" || extension == ".pez" || extension == ".cgrp") {
+      switch (classifyPackageArchive(path)) {
+        case PackageKind::Chart: (void)route("chartzip"); return;
+        case PackageKind::Replay: (void)route("replay"); return;
+        case PackageKind::Skin: (void)route("skin"); return;
+        case PackageKind::Unknown: break;
+      }
+      notify(context, "不支持的文件类型");
       return;
     }
     if (isChartCandidate(path)) {

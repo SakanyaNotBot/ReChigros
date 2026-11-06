@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -32,6 +33,9 @@ public final class MainActivity extends SDLActivity {
     private static final long MAX_INPUT_BYTES = 512L * 1024L * 1024L;
     private static final long MAX_UNPACKED_BYTES = 1024L * 1024L * 1024L;
     private static final int MAX_ARCHIVE_ENTRIES = 4096;
+    // A multi-select answer copies one file per item in the same millisecond; the sequence
+    // keeps two identical display names from replacing each other in the import cache.
+    private static final AtomicLong INCOMING_SEQUENCE = new AtomicLong();
 
     @Override
     protected String[] getLibraries() {
@@ -133,6 +137,11 @@ public final class MainActivity extends SDLActivity {
         if (zipContainsAny(incoming, "respack.json", "skin.json")) {
             return "skin|" + incoming.getAbsolutePath();
         }
+        if (zipContainsAny(incoming, "info.yml", "info.yaml")
+                && zipContainsAny(incoming, "click.png", "hit_fx.png", "drag.png",
+                        "flick.png", "hold.png")) {
+            return "skin|" + incoming.getAbsolutePath();
+        }
         return "chartzip|" + incoming.getAbsolutePath();
     }
 
@@ -161,7 +170,9 @@ public final class MainActivity extends SDLActivity {
             displayName = "chart" + (extension == null ? ".bin" : "." + extension);
         }
         displayName = sanitizeFileName(displayName);
-        File output = new File(root, System.currentTimeMillis() + "_" + displayName);
+        File output = new File(root,
+                System.currentTimeMillis() + "_" + INCOMING_SEQUENCE.incrementAndGet()
+                        + "_" + displayName);
         long total = 0;
         InputStream source = getContentResolver().openInputStream(uri);
         if (source == null) throw new IOException("Content provider returned no stream");
@@ -602,7 +613,9 @@ public final class MainActivity extends SDLActivity {
     private String copyDocumentTree(Uri treeUri) throws IOException {
         File root = new File(getCacheDir(), "incoming");
         if (!root.isDirectory() && !root.mkdirs()) throw new IOException("Cannot create import cache");
-        File output = new File(root, System.currentTimeMillis() + "_folder");
+        File output = new File(root,
+                System.currentTimeMillis() + "_" + INCOMING_SEQUENCE.incrementAndGet()
+                        + "_folder");
         if (!output.mkdirs()) throw new IOException("Cannot create the import folder");
         long[] budget = new long[]{MAX_UNPACKED_BYTES};
         final int copied = copyTreeRecursive(treeUri, output, budget, 0);

@@ -30,6 +30,13 @@ std::uint8_t coverageToAlpha(float coverage) {
   return static_cast<std::uint8_t>(clamped * 255.0F + 0.5F);
 }
 
+// Glyphs are rasterised and positioned on integer device pixels. Keeping a fractional size
+// here makes every glyph pass through a fractional scale when its quad reaches the screen,
+// which softens stems even though the source coverage is correct.
+float glyphPixelSize(float pixelSize) {
+  return std::max(1.0F, std::round(pixelSize));
+}
+
 // Splits UTF-8 into code points. The font API addresses glyphs by code point; iterating
 // the bytes of a string instead would draw every continuation byte as its own missing
 // glyph, which turns one non-ASCII separator into a row of placeholder boxes.
@@ -691,10 +698,11 @@ void TextRenderer::shutdown() noexcept {
 }
 
 float TextRenderer::measure(const std::string& text, float pixelSize) const {
-  return font_.measure(text, pixelSize);
+  return font_.measure(text, glyphPixelSize(pixelSize));
 }
 
 TextTexture* TextRenderer::get(const std::string& text, float pixelSize, bool bold) {
+  pixelSize = glyphPixelSize(pixelSize);
   // Compare the fields directly instead of building a concatenated key string, so a cache
   // hit does not allocate (the HUD queries several labels every frame).
   for (auto& entry : cache_) {
@@ -712,6 +720,7 @@ TextTexture* TextRenderer::get(const std::string& text, float pixelSize, bool bo
 
 const GlyphStrip* TextRenderer::glyphStrip(float pixelSize) {
   if (!font_.valid()) return nullptr;
+  pixelSize = glyphPixelSize(pixelSize);
   for (auto& entry : strips_) {
     if (std::abs(entry.pixelSize - pixelSize) < 0.005F) return entry.strip.get();
   }
@@ -727,6 +736,7 @@ const GlyphStrip* TextRenderer::glyphStrip(float pixelSize) {
 const GlyphStrip* TextRenderer::compose(const std::string& text, float pixelSize,
     ComposedTextMetrics& metrics,
     std::array<ComposedGlyphPlacement, kMaxComposedGlyphs>& placements, int& placementCount) {
+  pixelSize = glyphPixelSize(pixelSize);
   const GlyphStrip* strip = glyphStrip(pixelSize);
   if (strip == nullptr) return nullptr;
   if (!font_.layoutStrip(*strip, text, metrics, placements, placementCount)) return nullptr;

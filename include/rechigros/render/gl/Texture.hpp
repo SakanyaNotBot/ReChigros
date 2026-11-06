@@ -25,6 +25,9 @@ public:
   void updateRows(int firstRow, int rowCount, const std::uint8_t* pixels, bool dualChannel) noexcept;
   // Allocates an empty RGBA image, used for render targets.
   bool allocateEmpty(int width, int height) noexcept;
+  // Builds the mip chain of an uploaded image and enables trilinear minification.
+  // Render targets and sub-rectangle atlases must not call this.
+  void generateMipmaps() noexcept;
   // Replaces the whole level-0 image of an existing texture (same dimensions allowed).
   void updateRgba(int width, int height, const std::uint8_t* pixels) noexcept;
   void setFilter(bool linear) noexcept;
@@ -47,6 +50,7 @@ private:
   int width_{};
   int height_{};
   bool linear_{true};
+  bool mipmapped_{};
 };
 
 // Shared 1x1 opaque white texture, created on first use.

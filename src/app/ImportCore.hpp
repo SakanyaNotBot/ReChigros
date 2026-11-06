@@ -21,7 +21,14 @@ struct ImportOutcome {
   std::string message;
   // Installed chart identifier for chart imports; empty otherwise.
   std::string chartId;
+  // True when the imported replay is already present in the replay store.
+  bool duplicate{};
 };
+
+// What an archive received from the system (an "open with" document, a shared file or a
+// drop) contains. The caller routes it to the matching store.
+enum class PackageKind { Chart, Replay, Skin, Unknown };
+[[nodiscard]] PackageKind classifyPackageArchive(const std::filesystem::path& archive);
 
 // Installs one chart package archive. `requireComplete` mirrors the reference: a package
 // picked from the browser may be accepted as-is while an incoming document must carry
