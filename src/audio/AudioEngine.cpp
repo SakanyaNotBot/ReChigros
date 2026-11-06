@@ -21,8 +21,9 @@
 namespace rechigros::audio {
 namespace {
 constexpr std::uint32_t kOutputChannels = 2;
-/// Requested frames per device callback. Small periods keep hit sounds tight.
-constexpr std::uint32_t kPeriodFrames = 256;
+/// Requested frames per device callback. Small periods keep hit sounds tight. WASAPI shared
+/// mode may round this up to its 10 ms engine period; the exclusive path below honors it.
+constexpr std::uint32_t kPeriodFrames = 128;
 /// Requested number of periods buffered between the mixer and the speaker.
 constexpr std::uint32_t kPeriodCount = 2;
 /// Upper bound on effects sounding at the same time.
@@ -59,7 +60,6 @@ public:
   struct Event {
     int noteType{};
     const AudioBuffer* customBuffer{};
-    std::int64_t targetOutputFrame{};
   };
 
   /// Returns false when the queue is full and the trigger has to be dropped.
@@ -95,7 +95,6 @@ struct Voice {
   const float* frames{};
   std::int64_t frameCount{};
   std::int64_t frameIndex{};
-  std::int64_t startOffsetFrames{};
   bool active{};
 };
 
@@ -151,6 +150,13 @@ struct AudioEngine::Impl final {
     config.aaudio.usage = ma_aaudio_usage_game;
     config.aaudio.contentType = ma_aaudio_content_type_music;
     config.opensl.streamType = ma_opensl_stream_type_media;
+#if defined(_WIN32)
+    // Shared WASAPI commonly runs with a 10 ms engine period, so even a 128-frame hint
+    // becomes a 480-frame callback. Exclusive mode lets the endpoint use the requested
+    // short period, which removes the dominant part of the hit-sound delay.
+    config.playback.shareMode = ma_share_mode_exclusive;
+    config.wasapi.usage = ma_wasapi_usage_games;
+#endif
 
     // The default iOS category is play-and-record, which routes playback through the earpiece,
     // keeps the input side of the session alive and can raise a microphone prompt the first
@@ -164,7 +170,21 @@ struct AudioEngine::Impl final {
       contextOpen_ = true;
     }
 
-    if (ma_device_init(&context_, &config, &device_) != MA_SUCCESS) return false;
+    ma_result deviceResult = ma_device_init(&context_, &config, &device_);
+#if defined(_WIN32)
+    if (deviceResult != MA_SUCCESS) {
+      // Exclusive access is not always available: another application may own the endpoint,
+      // or the device may reject the stream format. Shared mode is the safe fallback; one
+      // period instead of two still removes a full buffer from the reported latency.
+      config.playback.shareMode = ma_share_mode_shared;
+      config.periods = 1;
+      deviceResult = ma_device_init(&context_, &config, &device_);
+      if (deviceResult == MA_SUCCESS) {
+        std::fprintf(stderr, "[audio] exclusive WASAPI unavailable; using shared mode%c", 10);
+      }
+    }
+#endif
+    if (deviceResult != MA_SUCCESS) return false;
 
     deviceOpen_ = true;
     {
@@ -349,10 +369,7 @@ struct AudioEngine::Impl final {
     // Every slot is busy: reuse the voice that is furthest through its playback.
     Voice* oldest = &voices_[0];
     for (auto& voice : voices_) {
-      if (voice.frameIndex - voice.startOffsetFrames
-          > oldest->frameIndex - oldest->startOffsetFrames) {
-        oldest = &voice;
-      }
+      if (voice.frameIndex > oldest->frameIndex) oldest = &voice;
     }
     return oldest;
   }
@@ -362,7 +379,7 @@ struct AudioEngine::Impl final {
     return &banks_[static_cast<std::size_t>(noteType)];
   }
 
-  void spawnVoice(const SfxQueue::Event& event, std::int64_t callbackStartOutputFrames) {
+  void spawnVoice(const SfxQueue::Event& event) {
     auto* bank = event.customBuffer != nullptr
         ? const_cast<AudioBuffer*>(event.customBuffer) : bankFor(event.noteType);
     if (bank == nullptr || bank->empty()) return;
@@ -371,32 +388,7 @@ struct AudioEngine::Impl final {
     voice->frames = bank->data();
     voice->frameCount = bank->frameCount();
     voice->frameIndex = 0;
-    voice->startOffsetFrames = std::max<std::int64_t>(
-        0, event.targetOutputFrame - callbackStartOutputFrames);
     voice->active = true;
-  }
-
-  /// Number of output frames the device is estimated to have consumed by now,
-  /// used to place a trigger on the frame the caller is hearing.
-  std::int64_t estimateGeneratedOutputFrameNow() const noexcept {
-    const auto endOutput = generatedOutputFrames_.load(std::memory_order_acquire);
-    const auto rate = sampleRate_.load(std::memory_order_acquire);
-    CallbackAnchor anchor;
-    if (rate == 0 || !readAnchor(anchor) || anchor.startNanos == 0 || anchor.frameCount <= 0) {
-      return endOutput;
-    }
-
-    const double elapsed = static_cast<double>(nowNanoseconds() - anchor.startNanos) * 1.0e-9;
-    double generated = static_cast<double>(anchor.startOutputFrames)
-        + elapsed * static_cast<double>(rate);
-    const double maximum = std::min(
-        static_cast<double>(anchor.startOutputFrames + anchor.frameCount),
-        static_cast<double>(endOutput));
-    if (generated > maximum) generated = maximum;
-    if (generated < static_cast<double>(anchor.startOutputFrames)) {
-      generated = static_cast<double>(anchor.startOutputFrames);
-    }
-    return static_cast<std::int64_t>(std::llround(generated));
   }
 
   void mix(float* output, std::uint32_t frameCount) {
@@ -418,7 +410,10 @@ struct AudioEngine::Impl final {
     const auto callbackStartOutputFrames = generatedOutputFrames_.load(std::memory_order_relaxed);
 
     SfxQueue::Event event;
-    while (queue_.pop(event)) spawnVoice(event, callbackStartOutputFrames);
+    // A trigger becomes the first sample of the next callback. Do not add a dead-reckoned
+    // start offset on top of that: the callback is already the shortest scheduling unit, and
+    // an offset computed from the generated position can only delay the effect further.
+    while (queue_.pop(event)) spawnVoice(event);
 
     const auto rate = sampleRate_.load(std::memory_order_relaxed);
     const bool audible = playing_.load(std::memory_order_relaxed)
@@ -487,10 +482,6 @@ struct AudioEngine::Impl final {
 
       for (auto& voice : voices_) {
         if (!voice.active) continue;
-        if (voice.startOffsetFrames > 0) {
-          --voice.startOffsetFrames;
-          continue;
-        }
         mixer::accumulate(mixed, voice.frames, voice.frameCount, voice.frameIndex, sfxGain);
         ++voice.frameIndex;
       }
@@ -945,7 +936,6 @@ void AudioEngine::triggerSoundEffect(int noteType) {
 
   SfxQueue::Event event;
   event.noteType = noteType;
-  event.targetOutputFrame = impl_->estimateGeneratedOutputFrameNow();
   impl_->queue_.push(event);
 }
 
@@ -964,7 +954,6 @@ void AudioEngine::triggerSoundEffect(int noteType, const std::string& hitSound) 
     const auto found = impl_->customBanks_.find(hitSound);
     if (found != impl_->customBanks_.end()) event.customBuffer = found->second.get();
   }
-  event.targetOutputFrame = impl_->estimateGeneratedOutputFrameNow();
   impl_->queue_.push(event);
 }
 
