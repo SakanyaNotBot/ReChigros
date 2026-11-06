@@ -122,6 +122,9 @@ void drawRenderScreen(AppContext& context) {
   const ui::Canvas canvas = ui::canvas();
   ImDrawList* drawList = ImGui::GetBackgroundDrawList();
   RecordSession::Settings& settings = settingsState(context);
+  if (auto picked = platform::takePickedDirectory()) {
+    settings.outputDirectory = *picked;
+  }
   const auto& resolutions = RecordSession::resolutions();
   const bool busy = context.recording.state() == RecordSession::State::Running;
 
@@ -174,16 +177,19 @@ void drawRenderScreen(AppContext& context) {
   ++row;
 
   // The file name and the directory are typed values, so they are edited elsewhere; here the row
-  // shows the current choice and accepts a press to raise the picker.
-  if (valueCell("##render_output_dir", canvas, layout, row,
-          platform::pathToUtf8(RecordSession::displayOutputDirectory(settings)), false)
-          .pressed
-      && !busy) {
-    const auto chosen = platform::FileDialog::pickDirectory();
-    if (!chosen.empty()) settings.outputDirectory = chosen;
+  // shows the current choice and accepts a press to raise the picker. A platform without a
+  // directory provider keeps the default workspace instead of showing a control that does nothing.
+  if (platform::FileDialog::supportsDirectoryPicker()) {
+    if (valueCell("##render_output_dir", canvas, layout, row,
+            platform::pathToUtf8(RecordSession::displayOutputDirectory(settings)), false)
+            .pressed
+        && !busy) {
+      const auto chosen = platform::FileDialog::pickDirectory();
+      if (!chosen.empty()) settings.outputDirectory = chosen;
+    }
+    drawRowLabel(drawList, canvas, layout, row, "输出目录");
+    ++row;
   }
-  drawRowLabel(drawList, canvas, layout, row, "输出目录");
-  ++row;
 
   // The file name is typed directly. The field sits over the value plate with its own colours
   // suppressed, so the plate and the text are drawn by the same code as every other row instead of

@@ -295,7 +295,8 @@ std::optional<ReplayData> readReplayFile(const std::filesystem::path& file) {
 
 ReplayStore::ReplayStore(std::filesystem::path root) : root_(std::move(root)) {}
 
-std::string ReplayStore::save(const ReplayData& data) {
+std::string ReplayStore::save(const ReplayData& data, bool* duplicate) {
+  if (duplicate != nullptr) *duplicate = false;
   std::error_code error;
   std::filesystem::create_directories(root_, error);
   if (error && !std::filesystem::is_directory(root_)) return {};
@@ -309,7 +310,10 @@ std::string ReplayStore::save(const ReplayData& data) {
     const long long gap = existing.meta.timestampMs > data.meta.timestampMs
         ? existing.meta.timestampMs - data.meta.timestampMs
         : data.meta.timestampMs - existing.meta.timestampMs;
-    if (gap < kDuplicateWindowMs) return {};
+    if (gap < kDuplicateWindowMs) {
+      if (duplicate != nullptr) *duplicate = true;
+      return {};
+    }
   }
   const long long timestamp = data.meta.timestampMs > 0 ? data.meta.timestampMs : 0;
   std::string id = std::to_string(timestamp);

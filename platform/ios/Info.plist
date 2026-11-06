@@ -26,11 +26,19 @@
       <key>public.filename-extension</key><array><string>pez</string><string>cgrp</string></array>
     </dict>
   </dict></array>
-  <key>CFBundleDocumentTypes</key><array><dict>
-    <key>CFBundleTypeName</key><string>ReChigros package</string>
-    <key>CFBundleTypeRole</key><string>Viewer</string>
-    <key>LSHandlerRank</key><string>Owner</string>
-    <key>LSItemContentTypes</key><array><string>com.wuying.chigros.package</string><string>public.zip-archive</string></array>
-  </dict></array>
+  <key>CFBundleDocumentTypes</key><array>
+    <dict>
+      <key>CFBundleTypeName</key><string>ReChigros package</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Owner</string>
+      <key>LSItemContentTypes</key><array><string>com.wuying.chigros.package</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Chart package</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key><array><string>public.zip-archive</string></array>
+    </dict>
+  </array>
 </dict></plist>
 

@@ -29,10 +29,24 @@ constexpr int kAtlasInitialHeight = 1024;
 constexpr int kAtlasMaxWidth = 8192;
 constexpr int kAtlasMaxHeight = 8192;
 constexpr int kGlyphPadding = 1;
+// Coverage is accumulated from 4x4 subpixel positions. A single stb_truetype sample uses the
+// integer grid inside the glyph, which leaves stems and diagonal joins visibly soft at the
+// sizes used by the interface; the same multisample coverage the gameplay text uses keeps the
+// antialiased edge aligned with the requested pixel size.
+constexpr int kSubpixelsX = 4;
+constexpr int kSubpixelsY = 4;
+
+// Glyph boxes and pen advances are integer pixels. Rasterising a fractional pixel size and then
+// placing the result on the integer device grid scales the atlas by a fraction of a pixel, which
+// softens every stem and corner. The interface therefore snaps each requested size to the nearest
+// device pixel before it computes metrics or rasterises the glyph.
+float rasterPixelSize(float pixelSize) {
+  if (!(pixelSize > 0.0F)) return 1.0F;
+  return std::max(1.0F, std::round(pixelSize));
+}
 
 std::uint32_t quantiseSize(float pixelSize) {
-  if (!(pixelSize > 0.0F)) return 1;
-  const auto scaled = static_cast<std::uint32_t>(std::lround(pixelSize * 8.0F));
+  const auto scaled = static_cast<std::uint32_t>(std::lround(rasterPixelSize(pixelSize) * 8.0F));
   return std::max<std::uint32_t>(1, scaled);
 }
 
@@ -254,6 +268,7 @@ std::uint32_t UiFontCache::decode(std::string_view text, std::size_t index, std:
 }
 
 float UiFontCache::ascent(float pixelSize) const {
+  pixelSize = rasterPixelSize(pixelSize);
   if (impl_ == nullptr || !impl_->valid) return pixelSize * 0.88F;
   int ascent = 0;
   int descent = 0;
@@ -263,6 +278,7 @@ float UiFontCache::ascent(float pixelSize) const {
 }
 
 float UiFontCache::descent(float pixelSize) const {
+  pixelSize = rasterPixelSize(pixelSize);
   if (impl_ == nullptr || !impl_->valid) return pixelSize * 0.22F;
   int ascent = 0;
   int descent = 0;
@@ -272,6 +288,7 @@ float UiFontCache::descent(float pixelSize) const {
 }
 
 float UiFontCache::lineGap(float pixelSize) const {
+  pixelSize = rasterPixelSize(pixelSize);
   if (impl_ == nullptr || !impl_->valid) return 0.0F;
   int ascent = 0;
   int descent = 0;
@@ -284,11 +301,12 @@ float UiFontCache::advance(std::uint32_t codepoint, float pixelSize, bool bold) 
   const Glyph* item = glyph(codepoint, pixelSize, bold);
   if (item != nullptr) return item->advance;
   if (impl_ == nullptr || !impl_->valid) return 0.0F;
+  const float size = rasterPixelSize(pixelSize);
   const stbtt_fontinfo* font = impl_->fontFor(codepoint);
   int advance = 0;
   int leftSideBearing = 0;
   stbtt_GetCodepointHMetrics(font, static_cast<int>(codepoint), &advance, &leftSideBearing);
-  return static_cast<float>(advance) * Impl::emScale(font, pixelSize);
+  return static_cast<float>(advance) * Impl::emScale(font, size);
 }
 
 float UiFontCache::kerning(std::uint32_t left, std::uint32_t right, float pixelSize,
@@ -300,23 +318,25 @@ float UiFontCache::kerning(std::uint32_t left, std::uint32_t right, float pixelS
   const int kern = stbtt_GetCodepointKernAdvance(font, static_cast<int>(left),
       static_cast<int>(right));
   if (kern == 0) return 0.0F;
-  return static_cast<float>(kern) * Impl::emScale(font, pixelSize);
+  return static_cast<float>(kern) * Impl::emScale(font, rasterPixelSize(pixelSize));
 }
 
 const UiFontCache::Glyph* UiFontCache::glyph(std::uint32_t codepoint, float pixelSize,
     bool bold) {
   if (impl_ == nullptr || !impl_->valid || !impl_->ready) return nullptr;
   if (!(pixelSize > 0.0F)) return nullptr;
+  const float size = rasterPixelSize(pixelSize);
   Key key;
   key.codepoint = codepoint;
-  key.sizeKey = quantiseSize(pixelSize);
+  key.sizeKey = quantiseSize(size);
   key.bold = bold ? 1U : 0U;
   const auto found = impl_->glyphs.find(key);
   if (found != impl_->glyphs.end()) return &found->second;
-  return impl_->rasterise(key, pixelSize);
+  return impl_->rasterise(key, size);
 }
 
 const UiFontCache::Glyph* UiFontCache::Impl::rasterise(const Key& key, float pixelSize) {
+  pixelSize = static_cast<float>(key.sizeKey) / 8.0F;
   const auto codepoint = static_cast<int>(key.codepoint);
   const stbtt_fontinfo* font = fontFor(key.codepoint);
   const float scale = emScale(font, pixelSize);
@@ -341,10 +361,26 @@ const UiFontCache::Glyph* UiFontCache::Impl::rasterise(const Key& key, float pix
     return &inserted.first->second;
   }
 
+  std::vector<float> coverage(
+      static_cast<std::size_t>(glyphWidth) * static_cast<std::size_t>(glyphHeight), 0.0F);
   std::vector<std::uint8_t> bitmap(
       static_cast<std::size_t>(glyphWidth) * static_cast<std::size_t>(glyphHeight), 0);
-  stbtt_MakeCodepointBitmap(font, bitmap.data(), glyphWidth, glyphHeight, glyphWidth, scale,
-      scale, codepoint);
+  constexpr float sampleWeight = 1.0F / (kSubpixelsX * kSubpixelsY * 255.0F);
+  for (int subY = 0; subY < kSubpixelsY; ++subY) {
+    for (int subX = 0; subX < kSubpixelsX; ++subX) {
+      const float shiftX = static_cast<float>(subX) / kSubpixelsX;
+      const float shiftY = static_cast<float>(subY) / kSubpixelsY;
+      stbtt_MakeCodepointBitmapSubpixel(font, bitmap.data(), glyphWidth, glyphHeight, glyphWidth,
+          scale, scale, shiftX, shiftY, codepoint);
+      for (std::size_t index = 0; index < bitmap.size(); ++index) {
+        coverage[index] += static_cast<float>(bitmap[index]) * sampleWeight;
+      }
+    }
+  }
+  for (std::size_t index = 0; index < bitmap.size(); ++index) {
+    bitmap[index] = static_cast<std::uint8_t>(
+        std::clamp(coverage[index] * 255.0F + 0.5F, 0.0F, 255.0F));
+  }
 
   // Synthesised bold. Stamping the glyph at whole-pixel offsets and keeping the largest coverage
   // widens every stroke by a full pixel on each side, which at interface text sizes (16-24 px) is

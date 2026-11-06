@@ -18,8 +18,9 @@ namespace rechigros::app {
 // Unpacked chart pack directory picked from the browser.
 [[nodiscard]] bool importChartFolderFromDialog(AppContext& context);
 
-// Loose chart document, audio track and illustration picked together; they are gathered
-// into one pack before installation.
+// Loose chart document, audio track and illustration selected as three independent files;
+// they are gathered into one pack before installation. A platform whose picker answers
+// asynchronously advances through the three selections in handlePickerResult().
 [[nodiscard]] bool importChartFilesFromDialog(AppContext& context);
 
 // Replay package or replay document picked from the browser; the replay list refreshes on
@@ -31,9 +32,9 @@ namespace rechigros::app {
 [[nodiscard]] bool importSkinFromDialog(AppContext& context);
 
 // A platform picker that answers asynchronously reports the chosen document through the
-// drop channel tagged with the kind of document the caller asked for. Consumes the payload
-// and returns true when it was handled; a plain path returns false so the caller falls back
-// to the regular drag-and-drop handling.
+// application's picker queue, tagged with the kind of document the caller asked for.
+// Consumes the payload and returns true when it was handled; a plain path returns false so
+// the caller falls back to the regular drag-and-drop handling.
 [[nodiscard]] bool handlePickerResult(AppContext& context, std::string_view payload);
 
 } // namespace rechigros::app
