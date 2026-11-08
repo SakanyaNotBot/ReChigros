@@ -441,12 +441,19 @@ void GameplaySession::updateChallengeTiming(float delta) noexcept {
 void GameplaySession::update(double time, float frameDelta) {
   if (!chart_) return;
   // Frame time on the chart clock. The hold-body feedback timer runs on this value so a hold
-  // produces the same number of bursts at 1.0x, 0.5x or 0.2x; a stall or a seek falls back to
-  // the nominal frame instead of releasing a burst for the whole jump at once.
-  double chartDelta = 1.0 / 60.0;
+  // produces the same number of bursts at 1.0x, 0.5x or 0.2x. The audio cursor is a
+  // staircase: it only moves when a new callback anchor is published, so some frames advance
+  // the chart clock by nothing. Those frames must contribute nothing - adding a nominal
+  // frame made the timer run at roughly the display rate instead of the chart rate, and how
+  // many frames fall between two anchors depends on the frame cost, which a skin changes.
+  // An overlong jump still falls back to the nominal frame so a stall or a seek does not
+  // release a burst for the whole gap at once.
+  double chartDelta = 0.0;
   if (hasUpdateTime_) {
     const double elapsed = time - lastUpdateTimeSec_;
-    if (std::isfinite(elapsed) && elapsed > 0.0 && elapsed <= 0.1) chartDelta = elapsed;
+    if (std::isfinite(elapsed) && elapsed > 0.0) {
+      chartDelta = elapsed <= 0.1 ? elapsed : 1.0 / 60.0;
+    }
   }
   lastUpdateTimeSec_ = time;
   hasUpdateTime_ = true;
