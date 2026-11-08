@@ -22,8 +22,14 @@ namespace rechigros::audio {
 namespace {
 constexpr std::uint32_t kOutputChannels = 2;
 /// Requested frames per device callback. Small periods keep hit sounds tight. WASAPI shared
-/// mode may round this up to its 10 ms engine period; the exclusive path below honors it.
+/// mode may round this up to its 10 ms engine period. Android keeps the larger period: the
+/// callback runs on the audio thread and preempts rendering, so halving it doubles the wakeup
+/// rate on exactly the devices without headroom to spare.
+#if defined(__ANDROID__)
+constexpr std::uint32_t kPeriodFrames = 256;
+#else
 constexpr std::uint32_t kPeriodFrames = 128;
+#endif
 /// Requested number of periods buffered between the mixer and the speaker. AAudio leaves
 /// its low-latency performance mode when the stream has only one period, so Android needs
 /// at least two. Core Audio derives its preferred IO buffer duration from kPeriodFrames.
@@ -151,7 +157,6 @@ struct AudioEngine::Impl final {
     config.noClip = MA_TRUE; // Every mixed frame is clamped here.
     config.aaudio.usage = ma_aaudio_usage_game;
     config.aaudio.contentType = ma_aaudio_content_type_music;
-    config.aaudio.enableCompatibilityWorkarounds = MA_FALSE;
     config.opensl.streamType = ma_opensl_stream_type_media;
 
     // The default iOS category is play-and-record, which routes playback through the earpiece,
@@ -162,15 +167,7 @@ struct AudioEngine::Impl final {
 #if defined(__APPLE__)
       contextConfig.coreaudio.sessionCategory = ma_ios_session_category_playback;
 #endif
-#if defined(__ANDROID__)
-      // AAudio is the low-latency Android backend. Keep OpenSL ES as a fallback for devices
-      // that do not expose AAudio, rather than letting the generic backend order choose a
-      // higher-latency path when both are available.
-      static constexpr ma_backend kAndroidBackends[] = {
-          ma_backend_aaudio, ma_backend_opensl};
-      const ma_result contextResult = ma_context_init(
-          kAndroidBackends, 2, &contextConfig, &context_);
-#elif defined(__APPLE__)
+#if defined(__APPLE__)
       // Core Audio is the only playback backend on Apple platforms. Selecting it explicitly
       // keeps the preferred IO buffer and AVAudioSession category setup on the intended path.
       static constexpr ma_backend kAppleBackends[] = {ma_backend_coreaudio};
@@ -184,18 +181,6 @@ struct AudioEngine::Impl final {
     }
 
     ma_result deviceResult = ma_device_init(&context_, &config, &device_);
-#if defined(__ANDROID__)
-    if (deviceResult != MA_SUCCESS) {
-      // Some Android 8-11 devices reject an explicit frames-per-callback value even though
-      // the AAudio backend itself is available. Let the platform choose its native buffer
-      // in that case instead of leaving the game silent.
-      config.aaudio.enableCompatibilityWorkarounds = MA_TRUE;
-      deviceResult = ma_device_init(&context_, &config, &device_);
-      if (deviceResult == MA_SUCCESS) {
-        std::fprintf(stderr, "[audio] AAudio callback override unavailable; using native buffer%c", 10);
-      }
-    }
-#endif
     if (deviceResult != MA_SUCCESS) return false;
 
     deviceOpen_ = true;

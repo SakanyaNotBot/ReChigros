@@ -42,6 +42,10 @@ private:
   // present from zero; the UIKit view owns a framebuffer object and reports its name on the
   // window properties.
   void publishScreenFramebuffer() noexcept;
+  // Watches the frame interval against the display's refresh period and gives up the optional
+  // multisampled path for the rest of a run when it cannot be sustained. The setting itself is
+  // untouched, so a later run tries again on a device that has the headroom.
+  void updateAntialiasBudget(double intervalMs);
   // Sets up the chart-to-video run requested with --record. The frames are produced later, from
   // the run loop, so the process stays interactive while the video is written.
   bool beginCommandLineRecording(AppContext& context);
@@ -157,6 +161,12 @@ private:
   int lastDrawableHeight_{};
   float displayDpi_{380.0F};
   float smoothedFps_{60.0F};
+  // Display refresh used as the frame budget for the quality guard, and the running frame
+  // interval and consecutive over-budget count that decide when the optional multisampled
+  // path has to stand down. Zero samples mean "no measurement yet".
+  double displayRefreshHz_{60.0};
+  double aaFrameMsEma_{0.0};
+  int aaOverBudgetFrames_{0};
 
   // --frames N batch mode: runs the real event/update/render loop for N frames
   // and exits with a machine-checkable summary. Used for automated verification.

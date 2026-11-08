@@ -221,6 +221,32 @@ void reportLaunchStage(const char* stage, std::uint64_t from, std::uint64_t freq
 }
 } // namespace
 
+void Application::updateAntialiasBudget(double intervalMs) {
+  if (app_ == nullptr) return;
+  if (app_->screen != Screen::Game || !app_->settings.antialias) {
+    aaOverBudgetFrames_ = 0;
+    aaFrameMsEma_ = 0.0;
+    return;
+  }
+  if (app_->antialiasSuppressed) return;
+  // Ignore the first frames after a load and pathological samples: they say nothing about the
+  // steady cost of the multisampled path.
+  const double sample = std::clamp(intervalMs, 1.0, 100.0);
+  aaFrameMsEma_ = aaFrameMsEma_ <= 0.0 ? sample : aaFrameMsEma_ + (sample - aaFrameMsEma_) * 0.1;
+  const double budgetMs = 1000.0 / (displayRefreshHz_ > 1.0 ? displayRefreshHz_ : 60.0);
+  if (aaFrameMsEma_ <= budgetMs * 1.15) {
+    aaOverBudgetFrames_ = 0;
+    return;
+  }
+  // Forty-five consecutive over-budget frames is about a second at 60 Hz: long enough to be
+  // the scene and not a load spike, short enough that the player does not sit through it.
+  if (++aaOverBudgetFrames_ < 45) return;
+  aaOverBudgetFrames_ = 0;
+  app_->antialiasSuppressed = true;
+  SDL_Log("present: antialias disabled for this run (frame %.1f ms, budget %.1f ms)",
+      aaFrameMsEma_, budgetMs);
+}
+
 void Application::publishScreenFramebuffer() noexcept {
   unsigned int framebuffer = 0;
 #if defined(RECHIGROS_GLES) && defined(__APPLE__)
@@ -283,10 +309,14 @@ bool Application::initialize() {
   SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
 
   SDL_WindowFlags windowFlags = SDL_WINDOW_OPENGL | SDL_WINDOW_HIGH_PIXEL_DENSITY;
-#if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IPHONE)
-  // A packaged build owns the whole screen and the platform decides the size; advertising
-  // a resizable window there made SDL report every orientation as supported, which let the
-  // interface follow the device into portrait.
+#if defined(__ANDROID__)
+  // Android locks the orientation in the manifest; the flag only matches the window the
+  // initial release created.
+  windowFlags |= SDL_WINDOW_RESIZABLE | SDL_WINDOW_FULLSCREEN;
+#elif defined(__APPLE__) && TARGET_OS_IPHONE
+  // A packaged iOS build owns the whole screen and the platform decides the size;
+  // advertising a resizable window there made SDL report every orientation as supported,
+  // which let the interface follow the device into portrait.
   windowFlags |= SDL_WINDOW_FULLSCREEN;
 #else
   windowFlags |= SDL_WINDOW_RESIZABLE;
@@ -323,6 +353,14 @@ bool Application::initialize() {
     return false;
   }
   publishScreenFramebuffer();
+  // The refresh period is the budget the quality guard measures against. SDL reports the
+  // display's current mode; a report of zero keeps the 60 Hz default.
+  if (const SDL_DisplayMode* displayMode =
+          SDL_GetCurrentDisplayMode(SDL_GetPrimaryDisplay());
+      displayMode != nullptr && std::isfinite(displayMode->refresh_rate)
+      && displayMode->refresh_rate > 1.0F) {
+    displayRefreshHz_ = static_cast<double>(displayMode->refresh_rate);
+  }
 #ifndef RECHIGROS_GLES
   if (gladLoadGLLoader(reinterpret_cast<GLADloadproc>(SDL_GL_GetProcAddress)) == 0) {
     std::cerr << "Failed to load OpenGL entry points\n";
@@ -719,6 +757,7 @@ int Application::run() {
     }
     app_->deltaSec = static_cast<double>(delta);
     app_->nowSec = elapsed;
+    updateAntialiasBudget(intervalMs);
     app_->fps = smoothedFps_;
 
     processEvents(running);

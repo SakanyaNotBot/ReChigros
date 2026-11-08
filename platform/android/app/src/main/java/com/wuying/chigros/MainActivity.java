@@ -4,9 +4,12 @@ import android.content.ClipData;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
 import android.util.Log;
+import android.view.Display;
+import android.view.WindowManager;
 import android.webkit.MimeTypeMap;
 import android.widget.Toast;
 
@@ -51,6 +54,34 @@ public final class MainActivity extends SDLActivity {
     @Override
     public void setOrientationBis(int width, int height, boolean resizable, String hint) {
         setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+    }
+
+    // The interface is paced by the display, so the window asks for the panel's highest
+    // supported mode instead of whatever the system picked for a static screen. A mode that
+    // changes the panel resolution is skipped: only the refresh rate is raised.
+    private void applyHighestRefreshRate() {
+        try {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
+            final Display display = getWindowManager() != null
+                    ? getWindowManager().getDefaultDisplay() : null;
+            if (display == null) return;
+            final Display.Mode current = display.getMode();
+            if (current == null) return;
+            Display.Mode best = current;
+            for (final Display.Mode mode : display.getSupportedModes()) {
+                if (mode == null) continue;
+                if (mode.getPhysicalWidth() != current.getPhysicalWidth()
+                        || mode.getPhysicalHeight() != current.getPhysicalHeight()) continue;
+                if (mode.getRefreshRate() > best.getRefreshRate() + 0.01f) best = mode;
+            }
+            final WindowManager.LayoutParams params = getWindow().getAttributes();
+            params.preferredDisplayModeId = best.getModeId();
+            params.preferredRefreshRate = best.getRefreshRate();
+            getWindow().setAttributes(params);
+        } catch (RuntimeException ignored) {
+            // A window that is going away, or a vendor that rejects the mode, must not take
+            // the activity down; the display keeps its current mode.
+        }
     }
 
     // Automation and device bring-up runs need the same flags the desktop build takes
@@ -506,6 +537,7 @@ public final class MainActivity extends SDLActivity {
     protected void onResume() {
         super.onResume();
         instance = this;
+        applyHighestRefreshRate();
     }
 
     @Override

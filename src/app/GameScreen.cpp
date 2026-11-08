@@ -1655,6 +1655,9 @@ bool beginRun(AppContext& context, std::unique_ptr<game::Chart> chart,
   // The gameplay targets are allocated here, with the loading panel already on screen, instead
   // of on a home-screen frame: a full-screen set of framebuffers is the one part of renderer
   // setup that has to touch OpenGL, and doing it at launch made the backdrop's first scan stall.
+  // A new run gets a fresh frame-budget decision: the previous run may have suppressed the
+  // multisampled path, and the device state (thermal, load) can change between runs.
+  context.antialiasSuppressed = false;
   if (context.renderer != nullptr) {
     context.renderer->resize(context.drawableWidth, context.drawableHeight);
     context.renderer->prepareAntialias(
@@ -2241,7 +2244,7 @@ void gameRender(AppContext& context) {
   // while gameplay is active.
   input.judgeLineWidth = context.settings.judgeLineWidth;
   input.lowResolutionMode = context.settings.lowResolutionMode;
-  input.antialias = context.settings.antialias;
+  input.antialias = context.settings.antialias && !context.antialiasSuppressed;
   input.disableChartShader = context.settings.disableChartShader;
   input.multiPressHighlight = context.settings.multiPressHighlight;
   input.storyMode = context.settings.storyMode;
