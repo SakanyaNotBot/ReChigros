@@ -230,9 +230,6 @@ struct AppContext {
   // new run's reset cannot clear it.
   bool recordRequested{};
   bool settingsDirty{};
-  // Set for the rest of a run when the frame budget shows the multisampled path cannot be
-  // sustained; the setting itself is untouched, so the next run gets another chance.
-  bool antialiasSuppressed{};
   float displayDpi{380.0F};
   int windowWidth{1280};
   int windowHeight{720};
