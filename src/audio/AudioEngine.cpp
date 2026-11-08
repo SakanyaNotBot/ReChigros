@@ -153,13 +153,6 @@ struct AudioEngine::Impl final {
     config.aaudio.contentType = ma_aaudio_content_type_music;
     config.aaudio.enableCompatibilityWorkarounds = MA_FALSE;
     config.opensl.streamType = ma_opensl_stream_type_media;
-#if defined(_WIN32)
-    // Shared WASAPI commonly runs with a 10 ms engine period, so even a 128-frame hint
-    // becomes a 480-frame callback. Exclusive mode lets the endpoint use the requested
-    // short period, which removes the dominant part of the hit-sound delay.
-    config.playback.shareMode = ma_share_mode_exclusive;
-    config.wasapi.usage = ma_wasapi_usage_games;
-#endif
 
     // The default iOS category is play-and-record, which routes playback through the earpiece,
     // keeps the input side of the session alive and can raise a microphone prompt the first
@@ -200,19 +193,6 @@ struct AudioEngine::Impl final {
       deviceResult = ma_device_init(&context_, &config, &device_);
       if (deviceResult == MA_SUCCESS) {
         std::fprintf(stderr, "[audio] AAudio callback override unavailable; using native buffer%c", 10);
-      }
-    }
-#endif
-#if defined(_WIN32)
-    if (deviceResult != MA_SUCCESS) {
-      // Exclusive access is not always available: another application may own the endpoint,
-      // or the device may reject the stream format. Shared mode is the safe fallback; one
-      // period instead of two still removes a full buffer from the reported latency.
-      config.playback.shareMode = ma_share_mode_shared;
-      config.periods = 1;
-      deviceResult = ma_device_init(&context_, &config, &device_);
-      if (deviceResult == MA_SUCCESS) {
-        std::fprintf(stderr, "[audio] exclusive WASAPI unavailable; using shared mode%c", 10);
       }
     }
 #endif
