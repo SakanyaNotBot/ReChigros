@@ -34,6 +34,11 @@ if(APPLE)
   endif()
 endif()
 
+if(ANDROID)
+  # The device-setup diagnostic goes to logcat.
+  target_link_libraries(rechigros_audio PUBLIC log)
+endif()
+
 if(MSVC)
   target_compile_options(rechigros_audio PRIVATE /W4 /permissive-)
   # The bundled single-file decoder is not warning-clean.

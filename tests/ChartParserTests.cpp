@@ -7,13 +7,20 @@
 #include "rechigros/game/GameConstants.hpp"
 #include "rechigros/game/RpeTrajectory.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <limits>
+#include <sstream>
 #include "TestScratch.hpp"
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 void require(bool condition, const char* message) {
@@ -415,6 +422,76 @@ int main() {
     const auto comments = rechigros::chart::PecChartParser::parse(
         "0 // offset\n\nbp 0 120\nn1 0 1 0 1 0 // tap\n");
     require(comments.allNotesSorted.size() == 1, "PEC comment and blank line handling");
+  }
+
+  {
+    const auto visibleAt = [](double startTick, double endTick, double alphaStart,
+        double alphaEnd, const std::vector<double>& noteTicks, bool implicitEnd = false) {
+      std::ostringstream source;
+      source << std::setprecision(std::numeric_limits<double>::max_digits10);
+      source << "0\nbp 0 120\nbp 1 240\nca 0 " << startTick / 32.0 << ' ' << alphaStart << '\n';
+      if (!implicitEnd) {
+        source << "cf 0 " << startTick / 32.0 << ' ' << endTick / 32.0 << ' ' << alphaEnd << '\n';
+      }
+      for (std::size_t index = 0; index < noteTicks.size(); ++index) {
+        source << "n1 0 " << noteTicks[index] / 32.0 << " 0 " << (index % 2 == 0 ? 1 : 0) << " 0\n";
+      }
+      return rechigros::chart::PecChartParser::parse(source.str());
+    };
+    const auto referenceSamples = [](double start, double end, double alphaStart, double alphaEnd,
+        const std::vector<double>& ticks) {
+      std::vector<float> expected(ticks.size(), -1.0F);
+      for (auto time = start; time <= end + 1e-9; time += 4.0) {
+        auto progress = (time - start) / (end - start);
+        progress = std::clamp(progress, 0.0, 1.0);
+        const auto alpha = alphaStart + (alphaEnd - alphaStart) * progress;
+        if (alpha < -100.0 && alpha >= -1000.0) {
+          auto visibleBeat = ((alpha + 100.0) * -1.0) / 10.0;
+          if (visibleBeat < 0.0) visibleBeat = 0.0;
+          for (std::size_t index = 0; index < ticks.size(); ++index) {
+            if (std::abs(ticks[index] - time) < 1e-6) {
+              expected[index] = static_cast<float>(visibleBeat * (60.0 / (ticks[index] >= 32.0 ? 240.0 : 120.0)));
+            }
+          }
+        }
+      }
+      return expected;
+    };
+    const auto verify = [](const Chart& chart, const std::vector<float>& expected) {
+      require(chart.allNotesSorted.size() == expected.size(), "PEC sampled fixture keeps every note");
+      for (std::size_t index = 0; index < expected.size(); ++index) {
+        require(chart.allNotesSorted[index]->visibleTime == expected[index],
+            "PEC visible time equals successive-grid interpolation exactly");
+      }
+    };
+
+    const std::vector<double> ticks{-0.0000005, 0.0, 4.0, 4.0000005, 4.000002, 31.9999995,
+        32.0, 32.0000005, 63.9999995, 64.0, 64.0000005, 64.000002};
+    for (const auto& alphas : std::array<std::array<double, 2>, 4>{{
+        {{-100.0, -120.0}}, {{-120.0, -100.0}}, {{-1001.0, -999.0}}, {{-1.0, -120.0}}}}) {
+      verify(visibleAt(0.0, 64.0, alphas[0], alphas[1], ticks),
+          referenceSamples(0.0, 64.0, alphas[0], alphas[1], ticks));
+    }
+
+    const auto fractionalStart = 0.1 * 32.0;
+    const auto fractionalEnd = 1.1 * 32.0;
+    const std::vector<double> fractionalTicks{fractionalStart - 0.0000005, fractionalStart,
+        fractionalStart + 4.0, fractionalStart + 4.0000005, fractionalStart + 4.000002,
+        fractionalStart + 28.0, fractionalEnd, fractionalEnd + 0.0000005};
+    verify(visibleAt(fractionalStart, fractionalEnd, -120.0, -1000.0, fractionalTicks),
+        referenceSamples(fractionalStart, fractionalEnd, -120.0, -1000.0, fractionalTicks));
+
+    const std::vector<double> lateTicks{999999996.0, 1000000000.0};
+    verify(visibleAt(0.0, 1e9, -120.0, -120.0, lateTicks, true), {0.5F, 0.5F});
+    const auto sentinel = visibleAt(0.0, 1e9, -1.0, -1.0, {32.0}, true);
+    const auto offGrid = visibleAt(0.0, 1e9, -120.0, -120.0, {2.0}, true);
+    verify(offGrid, {-1.0F});
+    require(close(offGrid.judgeLineList[0]->judgeLineDisappearEvents[0].start, -1.0),
+        "PEC long encoded alpha without sample hits keeps the hidden-line value");
+    require(sentinel.allNotesSorted[0]->visibleTime == -1.0F,
+        "PEC alpha sentinel uses its authored sample value");
+    require(close(sentinel.judgeLineList[0]->judgeLineDisappearEvents[0].start, -1.0),
+        "PEC unmatched encoded alpha keeps the hidden-line value");
   }
 
   // --- RPE speed layers -------------------------------------------------------
@@ -1428,6 +1505,85 @@ int main() {
         "large RPE combined notes keep their above flags");
     require(chart.judgeLineList[0]->rotateWithFather,
         "large RPE keeps versioned line defaults");
+  }
+
+  {
+    const std::string source = R"json({
+      "META":{"offset":125,"RPEVersion":163},
+      "BPMList":[{"bpm":180,"startTime":[2,0,1]},
+        {"bpm":120,"startTime":[0,0,1]}, {"bpm":240,"startTime":[2,0,1]},
+        {"bpm":0,"startTime":[1,0,1]}],
+      "effects":[{"shader":"chromatic","line":1,"startTime":[1,0,1],"endTime":[4,0,1]}],
+      "judgeLineList":[
+        {"attachUI":"score","eventLayers":[{"speedEvents":[
+          {"startTime":[0,0,1],"endTime":[4,0,1],"start":4.5,"end":9,"easingType":2}]}],
+         "notesAbove":[{"type":1,"startTime":[2,0,1],"hitSound":"音效/击打.wav"},
+           {"type":1,"startTime":[1,0,1],"isFake":true},
+           {"type":5,"startTime":[0,0,1]}],
+         "notesBelow":[{"type":2,"startTime":[1,0,1],"endTime":[3,0,1],"speed":-2}]},
+        {"bpmfactor":2,"father":0,"notes":[
+          {"type":1,"startTime":[1,0,1],"above":1},
+          {"type":2,"startTime":[4,0,1],"endTime":[3,0,1],"above":0},
+          {"type":3,"startTime":[0,1,3],"above":1}, false,
+          {"type":5,"startTime":[1,0,1]}]},
+        {"notesAbove":[],"notes":[{"type":1,"startTime":[0,0,1]}]}, null,
+        {"bpmfactor":0.5,"notes":[{"type":1,"startTime":[4,0,1],"above":1}],
+         "eventLayers":[{"moveXEvents":[{"startTime":[0,0,1],"endTime":[1,0,1],"start":0,"end":675}]}]}
+      ]})json";
+    const auto expected = rechigros::chart::RpeChartParser::parse(std::string_view(source), "pack");
+    auto padded = source;
+    padded.append(1U << 20, ' ');
+    const auto actual = rechigros::chart::RpeChartParser::parse(std::string_view(padded), "pack");
+    require(actual.offset == expected.offset && actual.chartEndTimeSec == expected.chartEndTimeSec
+        && actual.attachUiLineIndex == expected.attachUiLineIndex,
+        "RPE streaming keeps chart timing and UI bindings exactly");
+    require(actual.judgeLineList.size() == expected.judgeLineList.size()
+        && actual.allNotesSorted.size() == expected.allNotesSorted.size(),
+        "RPE streaming preserves valid lines and non-fake notes");
+    require(actual.prprEffects.size() == expected.prprEffects.size()
+        && actual.prprEffects[0].startTime == expected.prprEffects[0].startTime
+        && actual.prprEffects[0].endTime == expected.prprEffects[0].endTime,
+        "RPE streaming shares the line and effect BPM timeline");
+    for (double tick : {0.0, 32.0, 64.0, 96.0, 128.0}) {
+      require(actual.bpmTimeline->beatToSec(tick) == expected.bpmTimeline->beatToSec(tick),
+          "RPE streaming preserves duplicate-BPM selection exactly");
+    }
+    for (std::size_t lineIndex = 0; lineIndex < expected.judgeLineList.size(); ++lineIndex) {
+      const auto& first = *expected.judgeLineList[lineIndex];
+      const auto& second = *actual.judgeLineList[lineIndex];
+      require(second.bpm == first.bpm && second.bpmTimeline == actual.bpmTimeline
+          && second.rotateWithFather == first.rotateWithFather
+          && second.notesAbove.size() == first.notesAbove.size()
+          && second.notesBelow.size() == first.notesBelow.size()
+          && second.notes.size() == first.notes.size(),
+          "RPE streaming prepares the complete line on the shared BPM timeline");
+      for (std::size_t noteIndex = 0; noteIndex < first.notes.size(); ++noteIndex) {
+        const auto& a = first.notes[noteIndex];
+        const auto& b = second.notes[noteIndex];
+        require(a.type == b.type && a.isAbove == b.isAbove && a.isFake == b.isFake
+            && a.time == b.time && a.holdTime == b.holdTime && a.rpeGlobalBeat == b.rpeGlobalBeat
+            && a.hitSound == b.hitSound && a.sect == b.sect && a.secht == b.secht
+            && a.floorPosition == b.floorPosition && a.holdEndTime == b.holdEndTime
+            && a.holdLength == b.holdLength && a.holdEndFloorPosition == b.holdEndFloorPosition
+            && a.morebets == b.morebets && a.sortedIndex == b.sortedIndex,
+            "RPE streaming note values and runtime geometry match exactly");
+      }
+    }
+    require(actual.clickEffectsSorted.size() == actual.allNotesSorted.size(),
+        "RPE streaming generates one final burst per playable note");
+    for (std::size_t index = 0; index < actual.allNotesSorted.size(); ++index) {
+      const auto* note = actual.allNotesSorted[index];
+      const auto& burst = actual.clickEffectsSorted[index];
+      require(burst.note == note && burst.timeSec == note->sect && !note->isFake,
+          "RPE streaming binds bursts after final runtime note ordering");
+      for (std::size_t particle = 0; particle < burst.effectRotateDeg.size(); ++particle) {
+        require(burst.effectRotateDeg[particle] >= 0.0F && burst.effectRotateDeg[particle] <= 360.0F
+            && burst.effectSpeed[particle] >= HIT_FX_PARTICLE_SPEED_MIN
+            && burst.effectSpeed[particle] <= HIT_FX_PARTICLE_SPEED_MAX
+            && std::isfinite(burst.effectDirX[particle]) && std::isfinite(burst.effectDirY[particle]),
+            "RPE streaming retains complete random particle samples");
+      }
+    }
   }
 
   std::cout << "All ReChigros chart parser tests passed\n";

@@ -109,6 +109,14 @@ public:
   void flush(const math::Mat4& projection, const gl::Texture& texture,
       const gl::Texture* bodyTexture);
 
+  // Single-texture hit sheet, sharing the same vertex shader, instances and draw state.
+  // Falls back to flush() when the specialised program is unavailable or disabled.
+  void flushSheet(const math::Mat4& projection, const gl::Texture& texture);
+
+  // White-pixel geometry, with the same tint arithmetic and vertex layout as flush().
+  // Only use this for a batch whose primary texture is the opaque 1x1 white pixel.
+  void flushWhite(const math::Mat4& projection, const gl::Texture& whiteTexture);
+
   // Discards buffered sprites without drawing.
   void discard() noexcept;
 
@@ -119,6 +127,8 @@ public:
 
 private:
   bool ensureBuffers() noexcept;
+  void flushImpl(const math::Mat4& projection, const gl::Texture& texture,
+      const gl::Texture* bodyTexture, bool white, bool sheet = false);
 
   SpriteInstance* buffer_{};
   int count_{};
@@ -126,6 +136,8 @@ private:
   unsigned int quadVbo_{};
   unsigned int instanceVbo_{};
   gl::ShaderProgram* program_{};
+  gl::ShaderProgram* whiteProgram_{};
+  gl::ShaderProgram* sheetProgram_{};
   bool clipEnabled_{};
   bool allocFailure_{};
   float clipLeft_{}, clipTop_{}, clipRight_{}, clipBottom_{};
@@ -138,6 +150,11 @@ private:
   float cachedRotationCos_{1.0F};
   float cachedRotationSin_{};
   bool rotationCached_{};
+  // Above/below sprites alternate between two exact angles on the same line.
+  float previousRotationDeg_{};
+  float previousRotationCos_{1.0F};
+  float previousRotationSin_{};
+  bool previousRotationCached_{};
   const gl::Texture* extraTextures_[MAX_BATCH_EXTRA_TEXTURES]{};
   int extraTextureCount_{};
 };

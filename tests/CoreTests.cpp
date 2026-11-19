@@ -8,19 +8,348 @@
 #include "rechigros/game/PracticeJudgeWindows.hpp"
 #include "rechigros/game/GameplaySession.hpp"
 #include "rechigros/game/NoteGeometry.hpp"
+#include "rechigros/game/RpeTrajectory.hpp"
 #include "rechigros/chart/PecChartParser.hpp"
 
+#include <algorithm>
+#include <array>
+#include <bit>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
+#include <optional>
+#include <thread>
+#include <vector>
 
 namespace {
 void require(bool condition,const char* message){if(!condition){std::cerr<<"FAIL: "<<message<<'\n';std::exit(1);}}
 bool close(double a,double b,double epsilon=1e-5){return std::abs(a-b)<=epsilon;}
+
+template <typename Number>
+bool exactlyEqual(Number a, Number b) {
+  return std::bit_cast<std::array<unsigned char, sizeof(Number)>>(a)
+      == std::bit_cast<std::array<unsigned char, sizeof(Number)>>(b);
+}
+
+bool exactlyEqual(const rechigros::game::RpeTrajectorySample& a,
+    const rechigros::game::RpeTrajectorySample& b) {
+  return exactlyEqual(a.x, b.x) && exactlyEqual(a.y, b.y)
+      && exactlyEqual(a.rotation, b.rotation);
+}
+
+void testEventCursors() {
+  using namespace rechigros::game;
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double infinity = std::numeric_limits<double>::infinity();
+  EventCursor initial;
+  require(initial.index == -1 && std::isnan(initial.lastTime), "an event cursor starts unprimed");
+  initial.index = 3;
+  initial.lastTime = 7.0;
+  initial.reset();
+  require(initial.index == -1 && std::isnan(initial.lastTime), "reset clears both cursor fields");
+
+  const auto checkSequence = [&](const std::vector<std::array<double, 2>>& intervals) {
+    std::vector<LineEvent> lines;
+    std::vector<MoveEvent> moves;
+    std::vector<ColorEvent> colors;
+    std::vector<TextEvent> texts;
+    std::vector<GifEvent> gifs;
+    for (std::size_t i = 0; i < intervals.size(); ++i) {
+      const double value = static_cast<double>(i + 1);
+      EasingSpec easing;
+      easing.type = static_cast<int>(i % 29);
+      easing.left = 0.125F;
+      easing.right = 0.875F;
+      if (i % 3 == 1) {
+        easing.bezier = true;
+        easing.bezierPoints = {0.42F, 0.0F, 0.58F, 1.0F};
+      } else if (i % 3 == 2) {
+        easing.bezier = true;
+        easing.bezierLut = {0.0F, 0.125F, 0.75F, 1.0F};
+      }
+      LineEvent line;
+      static_cast<EasingSpec&>(line) = easing;
+      line.startTime = intervals[i][0];
+      line.endTime = intervals[i][1];
+      line.start = i % 4 == 1 || i % 4 == 2 ? nan : -value;
+      line.end = i % 4 == 1 || i % 4 == 3 ? nan : value * 2.0;
+      lines.push_back(line);
+      MoveEvent move;
+      static_cast<EasingSpec&>(move) = easing;
+      move.startTime = line.startTime;
+      move.endTime = line.endTime;
+      move.start = line.start;
+      move.end = line.end;
+      move.start2 = i % 4 == 0 ? infinity : value * 3.0;
+      move.end2 = i % 4 == 0 || i % 4 == 2 ? nan : -value;
+      moves.push_back(move);
+      ColorEvent color;
+      static_cast<EasingSpec&>(color) = easing;
+      color.startTime = line.startTime;
+      color.endTime = line.endTime;
+      color.startR = static_cast<float>(value * 0.125);
+      color.startG = -0.0F;
+      color.startB = i % 4 == 1 ? std::numeric_limits<float>::quiet_NaN() : 0.5F;
+      color.endR = -color.startR;
+      color.endG = i % 4 == 2 ? std::numeric_limits<float>::infinity() : 0.75F;
+      color.endB = 1.0F;
+      colors.push_back(color);
+      TextEvent text;
+      static_cast<EasingSpec&>(text) = easing;
+      text.startTime = line.startTime;
+      text.endTime = line.endTime;
+      text.hasEndText = i % 4 != 3;
+      text.text = i % 4 == 0 ? "10%P%" : i % 4 == 1 ? "a%T%" : "a";
+      text.endText = i % 4 == 0 ? "30%P%" : i % 4 == 1 ? "xyz%T%" : "abcd";
+      texts.push_back(text);
+      GifEvent gif;
+      static_cast<EasingSpec&>(gif) = easing;
+      gif.startTime = line.startTime;
+      gif.endTime = line.endTime;
+      gif.start = line.start;
+      gif.end = line.end;
+      gifs.push_back(gif);
+    }
+
+    std::vector<double> queries;
+    for (int step = -16; step <= 160; ++step) queries.push_back(step * 0.125);
+    queries.insert(queries.end(), {20.0, 3.0, 3.0, 7.0, -0.0, 0.0, nan, 0.5,
+        12.0, infinity, 1.5, -infinity, 9.0, nan, nan, 0.0});
+    std::array<EventCursor, 6> cursors;
+    const auto checkPosition = [](const EventCursor& cursor, const EventCursor& fresh) {
+      require(fresh.index >= 0 && cursor.index == fresh.index,
+          "a reused cursor stores the same position as a fresh lookup");
+      require(exactlyEqual(cursor.lastTime, fresh.lastTime),
+          "a cursor stores the original query time");
+    };
+    std::size_t queryIndex = 0;
+    for (const double time : queries) {
+      if (queryIndex == 40) {
+        for (auto& cursor : cursors) cursor.reset();
+      } else if (queryIndex == 80 || queryIndex == 120) {
+        for (auto& cursor : cursors) {
+          cursor.index = queryIndex == 80 ? -7 : static_cast<int>(intervals.size()) + 7;
+          cursor.lastTime = time - 1.0;
+        }
+      }
+      ++queryIndex;
+      std::array<EventCursor, 6> fresh;
+      require(exactlyEqual(EventUtils::getEventVal(time, lines, cursors[0]),
+          EventUtils::getEventVal(time, lines, fresh[0])), "line cursor matches a fresh lookup exactly");
+      require(exactlyEqual(EventUtils::getMoveEventVal1(time, moves, cursors[1]),
+          EventUtils::getMoveEventVal1(time, moves, fresh[1])), "move X cursor matches a fresh lookup exactly");
+      require(exactlyEqual(EventUtils::getMoveEventVal2(time, moves, cursors[2]),
+          EventUtils::getMoveEventVal2(time, moves, fresh[2])), "move Y cursor matches a fresh lookup exactly");
+      std::array<float, 3> actualColor{-7.0F, -8.0F, -9.0F};
+      auto expectedColor = actualColor;
+      require(EventUtils::getColorVal(time, colors, cursors[3], actualColor)
+          == EventUtils::getColorVal(time, colors, fresh[3], expectedColor),
+          "color cursor matches a fresh lookup status");
+      for (std::size_t channel = 0; channel < actualColor.size(); ++channel) {
+        require(exactlyEqual(actualColor[channel], expectedColor[channel]),
+            "color cursor matches every fresh channel exactly");
+      }
+      std::string actualText = "initial";
+      auto expectedText = actualText;
+      require(EventUtils::getTextVal(time, texts, cursors[4], actualText)
+          == EventUtils::getTextVal(time, texts, fresh[4], expectedText),
+          "text cursor matches a fresh lookup status");
+      require(actualText == expectedText, "text cursor matches fresh text exactly");
+      require(exactlyEqual(EventUtils::getGifVal(time, gifs, cursors[5]),
+          EventUtils::getGifVal(time, gifs, fresh[5])), "GIF cursor matches a fresh lookup exactly");
+      if (!intervals.empty()) {
+        for (std::size_t kind = 0; kind < cursors.size(); ++kind) {
+          if (kind == 3 && time < intervals.front()[0]) continue;
+          checkPosition(cursors[kind], fresh[kind]);
+        }
+      }
+    }
+  };
+
+  // Each fresh cursor uses the established double-while lookup and previous-event fallback.
+  checkSequence({});
+  checkSequence({{1.0, 2.0}});
+  checkSequence({{nan, nan}});
+  checkSequence({{1.0, 2.0}, {3.0, 6.0}, {3.0, 4.0}, {5.0, 5.0},
+      {7.0, nan}, {9.0, 8.0}, {12.0, 14.0}});
+  checkSequence({{0.0, 1.0}, {10.0, 11.0}, {nan, 12.0}, {20.0, 21.0}});
+  checkSequence({{nan, 1.0}, {nan, 3.0}, {4.0, infinity}, {nan, 5.0}, {8.0, 9.0}});
+  checkSequence({{infinity, 2.0}, {1.0, 3.0}, {-infinity, 4.0}, {nan, 5.0}, {8.0, 9.0}});
+  checkSequence({{1.0, 2.0}, {8.0, 9.0}, {3.0, 6.0}, {4.0, 7.0}, {12.0, 13.0}});
+  std::vector<std::array<double, 2>> dense;
+  for (int i = 0; i < 96; ++i) dense.push_back({i * 0.125, (i + 1) * 0.125});
+  checkSequence(dense);
+}
+
+void testTrajectoryCache() {
+  using namespace rechigros::game;
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double infinity = std::numeric_limits<double>::infinity();
+  const auto checkSamples = [&](const RpeTrajectoryOptions& options) {
+    RpeTrajectory trajectory(options);
+    const RpeTrajectory shared = trajectory;
+    RpeTrajectory reference(options);
+    std::vector<double> progress{-2.0, -0.0, 0.0, 0.125, 0.25, 0.25,
+        std::nextafter(0.25, 1.0), 0.5, 0.999, 1.0, 2.0, 0.125,
+        infinity, -infinity, 0.5};
+    if (!options.tangentRotation) progress.push_back(nan);
+    for (const double value : progress) {
+      // The reference owns a separate implementation and replaces the thread's cache entry.
+      const auto expected = reference.sample(value);
+      const auto actual = trajectory.sample(value);
+      require(exactlyEqual(actual, expected), "a trajectory cache miss matches a separate implementation exactly");
+      require(exactlyEqual(trajectory.sample(value), expected), "a repeated trajectory sample matches exactly");
+      require(exactlyEqual(shared.sample(value), expected), "a shared implementation returns the same cached sample");
+    }
+  };
+
+  RpeTrajectoryOptions circle;
+  circle.tangentRotation = true;
+  checkSamples(circle);
+  RpeTrajectoryOptions transformed;
+  transformed.xExpression = "amplitude*cos(t)+u";
+  transformed.yExpression = "amplitude*sin(t)-u*u";
+  transformed.rotationExpression = "45*u-10*t";
+  transformed.parameterStart = "-pi";
+  transformed.parameterEnd = "2*pi";
+  transformed.parameters["amplitude"] = 137.0;
+  transformed.easingX = 6;
+  transformed.easingY = 4;
+  transformed.trimStart = 0.125;
+  transformed.trimEnd = 0.875;
+  transformed.rotation = 31.0;
+  transformed.scaleX = -1.25;
+  transformed.scaleY = 0.75;
+  transformed.alignStart = true;
+  transformed.startX = 14.0;
+  transformed.startY = -23.0;
+  checkSamples(transformed);
+  RpeTrajectoryOptions polar;
+  polar.mode = "polar";
+  polar.radiusExpression = "100+20*sin(theta)";
+  polar.rotationExpression = "theta*180/pi";
+  polar.angleStart = "-pi";
+  polar.angleEnd = "3*pi";
+  checkSamples(polar);
+  auto polygon = circle;
+  polygon.shape = "random-polygon";
+  polygon.seed = 7.0;
+  polygon.randomness = 0.65;
+  polygon.parameters["points"] = 7.0;
+  polygon.parameters["radius"] = 173.0;
+  checkSamples(polygon);
+  polygon.shape = "star";
+  polygon.parameters["inner"] = 0.3;
+  checkSamples(polygon);
+  auto stationary = circle;
+  stationary.xExpression = "3";
+  stationary.yExpression = "4";
+  checkSamples(stationary);
+
+  RpeTrajectoryOptions signedProgress;
+  signedProgress.xExpression = "u";
+  signedProgress.yExpression = "u*u";
+  signedProgress.rotationExpression = "u";
+  RpeTrajectory signedTrajectory(signedProgress);
+  for (const double value : {0.0, -0.0, 0.0, -0.0, 0.25, std::nextafter(0.25, 1.0), 0.25}) {
+    const auto point = signedTrajectory.sample(value);
+    require(exactlyEqual(point.rotation, value), "trajectory cache keys preserve every progress bit including signed zero");
+  }
+  const auto first = signedTrajectory.sample(-2.0);
+  require(exactlyEqual(first, signedTrajectory.sample(0.0)), "finite progress below zero keeps the original clamp");
+  const auto last = signedTrajectory.sample(2.0);
+  require(exactlyEqual(last, signedTrajectory.sample(1.0)), "finite progress above one keeps the original clamp");
+
+  RpeTrajectoryOptions exceptional;
+  exceptional.xExpression = "u < 0.5 ? 100+u : sqrt(-1)";
+  exceptional.yExpression = "u";
+  RpeTrajectory throwingTrajectory(exceptional);
+  for (const double value : {0.25, 0.75, 0.75, 0.25, nan, 0.75, infinity, 0.25}) {
+    const auto point = throwingTrajectory.sample(value);
+    if (value < 0.5) {
+      require(exactlyEqual(point.x, 100.0 + value) && exactlyEqual(point.y, value),
+          "successful trajectory samples remain stable around expression failures");
+    } else {
+      require(exactlyEqual(point, RpeTrajectorySample{}), "expression failures keep the empty sample fallback");
+    }
+  }
+  auto nonfinite = signedProgress;
+  nonfinite.scaleX = infinity;
+  RpeTrajectory nonfiniteTrajectory(nonfinite);
+  require(exactlyEqual(nonfiniteTrajectory.sample(0.25), RpeTrajectorySample{})
+      && exactlyEqual(nonfiniteTrajectory.sample(0.25), RpeTrajectorySample{}),
+      "nonfinite coordinates keep the empty sample fallback");
+  RpeTrajectoryOptions constant;
+  constant.xExpression = "3";
+  constant.yExpression = "4";
+  RpeTrajectory constantTrajectory(constant);
+  require(exactlyEqual(constantTrajectory.sample(nan), RpeTrajectorySample{3.0, 4.0, 0.0}),
+      "a nonfinite query preserves constant-expression sampling");
+
+  // Reusing the wrapper's storage installs a new implementation with independent options.
+  std::optional<RpeTrajectory> replacement;
+  for (int generation = 1; generation <= 24; ++generation) {
+    auto options = signedProgress;
+    options.xExpression = std::to_string(generation) + "+u";
+    replacement.emplace(options);
+    const auto point = replacement->sample(0.25);
+    require(exactlyEqual(point.x, generation + 0.25), "a replacement trajectory owns a distinct cached sample");
+    replacement.reset();
+  }
+
+  // Each worker samples the same immutable implementation with a different query order.
+  RpeTrajectory concurrent(circle);
+  RpeTrajectory concurrentReference(circle);
+  constexpr std::array<double, 6> progress{0.0, 0.125, 0.25, 0.5, 0.875, 1.0};
+  std::array<RpeTrajectorySample, progress.size()> expected;
+  for (std::size_t i = 0; i < progress.size(); ++i) expected[i] = concurrentReference.sample(progress[i]);
+  std::array<std::thread, 4> workers;
+  std::array<int, 4> correct{1, 1, 1, 1};
+  for (std::size_t worker = 0; worker < workers.size(); ++worker) {
+    workers[worker] = std::thread([&, worker] {
+      const RpeTrajectory shared = concurrent;
+      for (std::size_t step = 0; step < 48; ++step) {
+        const auto index = (step + worker) % progress.size();
+        if (!exactlyEqual(shared.sample(progress[index]), expected[index])
+            || !exactlyEqual(shared.sample(progress[index]), expected[index])) {
+          correct[worker] = 0;
+          break;
+        }
+      }
+    });
+  }
+  for (auto& worker : workers) worker.join();
+  require(std::all_of(correct.begin(), correct.end(), [](int value) { return value == 1; }),
+      "concurrent trajectory samples match the serial results exactly");
+
+  auto trajectory = std::make_shared<RpeTrajectory>(circle);
+  LineEvent axis;
+  axis.startTime = 0.0;
+  axis.endTime = 8.0;
+  axis.trajectory = trajectory;
+  std::array<std::vector<LineEvent>, 3> tracks;
+  std::array<EventCursor, 3> cursors;
+  for (std::size_t i = 0; i < tracks.size(); ++i) {
+    axis.trajectoryAxis = static_cast<int>(i);
+    axis.trajectoryScale = i == 0 ? 1.0 / 1350.0 : i == 1 ? 1.0 / 900.0 : 1.0;
+    tracks[i].push_back(axis);
+  }
+  for (const double time : {0.0, 1.0, 2.0, 4.0, 2.0, 8.0}) {
+    const auto point = concurrentReference.sample(time / 8.0);
+    const std::array<double, 3> values{point.x, point.y, point.rotation};
+    for (const std::size_t i : {2U, 0U, 1U}) {
+      require(exactlyEqual(EventUtils::getEventVal(time, tracks[i], cursors[i]),
+          values[i] * tracks[i][0].trajectoryScale), "shared X Y and rotation events preserve the sampled axis and scale exactly");
+    }
+  }
+}
 }
 
 int main(){
   using namespace rechigros::game;
+  testEventCursors();
+  testTrajectoryCache();
   const auto singleNoteChart=[](int type,double holdSeconds=0.0){Chart chart;chart.formatVersion=3;auto line=std::make_unique<JudgeLine>();line->bpm=120;SpeedEvent speed;speed.endTime=1e9;speed.value=speed.endValue=1;line->speedEvents.push_back(speed);Note note;note.type=type;note.time=64;note.holdTime=holdSeconds/(PGR_BEAT/120.0);note.positionX=0;line->notesAbove.push_back(note);chart.judgeLineList.push_back(std::move(line));chart.prepareRuntime();return chart;};
   require(close(HitOffsetIndicator::angleForDiff(-0.220,0.220),-60.0),"early offset angle");
   require(close(HitOffsetIndicator::angleForDiff(0.040,0.140),60.0*0.040/0.140),"challenge offset angle");

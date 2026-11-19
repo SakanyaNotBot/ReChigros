@@ -372,10 +372,9 @@ void finishGame(AppContext& context) {
   }
   if (!context.play.replayMode) {
     if (!context.play.chartId.empty()) {
-      context.library.recordPlayTime(context.play.chartId, nowMilliseconds());
-      if (!game.autoplay && !game.challenge && !game.practice) {
-        context.library.recordBestResult(context.play.chartId, context.lastResult);
-      }
+      const bool keepBest = !game.autoplay && !game.challenge && !game.practice;
+      context.library.recordResult(context.play.chartId, nowMilliseconds(),
+          keepBest ? &context.lastResult : nullptr);
     }
   }
   context.savedReplayId.clear();
@@ -1650,6 +1649,10 @@ bool beginRun(AppContext& context, std::unique_ptr<game::Chart> chart,
     return false;
   }
   context.loadError.clear();
+  // Synchronous entry also prepares the settlement image before the chart clock starts.
+  if (!context.textures.blurredBackdropReady(context.play.bgFile)) {
+    (void)context.textures.blurredBackdropFor(context.play.bgFile);
+  }
   gRunChartKey = chartCacheKey(context.play.chartFile, context.settings.storyMode);
   if (context.ensureRenderer) context.ensureRenderer();
   // The gameplay targets are allocated here, with the loading panel already on screen, instead
@@ -1837,6 +1840,7 @@ void gameEnterWithLoading(AppContext& context) {
   game.loadingFrames = 0;
   game.loadingPlay = context.play;
   game.loadingError.clear();
+  context.textures.prefetchBlurredBackdrop(context.play.bgFile);
   // The file and the name are copied into the worker: the context's play setup may be replaced
   // by another navigation while the parse is still running.
   const auto chartFile = context.play.chartFile;
@@ -1959,6 +1963,8 @@ void pollChartLoad(AppContext& context) {
     context.renderer->prefetchChartTextures(*game.pendingRun->chart);
     if (!context.renderer->gameplayTexturesReady()) return;
   }
+  context.textures.prefetchBlurredBackdrop(context.play.bgFile);
+  if (!context.textures.blurredBackdropReady(context.play.bgFile)) return;
   GameRuntime::LoadedRun loaded = std::move(*game.pendingRun);
   game.pendingRun.reset();
   // The future is spent; keep the runtime from treating it as still running.
@@ -2147,14 +2153,13 @@ void gameUpdate(AppContext& context, float frameDeltaSec) {
   game.visualTimeSec += delta;
 
   if (game.inOutro) {
-    // The settlement page draws the artwork as a heavily blurred backdrop, which needs the image
-    // decoded and blurred. Doing that on its first frame stalls visibly, so it is prepared here
-    // on the frame the exit starts, where the one-off cost is hidden by the transition.
+    // The loading phase prepared these pixels. A device reset can discard that texture during
+    // play, in which case the same preparation is completed before the settlement uses it.
     if (!game.outroBlurPrepared) {
       game.outroBlurPrepared = true;
-      const auto record = context.library.find(context.play.chartId);
-      const auto& art = record ? record->bgFile : context.play.bgFile;
-      if (!art.empty()) (void)context.textures.blurredBackdropFor(art);
+      if (!context.play.bgFile.empty()) {
+        (void)context.textures.blurredBackdropFor(context.play.bgFile);
+      }
     }
     game.outroElapsedSec += delta;
     if (game.outroElapsedSec >= kOutroDurationSec) finishGame(context);

@@ -11,6 +11,7 @@
 #include <iostream>
 #include "TestScratch.hpp"
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <miniz.h>
@@ -218,13 +219,116 @@ void runChecks() {
       "deflated entry decompresses byte for byte");
   require(fileExists(outputDir / "compressible.json"), "deflated entry extracted");
 
+  {
+    ArchiveReader reader(archive);
+    require(reader.entries().size() == listed.size(), "indexed listing keeps every entry");
+    for (std::size_t index = 0; index < listed.size(); ++index) {
+      require(reader.entries()[index].name == listed[index].name
+          && reader.entries()[index].size == listed[index].size,
+          "indexed listing keeps central-directory order and sizes");
+      require(reader.readEntry(listed[index].name) == readArchiveEntry(archive, listed[index].name),
+          "indexed reads match individual reads byte for byte");
+    }
+    require(reader.readEntry("win\\\\style/./name.txt") == reader.readEntry("win/style/name.txt"),
+        "indexed requests use the same separator and dot normalisation");
+    require(reader.readEntry("../chart.json").empty(), "indexed traversal request is rejected");
+    require(reader.readEntry("missing.json").empty(), "indexed missing entry returns empty");
+    require(reader.readEntry("chart.json") == chartBytes,
+        "indexed reads continue after an invalid or missing request");
+
+    ArchiveReader moved(std::move(reader));
+    require(moved.readEntry("compressible.json") == decompressed,
+        "moving an indexed reader retains its stream and lookup");
+  }
+
+  {
+    ZipWriter duplicates;
+    duplicates.add("./same\\\\entry.txt", "first");
+    duplicates.add("same/entry.txt", "second");
+    duplicates.add("empty.txt", "");
+    duplicates.add("folder/", "");
+    duplicates.add("folder", "file");
+    duplicates.add(std::string("nul\0name", 8), "rejected");
+    const auto duplicateArchive = scratch / "duplicates.zip";
+    require(duplicates.write(duplicateArchive), "duplicate fixture archive written");
+    ArchiveReader reader(duplicateArchive);
+    require(reader.entries().size() == 5 && reader.entries()[0].name == "same/entry.txt"
+        && reader.entries()[1].name == "same/entry.txt",
+        "indexed listing preserves duplicate normalised names in archive order");
+    const auto first = reader.readEntry("/same/./entry.txt");
+    require(std::string(first.begin(), first.end()) == "first"
+        && first == readArchiveEntry(duplicateArchive, "same/entry.txt"),
+        "indexed duplicate reads select the first normalised entry");
+    require(reader.readEntry("empty.txt").empty() && reader.readEntry("folder").empty(),
+        "empty files and directory-first duplicates retain empty reads");
+  }
+
+  {
+    const auto brokenArchive = scratch / "broken-entry.zip";
+    require(writer.write(brokenArchive), "broken entry fixture written");
+    {
+      std::fstream output(brokenArchive, std::ios::binary | std::ios::in | std::ios::out);
+      output.put('\0');
+      require(static_cast<bool>(output), "local header corruption written");
+    }
+    ArchiveReader reader(brokenArchive);
+    require(!reader.entries().empty() && reader.readEntry("chart.json").empty(),
+        "indexed local-header failure returns empty");
+    const auto valid = reader.readEntry("music.ogg");
+    require(std::string(valid.begin(), valid.end()) == "ogg",
+        "indexed reads continue after an entry failure");
+
+    const auto truncatedArchive = scratch / "truncated-entry.zip";
+    auto bytes = readBinaryFile(archive);
+    const std::vector<std::uint8_t> signature{0x50, 0x4b, 0x01, 0x02};
+    const auto central = std::search(bytes.begin(), bytes.end(), signature.begin(), signature.end());
+    require(central != bytes.end(), "central directory found in truncated fixture");
+    if (central != bytes.end()) {
+      const auto offset = static_cast<std::size_t>(central - bytes.begin()) + 24;
+      bytes[offset] = bytes[offset + 1] = bytes[offset + 3] = 0;
+      bytes[offset + 2] = 0x10;
+      require(writeBinaryFile(truncatedArchive, bytes), "truncated entry fixture written");
+      ArchiveReader truncated(truncatedArchive);
+      require(truncated.readEntry("chart.json").empty(),
+          "indexed truncated entry returns empty");
+      require(truncated.readEntry("music.ogg") == valid,
+          "indexed stream clears a failed read before the next entry");
+    }
+  }
+
+  {
+    const auto malformedArchive = scratch / "malformed.zip";
+    require(writeTextFile(malformedArchive, std::string(80, 'x')), "malformed archive written");
+    ArchiveReader malformed(malformedArchive);
+    require(malformed.entries().empty() && malformed.readEntry("chart.json").empty(),
+        "indexed malformed archive returns empty results");
+    ArchiveReader missing(scratch / "missing.zip");
+    require(missing.entries().empty() && missing.readEntry("chart.json").empty(),
+        "indexed missing archive returns empty results");
+  }
+
   // --- limits ----------------------------------------------------------------
-  ArchiveLimits tight;
-  tight.maxEntries = 2;
-  setArchiveLimits(tight);
-  require(listArchive(archive).empty(), "entry cap enforced");
-  setArchiveLimits(ArchiveLimits{});
-  require(archiveLimits().maxEntries == 4096, "limits restored");
+  {
+    ArchiveReader limitedReader(archive);
+    ArchiveLimits tight;
+    tight.maxEntries = 2;
+    setArchiveLimits(tight);
+    require(listArchive(archive).empty(), "entry cap enforced");
+    require(ArchiveReader(archive).entries().empty(), "indexed entry cap enforced at open");
+    require(limitedReader.readEntry("chart.json").empty(),
+        "indexed reads respect a tightened entry count limit");
+    tight.maxEntries = ArchiveLimits{}.maxEntries;
+    tight.maxEntryBytes = 2;
+    setArchiveLimits(tight);
+    require(limitedReader.readEntry("chart.json").empty(), "indexed entry size cap enforced");
+    const auto shortEntry = limitedReader.readEntry("sub/dir/info.json");
+    require(std::string(shortEntry.begin(), shortEntry.end()) == "{}",
+        "indexed size failure leaves other entries readable");
+    setArchiveLimits(ArchiveLimits{});
+    require(limitedReader.readEntry("chart.json") == chartBytes,
+        "indexed reader observes restored archive limits");
+    require(archiveLimits().maxEntries == 4096, "limits restored");
+  }
 
   // --- file system helpers ---------------------------------------------------
   const auto textPath = scratch / "nested" / "dir" / "note.txt";

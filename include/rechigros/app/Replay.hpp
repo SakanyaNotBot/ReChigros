@@ -103,13 +103,16 @@ public:
   [[nodiscard]] std::string save(const ReplayData& data, bool* duplicate = nullptr);
 
   // Scans the store; returns saved replays newest first.
-  [[nodiscard]] std::vector<ReplayInfo> list() const;
+  [[nodiscard]] const std::vector<ReplayInfo>& list() const;
+  void invalidate() const noexcept { listed_ = false; }
 
   [[nodiscard]] std::optional<ReplayInfo> find(const std::string& id) const;
   bool remove(const std::string& id);
 
 private:
   std::filesystem::path root_;
+  mutable bool listed_{};
+  mutable std::vector<ReplayInfo> listedReplays_;
 };
 
 } // namespace rechigros::app

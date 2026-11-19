@@ -11,12 +11,18 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
 #include <utility>
+
+#if defined(__ANDROID__)
+#include <android/log.h>
+#include <dlfcn.h>
+#endif
 
 namespace rechigros::audio {
 namespace {
@@ -49,6 +55,62 @@ std::int64_t nowNanoseconds() noexcept {
   return std::chrono::duration_cast<std::chrono::nanoseconds>(
       std::chrono::steady_clock::now().time_since_epoch()).count();
 }
+
+void logAudio(const char* format, ...) noexcept {
+  va_list arguments;
+  va_start(arguments, format);
+#if defined(__ANDROID__)
+  __android_log_vprint(ANDROID_LOG_INFO, "ReChigrosAudio", format, arguments);
+#else
+  std::vfprintf(stderr, format, arguments);
+#endif
+  va_end(arguments);
+}
+
+#if defined(__ANDROID__)
+/// Shape of an open AAudio stream: the hardware mix burst, plus the sharing and performance
+/// modes the service actually granted. Exclusive MMAP is the shortest path, but the service
+/// may downgrade the request, so the granted modes are what the buffer sizing has to follow.
+struct AaudioShape {
+  std::uint32_t burst{};
+  std::int32_t sharingMode{-1};
+  std::int32_t performanceMode{-1};
+};
+
+/// The AAudio library is resolved at run time because the minimum API level predates it.
+AaudioShape queryAaudioShape(const ma_device& device) noexcept {
+  AaudioShape shape;
+  if (device.pContext == nullptr || device.pContext->backend != ma_backend_aaudio) return shape;
+  void* library = dlopen("libaaudio.so", RTLD_NOW | RTLD_LOCAL);
+  if (library == nullptr) return shape;
+  if (device.aaudio.pStreamPlayback == nullptr) {
+    dlclose(library);
+    return shape;
+  }
+  using GetInt32 = std::int32_t (*)(void*);
+  const auto getBurst = reinterpret_cast<GetInt32>(
+      dlsym(library, "AAudioStream_getFramesPerBurst"));
+  const auto getSharing = reinterpret_cast<GetInt32>(
+      dlsym(library, "AAudioStream_getSharingMode"));
+  const auto getPerformance = reinterpret_cast<GetInt32>(
+      dlsym(library, "AAudioStream_getPerformanceMode"));
+  if (getBurst != nullptr) {
+    const auto burst = getBurst(device.aaudio.pStreamPlayback);
+    if (burst > 0) shape.burst = static_cast<std::uint32_t>(burst);
+  }
+  if (getSharing != nullptr) shape.sharingMode = getSharing(device.aaudio.pStreamPlayback);
+  if (getPerformance != nullptr) shape.performanceMode = getPerformance(device.aaudio.pStreamPlayback);
+  dlclose(library);
+  return shape;
+}
+
+/// AAudio's sharing-mode values; the header is not linked because the stream API predates the
+/// application's minimum API level.
+const char* aaudioSharingModeName(std::int32_t mode) noexcept {
+  // AAUDIO_SHARING_MODE_EXCLUSIVE = 0, AAUDIO_SHARING_MODE_SHARED = 1.
+  return mode == 0 ? "exclusive" : (mode == 1 ? "shared" : "unknown");
+}
+#endif
 
 std::string musicFileKey(const std::filesystem::path& path, std::uint32_t sampleRate) {
   if (path.empty() || sampleRate == 0) return {};
@@ -158,6 +220,9 @@ struct AudioEngine::Impl final {
     config.aaudio.usage = ma_aaudio_usage_game;
     config.aaudio.contentType = ma_aaudio_content_type_music;
     config.opensl.streamType = ma_opensl_stream_type_media;
+#if defined(_WIN32)
+    config.wasapi.usage = ma_wasapi_usage_games;
+#endif
 
     // The default iOS category is play-and-record, which routes playback through the earpiece,
     // keeps the input side of the session alive and can raise a microphone prompt the first
@@ -180,8 +245,52 @@ struct AudioEngine::Impl final {
       contextOpen_ = true;
     }
 
+#if defined(__ANDROID__)
+    // The first stream only exists to learn the hardware burst. It stays shared so it opens on
+    // every device, including the ones that refuse exclusive access to the endpoint.
+    config.playback.shareMode = ma_share_mode_shared;
     ma_result deviceResult = ma_device_init(&context_, &config, &device_);
     if (deviceResult != MA_SUCCESS) return false;
+#else
+    ma_result deviceResult = ma_device_init(&context_, &config, &device_);
+    if (deviceResult != MA_SUCCESS) return false;
+#endif
+
+#if defined(__ANDROID__)
+    // AAudio keeps a stream on the low-latency path only when the requested capacity and
+    // callback size are multiples of the hardware burst; a size that is merely "small" is
+    // rounded up to the normal mixer, which multiplies the output buffer several times. Once
+    // the burst is known, reopen with burst x 2 and ask for exclusive MMAP first, since that
+    // is the shortest path the platform offers. A shared stream at the same size is the
+    // fallback, and the original request is the last resort.
+    {
+      auto shape = queryAaudioShape(device_);
+      if (shape.burst >= 32 && shape.burst <= 2048) {
+        const auto originalFrames = config.periodSizeInFrames;
+        const auto originalPeriods = config.periods;
+        ma_device_uninit(&device_);
+        config.periodSizeInFrames = shape.burst;
+        config.periods = 2;
+        config.playback.shareMode = ma_share_mode_exclusive;
+        deviceResult = ma_device_init(&context_, &config, &device_);
+        if (deviceResult != MA_SUCCESS) {
+          config.playback.shareMode = ma_share_mode_shared;
+          deviceResult = ma_device_init(&context_, &config, &device_);
+        }
+        if (deviceResult != MA_SUCCESS) {
+          config.periodSizeInFrames = originalFrames;
+          config.periods = originalPeriods;
+          deviceResult = ma_device_init(&context_, &config, &device_);
+        }
+        if (deviceResult != MA_SUCCESS) return false;
+        shape = queryAaudioShape(device_);
+      }
+      logAudio("[audio] aaudio burst %u frames, opened %u x %u (%s, performance %d)\n",
+          shape.burst, device_.playback.internalPeriodSizeInFrames,
+          device_.playback.internalPeriods, aaudioSharingModeName(shape.sharingMode),
+          static_cast<int>(shape.performanceMode));
+    }
+#endif
 
     deviceOpen_ = true;
     {
@@ -197,6 +306,20 @@ struct AudioEngine::Impl final {
       if (previousRate != 0 && previousRate != newRate) {
         retimeBuffers(previousRate, newRate);
       }
+      logAudio("[audio] device %u Hz, period %u frames x %u = %.2f ms buffered (requested %u x %u)\n",
+          newRate, device_.playback.internalPeriodSizeInFrames,
+          device_.playback.internalPeriods,
+          1000.0 * static_cast<double>(device_.playback.internalPeriodSizeInFrames)
+              * static_cast<double>(device_.playback.internalPeriods)
+              / static_cast<double>(newRate),
+          kPeriodFrames, kPeriodCount);
+#if defined(_WIN32)
+      logAudio("[audio] wasapi buffer %u frames, share mode %d, internal %u Hz %u ch format %d\n",
+          device_.wasapi.actualBufferSizeInFramesPlayback,
+          static_cast<int>(device_.playback.shareMode),
+          device_.playback.internalSampleRate, device_.playback.internalChannels,
+          static_cast<int>(device_.playback.internalFormat));
+#endif
     }
 
     running_.store(false, std::memory_order_release);

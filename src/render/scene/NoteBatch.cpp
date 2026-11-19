@@ -353,6 +353,80 @@ NoteHeadPose noteHeadPose(const game::Note& note, const LineFrame& frame,
   return pose;
 }
 
+void NoteVisibilityIndex::clear() noexcept {
+  chart_ = nullptr;
+  lines_.clear();
+}
+
+void NoteVisibilityIndex::prepare(const game::Chart& chart) {
+  clear();
+  chart_ = &chart;
+  lines_.resize(chart.judgeLineList.size());
+  for (std::size_t lineIndex = 0; lineIndex < lines_.size(); ++lineIndex) {
+    const auto& line = *chart.judgeLineList[lineIndex];
+    for (int type = 1; type <= 4; ++type) {
+      if (line.notesByType.size() <= static_cast<std::size_t>(type)) continue;
+      const auto& notes = line.notesByType[static_cast<std::size_t>(type)];
+      auto& typed = lines_[lineIndex][static_cast<std::size_t>(type)];
+      typed.data = notes.data();
+      typed.count = notes.size();
+      typed.blocks.reserve((notes.size() + kBlockNotes - 1) / kBlockNotes);
+      for (std::size_t begin = 0; begin < notes.size(); begin += kBlockNotes) {
+        Block block;
+        block.end = std::min(begin + kBlockNotes, notes.size());
+        block.minimumFloor = std::numeric_limits<double>::infinity();
+        block.maximumFloor = -std::numeric_limits<double>::infinity();
+        block.firstTime = std::numeric_limits<double>::infinity();
+        block.speed = notes[begin]->speed;
+        block.bounded = std::isfinite(block.speed);
+        for (std::size_t index = begin; index < block.end; ++index) {
+          const auto& note = *notes[index];
+          if (note.type != type || note.isHold != (type == game::NOTE_HOLD) ||
+              note.yOffset != 0.0F || note.speed != block.speed ||
+              !std::isfinite(note.floorPosition) || !std::isfinite(note.sect)) {
+            block.bounded = false;
+          }
+          block.firstTime = std::min(block.firstTime, note.sect);
+          block.minimumFloor = std::min(block.minimumFloor, note.floorPosition);
+          block.maximumFloor = std::max(block.maximumFloor, note.floorPosition);
+          if (type == game::NOTE_HOLD) {
+            // Official-speed holds compute their tail from a length instead of a floor.
+            if (note.useOfficialSpeed) block.bounded = false;
+            if (std::isfinite(note.holdEndFloorPosition) &&
+                std::abs(note.holdEndFloorPosition - note.floorPosition) > 1.0e-9) {
+              block.minimumFloor = std::min(block.minimumFloor, note.holdEndFloorPosition);
+              block.maximumFloor = std::max(block.maximumFloor, note.holdEndFloorPosition);
+            }
+          }
+        }
+        typed.blocks.push_back(block);
+      }
+    }
+  }
+}
+
+const std::vector<NoteVisibilityIndex::Block>* NoteVisibilityIndex::blocks(
+    const game::Chart& chart, std::size_t lineIndex, int noteType, const void* data,
+    std::size_t count) const noexcept {
+  if (chart_ != &chart || lineIndex >= lines_.size() || noteType < 1 || noteType > 4) return nullptr;
+  const auto& typed = lines_[lineIndex][static_cast<std::size_t>(noteType)];
+  return typed.data == data && typed.count == count ? &typed.blocks : nullptr;
+}
+
+bool NoteVisibilityIndex::outside(const Block& block, double lineFloor, double beatScale,
+    float scrollSpeed, float minimum, float maximum) noexcept {
+  if (!block.bounded || !std::isfinite(lineFloor) || !std::isfinite(beatScale) ||
+      !std::isfinite(scrollSpeed) || !std::isfinite(minimum) || !std::isfinite(maximum)) return false;
+  const double speed = block.speed * static_cast<double>(scrollSpeed);
+  // Subtraction, then the same two multiplications and float rounding as baseFpPx.
+  // Each operation is monotone for a fixed finite multiplier; the endpoints therefore
+  // enclose every note even with negative speed or non-monotone authored floor positions.
+  const float first = static_cast<float>((block.minimumFloor - lineFloor) * beatScale * speed);
+  const float last = static_cast<float>((block.maximumFloor - lineFloor) * beatScale * speed);
+  if (!std::isfinite(first) || !std::isfinite(last)) return false;
+  return std::max(first, last) < minimum || std::min(first, last) > maximum;
+}
+
 void buildHeadBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frames,
     const std::vector<int>& drawOrder, const game::Chart& chart, int noteType,
     bool highlightVariant, float textureWidth, float textureHeight, const NotePassParams& params) {
@@ -396,8 +470,23 @@ void buildHeadBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
         static_cast<double>(params.stageHeight);
     const std::size_t firstNote = firstNoteAtOrAfter(noteAt, typedCount,
         params.chartTimeSec - static_cast<double>(params.missFadeWindow));
+    const auto* visibility = params.visibilityIndex != nullptr && typedNotes != nullptr &&
+            !reveal && line.noteYControls.empty()
+        ? params.visibilityIndex->blocks(chart, static_cast<std::size_t>(lineIndex), noteType,
+              typedNotes->data(), typedCount) : nullptr;
+    const float minimum = frame.visibleMin - frame.visiblePad;
+    const float maximum = frame.visibleMax + frame.visiblePad;
 
     for (std::size_t noteIndex = firstNote; noteIndex < typedCount; ++noteIndex) {
+      if (visibility != nullptr && (noteIndex == firstNote ||
+              noteIndex % NoteVisibilityIndex::kBlockNotes == 0)) {
+        const auto& block = (*visibility)[noteIndex / NoteVisibilityIndex::kBlockNotes];
+        if (NoteVisibilityIndex::outside(block, frame.floorPosition, beatScale,
+                params.scrollSpeed, minimum, maximum)) {
+          noteIndex = block.end - 1;
+          continue;
+        }
+      }
       const auto& note = noteAt(noteIndex);
       if (note.isHold || note.type != noteType) continue;
       if (((note.morebets == 1) && params.multiPressHighlight) != highlightVariant) continue;
@@ -602,8 +691,24 @@ void buildHoldBatch(batch::SpriteBatch& out, const std::vector<LineFrame>& frame
     const double bpm = frame.bpm > 0.0 ? frame.bpm : 120.0;
     const double beatScale = static_cast<double>(game::PGR_HEIGHT) * (kBeatSeconds / bpm) *
         static_cast<double>(params.stageHeight);
+    const auto* visibility = params.visibilityIndex != nullptr && typedNotes != nullptr &&
+            !reveal && line.noteYControls.empty()
+        ? params.visibilityIndex->blocks(chart, static_cast<std::size_t>(lineIndex),
+              game::NOTE_HOLD, typedNotes->data(), typedCount) : nullptr;
+    const float minimum = frame.visibleMin - frame.visiblePad;
+    const float maximum = frame.visibleMax + frame.visiblePad;
 
     for (std::size_t noteIndex = firstNote; noteIndex < typedCount; ++noteIndex) {
+      if (visibility != nullptr && (noteIndex == firstNote ||
+              noteIndex % NoteVisibilityIndex::kBlockNotes == 0)) {
+        const auto& block = (*visibility)[noteIndex / NoteVisibilityIndex::kBlockNotes];
+        if (block.firstTime > params.chartTimeSec &&
+            NoteVisibilityIndex::outside(block, frame.floorPosition, beatScale,
+                params.scrollSpeed, minimum, maximum)) {
+          noteIndex = block.end - 1;
+          continue;
+        }
+      }
       const auto& note = noteAt(noteIndex);
       if (!note.isHold) continue;
       if (((note.morebets == 1) && params.multiPressHighlight) != highlightVariant) continue;

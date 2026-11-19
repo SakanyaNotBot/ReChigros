@@ -175,14 +175,15 @@ gl::Texture* TextureCache::loadAsset(const std::string& relativePath, bool white
     if (const auto it = deferred_.find(key); it != deferred_.end()) return &it->second.texture;
   }
   // An image decoded ahead of time only needs its upload, which is the part that has to be here.
+  Image prefetched;
   {
     std::lock_guard<std::mutex> guard(prefetchMutex_);
     if (const auto ready = decoded_.find(key); ready != decoded_.end()) {
-      Image image = std::move(ready->second);
+      prefetched = std::move(ready->second);
       decoded_.erase(ready);
-      return store(key, std::move(image), white);
     }
   }
+  if (prefetched.valid()) return store(key, std::move(prefetched), white);
   const auto started = std::chrono::steady_clock::now();
   const auto bytes = platform::AssetManager::readBinary(assetRoot_, relativePath);
   if (bytes.empty()) return nullptr;
@@ -349,14 +350,15 @@ gl::Texture* TextureCache::loadFile(const std::filesystem::path& path, bool whit
   if (!white) {
     if (const auto it = deferred_.find(key); it != deferred_.end()) return &it->second.texture;
   }
+  Image prefetched;
   {
     std::lock_guard<std::mutex> guard(prefetchMutex_);
     if (const auto ready = decoded_.find("file:" + path.generic_string()); ready != decoded_.end()) {
-      Image image = std::move(ready->second);
+      prefetched = std::move(ready->second);
       decoded_.erase(ready);
-      return store(key, std::move(image), white);
     }
   }
+  if (prefetched.valid()) return store(key, std::move(prefetched), white);
   return store(key, decodeImage(path), white);
 }
 

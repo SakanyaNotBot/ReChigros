@@ -687,14 +687,16 @@ void PrprChain::applyPassScissored(const game::PrprEffect& effect, Program& prog
     int height) {
   if (input == nullptr || !output.valid()) return;
 
-  // The copy of the previous result has to be complete before the scissor goes on, so the
-  // area outside the stage keeps the unprocessed picture.
+  // Copy the surround before arming the scissor. A full-target stage is cleared and
+  // overwritten immediately below, so none of the copied pixels would survive.
   output.bind();
   glViewport(0, 0, output.width(), output.height());
   glDisable(GL_SCISSOR_TEST);
   glDisable(GL_BLEND);
-  BlitPass::instance().ensure();
-  BlitPass::instance().draw(*input, 1.0F, 1.0F, 1.0F, 1.0F, false);
+  if (x != 0 || y != 0 || width != output.width() || height != output.height()) {
+    BlitPass::instance().ensure();
+    BlitPass::instance().draw(*input, 1.0F, 1.0F, 1.0F, 1.0F, false);
+  }
 
   const GLboolean scissorWasOn = glIsEnabled(GL_SCISSOR_TEST);
   const bool blendWasOn = glIsEnabled(GL_BLEND) != GL_FALSE;
@@ -769,11 +771,11 @@ void PrprChain::applyPassScissored(const game::PrprEffect& effect, Program& prog
 }
 
 gl::Texture* PrprChain::apply(const std::vector<game::PrprEffect>& effects, gl::Texture* input,
-    gl::Framebuffer& ping, gl::Framebuffer& pong, double chartTimeSec) {
+    gl::Framebuffer& ping, gl::Framebuffer& pong, double chartTimeSec, bool globalOnly) {
   gl::Texture* current = input;
   bool usePing = true;
   for (const auto& effect : effects) {
-    if (!isActiveAt(effect, chartTimeSec)) continue;
+    if ((globalOnly && !effect.global) || !isActiveAt(effect, chartTimeSec)) continue;
     gl::Framebuffer& target = usePing ? ping : pong;
     if (!target.valid()) continue;
 
@@ -816,7 +818,7 @@ gl::Texture* PrprChain::applyStageViewport(const std::vector<game::PrprEffect>& 
   gl::Texture* current = input;
   bool usePing = true;
   for (const auto& effect : effects) {
-    if (!isActiveAt(effect, chartTimeSec)) continue;
+    if (effect.global || !isActiveAt(effect, chartTimeSec)) continue;
     gl::Framebuffer& target = usePing ? ping : pong;
     if (!target.valid()) continue;
 

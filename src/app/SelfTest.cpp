@@ -15,17 +15,21 @@
 #include "rechigros/platform/Archive.hpp"
 #include "rechigros/platform/AssetManager.hpp"
 #include "rechigros/platform/FileSystem.hpp"
+#include "rechigros/render/gl/Gl.hpp"
 
 #include <imgui.h>
 #include <miniz.h>
 
 #include <algorithm>
+#include <cstring>
+#include <unordered_map>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -250,6 +254,87 @@ int replayRoundTrip(const std::filesystem::path& directory) {
   if (loaded->entries[1].kind != ReplayTouchEvent::Kind::Move) return 7;
   return 0;
 }
+
+#ifndef RECHIGROS_GLES
+// A memory-backed GL sink checks transfer bytes and publication without a window or GPU.
+// The real entry points are restored before any other self-test draws.
+struct TextureUploadProbe {
+  struct Image {
+    int width{};
+    int height{};
+    std::vector<std::uint8_t> pixels;
+  };
+  PFNGLGENTEXTURESPROC gen{glad_glGenTextures};
+  PFNGLBINDTEXTUREPROC bind{glad_glBindTexture};
+  PFNGLTEXPARAMETERIPROC parameter{glad_glTexParameteri};
+  PFNGLPIXELSTOREIPROC pixelStore{glad_glPixelStorei};
+  PFNGLTEXIMAGE2DPROC image{glad_glTexImage2D};
+  PFNGLTEXSUBIMAGE2DPROC subImage{glad_glTexSubImage2D};
+  PFNGLDELETETEXTURESPROC remove{glad_glDeleteTextures};
+  std::unordered_map<GLuint, Image> images;
+  GLuint bound{};
+  GLuint next{1};
+  std::size_t frameBytes{};
+  std::size_t largestChunk{};
+  int largestRows{};
+  bool wholeImagePayload{};
+  bool valid{true};
+  static TextureUploadProbe* active;
+
+  static void APIENTRY generate(GLsizei count, GLuint* ids) {
+    for (int index = 0; index < count; ++index) ids[index] = active->next++;
+  }
+  static void APIENTRY bindTexture(GLenum, GLuint id) { active->bound = id; }
+  static void APIENTRY setParameter(GLenum, GLenum, GLint) {}
+  static void APIENTRY setPixelStore(GLenum, GLint) {}
+  static void APIENTRY allocate(GLenum, GLint, GLint, GLsizei width, GLsizei height, GLint,
+      GLenum, GLenum, const void* pixels) {
+    auto& target = active->images[active->bound];
+    target.width = width;
+    target.height = height;
+    target.pixels.assign(static_cast<std::size_t>(width) * height * 4U, 0);
+    active->wholeImagePayload |= pixels != nullptr;
+  }
+  static void APIENTRY transfer(GLenum, GLint, GLint x, GLint y, GLsizei width, GLsizei height,
+      GLenum, GLenum, const void* pixels) {
+    auto& target = active->images[active->bound];
+    if (pixels == nullptr || x != 0 || width != target.width || y < 0 || height <= 0
+        || y + height > target.height) {
+      active->valid = false;
+      return;
+    }
+    const auto bytes = static_cast<std::size_t>(width) * height * 4U;
+    active->frameBytes += bytes;
+    active->largestChunk = std::max(active->largestChunk, bytes);
+    active->largestRows = std::max(active->largestRows, static_cast<int>(height));
+    std::memcpy(target.pixels.data() + static_cast<std::size_t>(y) * width * 4U, pixels, bytes);
+  }
+  static void APIENTRY destroy(GLsizei count, const GLuint* ids) {
+    for (int index = 0; index < count; ++index) active->images.erase(ids[index]);
+  }
+  TextureUploadProbe() {
+    active = this;
+    glad_glGenTextures = generate;
+    glad_glBindTexture = bindTexture;
+    glad_glTexParameteri = setParameter;
+    glad_glPixelStorei = setPixelStore;
+    glad_glTexImage2D = allocate;
+    glad_glTexSubImage2D = transfer;
+    glad_glDeleteTextures = destroy;
+  }
+  ~TextureUploadProbe() {
+    glad_glGenTextures = gen;
+    glad_glBindTexture = bind;
+    glad_glTexParameteri = parameter;
+    glad_glPixelStorei = pixelStore;
+    glad_glTexImage2D = image;
+    glad_glTexSubImage2D = subImage;
+    glad_glDeleteTextures = remove;
+    active = nullptr;
+  }
+};
+TextureUploadProbe* TextureUploadProbe::active{};
+#endif
 
 // Draws one screen into an off-screen frame and returns how many vertices it produced.
 // ImGui builds draw lists on the CPU, so a screen can be exercised without a window or a
@@ -821,6 +906,199 @@ int runSelfTest() {
       exitCalibration(loopContext, false);
       loopContext.audio = nullptr;
       loopAudio.shutdown();
+    }
+
+    {
+      // The upload allowance belongs to the whole frame, including images that finish after
+      // its initial pump. Missing files settle as failures and need no graphics context.
+      AppContext textureContext(work / "texture-frame-budget");
+      auto& textures = textureContext.textures;
+      const auto first = work / "missing-visible-one.png";
+      const auto second = work / "missing-visible-two.png";
+      const auto third = work / "missing-visible-three.png";
+      textures.pump();
+      textures.prefetch(first);
+      bool firstSettled = false;
+      for (int attempt = 0; attempt < 200 && !firstSettled; ++attempt) {
+        (void)textures.textureFor(first);
+        firstSettled = textures.textureReady(first);
+        if (!firstSettled) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      textures.prefetch(second);
+      bool secondSettled = false;
+      for (int attempt = 0; attempt < 200 && !secondSettled; ++attempt) {
+        (void)textures.textureFor(second);
+        secondSettled = textures.textureReady(second);
+        if (!secondSettled) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      textures.prefetch(third);
+      bool thirdStayedPending = true;
+      for (int attempt = 0; attempt < 10; ++attempt) {
+        (void)textures.textureFor(third);
+        thirdStayedPending &= !textures.textureReady(third);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      textures.pump();
+      bool thirdSettled = textures.textureReady(third);
+      for (int attempt = 0; attempt < 200 && !thirdSettled; ++attempt) {
+        (void)textures.textureFor(third);
+        thirdSettled = textures.textureReady(third);
+        if (!thirdSettled) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      report(firstSettled && secondSettled && thirdStayedPending && thirdSettled,
+          "visible texture queries share the frame's two upload slots");
+
+      // Exhaust the remaining slot, then place a visible cover behind a full warm-up queue.
+      const auto fourth = work / "missing-visible-four.png";
+      for (int attempt = 0; attempt < 200 && !textures.textureReady(fourth); ++attempt) {
+        (void)textures.textureFor(fourth);
+        if (!textures.textureReady(fourth)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      for (int index = 0; index < 44; ++index) {
+        textures.prefetch(work / ("missing-warmup-" + std::to_string(index) + ".png"));
+      }
+      const auto cover = work / "missing-priority-cover.png";
+      (void)textures.textureFor(cover);
+      const auto sentinel = work / "missing-decode-sentinel.png";
+      textures.prefetchBlurredBackdrop(sentinel);
+      (void)textures.blurredBackdropFor(sentinel);
+      const bool coverWaitedForBudget = !textures.textureReady(cover);
+      textures.pump();
+      int warmed = 0;
+      for (int index = 0; index < 44; ++index) {
+        if (textures.textureReady(work / ("missing-warmup-" + std::to_string(index) + ".png"))) ++warmed;
+      }
+      report(coverWaitedForBudget && textures.textureReady(cover) && warmed == 1,
+          "a visible cover uploads ahead of queued warm-up artwork");
+    }
+
+#ifndef RECHIGROS_GLES
+    {
+      // A large uncompressed image makes transfer limits observable without decoder timing.
+      const auto path = work / "upload-rows.tga";
+      constexpr int imageWidth = 1024;
+      constexpr int imageHeight = 1100;
+      std::vector<std::uint8_t> tga(18U + static_cast<std::size_t>(imageWidth) * imageHeight * 4U);
+      tga[2] = 2;
+      tga[12] = static_cast<std::uint8_t>(imageWidth);
+      tga[13] = static_cast<std::uint8_t>(imageWidth >> 8);
+      tga[14] = static_cast<std::uint8_t>(imageHeight);
+      tga[15] = static_cast<std::uint8_t>(imageHeight >> 8);
+      tga[16] = 32;
+      tga[17] = 0x28;
+      std::vector<std::uint8_t> expected(tga.size() - 18U);
+      for (std::size_t pixel = 0; pixel < expected.size() / 4U; ++pixel) {
+        const auto red = static_cast<std::uint8_t>(pixel % 251U);
+        const auto green = static_cast<std::uint8_t>((pixel / imageWidth) % 241U);
+        const auto blue = static_cast<std::uint8_t>((pixel * 7U) % 239U);
+        expected[pixel * 4U] = red;
+        expected[pixel * 4U + 1U] = green;
+        expected[pixel * 4U + 2U] = blue;
+        expected[pixel * 4U + 3U] = 255;
+        tga[18U + pixel * 4U] = blue;
+        tga[18U + pixel * 4U + 1U] = green;
+        tga[18U + pixel * 4U + 2U] = red;
+        tga[18U + pixel * 4U + 3U] = 255;
+      }
+      const bool written = platform::writeBinaryFile(path, tga);
+      TextureUploadProbe probe;
+      TextureCache textures;
+      textures.prefetch(path);
+      std::uint64_t texture = 0;
+      bool placeholderUntilComplete = true;
+      bool sawPartial = false;
+      bool bounded = true;
+      int uploadFrames = 0;
+      for (int frame = 0; written && frame < 400 && texture == 0; ++frame) {
+        probe.frameBytes = 0;
+        textures.pump();
+        for (int query = 0; query < 4; ++query) {
+          texture = textures.textureFor(path);
+          if (probe.frameBytes != 0 && texture == 0) {
+            sawPartial = true;
+            placeholderUntilComplete &= !textures.textureReady(path);
+          }
+        }
+        if (probe.frameBytes != 0) ++uploadFrames;
+        bounded &= probe.frameBytes <= 4U * 1024U * 1024U;
+        if (texture == 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      const auto stored = probe.images.find(static_cast<GLuint>(texture));
+      report(written && texture != 0 && sawPartial && placeholderUntilComplete && bounded
+              && uploadFrames >= 2 && probe.valid && !probe.wholeImagePayload
+              && probe.largestChunk <= 64U * 1024U && probe.largestRows <= 8
+              && stored != probe.images.end() && stored->second.pixels == expected
+              && textures.width(texture) == imageWidth && textures.height(texture) == imageHeight,
+          "row uploads keep partial textures private and preserve every source pixel");
+      textures.reset();
+      report(probe.images.empty(), "reset releases completed row-upload textures");
+      textures.prefetch(path);
+      bool pendingRows = false;
+      for (int frame = 0; frame < 400 && !pendingRows; ++frame) {
+        textures.pump();
+        (void)textures.textureFor(path);
+        pendingRows = !textures.textureReady(path) && !probe.images.empty();
+        if (!pendingRows) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      textures.reset();
+      report(pendingRows && probe.images.empty() && !textures.textureReady(path),
+          "reset releases a partial row upload without publishing it");
+    }
+#endif
+
+    {
+      // A reset discards the settlement request as well as uploaded textures. Polling the
+      // same pending run requests its backdrop again and can still finish loading.
+      AppContext loadingContext(work / "loading-reset");
+      loadingContext.screen = Screen::Game;
+      loadingContext.play.chartFile = chartPath;
+      loadingContext.play.bgFile = work / "reset-missing-cover.png";
+      loadingContext.play.autoplay = true;
+      loadingContext.game.loading = true;
+      loadingContext.game.loadingFrames = 2;
+      loadingContext.game.pendingRun.emplace();
+      loadingContext.game.pendingRun->chart = chart::ChartLoader::loadFromFile(chartPath);
+      loadingContext.textures.prefetchBlurredBackdrop(loadingContext.play.bgFile);
+      loadingContext.textures.reset();
+      for (int attempt = 0; attempt < 200 && loadingContext.game.loading; ++attempt) {
+        loadingContext.textures.pump();
+        pollChartLoad(loadingContext);
+        if (loadingContext.game.loading) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      report(!loadingContext.game.loading && loadingContext.game.loaded,
+          "a loading run recovers its settlement request after a texture reset");
+      gameLeave(loadingContext);
+    }
+
+    {
+      const auto music = platform::AssetManager::materialize(
+          platform::assetRoot(), "audio/calibration.wav");
+      AppContext rateContext(work / "calibration-device-rate");
+      audio::AudioEngine rateAudio;
+      rateContext.audio = &rateAudio;
+      rateContext.screen = Screen::Calibration;
+      const bool deviceOpened = rateAudio.initialize();
+      const auto actualRate = rateAudio.outputSampleRate();
+      if (deviceOpened && actualRate != 0) {
+        const auto otherRate = actualRate == 48000 ? 44100U : 48000U;
+        // The label alone cannot validate PCM. The cached buffer carries its own rate, which
+        // has to match the repaired device even when the request label already looks current.
+        rateContext.calibrationAudioRate = actualRate;
+        rateContext.calibrationAudio.path = music;
+        rateContext.calibrationAudio.buffer = audio::Decoder::decodeFile(music, otherRate);
+        drawScreenHeadless(rateContext, drawCalibrationScreen);
+        report(rateContext.calibrationAudio.buffer.sampleRate() == actualRate
+                && rateContext.screen == Screen::Calibration && rateAudio.musicLooping()
+                && std::abs(rateAudio.getMusicDurationSeconds() - 2.0) < 0.01,
+            "calibration replaces PCM cached for another device sample rate");
+      } else {
+        drawScreenHeadless(rateContext, drawCalibrationScreen);
+        report(!rateContext.calibration.audioLoaded && rateContext.screen == Screen::Settings,
+            "calibration returns cleanly when the output device is unavailable");
+      }
+      exitCalibration(rateContext, false);
+      rateContext.audio = nullptr;
+      rateAudio.shutdown();
     }
 
     // Settings owns its pointer state instead of using immediate-mode buttons. Exercise

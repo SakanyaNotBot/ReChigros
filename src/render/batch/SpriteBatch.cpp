@@ -13,13 +13,13 @@ namespace rechigros::render::batch {
 namespace {
 constexpr const char* VERTEX_SOURCE = R"(
 uniform mat4 uProjection;
-in vec2 aCorner;
-in vec4 aCenterSize;
-in vec2 aRotation;
-in vec4 aUvRect;
-in vec4 aColor;
-in float aTextureSelect;
-in float aShear;
+layout(location = 0) in vec2 aCorner;
+layout(location = 1) in vec4 aCenterSize;
+layout(location = 2) in vec2 aRotation;
+layout(location = 3) in vec4 aUvRect;
+layout(location = 4) in vec4 aColor;
+layout(location = 5) in float aTextureSelect;
+layout(location = 6) in float aShear;
 out vec2 vUv;
 out vec4 vColor;
 out float vTextureSelect;
@@ -92,6 +92,28 @@ void main() {
 }
 )";
 
+constexpr const char* WHITE_FRAGMENT_SOURCE = R"(
+in vec4 vColor;
+out vec4 fragmentColor;
+void main() {
+  vec4 texel = vec4(1.0);
+  fragmentColor.a = texel.a * vColor.a;
+  fragmentColor.rgb = texel.rgb * vColor.rgb * vColor.a;
+}
+)";
+
+constexpr const char* SHEET_FRAGMENT_SOURCE = R"(
+uniform sampler2D uTexture;
+in vec2 vUv;
+in vec4 vColor;
+out vec4 fragmentColor;
+void main() {
+  vec4 texel = texture(uTexture, vUv);
+  fragmentColor.a = texel.a * vColor.a;
+  fragmentColor.rgb = texel.rgb * vColor.rgb * vColor.a;
+}
+)";
+
 constexpr float kDegToRad = 3.14159265358979323846F / 180.0F;
 constexpr float kQuadCorners[8] = {
     -0.5F, -0.5F,
@@ -115,6 +137,20 @@ bool SpriteBatch::ensureProgram() noexcept {
     delete program_;
     program_ = nullptr;
     return false;
+  }
+  whiteProgram_ = new gl::ShaderProgram();
+  if (!whiteProgram_->build(VERTEX_SOURCE, WHITE_FRAGMENT_SOURCE)) {
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "[render] white sprite shader failed: %s",
+        whiteProgram_->log().c_str());
+    delete whiteProgram_;
+    whiteProgram_ = nullptr;
+  }
+  sheetProgram_ = new gl::ShaderProgram();
+  if (!sheetProgram_->build(VERTEX_SOURCE, SHEET_FRAGMENT_SOURCE)) {
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "[render] sheet sprite shader failed: %s",
+        sheetProgram_->log().c_str());
+    delete sheetProgram_;
+    sheetProgram_ = nullptr;
   }
   return true;
 }
@@ -207,6 +243,10 @@ void SpriteBatch::release() noexcept {
   buffer_ = nullptr;
   delete program_;
   program_ = nullptr;
+  delete whiteProgram_;
+  whiteProgram_ = nullptr;
+  delete sheetProgram_;
+  sheetProgram_ = nullptr;
   count_ = 0;
 }
 
@@ -236,11 +276,21 @@ bool SpriteBatch::addQuadSelect(float centerX, float centerY, float width, float
     instance.rotationSin = 0.0F;
   } else {
     if (!rotationCached_ || cachedRotationDeg_ != rotationDeg) {
-      const float radians = rotationDeg * kDegToRad;
-      cachedRotationCos_ = std::cos(radians);
-      cachedRotationSin_ = std::sin(radians);
-      cachedRotationDeg_ = rotationDeg;
-      rotationCached_ = true;
+      if (previousRotationCached_ && previousRotationDeg_ == rotationDeg) {
+        std::swap(cachedRotationDeg_, previousRotationDeg_);
+        std::swap(cachedRotationCos_, previousRotationCos_);
+        std::swap(cachedRotationSin_, previousRotationSin_);
+      } else {
+        previousRotationDeg_ = cachedRotationDeg_;
+        previousRotationCos_ = cachedRotationCos_;
+        previousRotationSin_ = cachedRotationSin_;
+        previousRotationCached_ = rotationCached_;
+        const float radians = rotationDeg * kDegToRad;
+        cachedRotationCos_ = std::cos(radians);
+        cachedRotationSin_ = std::sin(radians);
+        cachedRotationDeg_ = rotationDeg;
+        rotationCached_ = true;
+      }
     }
     instance.rotationCos = cachedRotationCos_;
     instance.rotationSin = cachedRotationSin_;
@@ -373,6 +423,19 @@ void SpriteBatch::discard() noexcept {
 
 void SpriteBatch::flush(const math::Mat4& projection, const gl::Texture& texture,
     const gl::Texture* bodyTexture) {
+  flushImpl(projection, texture, bodyTexture, false);
+}
+
+void SpriteBatch::flushSheet(const math::Mat4& projection, const gl::Texture& texture) {
+  flushImpl(projection, texture, nullptr, false, true);
+}
+
+void SpriteBatch::flushWhite(const math::Mat4& projection, const gl::Texture& whiteTexture) {
+  flushImpl(projection, whiteTexture, nullptr, true);
+}
+
+void SpriteBatch::flushImpl(const math::Mat4& projection, const gl::Texture& texture,
+    const gl::Texture* bodyTexture, bool white, bool sheet) {
   if (count_ == 0) return;
   if (!ensureBuffers()) {
     count_ = 0;
@@ -384,27 +447,35 @@ void SpriteBatch::flush(const math::Mat4& projection, const gl::Texture& texture
   glBufferSubData(GL_ARRAY_BUFFER, 0, bytes, buffer_);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-  program_->use();
-  program_->setMat4("uProjection", projection.data());
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, texture.valid() ? texture.id() : gl::whiteTexture().id());
-  program_->set1i("uTexture", 0);
-  glActiveTexture(GL_TEXTURE1);
-  const unsigned int bodyId =
-      bodyTexture != nullptr && bodyTexture->valid() ? bodyTexture->id() : 0U;
-  glBindTexture(GL_TEXTURE_2D, bodyId != 0 ? bodyId : (texture.valid() ? texture.id() : 0U));
-  program_->set1i("uTextureBody", 1);
-  program_->set1i("uHasBody", bodyId != 0 ? 1 : 0);
-  static const char* const kExtraUniforms[MAX_BATCH_EXTRA_TEXTURES] = {
-      "uExtra0", "uExtra1", "uExtra2", "uExtra3", "uExtra4", "uExtra5", "uExtra6",
-      "uExtra7", "uExtra8", "uExtra9", "uExtra10", "uExtra11", "uExtra12", "uExtra13"};
-  for (int index = 0; index < extraTextureCount_; ++index) {
-    const int unit = 2 + index;
-    glActiveTexture(GL_TEXTURE0 + unit);
-    const unsigned int extraId = extraTextures_[index] != nullptr && extraTextures_[index]->valid()
-        ? extraTextures_[index]->id() : 0U;
-    glBindTexture(GL_TEXTURE_2D, extraId);
-    program_->set1i(kExtraUniforms[index], unit);
+  const bool useWhite = white && whiteProgram_ != nullptr && extraTextureCount_ == 0 &&
+      bodyTexture == nullptr;
+  const bool useSheet = sheet && sheetProgram_ != nullptr && extraTextureCount_ == 0 &&
+      bodyTexture == nullptr;
+  gl::ShaderProgram& shader = useWhite ? *whiteProgram_
+      : (useSheet ? *sheetProgram_ : *program_);
+  shader.use();
+  shader.setMat4("uProjection", projection.data());
+  if (!useWhite) {
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture.valid() ? texture.id() : gl::whiteTexture().id());
+    shader.set1i("uTexture", 0);
+    glActiveTexture(GL_TEXTURE1);
+    const unsigned int bodyId =
+        bodyTexture != nullptr && bodyTexture->valid() ? bodyTexture->id() : 0U;
+    glBindTexture(GL_TEXTURE_2D, bodyId != 0 ? bodyId : (texture.valid() ? texture.id() : 0U));
+    shader.set1i("uTextureBody", 1);
+    shader.set1i("uHasBody", bodyId != 0 ? 1 : 0);
+    static const char* const kExtraUniforms[MAX_BATCH_EXTRA_TEXTURES] = {
+        "uExtra0", "uExtra1", "uExtra2", "uExtra3", "uExtra4", "uExtra5", "uExtra6",
+        "uExtra7", "uExtra8", "uExtra9", "uExtra10", "uExtra11", "uExtra12", "uExtra13"};
+    for (int index = 0; index < extraTextureCount_; ++index) {
+      const int unit = 2 + index;
+      glActiveTexture(GL_TEXTURE0 + unit);
+      const unsigned int extraId = extraTextures_[index] != nullptr && extraTextures_[index]->valid()
+          ? extraTextures_[index]->id() : 0U;
+      glBindTexture(GL_TEXTURE_2D, extraId);
+      shader.set1i(kExtraUniforms[index], unit);
+    }
   }
   glActiveTexture(GL_TEXTURE0);
 
@@ -413,9 +484,9 @@ void SpriteBatch::flush(const math::Mat4& projection, const gl::Texture& texture
   // notes from drawing outside the stage. The rectangle arrives in the top-left origin space
   // the geometry uses and is converted here to GL's bottom-left origin against the current
   // viewport height.
-  GLint viewport[4] = {0, 0, 0, 0};
-  glGetIntegerv(GL_VIEWPORT, viewport);
   if (scissorEnabled_) {
+    GLint viewport[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_VIEWPORT, viewport);
     const int targetHeight = viewport[3];
     const int left = static_cast<int>(std::floor(scissorLeft_));
     const int right = static_cast<int>(std::ceil(scissorRight_));

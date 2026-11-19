@@ -546,6 +546,15 @@ int gradeIndexForScore(int score, bool fullCombo) {
 ChartLibrary::ChartLibrary(std::filesystem::path packsRoot, std::filesystem::path scoreFile)
     : packsRoot_(std::move(packsRoot)), scoreFile_(std::move(scoreFile)) {}
 
+ChartLibrary::~ChartLibrary() {
+  if (warmUp_.valid()) warmUp_.wait();
+}
+
+void ChartLibrary::invalidate() noexcept {
+  ++generation_;
+  loaded_ = false;
+}
+
 void ChartLibrary::rebuildIndex() {
   if (!scoresLoaded_) loadScores();
   std::vector<ChartRecord> records;
@@ -561,56 +570,49 @@ void ChartLibrary::rebuildIndex() {
       if (record && record->complete()) records.push_back(std::move(*record));
     }
   }
-  std::lock_guard<std::mutex> lock(indexMutex_);
   records_ = std::move(records);
   sortRecords();
   loaded_ = true;
 }
 
 void ChartLibrary::warmUpAsync() {
-  std::lock_guard<std::mutex> lock(indexMutex_);
-  if (loaded_ || warmUp_) return;
-  auto promise = std::make_shared<std::promise<void>>();
-  warmUp_ = std::make_shared<std::shared_future<void>>(promise->get_future().share());
-  // The worker must never call records(): records() joins this very future, so a warm-up
-  // that went through it would wait on itself. It rebuilds the index directly instead.
-  std::thread([this, promise]() {
-    try {
-      rebuildIndex();
-    } catch (...) {
-      // A failed warm-up leaves the index unloaded; the next records() call rebuilds inline.
-    }
-    promise->set_value();
-  }).detach();
+  if (loaded_ || warmUp_.valid()) return;
+  warmUpGeneration_ = generation_;
+  warmUp_ = std::async(std::launch::async, [packs = packsRoot_, scores = scoreFile_] {
+    ChartLibrary index(packs, scores);
+    index.rebuildIndex();
+    return IndexSnapshot{std::move(index.records_), std::move(index.scores_)};
+  });
+}
+
+void ChartLibrary::finishWarmUp() {
+  if (!warmUp_.valid()) return;
+  try {
+    IndexSnapshot snapshot = warmUp_.get();
+    if (warmUpGeneration_ != generation_) return;
+    records_ = std::move(snapshot.records);
+    scores_ = std::move(snapshot.scores);
+    scoresLoaded_ = true;
+    loaded_ = true;
+  } catch (...) {
+    // A failed asynchronous scan leaves the index available for a synchronous retry.
+  }
 }
 
 bool ChartLibrary::ready() {
-  {
-    std::lock_guard<std::mutex> lock(indexMutex_);
+  if (loaded_) return true;
+  if (warmUp_.valid()
+      && warmUp_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+    finishWarmUp();
     if (loaded_) return true;
-    if (warmUp_ && warmUp_->wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-      return true;
-    }
   }
-  // A delete, an import or a recorded score invalidates the index without starting a new
-  // scan. The list screen polls this predicate, so the next frame kicks the rebuild here
-  // instead of leaving the scanning placeholder up until the application restarts.
   warmUpAsync();
   return false;
 }
 
 const std::vector<ChartRecord>& ChartLibrary::records(bool force) {
-  // A warm-up may still be writing the index, so the caller joins it first. This keeps the
-  // first screen fast without ever handing out a half-built list.
-  std::shared_ptr<std::shared_future<void>> pending;
-  {
-    std::lock_guard<std::mutex> lock(indexMutex_);
-    pending = warmUp_;
-    warmUp_.reset();
-  }
-  if (pending) pending->wait();
-  if (loaded_ && !force) return records_;
-  rebuildIndex();
+  finishWarmUp();
+  if (!loaded_ || force) rebuildIndex();
   return records_;
 }
 
@@ -623,6 +625,8 @@ std::optional<ChartRecord> ChartLibrary::find(const std::string& id) {
 }
 
 std::optional<ChartRecord> ChartLibrary::loadRecord(const std::string& id) {
+  finishWarmUp();
+  if (!scoresLoaded_) loadScores();
   return loadRecordInternal(id);
 }
 
@@ -744,6 +748,7 @@ std::optional<ChartRecord> ChartLibrary::loadRecordInternal(const std::string& i
 
 ChartLibrary::ImportResult ChartLibrary::importZip(const std::filesystem::path& archive,
     bool requireComplete) {
+  finishWarmUp();
   if (!platform::fileExists(archive)) throw std::runtime_error("Package not found");
   std::uint64_t size = 0;
   const std::string id = hashFile(archive, size);
@@ -770,6 +775,7 @@ ChartLibrary::ImportResult ChartLibrary::importZip(const std::filesystem::path& 
 }
 
 ChartLibrary::ImportResult ChartLibrary::importDirectory(const std::filesystem::path& directory) {
+  finishWarmUp();
   if (!platform::directoryExists(directory)) throw std::runtime_error("Directory not found");
   const auto absolute = std::filesystem::weakly_canonical(directory);
   const std::string id = hashDirectory(absolute);
@@ -851,6 +857,8 @@ ChartLibrary::ImportResult ChartLibrary::installDirectory(const std::filesystem:
 }
 
 bool ChartLibrary::remove(const std::vector<std::string>& ids) {
+  finishWarmUp();
+  if (!scoresLoaded_) loadScores();
   bool removed = false;
   for (const auto& id : ids) {
     if (id.empty()) continue;
@@ -865,6 +873,7 @@ bool ChartLibrary::remove(const std::vector<std::string>& ids) {
 
 bool ChartLibrary::updateInfo(const std::string& id, const std::string& name,
     const std::string& difficulty, int chartOffsetMs) {
+  finishWarmUp();
   auto record = loadRecordInternal(id);
   if (!record) return false;
   auto info = record->info;
@@ -878,23 +887,41 @@ bool ChartLibrary::updateInfo(const std::string& id, const std::string& name,
   return true;
 }
 
-void ChartLibrary::recordBestResult(const std::string& id, const game::PlayResult& result) {
+void ChartLibrary::updateIndexedScore(const std::string& id) {
+  if (!loaded_) return;
+  const ScoreEntry score = scoreFor(id);
+  for (auto& record : records_) {
+    if (record.id != id) continue;
+    record.bestScore = score.bestScore;
+    record.bestAcc = score.bestAcc;
+    record.lastPlayedAtMs = score.lastPlayedAtMs;
+    sortRecords();
+    return;
+  }
+}
+
+void ChartLibrary::recordResult(const std::string& id, std::int64_t timestampMs,
+    const game::PlayResult* bestResult) {
   if (id.empty()) return;
+  finishWarmUp();
   if (!scoresLoaded_) loadScores();
   auto& entry = scores_[id];
-  if (result.score > entry.bestScore) entry.bestScore = result.score;
-  const int accuracy = static_cast<int>(std::lround(result.accuracy * 10000.0));
-  if (accuracy > entry.bestAcc) entry.bestAcc = accuracy;
+  entry.lastPlayedAtMs = std::max(entry.lastPlayedAtMs, timestampMs);
+  if (bestResult != nullptr) {
+    entry.bestScore = std::max(entry.bestScore, bestResult->score);
+    const int accuracy = static_cast<int>(std::lround(bestResult->accuracy * 10000.0));
+    entry.bestAcc = std::max(entry.bestAcc, accuracy);
+  }
   saveScores();
-  invalidate();
+  updateIndexedScore(id);
+}
+
+void ChartLibrary::recordBestResult(const std::string& id, const game::PlayResult& result) {
+  recordResult(id, 0, &result);
 }
 
 void ChartLibrary::recordPlayTime(const std::string& id, std::int64_t timestampMs) {
-  if (id.empty()) return;
-  if (!scoresLoaded_) loadScores();
-  scores_[id].lastPlayedAtMs = std::max<std::int64_t>(scores_[id].lastPlayedAtMs, timestampMs);
-  saveScores();
-  invalidate();
+  recordResult(id, timestampMs, nullptr);
 }
 
 ChartLibrary::ScoreEntry ChartLibrary::scoreFor(const std::string& id) const {

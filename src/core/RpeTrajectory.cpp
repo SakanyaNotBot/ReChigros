@@ -3,8 +3,10 @@
 #include "rechigros/game/Easing.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <functional>
 #include <stdexcept>
@@ -363,6 +365,18 @@ RpeTrajectory::RpeTrajectory(const RpeTrajectoryOptions& options)
     : impl_(std::make_shared<Impl>(options)) {}
 
 RpeTrajectorySample RpeTrajectory::sample(double progress) const noexcept {
+  struct SampleCache {
+    std::shared_ptr<const Impl> owner;
+    std::uint64_t progressBits{};
+    RpeTrajectorySample point;
+  };
+  // Each thread retains the sampled implementation and the original input bits.
+  thread_local SampleCache cache;
+  const bool cacheable = std::isfinite(progress);
+  const auto progressBits = std::bit_cast<std::uint64_t>(progress);
+  if (cacheable && cache.owner == impl_ && cache.progressBits == progressBits) {
+    return cache.point;
+  }
   try {
     progress = std::clamp(progress, 0.0, 1.0);
     auto point = impl_->raw(progress);
@@ -376,6 +390,11 @@ RpeTrajectorySample RpeTrajectory::sample(double progress) const noexcept {
     point.y += impl_->options.alignStart ? impl_->options.startY - impl_->first.y : 0.0;
     if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.rotation)) {
       return {};
+    }
+    if (cacheable) {
+      cache.owner = impl_;
+      cache.progressBits = progressBits;
+      cache.point = point;
     }
     return point;
   } catch (...) {

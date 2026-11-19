@@ -725,6 +725,61 @@ void testLibraryRecoversAfterInvalidate() {
   require(library.records().empty(), "the rebuilt index drops the deleted pack");
 }
 
+void testLibraryScoreUpdatesAndWarmUpLifetime() {
+  using namespace rechigros::app;
+  const auto root = rechigros::test::scratchDirectory("app-data-score-index");
+  std::filesystem::remove_all(root);
+  const auto packs = root / "packs";
+  for (const char* id : {"one", "two"}) {
+    const auto pack = packs / id;
+    std::filesystem::create_directories(pack);
+    writeText(pack / "info.json", std::string("{\"name\":\"") + id
+        + "\",\"level\":\"IN Lv.1\",\"chart\":\"chart.json\","
+          "\"music\":\"music.ogg\",\"illustration\":\"cover.png\"}");
+    writeText(pack / "chart.json", chartJson("", "", "", "", false));
+    writeText(pack / "music.ogg", "OggS");
+    writeText(pack / "cover.png", "PNG");
+  }
+  ChartLibrary library(packs, root / "library.txt");
+  require(library.records().size() == 2, "score-update library holds both packs");
+  // A score write only changes score data. An external metadata edit is observed when the
+  // caller explicitly asks for a new metadata index.
+  ChartInfo changed = readInfoFile(packs / "one" / "info.json");
+  changed.name = "External Rename";
+  require(writeInfoJson(packs / "one" / "info.json", changed), "external metadata edit is written");
+  rechigros::game::PlayResult best;
+  best.score = 912345;
+  best.accuracy = 0.9876;
+  library.recordResult("one", 2000, &best);
+  const auto record = library.find("one");
+  require(library.ready() && record && record->songName == "one"
+          && record->bestScore == 912345 && record->bestAcc == 9876,
+      "a score update preserves indexed metadata and updates its score");
+  library.recordResult("two", 3000, nullptr);
+  require(library.records().front().id == "two", "play time reorders cached records");
+  ChartLibrary reopened(packs, root / "library.txt");
+  const auto persisted = reopened.find("one");
+  require(persisted && persisted->songName == "External Rename"
+          && persisted->bestScore == 912345 && persisted->lastPlayedAtMs == 2000,
+      "a fresh index reads metadata and the combined persisted score");
+  library.invalidate();
+  const auto refreshed = library.find("one");
+  require(refreshed && refreshed->songName == "External Rename",
+      "explicit invalidation observes an external metadata change");
+  {
+    ChartLibrary warming(packs, root / "library.txt");
+    warming.warmUpAsync();
+    warming.invalidate();
+    require(warming.records().size() == 2, "an invalidated warm-up yields a complete fresh index");
+  }
+  {
+    ChartLibrary shortLived(packs, root / "library.txt");
+    shortLived.warmUpAsync();
+  }
+  require(std::filesystem::exists(packs / "one" / "info.json"),
+      "destroying a warming library safely collects its scan");
+}
+
 void testNestedArchiveImport() {
   using namespace rechigros::app;
   const auto root = rechigros::test::scratchDirectory("app-data-import-nested");
@@ -1080,6 +1135,23 @@ void testReplayStoreRows() {
   const auto remaining = store.list();
   require(remaining.size() == 1 && remaining[0].id == second,
       "deleting one row keeps the other rows");
+  ReplayStore externalWriter(root / "replays");
+  const std::string external = externalWriter.save(makeReplay(1700000200000LL, "External Song", 333333));
+  require(!external.empty() && store.list().size() == 1,
+      "the replay list remains a stable snapshot between refreshes");
+  store.invalidate();
+  require(store.list().size() == 2 && store.list().front().id == external,
+      "an explicit replay refresh observes external additions");
+  const auto externallyAdded = makeReplay(1700000300000LL, "External Addition", 444444);
+  require(!externalWriter.save(externallyAdded).empty(), "another store adds a replay after the snapshot");
+  bool externalDuplicate = false;
+  require(store.save(externallyAdded, &externalDuplicate).empty() && externalDuplicate,
+      "saving rejects a duplicate added after the display snapshot");
+  require(externalWriter.remove(external), "another store removes a cached replay");
+  bool deletedDuplicate = false;
+  require(!store.save(makeReplay(1700000200000LL, "External Song", 333333), &deletedDuplicate).empty()
+          && !deletedDuplicate,
+      "saving permits a replay whose cached duplicate was removed externally");
 }
 
 // The drawing clock follows the audio stream without copying its reporting steps. These
@@ -1244,6 +1316,7 @@ int main() {
   testChartLibraryPackDetection();
   testImportPersistsAcrossReload();
   testLibraryRecoversAfterInvalidate();
+  testLibraryScoreUpdatesAndWarmUpLifetime();
   testNestedArchiveImport();
   testIncompleteMetadataNestedArchive();
   testSettingsDefaultsPersistenceAndClamps();

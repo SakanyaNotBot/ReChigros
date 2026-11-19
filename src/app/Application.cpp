@@ -516,8 +516,8 @@ bool Application::initialize() {
   app_->advanceRenderer = [this]() { return advanceRenderer(); };
   // The home screen's own artwork decodes on the cache worker from here on. Requesting it
   // during launch means the first frame already draws it instead of a placeholder.
-  app_->textures.textureFor(platform::assetRoot() / "res/meow.png", 320);
-  app_->textures.textureFor(platform::assetRoot() / "res/github.png", 128);
+  app_->textures.prefetch(platform::assetRoot() / "res/meow.png", 320);
+  app_->textures.prefetch(platform::assetRoot() / "res/github.png", 128);
   // Every interface icon is requested during launch as well. The shared cache decodes them on
   // its worker and uploads a couple per frame, so a screen opened for the first time already
   // has its button artwork instead of showing the placeholder for a frame or two. The sizes
@@ -528,16 +528,16 @@ bool Application::initialize() {
         "res/import.png", "res/delete.png", "res/all.png", "res/cancel.png", "res/refresh.png",
         "res/next.png", "res/last.png", "res/return.png"};
     for (const char* asset : kIconAssets) {
-      app_->textures.textureFor(platform::assetRoot() / asset, 128);
-      app_->textures.textureFor(platform::assetRoot() / asset, 96);
+      app_->textures.prefetch(platform::assetRoot() / asset, 128);
+      app_->textures.prefetch(platform::assetRoot() / asset, 96);
     }
-    app_->textures.textureFor(platform::assetRoot() / "res/checked.png", 64);
-    app_->textures.textureFor(platform::assetRoot() / "res/click.png", 512);
+    app_->textures.prefetch(platform::assetRoot() / "res/checked.png", 64);
+    app_->textures.prefetch(platform::assetRoot() / "res/click.png", 512);
     // res/hit_fx.png is a 4095x4914 effect sheet. Uploading it at launch costs a large texture
     // allocation for an image only the calibration screen and gameplay use; those paths request
     // it when they open, where a few extra frames of decode are expected.
     for (const char* grade : {"F", "C", "B", "A", "S", "V", "FC", "AP"}) {
-      app_->textures.textureFor(platform::assetRoot() / "grades" / (std::string(grade) + ".png"),
+      app_->textures.prefetch(platform::assetRoot() / "grades" / (std::string(grade) + ".png"),
           128);
     }
   }
@@ -753,7 +753,7 @@ int Application::run() {
       for (const auto& record : app_->library.records()) {
         if (requested >= 16) break;
         if (record.bgFile.empty()) continue;
-        (void)app_->textures.textureFor(record.bgFile, 320);
+        app_->textures.prefetch(record.bgFile, 320);
         ++requested;
       }
     }

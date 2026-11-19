@@ -1412,8 +1412,7 @@ std::unique_ptr<JudgeLine> parseJudgeLine(const json& source, const BpmConverter
   return line;
 }
 
-Chart parseRoot(const json& root, const std::filesystem::path& baseDirectory) {
-  if (!root.is_object()) throw std::invalid_argument("RPE chart root must be an object");
+BpmConverter parseBpm(const json& root) {
   std::vector<BpmPoint> points;
   if (const auto* list = array(root, {"BPMList", "bpmList", "BpmList"})) {
     for (const auto& item : *list) if (item.is_object()) {
@@ -1424,7 +1423,12 @@ Chart parseRoot(const json& root, const std::filesystem::path& baseDirectory) {
   if (points.empty()) points.push_back({0.0, 120.0});
   std::stable_sort(points.begin(), points.end(), [](const auto& a, const auto& b) { return a.beat < b.beat; });
   if (points.front().beat > 0.0) points.insert(points.begin(), {0.0, points.front().bpm});
-  BpmConverter bpm(std::move(points));
+  return BpmConverter(std::move(points));
+}
+
+Chart parseRoot(const json& root, const std::filesystem::path& baseDirectory,
+    const BpmConverter& bpm, bool prepareRuntime) {
+  if (!root.is_object()) throw std::invalid_argument("RPE chart root must be an object");
   Chart chart; chart.bpmTimeline = bpm.timeline();
   const auto* meta = object(root, {"META", "meta", "Meta"});
   chart.offset = number(meta ? *meta : root, {"offset", "Offset", "chartOffset"}, 0.0) / 1000.0;
@@ -1469,8 +1473,14 @@ Chart parseRoot(const json& root, const std::filesystem::path& baseDirectory) {
   }
   chart.rpeCamera = RpeCamera::parse(chart.rpeGlobalEventsJson, chart.bpmTimeline);
   appendShaderEffects(root, chart, bpm);
-  chart.prepareRuntime();
+  if (prepareRuntime) chart.prepareRuntime();
   return chart;
+}
+
+Chart parseRoot(const json& root, const std::filesystem::path& baseDirectory) {
+  if (!root.is_object()) throw std::invalid_argument("RPE chart root must be an object");
+  const auto bpm = parseBpm(root);
+  return parseRoot(root, baseDirectory, bpm, true);
 }
 
 Chart parseStreaming(std::string_view text, const std::filesystem::path& baseDirectory) {
@@ -1542,7 +1552,8 @@ Chart parseStreaming(std::string_view text, const std::filesystem::path& baseDir
   skeleton.append(text.substr(linesEnd));
   const auto root = json::parse(skeleton, nullptr, false);
   if (root.is_discarded() || !root.is_object()) return parseRoot(json::parse(text), baseDirectory);
-  Chart chart = parseRoot(root, baseDirectory);
+  const auto bpm = parseBpm(root);
+  Chart chart = parseRoot(root, baseDirectory, bpm, false);
 
   std::vector<JudgeLine*> lineByElement(lineElements.size(), nullptr);
   std::size_t compactIndex = 0;
@@ -1553,21 +1564,6 @@ Chart parseStreaming(std::string_view text, const std::filesystem::path& baseDir
   }
   if (compactIndex != chart.judgeLineList.size()) return parseRoot(json::parse(text), baseDirectory);
 
-  std::vector<BpmPoint> points;
-  if (const auto* list = array(root, {"BPMList", "bpmList", "BpmList"})) {
-    for (const auto& item : *list) if (item.is_object()) {
-      const auto value = number(item, {"bpm", "BPM"}, 0.0);
-      if (std::isfinite(value) && value > 0.0) {
-        points.push_back({parseBeat(field(item, {"startTime", "time", "beat"})), value});
-      }
-    }
-  }
-  if (points.empty()) points.push_back({0.0, 120.0});
-  std::stable_sort(points.begin(), points.end(), [](const auto& a, const auto& b) {
-    return a.beat < b.beat;
-  });
-  if (points.front().beat > 0.0) points.insert(points.begin(), {0.0, points.front().bpm});
-  BpmConverter bpm(std::move(points));
   const double timeBase = bpm.baseBpm();
 
   struct NoteSlice {

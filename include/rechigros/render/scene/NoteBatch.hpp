@@ -12,6 +12,8 @@ namespace rechigros::game { class Chart; struct Note; }
 
 namespace rechigros::render::scene {
 
+class NoteVisibilityIndex;
+
 // Head/tail/body slices of a hold sprite sheet, expressed in normalised V. The
 // sheet order is tail (top), body (middle), head (bottom).
 struct HoldUv {
@@ -48,6 +50,8 @@ struct NotePassParams {
   double missFadeWindow{0.18};
   math::Rect cullBounds{};
   bool flipU{false};
+  // Optional immutable geometry index; every surviving note still uses the full pass math.
+  const NoteVisibilityIndex* visibilityIndex{};
   // Per-type, per-variant width correction. A highlight texture is a different canvas
   // size, so the drawn width is scaled by its width ratio to keep the note the same size.
   // [type][0] is the normal variant, [type][1] the highlight one.
@@ -61,6 +65,38 @@ struct NotePassParams {
         [highlight ? 1U : 0U];
     return (std::isfinite(value) && value > 0.0F) ? value : 1.0F;
   }
+};
+
+// A conservative floor-space bound for consecutive notes in their original typed-list
+// order. It skips only blocks rejected by the existing cheap distance test, so unusual
+// speeds, offsets, controls and active holds retain their ordinary per-note evaluation.
+class NoteVisibilityIndex final {
+public:
+  struct Block {
+    std::size_t end{};
+    double minimumFloor{};
+    double maximumFloor{};
+    double speed{};
+    double firstTime{};
+    bool bounded{};
+  };
+  static constexpr std::size_t kBlockNotes = 128;
+
+  void prepare(const game::Chart& chart);
+  void clear() noexcept;
+  [[nodiscard]] const std::vector<Block>* blocks(const game::Chart& chart,
+      std::size_t lineIndex, int noteType, const void* data, std::size_t count) const noexcept;
+  [[nodiscard]] static bool outside(const Block& block, double lineFloor, double beatScale,
+      float scrollSpeed, float minimum, float maximum) noexcept;
+
+private:
+  struct TypedBlocks {
+    const void* data{};
+    std::size_t count{};
+    std::vector<Block> blocks;
+  };
+  const game::Chart* chart_{};
+  std::vector<std::array<TypedBlocks, 5>> lines_;
 };
 
 // World-space pose of one note head at the frame's chart time, using the same control-

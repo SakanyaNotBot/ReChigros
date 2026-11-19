@@ -19,7 +19,9 @@
 #include "rechigros/render/scene/Transition.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
@@ -963,6 +965,126 @@ int main() {
     require(close(skin.perfectGreen, 0.92704993F) && close(skin.perfectAlpha, 0.88235295F),
         "perfect sprite tint and alpha match the prefab");
     require(close(skin.goodAlpha, 235.0F / 255.0F), "good sprite alpha matches the prefab");
+  }
+
+  {
+    // Compare the shared curve samples against the original Simpson expression bit for
+    // bit, including signed zero and progress values outside the animation lifetime.
+    using namespace rechigros::render::fx;
+    const auto referenceTravel = [](float speed, float progress) {
+      constexpr int steps = 24;
+      const float step = hitEffectProgress(progress) / static_cast<float>(steps);
+      float sum = 0.0F;
+      for (int index = 0; index <= steps; ++index) {
+        const float u = static_cast<float>(index) * step;
+        const float weight = (index == 0 || index == steps)
+            ? 1.0F : ((index & 1) == 1 ? 4.0F : 2.0F);
+        sum += weight / (1.0F / speed + particleDragIntegral(u));
+      }
+      return sum * step / 3.0F * 0.5F;
+    };
+    bool identical = true;
+    for (int frame = -2; frame <= 1002; ++frame) {
+      const float progress = frame == 0 ? -0.0F : static_cast<float>(frame) / 1000.0F;
+      const ParticleTravelFrame shared(progress);
+      for (int particle = 0; particle < 81; ++particle) {
+        const float speed = 15.0F + static_cast<float>(particle) * 0.25F;
+        identical = identical && std::bit_cast<std::uint32_t>(shared.travel(speed)) ==
+            std::bit_cast<std::uint32_t>(referenceTravel(speed, progress));
+        const std::array<float, 4> speeds{{speed, speed + 0.00137F, speed - 0.04721F,
+            speed + 0.29163F}};
+        const auto four = shared.travelFour(speeds);
+        for (std::size_t lane = 0; lane < speeds.size(); ++lane) {
+          identical = identical && std::bit_cast<std::uint32_t>(four[lane]) ==
+              std::bit_cast<std::uint32_t>(referenceTravel(speeds[lane], progress));
+        }
+      }
+    }
+    require(identical, "shared burst integration preserves every original float bit");
+  }
+
+  {
+    using rechigros::game::NOTE_HOLD;
+    using rechigros::game::NOTE_TAP;
+    rechigros::game::Chart chart;
+    auto line = std::make_unique<rechigros::game::JudgeLine>();
+    const auto blockSize = NoteVisibilityIndex::kBlockNotes;
+    line->notes.resize(blockSize * 5);
+    line->notesByType.resize(5);
+    for (std::size_t index = 0; index < line->notes.size(); ++index) {
+      auto& note = line->notes[index];
+      const auto block = index / blockSize;
+      note.type = block == 3 || block == 4 ? NOTE_HOLD : NOTE_TAP;
+      note.isHold = note.type == NOTE_HOLD;
+      note.sect = static_cast<double>(index);
+      // Floor order deliberately disagrees with note time.
+      note.floorPosition = static_cast<double>((index * 37) % blockSize) - 64.0;
+      note.holdEndFloorPosition = -note.floorPosition * 2.0;
+      note.speed = block == 1 ? -2.0 : 1.0;
+      line->notesByType[static_cast<std::size_t>(note.type)].push_back(&note);
+    }
+    line->notes[blockSize * 2 + 5].yOffset = 0.5F;
+    line->notes[blockSize * 4 + 5].useOfficialSpeed = true;
+    chart.judgeLineList.push_back(std::move(line));
+    auto& typedLine = *chart.judgeLineList.front();
+    NoteVisibilityIndex visibility;
+    visibility.prepare(chart);
+    const auto& taps = typedLine.notesByType[NOTE_TAP];
+    const auto& holds = typedLine.notesByType[NOTE_HOLD];
+    const auto* tapBlocks = visibility.blocks(chart, 0, NOTE_TAP, taps.data(), taps.size());
+    const auto* holdBlocks = visibility.blocks(chart, 0, NOTE_HOLD, holds.data(), holds.size());
+    require(tapBlocks != nullptr && tapBlocks->size() == 3,
+        "the visibility index keeps consecutive original-order head blocks");
+    require(holdBlocks != nullptr && holdBlocks->size() == 2,
+        "the visibility index keeps consecutive original-order hold blocks");
+    if (tapBlocks != nullptr && tapBlocks->size() == 3 &&
+        holdBlocks != nullptr && holdBlocks->size() == 2) {
+      require((*tapBlocks)[0].bounded && (*tapBlocks)[1].bounded && !(*tapBlocks)[2].bounded,
+          "offset notes fall back while positive and negative speed blocks retain bounds");
+      require((*holdBlocks)[0].bounded && !(*holdBlocks)[1].bounded,
+          "official-speed holds retain the original per-note tail calculation");
+      bool conservative = true;
+      for (int type : {NOTE_TAP, NOTE_HOLD}) {
+        const auto& notes = typedLine.notesByType[static_cast<std::size_t>(type)];
+        const auto& blocks = type == NOTE_TAP ? *tapBlocks : *holdBlocks;
+        for (int clock = -20; clock <= 20; ++clock) {
+          const double floor = static_cast<double>(clock) * 17.125;
+          for (float scroll : {-2.0F, -0.0F, 0.125F, 1.0F, 3.0F}) {
+            for (double scale : {-19.25, 0.0, 13.5}) {
+              for (std::size_t blockIndex = 0; blockIndex < blocks.size(); ++blockIndex) {
+                const auto& block = blocks[blockIndex];
+                if (!NoteVisibilityIndex::outside(block, floor, scale, scroll, -30.0F, 40.0F)) continue;
+                for (std::size_t index = blockIndex * blockSize; index < block.end; ++index) {
+                  const auto& note = *notes[index];
+                  const double speed = note.speed * static_cast<double>(scroll);
+                  const float head = static_cast<float>((note.floorPosition - floor) * scale * speed);
+                  const float tail = type == NOTE_HOLD
+                      ? static_cast<float>((note.holdEndFloorPosition - floor) * scale * speed) : head;
+                  conservative = conservative && (std::max(head, tail) < -30.0F ||
+                      std::min(head, tail) > 40.0F);
+                }
+              }
+            }
+          }
+        }
+      }
+      require(conservative, "block rejection never drops a head or tail inside the original range");
+      const auto& block = (*tapBlocks)[0];
+      const float edge = static_cast<float>(block.maximumFloor);
+      require(!NoteVisibilityIndex::outside(block, 0.0, 1.0, 1.0F, edge, edge),
+          "a note exactly on the cull boundary survives");
+      require(!NoteVisibilityIndex::outside(block, 0.0, std::numeric_limits<double>::max(),
+                  1.0F, -1.0F, 1.0F),
+          "overflowing bounds fall back to the original per-note test");
+      require(!NoteVisibilityIndex::outside(block, std::numeric_limits<double>::quiet_NaN(),
+                  1.0, 1.0F, -1.0F, 1.0F),
+          "non-finite line states fall back to the original pass");
+    }
+    require(visibility.blocks(chart, 0, NOTE_TAP, taps.data(), taps.size() - 1) == nullptr,
+        "a changed typed list cannot use stale bounds");
+    visibility.clear();
+    require(visibility.blocks(chart, 0, NOTE_TAP, taps.data(), taps.size()) == nullptr,
+        "clearing a renderer discards chart geometry bounds");
   }
 
   if (g_failures != 0) {

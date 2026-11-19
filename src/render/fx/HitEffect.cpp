@@ -9,7 +9,9 @@
 #include "rechigros/render/gl/Texture.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <optional>
 
 namespace rechigros::render::fx {
 namespace {
@@ -279,30 +281,42 @@ void HitEffectField::draw(batch::SpriteBatch& out, const math::Mat4& projection,
         applyTint ? effect.red : 1.0F, applyTint ? effect.green : 1.0F,
         applyTint ? effect.blue : 1.0F, effect.alpha, drawU0, v0, drawU1, v1);
   }
-  if (!out.empty()) out.flush(projection, sheet, nullptr);
+  if (!out.empty()) out.flushSheet(projection, sheet);
 
   // Debris quads, drawn with the shared white texture.
   if (!style_.showParticles) return;
   const float worldPx = noteWidth_ * kHitEffectPrefabToNoteWidth;
   const float baseSize = noteWidth_ * kHitEffectParticleSize * style_.sizeScale;
   out.begin();
+  std::optional<ParticleTravelFrame> travelFrame;
+  std::uint32_t travelProgressBits{};
+  float cachedParticleAlpha{};
+  float cachedParticleSize{};
   for (const auto& effect : effects_) {
     const float age = static_cast<float>(visualTimeSec - effect.startSec);
     if (age < 0.0F || age > duration) continue;
     const float progress = hitEffectProgress(age / duration);
-    const float alpha = 1.0F - progress;
-    const float size = baseSize * particleSize(progress);
+    const auto progressBits = std::bit_cast<std::uint32_t>(progress);
+    if (!travelFrame || travelProgressBits != progressBits) {
+      travelFrame.emplace(progress);
+      travelProgressBits = progressBits;
+      cachedParticleAlpha = 1.0F - progress;
+      cachedParticleSize = baseSize * particleSize(progress);
+    }
+    const float alpha = cachedParticleAlpha;
+    const float size = cachedParticleSize;
     const float* colour = effect.customTint
         ? &effect.red : (effect.parts == 4 ? game::PERFECT_COLOR : game::GOOD_COLOR);
+    const auto travelDistances = travelFrame->travelFour(effect.speed);
     for (int part = 0; part < effect.parts; ++part) {
       const auto slot = static_cast<std::size_t>(part);
-      const float travel = particleTravel(effect.speed[slot], progress);
+      const float travel = travelDistances[slot];
       const float radius = (effect.radius0[slot] + travel) * worldPx * style_.sizeScale;
       out.addQuad(effect.x + radius * effect.dirX[slot], effect.y + radius * effect.dirY[slot],
           size, size, 0.0F, colour[0], colour[1], colour[2], alpha, 0.0F, 0.0F, 1.0F, 1.0F);
     }
   }
-  if (!out.empty()) out.flush(projection, whiteTexture, nullptr);
+  if (!out.empty()) out.flushWhite(projection, whiteTexture);
 }
 
 } // namespace rechigros::render::fx

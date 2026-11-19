@@ -47,6 +47,10 @@ void drawRenderScreen(AppContext& context);
 bool updateRecording(AppContext& context);
 // Draws the modal progress plate with its cancel action.
 void drawRecordingProgress(AppContext& context);
+// Starts a CPU-only decode when the audio device has published its sample rate.
+void prefetchCalibrationAudio(AppContext& context);
+// Prepares the page's fixed artwork and glyphs while its caller is visible.
+void prepareCalibrationScreen(AppContext& context);
 void drawCalibrationScreen(AppContext& context);
 
 // Leaves the calibration page, optionally keeping the adjusted offset, and returns to the page it

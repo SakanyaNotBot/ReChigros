@@ -281,7 +281,8 @@ double getEventVal(double time, const std::vector<LineEvent>& events) noexcept {
 double getEventVal(double time, const std::vector<LineEvent>& events, EventCursor& cursor) noexcept {
   if (events.empty()) return 0.0;
   const auto size = static_cast<int>(events.size());
-  int index = cursor.index;
+  int index = std::isfinite(time) && std::isfinite(cursor.lastTime) && time >= cursor.lastTime
+      ? cursor.index : 0;
   if (index < 0 || index >= size) index = 0;
 
   while (index < size - 1) {
@@ -293,6 +294,8 @@ double getEventVal(double time, const std::vector<LineEvent>& events, EventCurso
     if (std::isfinite(start) && time < start) --index;
     else break;
   }
+  cursor.index = index;
+  cursor.lastTime = time;
 
   double last = 0.0;
   bool hasLast = false;
@@ -351,7 +354,8 @@ double getMoveEventVal1(double time, const std::vector<MoveEvent>& events) noexc
 double getMoveEventVal1(double time, const std::vector<MoveEvent>& events, EventCursor& cursor) noexcept {
   if (events.empty()) return NAN_VALUE;
   const auto size = static_cast<int>(events.size());
-  int index = cursor.index;
+  int index = std::isfinite(time) && std::isfinite(cursor.lastTime) && time >= cursor.lastTime
+      ? cursor.index : 0;
   if (index < 0 || index >= size) index = 0;
   while (index < size - 1) {
     if (eventStarted(time, events[static_cast<std::size_t>(index) + 1].startTime)) ++index;
@@ -362,6 +366,8 @@ double getMoveEventVal1(double time, const std::vector<MoveEvent>& events, Event
     if (std::isfinite(start) && time < start) --index;
     else break;
   }
+  cursor.index = index;
+  cursor.lastTime = time;
   double last = NAN_VALUE;
   if (index > 0) {
     const auto& previous = events[static_cast<std::size_t>(index) - 1];
@@ -422,7 +428,8 @@ double getMoveEventVal2(double time, const std::vector<MoveEvent>& events) noexc
 double getMoveEventVal2(double time, const std::vector<MoveEvent>& events, EventCursor& cursor) noexcept {
   if (events.empty()) return NAN_VALUE;
   const auto size = static_cast<int>(events.size());
-  int index = cursor.index;
+  int index = std::isfinite(time) && std::isfinite(cursor.lastTime) && time >= cursor.lastTime
+      ? cursor.index : 0;
   if (index < 0 || index >= size) index = 0;
   while (index < size - 1) {
     if (eventStarted(time, events[static_cast<std::size_t>(index) + 1].startTime)) ++index;
@@ -433,6 +440,8 @@ double getMoveEventVal2(double time, const std::vector<MoveEvent>& events, Event
     if (std::isfinite(start) && time < start) --index;
     else break;
   }
+  cursor.index = index;
+  cursor.lastTime = time;
   double last = NAN_VALUE;
   if (index > 0) {
     const auto& previous = events[static_cast<std::size_t>(index) - 1];
@@ -471,7 +480,8 @@ bool getColorVal(double time, const std::vector<ColorEvent>& events, EventCursor
     return true;
   }
   const auto size = static_cast<int>(events.size());
-  int index = cursor.index;
+  int index = std::isfinite(time) && std::isfinite(cursor.lastTime) && time >= cursor.lastTime
+      ? cursor.index : 0;
   if (index < 0 || index >= size) index = 0;
   while (index < size - 1) {
     if (eventStarted(time, events[static_cast<std::size_t>(index) + 1].startTime)) ++index;
@@ -482,6 +492,8 @@ bool getColorVal(double time, const std::vector<ColorEvent>& events, EventCursor
     if (std::isfinite(start) && time < start) --index;
     else break;
   }
+  cursor.index = index;
+  cursor.lastTime = time;
 
   bool hasLast = false;
   float lastR = 0.0F;
@@ -565,7 +577,8 @@ bool getTextVal(double time, const std::vector<TextEvent>& events, EventCursor& 
     std::string& out) {
   if (events.empty()) return false;
   const auto size = static_cast<int>(events.size());
-  int index = cursor.index;
+  int index = std::isfinite(time) && std::isfinite(cursor.lastTime) && time >= cursor.lastTime
+      ? cursor.index : 0;
   if (index < 0 || index >= size) index = 0;
   while (index < size - 1) {
     if (eventStarted(time, events[static_cast<std::size_t>(index) + 1].startTime)) ++index;
@@ -576,6 +589,8 @@ bool getTextVal(double time, const std::vector<TextEvent>& events, EventCursor& 
     if (std::isfinite(start) && time < start) --index;
     else break;
   }
+  cursor.index = index;
+  cursor.lastTime = time;
 
   bool hasLast = false;
   std::string last;
@@ -659,7 +674,8 @@ bool getTextVal(double time, const std::vector<TextEvent>& events, std::string& 
 float getGifVal(double time, const std::vector<GifEvent>& events, EventCursor& cursor) noexcept {
   if (events.empty()) return std::numeric_limits<float>::quiet_NaN();
   const auto size = static_cast<int>(events.size());
-  int index = cursor.index;
+  int index = std::isfinite(time) && std::isfinite(cursor.lastTime) && time >= cursor.lastTime
+      ? cursor.index : 0;
   if (index < 0 || index >= size) index = 0;
   while (index < size - 1) {
     if (eventStarted(time, events[static_cast<std::size_t>(index) + 1].startTime)) ++index;
@@ -670,6 +686,8 @@ float getGifVal(double time, const std::vector<GifEvent>& events, EventCursor& c
     if (std::isfinite(start) && time < start) --index;
     else break;
   }
+  cursor.index = index;
+  cursor.lastTime = time;
   for (int i = index; i < size; ++i) {
     const auto& event = events[static_cast<std::size_t>(i)];
     const double start = event.startTime;

@@ -9,6 +9,8 @@
 #include <fstream>
 #include <mutex>
 #include <stdexcept>
+#include <unordered_map>
+#include <utility>
 
 namespace rechigros::platform {
 namespace {
@@ -93,7 +95,8 @@ bool readZip64Extra(const std::vector<std::uint8_t>& extra, bool needsUncompress
 // Locates and parses the central directory. Throws for malformed archives and for a
 // genuinely ZIP64 container, but an individual entry may still carry its 64-bit sizes in
 // the 0x0001 extended field, which is read back before the entry is used.
-std::vector<RawEntry> readCentralDirectory(std::ifstream& stream, std::uint64_t fileLength) {
+std::vector<RawEntry> readCentralDirectory(std::ifstream& stream, std::uint64_t fileLength,
+    const ArchiveLimits& limits, std::uint64_t* directoryEntryCount = nullptr) {
   const std::uint64_t searchLength = std::min<std::uint64_t>(fileLength, 22ULL + 65535ULL);
   std::vector<std::uint8_t> tail(static_cast<std::size_t>(searchLength));
   stream.seekg(static_cast<std::streamoff>(fileLength - searchLength), std::ios::beg);
@@ -115,9 +118,10 @@ std::vector<RawEntry> readCentralDirectory(std::ifstream& stream, std::uint64_t 
   if (centralOffset + centralSize > fileLength) {
     throw std::runtime_error("Invalid ZIP central directory");
   }
-  if (static_cast<std::uint64_t>(entryCount) > limitsSnapshot().maxEntries) {
+  if (static_cast<std::uint64_t>(entryCount) > limits.maxEntries) {
     throw std::runtime_error("Archive has too many entries");
   }
+  if (directoryEntryCount) *directoryEntryCount = static_cast<std::uint64_t>(entryCount);
 
   stream.seekg(static_cast<std::streamoff>(centralOffset), std::ios::beg);
   std::vector<RawEntry> entries;
@@ -259,6 +263,63 @@ void setArchiveLimits(const ArchiveLimits& limits) {
 
 ArchiveLimits archiveLimits() { return limitsSnapshot(); }
 
+struct ArchiveReader::Impl {
+  std::ifstream stream;
+  std::vector<RawEntry> rawEntries;
+  std::vector<ArchiveEntry> entries;
+  std::unordered_map<std::string, std::size_t> firstByName;
+  std::uint64_t entryCount{};
+
+  explicit Impl(const std::filesystem::path& archive) : stream(archive, std::ios::binary) {
+    if (!stream) return;
+    stream.seekg(0, std::ios::end);
+    const auto fileLength = static_cast<std::uint64_t>(stream.tellg());
+    if (fileLength < 22) return;
+    const auto limits = limitsSnapshot();
+    try {
+      rawEntries = readCentralDirectory(stream, fileLength, limits, &entryCount);
+      entries.reserve(rawEntries.size());
+      firstByName.reserve(rawEntries.size());
+      for (std::size_t index = 0; index < rawEntries.size(); ++index) {
+        const auto& entry = rawEntries[index];
+        entries.push_back({entry.name, entry.uncompressedSize});
+        if (stream) firstByName.try_emplace(entry.name, index);
+      }
+    } catch (const std::exception&) {
+      rawEntries.clear();
+      entries.clear();
+      firstByName.clear();
+    }
+  }
+};
+
+ArchiveReader::ArchiveReader(const std::filesystem::path& archive)
+    : impl_(std::make_unique<Impl>(archive)) {}
+ArchiveReader::~ArchiveReader() = default;
+ArchiveReader::ArchiveReader(ArchiveReader&&) noexcept = default;
+ArchiveReader& ArchiveReader::operator=(ArchiveReader&&) noexcept = default;
+
+const std::vector<ArchiveEntry>& ArchiveReader::entries() const noexcept {
+  static const std::vector<ArchiveEntry> empty;
+  return impl_ ? impl_->entries : empty;
+}
+
+std::vector<std::uint8_t> ArchiveReader::readEntry(const std::string& entry) {
+  if (!impl_) return {};
+  std::string wanted;
+  if (!normaliseEntryName(entry, wanted)) return {};
+  const auto limits = limitsSnapshot();
+  if (impl_->entryCount > limits.maxEntries) return {};
+  const auto found = impl_->firstByName.find(wanted);
+  if (found == impl_->firstByName.end()) return {};
+  try {
+    impl_->stream.clear();
+    return inflateEntry(impl_->stream, impl_->rawEntries[found->second], limits);
+  } catch (const std::exception&) {
+    return {};
+  }
+}
+
 std::vector<ArchiveEntry> listArchive(const std::filesystem::path& archive) {
   std::ifstream stream(archive, std::ios::binary);
   if (!stream) return {};
@@ -266,9 +327,10 @@ std::vector<ArchiveEntry> listArchive(const std::filesystem::path& archive) {
   const auto fileLength = static_cast<std::uint64_t>(stream.tellg());
   if (fileLength < 22) return {};
 
+  const auto limits = limitsSnapshot();
   std::vector<ArchiveEntry> result;
   try {
-    for (const auto& entry : readCentralDirectory(stream, fileLength)) {
+    for (const auto& entry : readCentralDirectory(stream, fileLength, limits)) {
       result.push_back({entry.name, entry.uncompressedSize});
     }
   } catch (const std::exception&) {
@@ -286,7 +348,7 @@ std::vector<std::filesystem::path> extractArchive(const std::filesystem::path& a
   if (fileLength < 22) throw std::runtime_error("Archive is truncated");
 
   const auto limits = limitsSnapshot();
-  const auto entries = readCentralDirectory(stream, fileLength);
+  const auto entries = readCentralDirectory(stream, fileLength, limits);
   std::error_code error;
   std::filesystem::create_directories(outputDirectory, error);
   if (error) throw std::runtime_error("Cannot create extraction directory");
@@ -336,25 +398,7 @@ bool extractArchiveEntry(const std::filesystem::path& archive, const std::string
 
 std::vector<std::uint8_t> readArchiveEntry(const std::filesystem::path& archive,
     const std::string& entry) {
-  std::ifstream stream(archive, std::ios::binary);
-  if (!stream) return {};
-  stream.seekg(0, std::ios::end);
-  const auto fileLength = static_cast<std::uint64_t>(stream.tellg());
-  if (fileLength < 22) return {};
-
-  std::string wanted;
-  if (!normaliseEntryName(entry, wanted)) return {};
-
-  const auto limits = limitsSnapshot();
-  try {
-    for (const auto& candidate : readCentralDirectory(stream, fileLength)) {
-      if (candidate.name != wanted) continue;
-      return inflateEntry(stream, candidate, limits);
-    }
-  } catch (const std::exception&) {
-    return {};
-  }
-  return {};
+  return ArchiveReader(archive).readEntry(entry);
 }
 
 } // namespace rechigros::platform

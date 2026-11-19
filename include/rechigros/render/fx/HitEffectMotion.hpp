@@ -37,17 +37,51 @@ inline constexpr std::array<float, 30> kHitEffectFrameWidths{{
   return 2.5F * (u3 - 0.5F * u4 + tangent * (0.25F * u4 - (2.0F / 3.0F) * u3 + 0.5F * u2));
 }
 
-[[nodiscard]] inline float particleTravel(float speed, float progress) noexcept {
-  constexpr int steps = 24;
-  const float step = hitEffectProgress(progress) / static_cast<float>(steps);
-  float sum = 0.0F;
-  for (int index = 0; index <= steps; ++index) {
-    const float u = static_cast<float>(index) * step;
-    const float weight = (index == 0 || index == steps)
-        ? 1.0F : ((index & 1) == 1 ? 4.0F : 2.0F);
-    sum += weight / (1.0F / speed + particleDragIntegral(u));
+// Every particle in one burst shares the same progress. Retain the original sample and
+// accumulation order while evaluating the drag curve only once for that burst.
+class ParticleTravelFrame final {
+public:
+  explicit ParticleTravelFrame(float progress) noexcept
+      : step_(hitEffectProgress(progress) / static_cast<float>(kSteps)) {
+    for (int index = 0; index <= kSteps; ++index) {
+      const float u = static_cast<float>(index) * step_;
+      drag_[static_cast<std::size_t>(index)] = particleDragIntegral(u);
+    }
   }
-  return sum * step / 3.0F * 0.5F;
+
+  [[nodiscard]] float travel(float speed) const noexcept {
+    float sum = 0.0F;
+    for (int index = 0; index <= kSteps; ++index) {
+      const float weight = (index == 0 || index == kSteps)
+          ? 1.0F : ((index & 1) == 1 ? 4.0F : 2.0F);
+      sum += weight / (1.0F / speed + drag_[static_cast<std::size_t>(index)]);
+    }
+    return sum * step_ / 3.0F * 0.5F;
+  }
+
+  // Independent lanes keep their original Simpson sum order while the compiler can
+  // evaluate four particles together. No reciprocal approximation or reassociation is used.
+  [[nodiscard]] std::array<float, 4> travelFour(const std::array<float, 4>& speeds) const noexcept {
+    std::array<float, 4> sums{};
+    for (int index = 0; index <= kSteps; ++index) {
+      const float weight = (index == 0 || index == kSteps)
+          ? 1.0F : ((index & 1) == 1 ? 4.0F : 2.0F);
+      for (std::size_t lane = 0; lane < sums.size(); ++lane) {
+        sums[lane] += weight / (1.0F / speeds[lane] + drag_[static_cast<std::size_t>(index)]);
+      }
+    }
+    for (float& sum : sums) sum = sum * step_ / 3.0F * 0.5F;
+    return sums;
+  }
+
+private:
+  static constexpr int kSteps = 24;
+  float step_{};
+  std::array<float, kSteps + 1> drag_{};
+};
+
+[[nodiscard]] inline float particleTravel(float speed, float progress) noexcept {
+  return ParticleTravelFrame(progress).travel(speed);
 }
 
 [[nodiscard]] inline float particleSize(float progress) noexcept {

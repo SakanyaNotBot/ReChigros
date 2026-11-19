@@ -2,7 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
-#include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -12,6 +12,26 @@ namespace rechigros::platform {
 struct ArchiveEntry {
   std::string name;      // normalised, forward slashes, no leading separator
   std::uint64_t size{};  // uncompressed size
+};
+
+// Reuses one central-directory index and file stream for reads from an unchanged archive.
+// Listings retain archive order and duplicate names; reads select the first normalised name.
+// Missing or invalid archives and failed entry reads produce empty results.
+class ArchiveReader final {
+public:
+  explicit ArchiveReader(const std::filesystem::path& archive);
+  ~ArchiveReader();
+  ArchiveReader(ArchiveReader&&) noexcept;
+  ArchiveReader& operator=(ArchiveReader&&) noexcept;
+  ArchiveReader(const ArchiveReader&) = delete;
+  ArchiveReader& operator=(const ArchiveReader&) = delete;
+
+  [[nodiscard]] const std::vector<ArchiveEntry>& entries() const noexcept;
+  [[nodiscard]] std::vector<std::uint8_t> readEntry(const std::string& entry);
+
+private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
 };
 
 // Directory listing of an archive without extracting anything.

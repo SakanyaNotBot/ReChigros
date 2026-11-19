@@ -1,9 +1,10 @@
 // Headless frame-time profile for the gameplay renderer.
 //
-// Drives a real chart the way the game does — fixed-step session update, then a full frame
-// through GameRenderer — and reports the distribution of update and render times. The point
-// is repeatability: a hidden window with no presentation, a fixed timestep, a warm-up phase
-// and a bounded number of frames, so before/after measurements are comparable.
+// Drives a real chart with fixed-step session updates and a full GameRenderer frame.
+// A hidden window, warm-up phase and bounded frame count make runs comparable when the
+// same chart, settings and machine load are used. Each rendered frame is serialized with
+// glFinish and (on desktop GL) an immediate timer-query read; this is not presentation
+// latency or the throughput of the application's pipelined render loop.
 //
 // Three kinds of measurement are supported:
 //  * steady-state runs over N frames with per-frame CSV and a histogram,
@@ -38,9 +39,12 @@
 #include <functional>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <new>
 #include <numeric>
+#include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -121,8 +125,8 @@ double millisecondsSince(Clock::time_point start) {
   return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
 }
 
-// Process CPU time, so measurements stay comparable while other work is running on the
-// machine. Wall time is still reported separately for the end-to-end frame cost.
+// Process CPU time excludes time spent waiting for the GPU; wall time reports the complete
+// serialized frame cost. Other processes, scheduling and thermal state still affect results.
 double processCpuMilliseconds() {
 #ifdef _WIN32
   FILETIME creation{}, exit{}, kernel{}, user{};
@@ -145,7 +149,13 @@ double processCpuMilliseconds() {
 struct Options {
   std::filesystem::path chartPath;
   std::filesystem::path assetRoot{"assets"};
+  std::filesystem::path skinDirectory;
+  std::filesystem::path backgroundImage;
   std::filesystem::path csvPath;
+  bool antialias{false};
+  float backgroundDim{0.0F};
+  float keyScale{1.0F};
+  double fpsBudget{60.0};
   int frames{3000};
   int warmupFrames{180};
   int width{1920};
@@ -180,27 +190,69 @@ Options parseOptions(int argc, char** argv) {
   for (int index = 1; index < argc; ++index) {
     const std::string flag = argv[index] != nullptr ? argv[index] : "";
     const auto next = [&]() -> std::string {
-      if (index + 1 >= argc || argv[index + 1] == nullptr) return {};
-      return argv[++index];
+      if (index + 1 >= argc || argv[index + 1] == nullptr
+          || std::string(argv[index + 1]).starts_with("--")) {
+        throw std::invalid_argument("Missing value for " + flag);
+      }
+      const std::string value = argv[++index];
+      if (value.empty()) throw std::invalid_argument("Empty value for " + flag);
+      return value;
+    };
+    const auto number = [&](double minimum, double maximum) {
+      const std::string value = next();
+      std::size_t consumed = 0;
+      double result = 0.0;
+      try {
+        result = std::stod(value, &consumed);
+      } catch (const std::exception&) {
+        throw std::invalid_argument("Invalid number for " + flag + ": " + value);
+      }
+      if (consumed != value.size() || !std::isfinite(result)
+          || result < minimum || result > maximum) {
+        throw std::invalid_argument("Out-of-range value for " + flag + ": " + value);
+      }
+      return result;
+    };
+    const auto integer = [&](int minimum) {
+      const double value = number(minimum, std::numeric_limits<int>::max());
+      if (std::floor(value) != value) {
+        throw std::invalid_argument("Expected an integer for " + flag);
+      }
+      return static_cast<int>(value);
     };
     if (flag == "--chart") {
       options.chartPath = next();
     } else if (flag == "--assets") {
       options.assetRoot = next();
+    } else if (flag == "--skin") {
+      options.skinDirectory = next();
+    } else if (flag == "--background") {
+      options.backgroundImage = next();
+    } else if (flag == "--antialias") {
+      options.antialias = true;
+    } else if (flag == "--no-antialias") {
+      options.antialias = false;
+    } else if (flag == "--dim") {
+      options.backgroundDim = static_cast<float>(number(0.0, 1.0));
+    } else if (flag == "--key-scale") {
+      options.keyScale = static_cast<float>(number(0.7, 1.5));
+    } else if (flag == "--fps-budget") {
+      options.fpsBudget = number(1.0, 1000.0);
     } else if (flag == "--csv") {
       options.csvPath = next();
     } else if (flag == "--frames") {
-      options.frames = std::max(1, std::atoi(next().c_str()));
+      options.frames = integer(1);
     } else if (flag == "--warmup") {
-      options.warmupFrames = std::max(0, std::atoi(next().c_str()));
+      options.warmupFrames = integer(0);
     } else if (flag == "--width") {
-      options.width = std::max(64, std::atoi(next().c_str()));
+      options.width = integer(64);
     } else if (flag == "--height") {
-      options.height = std::max(64, std::atoi(next().c_str()));
+      options.height = integer(64);
     } else if (flag == "--start") {
-      options.startTimeSec = std::atof(next().c_str());
+      options.startTimeSec = number(-std::numeric_limits<double>::max(),
+          std::numeric_limits<double>::max());
     } else if (flag == "--frame-delta") {
-      options.frameDeltaSec = std::max(0.001, std::atof(next().c_str()));
+      options.frameDeltaSec = number(0.001, std::numeric_limits<float>::max());
     } else if (flag == "--ablations") {
       options.runAblations = true;
     } else if (flag == "--micro") {
@@ -208,30 +260,81 @@ Options parseOptions(int argc, char** argv) {
     } else if (flag == "--no-load-profile") {
       options.profileLoad = false;
     } else if (flag == "--scan-bins") {
-      options.scanBinSec = std::max(0.1, std::atof(next().c_str()));
+      options.scanBinSec = number(0.1, std::numeric_limits<double>::max());
     } else if (flag == "--tap-profile") {
       options.tapProfile = true;
     } else if (flag == "--tap-duration") {
-      options.tapDurationSec = std::max(1.0, std::atof(next().c_str()));
+      options.tapDurationSec = number(1.0, std::numeric_limits<double>::max());
     } else if (flag == "--no-render") {
       options.tapRender = false;
     } else if (flag == "--no-hud") {
       options.tapHud = false;
     } else if (flag == "--tap-csv") {
       options.tapCsvPath = next();
+    } else if (flag != "--frame-profile") {
+      throw std::invalid_argument("Unknown option: " + flag);
     }
   }
+  if (options.frames > std::numeric_limits<int>::max() - options.warmupFrames
+      || options.tapDurationSec / options.frameDeltaSec + 0.5
+          >= static_cast<double>(std::numeric_limits<int>::max())) {
+    throw std::invalid_argument("Requested frame count exceeds the supported range");
+  }
   return options;
+}
+
+std::ofstream openCsv(const std::filesystem::path& path) {
+  std::ofstream csv;
+  if (!path.empty()) {
+    csv.open(path, std::ios::binary);
+    if (!csv) throw std::runtime_error("Could not open CSV: " + path.string());
+    csv.exceptions(std::ios::failbit | std::ios::badbit);
+    csv << std::fixed << std::setprecision(9);
+  }
+  return csv;
+}
+
+rechigros::game::GameplaySession::Viewport viewportFor(const Options& options) {
+  return {static_cast<float>(options.width), static_cast<float>(options.height),
+      16.0F / 9.0F, 1.0F, 380.0F, options.keyScale};
+}
+
+void initializeRenderer(rechigros::render::GameRenderer& renderer, const Options& options,
+    rechigros::game::Chart& chart) {
+  const auto start = Clock::now();
+  if (!renderer.initialize(options.assetRoot)) {
+    throw std::runtime_error("GameRenderer initialization failed");
+  }
+  renderer.resize(options.width, options.height);
+  renderer.prepareAntialias(options.antialias);
+  renderer.setSkinDirectory(options.skinDirectory);
+  renderer.setBackgroundImage(options.backgroundImage);
+  renderer.resetJudgementEffects(&chart);
+  if (options.profileLoad) {
+    std::cout << "load: rendererInitializeAndConfigure=" << millisecondsSince(start) << "ms\n";
+  }
+}
+
+void configureInput(rechigros::render::RenderFrameInput& input, const Options& options,
+    bool autoplay) {
+  input.antialias = options.antialias;
+  input.backgroundDim = options.backgroundDim;
+  input.keyScale = options.keyScale;
+  input.scrollSpeed = 1.0F;
+  input.dpi = 380.0F;
+  input.practice.autoPlay = autoplay;
 }
 
 struct FrameSample {
   double updateMs{};
   double renderMs{};
   double totalMs{};
-  // Process CPU and GPU time for the whole frame, which stay comparable while the machine
-  // is busy with other work.
+  // Process CPU and GPU time for the serialized frame; neither includes presentation.
   double cpuMs{};
   double gpuMs{};
+  std::size_t judgementEvents{};
+  std::size_t holdHeadBursts{};
+  std::size_t holdBodyBursts{};
 };
 
 struct Stats {
@@ -240,9 +343,13 @@ struct Stats {
   double p95Ms{};
   double p99Ms{};
   double maxMs{};
-  // Frames above the common frame budgets: 60 fps, 30 fps and the >100 ms hitch class.
+  // Keep the literal legacy thresholds, and report the exact 60/30 fps budgets separately.
   int over16ms{};
   int over33ms{};
+  int over60fps{};
+  int over30fps{};
+  int overBudget{};
+  double budgetMs{};
   int over100ms{};
   double meanUpdateMs{};
   double meanRenderMs{};
@@ -261,8 +368,9 @@ double percentileOf(std::vector<double> values, double fraction) {
   return values[index];
 }
 
-Stats summarize(const std::vector<FrameSample>& samples) {
+Stats summarize(const std::vector<FrameSample>& samples, double budgetMs) {
   Stats stats;
+  stats.budgetMs = budgetMs;
   if (samples.empty()) return stats;
   std::vector<double> totals, cpus, gpus;
   totals.reserve(samples.size());
@@ -282,6 +390,9 @@ Stats summarize(const std::vector<FrameSample>& samples) {
     gpuSum += sample.gpuMs;
     if (sample.totalMs > 16.0) ++stats.over16ms;
     if (sample.totalMs > 33.0) ++stats.over33ms;
+    if (sample.totalMs > 1000.0 / 60.0) ++stats.over60fps;
+    if (sample.totalMs > 1000.0 / 30.0) ++stats.over30fps;
+    if (sample.totalMs > budgetMs) ++stats.overBudget;
     if (sample.totalMs > 100.0) ++stats.over100ms;
     if (sample.totalMs > stats.maxMs) stats.maxMs = sample.totalMs;
   }
@@ -322,6 +433,10 @@ void printStats(const std::string& label, const Stats& stats, int frames) {
             << " gpu=" << stats.meanGpuMs << "ms"
             << " over16=" << stats.over16ms
             << " over33=" << stats.over33ms
+            << " over60fps=" << stats.over60fps
+            << " over30fps=" << stats.over30fps
+            << " budgetMs=" << stats.budgetMs
+            << " overBudget=" << stats.overBudget
             << " over100=" << stats.over100ms << '\n';
 }
 
@@ -331,7 +446,8 @@ std::unique_ptr<rechigros::game::Chart> loadChart(const Options& options) {
   const double loadMs = millisecondsSince(loadStart);
   if (chart == nullptr) return nullptr;
   std::cout << std::fixed << std::setprecision(3)
-            << "load: parse=" << loadMs << "ms (includes digest and level-effect match)\n";
+            << "load: chartLoad=" << loadMs
+            << "ms (includes parse, initial runtime preparation, digest and level-effect match)\n";
   std::size_t liveZones = 0;
   for (const auto& zone : chart->blockAreaList) {
     if (options.startTimeSec >= zone.appearTime && options.startTimeSec < zone.disappearTime) {
@@ -345,14 +461,19 @@ std::unique_ptr<rechigros::game::Chart> loadChart(const Options& options) {
             << " effects=" << chart->prprEffects.size()
             << " duration=" << chart->chartEndTimeSec << "s\n";
   if (options.profileLoad) {
+    // prepareRuntime re-rolls random click particles. Probe a separately loaded chart so the
+    // measured scene retains the first load's runtime data, just like the application.
+    auto prepChart = rechigros::chart::ChartLoader::loadFromFile(
+        options.chartPath, options.assetRoot);
+    if (!prepChart) throw std::runtime_error("Could not load the preparation probe chart");
     const auto prepStart = Clock::now();
-    chart->prepareRuntime();
-    std::cout << "load: prepareRuntime=" << millisecondsSince(prepStart) << "ms\n";
+    prepChart->prepareRuntime();
+    std::cout << "load: prepareRuntime=" << millisecondsSince(prepStart)
+              << "ms (separate chart, main chart keeps first-load particles)\n";
     rechigros::game::GameplaySession probe;
-    probe.setViewport({static_cast<float>(options.width), static_cast<float>(options.height),
-        16.0F / 9.0F, 1.0F, 380.0F});
+    probe.setViewport(viewportFor(options));
     const auto sessionStart = Clock::now();
-    probe.setChart(chart.get());
+    probe.setChart(prepChart.get());
     std::cout << "load: sessionSetChart=" << millisecondsSince(sessionStart) << "ms\n";
   }
   return chart;
@@ -361,12 +482,15 @@ std::unique_ptr<rechigros::game::Chart> loadChart(const Options& options) {
 // One measured run: fresh renderer on a shared chart, fixed-step session updates.
 std::vector<FrameSample> measure(const Options& options, rechigros::game::Chart& chart,
     int frames, int warmupFrames, bool hudVisible, const std::filesystem::path& csvPath) {
+  auto csv = openCsv(csvPath);
+  if (csv.is_open()) {
+    csv << "frame,chartTime,updateMs,renderMs,totalMs,cpuMs,gpuMs,judgementEvents,"
+           "holdHeadBursts,holdBodyBursts\n";
+  }
   rechigros::render::GameRenderer renderer;
-  if (!renderer.initialize(options.assetRoot)) return {};
-  renderer.resize(options.width, options.height);
+  initializeRenderer(renderer, options, chart);
   rechigros::game::GameplaySession gameplay;
-  gameplay.setViewport({static_cast<float>(options.width), static_cast<float>(options.height),
-      16.0F / 9.0F, 1.0F, 380.0F});
+  gameplay.setViewport(viewportFor(options));
   gameplay.setChart(&chart);
   gameplay.setAutoplay(true);
   // Drive the session to the requested start time before measuring so the first measured
@@ -374,35 +498,39 @@ std::vector<FrameSample> measure(const Options& options, rechigros::game::Chart&
   // profile, so the note state before the start time is not interesting.
   gameplay.update(options.startTimeSec, static_cast<float>(options.frameDeltaSec));
 
+  // Discard the seek's catch-up events; the first profiled update starts a new frame.
+  gameplay.takeSoundEvents();
+  gameplay.takeJudgementEvents();
+  gameplay.takeHoldHeadBursts();
+  gameplay.takeHoldBodyBursts();
+
   rechigros::render::RenderFrameInput input;
+  configureInput(input, options, gameplay.autoplay());
   input.hud.visible = hudVisible;
   input.hud.comboLabel = "AUTOPLAY";
-  input.backgroundDim = 0.0F;
-  input.scrollSpeed = 1.0F;
-  input.dpi = 380.0F;
   input.songName = "profile";
   input.levelName = "profile";
 
   std::vector<FrameSample> samples;
   samples.reserve(static_cast<std::size_t>(frames));
-  std::ofstream csv;
-  if (!csvPath.empty()) {
-    csv.open(csvPath, std::ios::binary);
-    csv << "frame,chartTime,updateMs,renderMs,totalMs,cpuMs,gpuMs\n";
-  }
   double chartTime = options.startTimeSec;
   const int totalFrames = warmupFrames + frames;
 #ifndef RECHIGROS_GLES
   GLuint gpuQuery = 0;
   glGenQueries(1, &gpuQuery);
 #endif
+  // Exclude queued setup work from the first frame's GPU wait.
+  glFinish();
   for (int frame = 0; frame < totalFrames; ++frame) {
+    const auto frameStart = Clock::now();
     const double frameStartCpu = processCpuMilliseconds();
     const auto updateStart = Clock::now();
     gameplay.update(chartTime, static_cast<float>(options.frameDeltaSec));
     gameplay.takeSoundEvents();
     input.judgementEvents = gameplay.takeJudgementEvents();
     input.judgementEventsAuthoritative = true;
+    input.holdHeadBursts = gameplay.takeHoldHeadBursts();
+    input.holdBodyBursts = gameplay.takeHoldBodyBursts();
     const double updateMs = millisecondsSince(updateStart);
 
     const auto& judgement = gameplay.judgement();
@@ -418,6 +546,7 @@ std::vector<FrameSample> measure(const Options& options, rechigros::game::Chart&
     input.hud.bad = judgement.counts()[2];
     input.hud.miss = judgement.counts()[3];
     input.hud.playheadSec = chartTime;
+    input.hud.visualTimeSec = input.visualTimeSec;
     input.hud.totalDurationSec = std::max(1.0, chart.chartEndTimeSec);
 
     const auto renderStart = Clock::now();
@@ -430,7 +559,6 @@ std::vector<FrameSample> measure(const Options& options, rechigros::game::Chart&
 #endif
     glFinish();
     const double renderMs = millisecondsSince(renderStart);
-    const double cpuMs = processCpuMilliseconds() - frameStartCpu;
     double gpuMs = 0.0;
 #ifndef RECHIGROS_GLES
     if (gpuQuery != 0) {
@@ -440,25 +568,35 @@ std::vector<FrameSample> measure(const Options& options, rechigros::game::Chart&
     }
 #endif
 
-    chartTime += options.frameDeltaSec;
-    if (frame < warmupFrames) continue;
-    FrameSample sample;
-    sample.updateMs = updateMs;
-    sample.renderMs = renderMs;
-    sample.totalMs = updateMs + renderMs;
-    sample.cpuMs = cpuMs;
-    sample.gpuMs = gpuMs;
-    samples.push_back(sample);
-    if (csv.is_open()) {
-      csv << (frame - warmupFrames) << ',' << std::setprecision(6) << chartTime << ','
-          << sample.updateMs << ',' << sample.renderMs << ',' << sample.totalMs << ','
-          << sample.cpuMs << ',' << sample.gpuMs << '\n';
+    // End after the synchronous query read: total includes HUD/input assembly and all GPU
+    // waits, but excludes sample storage and CSV output.
+    const double cpuMs = processCpuMilliseconds() - frameStartCpu;
+    const double totalMs = millisecondsSince(frameStart);
+    if (frame >= warmupFrames) {
+      FrameSample sample;
+      sample.updateMs = updateMs;
+      sample.renderMs = renderMs;
+      sample.totalMs = totalMs;
+      sample.cpuMs = cpuMs;
+      sample.gpuMs = gpuMs;
+      sample.judgementEvents = input.judgementEvents.size();
+      sample.holdHeadBursts = input.holdHeadBursts.size();
+      sample.holdBodyBursts = input.holdBodyBursts.size();
+      samples.push_back(sample);
+      if (csv.is_open()) {
+        csv << (frame - warmupFrames) << ',' << chartTime << ','
+            << sample.updateMs << ',' << sample.renderMs << ',' << sample.totalMs << ','
+            << sample.cpuMs << ',' << sample.gpuMs << ',' << sample.judgementEvents << ','
+            << sample.holdHeadBursts << ',' << sample.holdBodyBursts << '\n';
+      }
     }
+    chartTime += options.frameDeltaSec;
   }
 #ifndef RECHIGROS_GLES
   if (gpuQuery != 0) glDeleteQueries(1, &gpuQuery);
 #endif
   renderer.shutdown();
+  if (csv.is_open()) csv.close();
   return samples;
 }
 
@@ -466,6 +604,7 @@ std::vector<FrameSample> measure(const Options& options, rechigros::game::Chart&
 // contain a tap against a no-tap control run over the same chart range. Also accounts heap
 // traffic per frame and per tap, which is where input stutter usually comes from.
 void runTapProfile(const Options& options, rechigros::game::Chart& chart) {
+  auto csv = openCsv(options.tapCsvPath);
   using rechigros::game::GameplaySession;
   struct StageGeometry {
     float left{};
@@ -487,15 +626,7 @@ void runTapProfile(const Options& options, rechigros::game::Chart& chart) {
     stage.top = (static_cast<float>(options.height) - stage.height) * 0.5F;
     return stage;
   };
-  const auto viewport = [&options]() {
-    GameplaySession::Viewport value;
-    value.width = static_cast<float>(options.width);
-    value.height = static_cast<float>(options.height);
-    value.targetAspect = 16.0F / 9.0F;
-    value.scrollSpeed = 1.0F;
-    value.dpi = 380.0F;
-    return value;
-  };
+  const auto viewport = [&options]() { return viewportFor(options); };
   const auto stage = stageOf();
   struct ScheduledTap {
     double timeSec{};
@@ -534,14 +665,6 @@ void runTapProfile(const Options& options, rechigros::game::Chart& chart) {
     taps.push_back(tap);
   }
 
-  rechigros::render::GameRenderer renderer;
-  bool withRender = options.tapRender;
-  if (withRender && !renderer.initialize(options.assetRoot)) {
-    std::cout << "tap-profile: renderer unavailable, measuring update only\n";
-    withRender = false;
-  }
-  if (withRender) renderer.resize(options.width, options.height);
-
   struct FrameRow {
     double chartTimeSec{};
     int taps{};
@@ -558,17 +681,22 @@ void runTapProfile(const Options& options, rechigros::game::Chart& chart) {
     int judgedGood{};
     int judgedBad{};
     int judgedMiss{};
+    std::size_t judgementEvents{};
+    std::size_t holdHeadBursts{};
+    std::size_t holdBodyBursts{};
     bool control{};
   };
   const auto runSegment = [&](bool control) {
+    // Give each segment its own renderer so the control cannot inherit hit/HUD/blur state.
+    rechigros::render::GameRenderer renderer;
+    if (options.tapRender) initializeRenderer(renderer, options, chart);
     GameplaySession session;
     session.setViewport(viewport());
     session.setChart(&chart);
     session.setAutoplay(false);
-    chart.resetRuntime();
     rechigros::render::RenderFrameInput input;
+    configureInput(input, options, session.autoplay());
     input.hud.visible = options.tapHud;
-    input.dpi = 380.0F;
     input.hud.totalDurationSec = std::max(1.0, chart.chartEndTimeSec);
     std::vector<FrameRow> rows;
     const int frameCount =
@@ -578,10 +706,13 @@ void runTapProfile(const Options& options, rechigros::game::Chart& chart) {
     std::size_t nextTap = 0;
     while (nextTap < taps.size() && taps[nextTap].timeSec < time) ++nextTap;
     std::vector<std::pair<double, std::int64_t>> releases;
+    if (options.tapRender) glFinish();
     for (int frame = 0; frame < frameCount; ++frame) {
       FrameRow row;
       row.control = control;
       row.chartTimeSec = time;
+      const auto frameStart = Clock::now();
+      const auto countsBefore = session.judgement().counts();
       const auto allocBefore = allocationCount();
       const auto bytesBefore = allocationBytes();
       if (!control) {
@@ -606,13 +737,16 @@ void runTapProfile(const Options& options, rechigros::game::Chart& chart) {
         row.tapAllocations = allocationCount() - allocBefore;
       }
       const auto updateStart = Clock::now();
-      const auto countsBefore = session.judgement().counts();
       const auto updateAllocBefore = allocationCount();
       session.update(time, static_cast<float>(options.frameDeltaSec));
       session.takeSoundEvents();
       input.judgementEvents = session.takeJudgementEvents();
       input.judgementEventsAuthoritative = true;
-      session.takeHoldBodyBursts();
+      input.holdHeadBursts = session.takeHoldHeadBursts();
+      input.holdBodyBursts = session.takeHoldBodyBursts();
+      row.judgementEvents = input.judgementEvents.size();
+      row.holdHeadBursts = input.holdHeadBursts.size();
+      row.holdBodyBursts = input.holdBodyBursts.size();
       row.updateMs = millisecondsSince(updateStart);
       row.updateAllocations = allocationCount() - updateAllocBefore;
       const auto countsAfter = session.judgement().counts();
@@ -622,7 +756,7 @@ void runTapProfile(const Options& options, rechigros::game::Chart& chart) {
       row.judgedMiss = countsAfter[3] - countsBefore[3];
 
       double renderMs = 0.0;
-      if (withRender) {
+      if (options.tapRender) {
         const auto& judgement = session.judgement();
         input.chartTimeSec = time;
         input.playheadSec = time;
@@ -636,6 +770,9 @@ void runTapProfile(const Options& options, rechigros::game::Chart& chart) {
         input.hud.bad = judgement.counts()[2];
         input.hud.miss = judgement.counts()[3];
         input.hud.playheadSec = time;
+        input.hud.visualTimeSec = input.visualTimeSec;
+        input.blockedTouchPositions = session.blockedTouchPositions();
+        input.blockedTouchPulseSec = session.blockedTouchPulseSec();
         const auto renderAllocBefore = allocationCount();
         const auto renderStart = Clock::now();
         renderer.render(input, &chart, &judgement);
@@ -644,7 +781,7 @@ void runTapProfile(const Options& options, rechigros::game::Chart& chart) {
         row.renderAllocations = allocationCount() - renderAllocBefore;
       }
       row.renderMs = renderMs;
-      row.totalMs = row.tapMs + row.updateMs + row.renderMs;
+      row.totalMs = millisecondsSince(frameStart);
       row.allocations = allocationCount() - allocBefore;
       row.allocationBytes = allocationBytes() - bytesBefore;
       rows.push_back(row);
@@ -655,8 +792,10 @@ void runTapProfile(const Options& options, rechigros::game::Chart& chart) {
 
   std::cout << std::fixed << std::setprecision(3)
             << "tap-profile: taps=" << taps.size() << " duration=" << options.tapDurationSec
-            << "s start=" << options.startTimeSec << "s render=" << (withRender ? 1 : 0)
-            << '\n';
+            << "s start=" << options.startTimeSec << "s render=" << (options.tapRender ? 1 : 0)
+            << " autoplay=0 warmup=0 mode="
+            << (options.tapRender ? "serialized-glFinish" : "update-only")
+            << " present=0 (cold segments; taps are synthetic presses, not sustained holds/flicks)\n";
   const auto tapRows = runSegment(false);
   const auto controlRows = runSegment(true);
 
@@ -686,13 +825,13 @@ void runTapProfile(const Options& options, rechigros::game::Chart& chart) {
   std::vector<double> tapOnly;
   tapOnly.reserve(taps.size());
   unsigned long long tapAllocTotal = 0;
+  std::size_t executedTaps = 0;
   for (const auto& row : tapRows) {
+    tapAllocTotal += row.tapAllocations;
     if (row.taps > 0) {
-      tapAllocTotal += row.tapAllocations;
-      tapOnly.push_back(row.tapMs);
-      if (row.taps > 1) {
-        for (int repeat = 1; repeat < row.taps; ++repeat) tapOnly.push_back(row.tapMs / row.taps);
-      }
+      executedTaps += static_cast<std::size_t>(row.taps);
+      const double costPerTap = row.tapMs / static_cast<double>(row.taps);
+      for (int repeat = 0; repeat < row.taps; ++repeat) tapOnly.push_back(costPerTap);
     }
   }
   const auto tapFrames = [](const std::vector<FrameRow>& rows, bool withTaps) {
@@ -728,11 +867,14 @@ void runTapProfile(const Options& options, rechigros::game::Chart& chart) {
     int good = 0;
     int bad = 0;
     int miss = 0;
+    int overBudget = 0;
+    const double budgetMs = 1000.0 / options.fpsBudget;
     for (const auto& row : rows) {
       perfect += row.judgedPerfect;
       good += row.judgedGood;
       bad += row.judgedBad;
       miss += row.judgedMiss;
+      if (row.totalMs > budgetMs) ++overBudget;
     }
     std::cout << label << " frames=" << rows.size()
               << " update mean=" << update.meanMs << " p95=" << update.p95Ms
@@ -741,6 +883,7 @@ void runTapProfile(const Options& options, rechigros::game::Chart& chart) {
               << " p99=" << render.p99Ms
               << " total mean=" << total.meanMs << " p99=" << total.p99Ms
               << " max=" << total.maxMs
+              << " budgetMs=" << budgetMs << " overBudget=" << overBudget
               << " alloc/frame=" << allocations.meanMs
               << " p99=" << allocations.p99Ms
               << " (updateAlloc=" << updateAllocations.meanMs
@@ -753,77 +896,105 @@ void runTapProfile(const Options& options, rechigros::game::Chart& chart) {
   printBlock("no-tap frames", tapMiss, controlRows);
   printBlock("control     ", controlRows, controlRows);
   const auto tapCost = stats(tapOnly);
-  std::cout << "tap-ops: taps=" << taps.size() << " cost mean=" << tapCost.meanMs
+  std::cout << "tap-ops: scheduled=" << taps.size() << " taps=" << executedTaps
+            << " cost=amortized-per-tap mean=" << tapCost.meanMs
             << " p50=" << tapCost.p50Ms << " p95=" << tapCost.p95Ms
             << " p99=" << tapCost.p99Ms << " max=" << tapCost.maxMs
-            << " alloc/tap=" << (taps.empty() ? 0.0
+            << " alloc/tap=" << (executedTaps == 0 ? 0.0
                                               : static_cast<double>(tapAllocTotal)
-                                                    / static_cast<double>(taps.size()))
+                                                    / static_cast<double>(executedTaps))
             << '\n';
-  if (!options.tapCsvPath.empty()) {
-    std::ofstream csv(options.tapCsvPath);
-    if (csv) {
-      csv << "kind,frame,chartTime,taps,tapMs,updateMs,renderMs,totalMs,allocations,"
-             "allocationBytes,tapAllocations,updateAllocations,renderAllocations,"
-             "perfect,good,bad,miss\n";
-      const auto writeRows = [&csv](const char* kind, const std::vector<FrameRow>& rows) {
-        for (std::size_t index = 0; index < rows.size(); ++index) {
-          const auto& row = rows[index];
-          csv << kind << ',' << index << ',' << row.chartTimeSec << ',' << row.taps << ','
-              << row.tapMs << ',' << row.updateMs << ',' << row.renderMs << ',' << row.totalMs
-              << ',' << row.allocations << ',' << row.allocationBytes << ','
-              << row.tapAllocations << ',' << row.updateAllocations << ','
-              << row.renderAllocations << ',' << row.judgedPerfect << ',' << row.judgedGood
-              << ',' << row.judgedBad << ',' << row.judgedMiss << '\n';
-        }
-      };
-      writeRows("tap", tapRows);
-      writeRows("control", controlRows);
-    }
+  if (csv.is_open()) {
+    csv << "kind,frame,chartTime,taps,tapMs,updateMs,renderMs,totalMs,allocations,"
+           "allocationBytes,tapAllocations,updateAllocations,renderAllocations,"
+           "perfect,good,bad,miss,judgementEvents,holdHeadBursts,holdBodyBursts\n";
+    const auto writeRows = [&csv](const char* kind, const std::vector<FrameRow>& rows) {
+      for (std::size_t index = 0; index < rows.size(); ++index) {
+        const auto& row = rows[index];
+        csv << kind << ',' << index << ',' << row.chartTimeSec << ',' << row.taps << ','
+            << row.tapMs << ',' << row.updateMs << ',' << row.renderMs << ',' << row.totalMs
+            << ',' << row.allocations << ',' << row.allocationBytes << ','
+            << row.tapAllocations << ',' << row.updateAllocations << ','
+            << row.renderAllocations << ',' << row.judgedPerfect << ',' << row.judgedGood
+            << ',' << row.judgedBad << ',' << row.judgedMiss << ',' << row.judgementEvents
+            << ',' << row.holdHeadBursts << ',' << row.holdBodyBursts << '\n';
+      }
+    };
+    writeRows("tap", tapRows);
+    writeRows("control", controlRows);
+    csv.close();
   }
-  if (withRender) renderer.shutdown();
 }
 
 // Times the one-off and per-frame CPU structures directly, so a hotspot shows up without
 // having to instrument the renderer.
 void runMicroBenchmarks(const Options& options, rechigros::game::Chart& chart) {
   std::cout << std::fixed << std::setprecision(4);
-  const auto timeIt = [](int repeats, const std::function<void()>& work) {
-    work();
+  double checksum = 0.0;
+  // A volatile observable sink prevents scalar scans and returned states being optimized
+  // away. Each invocation publishes one aggregate, keeping volatile traffic outside loops.
+  volatile double observable = 0.0;
+  const auto timeIt = [&checksum, &observable](int repeats, const auto& work) {
+    const auto publish = [&]() {
+      std::atomic_signal_fence(std::memory_order_seq_cst);
+      const double value = static_cast<double>(work());
+      if (!std::isfinite(value)) throw std::runtime_error("Non-finite microbenchmark result");
+      observable = value;
+      checksum += value;
+      std::atomic_signal_fence(std::memory_order_seq_cst);
+    };
+    publish();
     const auto start = Clock::now();
-    for (int repeat = 0; repeat < repeats; ++repeat) work();
+    for (int repeat = 0; repeat < repeats; ++repeat) publish();
     return millisecondsSince(start) / static_cast<double>(repeats);
   };
   {
     // The chart load's fixed cost is dominated by the JSON document build; report it on its
     // own so a chart-load improvement can be attributed exactly.
     std::ifstream input(options.chartPath, std::ios::binary);
+    if (!input) throw std::runtime_error("Could not open chart for JSON microbenchmark");
     std::ostringstream buffer;
     buffer << input.rdbuf();
     const std::string content = buffer.str();
     std::cout << "micro jsonParse="
-              << timeIt(3, [&content]() { const auto parsed = nlohmann::json::parse(content); (void)parsed; })
+              << timeIt(3, [&content]() { return nlohmann::json::parse(content).size(); })
               << "ms (" << (static_cast<double>(content.size()) / (1024.0 * 1024.0)) << " MiB)\n";
   }
   std::cout << "micro prepareRuntime="
-            << timeIt(5, [&chart]() { chart.prepareRuntime(); }) << "ms\n";
+            << timeIt(5, [&chart]() {
+                 chart.prepareRuntime();
+                 return chart.allNotesSorted.size() + chart.clickEffectsSorted.size();
+               }) << "ms\n";
   std::cout << "micro resetRuntime="
-            << timeIt(5, [&chart]() { chart.resetRuntime(); }) << "ms\n";
+            << timeIt(5, [&chart]() {
+                 chart.resetRuntime();
+                 return chart.allNotesSorted.size();
+               }) << "ms\n";
   std::cout << "micro lineStates="
-            << timeIt(20, [&chart]() {
+            << timeIt(20, [&chart, &options]() {
+                 double sum = 0.0;
                  for (const auto& line : chart.judgeLineList) {
-                   if (line != nullptr) (void)line->fillState(30.0, 16.0F / 9.0F);
+                   if (line == nullptr) continue;
+                   line->resetCursors();
+                   const auto state = line->fillState(options.startTimeSec, 16.0F / 9.0F);
+                   sum += state.xNorm + state.yNorm + state.rotateDeg + state.alpha
+                       + state.floorPosition + static_cast<double>(state.text.size());
                  }
+                 return sum;
                })
-            << "ms\n";
+            << "ms (cursor reset per sample)\n";
   std::cout << "micro blockAdvance="
             << timeIt(20, [&chart, &options]() {
                  const double now = options.startTimeSec;
+                 double sum = 0.0;
                  for (auto& zone : chart.blockAreaList) {
                    zone.update(static_cast<float>(now), 0.0F, 0.0F,
                        static_cast<float>(options.width), static_cast<float>(options.height),
                        1.0F / 60.0F);
+                   sum += zone.centerX + zone.centerY + zone.halfW + zone.halfH
+                       + zone.rotationDeg + zone.showAlpha();
                  }
+                 return sum;
                })
             << "ms (" << chart.blockAreaList.size() << " zones)\n";
   {
@@ -856,16 +1027,20 @@ void runMicroBenchmarks(const Options& options, rechigros::game::Chart& chart) {
     const auto uv = rechigros::render::scene::buildHoldUv(256, 64, 64);
     rechigros::render::batch::SpriteBatch batch;
     const auto runNotePasses = [&]() {
+      std::size_t sprites = 0;
       for (int highlight = 0; highlight < 2; ++highlight) {
         batch.begin();
         rechigros::render::scene::buildHoldBatch(batch, frames, order, chart,
             highlight == 1, 128.0F, 256.0F, uv, false, false, false, 0.0F, 0.0F, params);
+        sprites += static_cast<std::size_t>(batch.size());
         for (const int type : {1, 2, 4}) {
           batch.begin();
           rechigros::render::scene::buildHeadBatch(batch, frames, order, chart, type,
               highlight == 1, 128.0F, 256.0F, params);
+          sprites += static_cast<std::size_t>(batch.size());
         }
       }
+      return sprites;
     };
     std::cout << "micro noteBatches=" << timeIt(20, runNotePasses) << "ms (8 passes, "
               << chart.allNotesSorted.size() << " notes)\n";
@@ -876,6 +1051,7 @@ void runMicroBenchmarks(const Options& options, rechigros::game::Chart& chart) {
                  for (const auto* note : chart.allNotesSorted) {
                    if (note != nullptr && note->judgeResult < 0) ++visible;
                  }
+                 return visible;
                })
             << "ms (" << chart.allNotesSorted.size() << " notes)\n";
   std::cout << "micro floorBinary="
@@ -886,11 +1062,15 @@ void runMicroBenchmarks(const Options& options, rechigros::game::Chart& chart) {
                    for (const auto& note : line->notes) {
                      sum += rechigros::game::EventUtils::getFloorPosition(note.time,
                          line->speedEvents, line->speedEventLayers);
+                     if (note.type == rechigros::game::NOTE_HOLD) {
+                       sum += rechigros::game::EventUtils::getFloorPosition(
+                           note.time + note.holdTime, line->speedEvents, line->speedEventLayers);
+                     }
                    }
                  }
-                 if (sum < -1.0e300) std::cout << "unreachable";
+                 return sum;
                })
-            << "ms (per-note binary search)\n";
+            << "ms (note heads and hold ends; per-note binary search)\n";
   std::cout << "micro floorMonotonic="
             << timeIt(10, [&chart]() {
                  double sum = 0.0;
@@ -910,15 +1090,16 @@ void runMicroBenchmarks(const Options& options, rechigros::game::Chart& chart) {
                      }
                    }
                  }
-                 if (sum < -1.0e300) std::cout << "unreachable";
+                 return sum;
                })
             << "ms (incremental cursor)\n";
   std::cout << "micro clickEffectScan="
-            << timeIt(20, [&chart]() {
+            << timeIt(20, [&chart, &options]() {
                  std::size_t active = 0;
                  for (const auto& item : chart.clickEffectsSorted) {
-                   if (item.timeSec < 30.0) ++active;
+                   if (item.timeSec < options.startTimeSec) ++active;
                  }
+                 return active;
                })
             << "ms\n";
   {
@@ -971,8 +1152,7 @@ void runMicroBenchmarks(const Options& options, rechigros::game::Chart& chart) {
     // Session update and hit-effect bookkeeping over 600 real frames of the chart, which is
     // the per-frame gameplay cost that runs on the device beside the draw passes.
     rechigros::game::GameplaySession session;
-    session.setViewport({static_cast<float>(options.width), static_cast<float>(options.height),
-        16.0F / 9.0F, 1.0F, 380.0F});
+    session.setViewport(viewportFor(options));
     session.setChart(&chart);
     session.setAutoplay(true);
     rechigros::render::fx::HitEffectField effects;
@@ -987,6 +1167,8 @@ void runMicroBenchmarks(const Options& options, rechigros::game::Chart& chart) {
       time += static_cast<double>(kDelta);
       session.update(time, kDelta);
       session.takeSoundEvents();
+      checksum += static_cast<double>(session.takeJudgementEvents().size()
+          + session.takeHoldHeadBursts().size() + session.takeHoldBodyBursts().size());
     }
     const double sessionMs = millisecondsSince(sessionStart) / static_cast<double>(kFrames);
     const auto effectStart = Clock::now();
@@ -1027,6 +1209,7 @@ void runMicroBenchmarks(const Options& options, rechigros::game::Chart& chart) {
       for (const auto& zone : zones) {
         overlay.draw(zone, static_cast<float>(options.startTimeSec), batch);
       }
+      return batch.size();
     };
     std::cout << "micro zoneDraw20=" << timeIt(50, drawPass) << "ms ("
               << kZones << " active zones)\n";
@@ -1053,21 +1236,29 @@ void runMicroBenchmarks(const Options& options, rechigros::game::Chart& chart) {
               << " samples (" << chart.blockAreaList.size() << " zones)\n";
   }
   std::cout << "micro eventSamplePerLine="
-            << timeIt(20, [&chart]() {
+            << timeIt(20, [&chart, &options]() {
+                 double sum = 0.0;
                  for (const auto& line : chart.judgeLineList) {
                    if (line == nullptr) continue;
-                   for (const auto& event : line->judgeLineRotateEvents) {
-                     if (event.startTime > 1e9) break;
-                   }
+                   sum += rechigros::game::EventUtils::getEventVal(
+                       options.startTimeSec, line->judgeLineRotateEvents);
                  }
+                 return sum;
                })
             << "ms\n";
+  std::cout << "micro checksum=" << checksum << " last=" << observable << '\n';
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
-  const Options options = parseOptions(argc, argv);
+  Options options;
+  try {
+    options = parseOptions(argc, argv);
+  } catch (const std::exception& error) {
+    std::cerr << "frame-profile: " << error.what() << '\n';
+    return 2;
+  }
   if (options.chartPath.empty()) {
     std::cerr << "--frame-profile requires --chart <path>\n";
     return 2;
@@ -1095,91 +1286,132 @@ int main(int argc, char** argv) {
   }
 #endif
   if (context == nullptr) {
+    std::cerr << "Could not create GL context: " << SDL_GetError() << '\n';
     SDL_DestroyWindow(window);
     SDL_Quit();
     return 4;
   }
 
+  std::cout << std::fixed << std::setprecision(6)
+            << "settings: antialias=" << (options.antialias ? 1 : 0)
+            << " skin=" << std::quoted(options.skinDirectory.string())
+            << " background=" << std::quoted(options.backgroundImage.string())
+            << " dim=" << options.backgroundDim << " keyScale=" << options.keyScale
+            << " fpsBudget=" << options.fpsBudget << " budgetMs=" << 1000.0 / options.fpsBudget
+            << " frameDeltaSec=" << options.frameDeltaSec << '\n';
+#ifndef RECHIGROS_GLES
+  std::cout << "measurement: mode=serialized-glFinish-immediate-query present=0"
+               " total=wall(update+input+HUD+render+GPU-wait+query-read)"
+               " excludes=CSV/storage (not presentation latency or pipelined throughput)\n";
+#else
+  std::cout << "measurement: mode=serialized-glFinish present=0 gpuTimer=unavailable"
+               " total=wall(update+input+HUD+render+GPU-wait) excludes=CSV/storage\n";
+#endif
+
   int exitCode = 0;
-  auto chart = loadChart(options);
-  if (chart == nullptr) {
-    std::cerr << "Could not load the chart\n";
-    exitCode = 5;
-  }
-
-  if (exitCode == 0 && options.runMicro) {
-    runMicroBenchmarks(options, *chart);
-  }
-
-  bool scanOnly = false;
-  if (exitCode == 0 && options.scanBinSec > 0.0) {
-    scanOnly = true;
-    // Census of the chart per time bin: how many zones are inside their window and how many
-    // notes are authored, so external frame-time CSVs can be correlated with content.
-    std::cout << std::fixed << std::setprecision(3) << "scan: bin,startSec,endSec,liveZones,notes\n";
-    const double step = options.scanBinSec;
-    int bin = 0;
-    for (double start = 0.0; start < chart->chartEndTimeSec + step; start += step, ++bin) {
-      const double end = start + step;
-      const double middle = start + step * 0.5;
-      std::size_t liveZones = 0;
-      for (const auto& zone : chart->blockAreaList) {
-        if (middle >= static_cast<double>(zone.appearTime)
-            && middle < static_cast<double>(zone.disappearTime)) {
-          ++liveZones;
-        }
-      }
-      std::size_t notes = 0;
-      for (const auto* note : chart->allNotesSorted) {
-        if (note != nullptr && note->sect >= start && note->sect < end) ++notes;
-      }
-      std::cout << "scan: " << bin << ',' << start << ',' << end << ',' << liveZones << ','
-                << notes << '\n';
+  try {
+    auto chart = loadChart(options);
+    if (chart == nullptr) {
+      std::cerr << "Could not load the chart\n";
+      exitCode = 5;
     }
-  }
 
-  if (exitCode == 0 && options.tapProfile) {
-    runTapProfile(options, *chart);
-    scanOnly = true;
-  }
+    if (exitCode == 0 && options.runMicro) {
+      auto microChart = rechigros::chart::ChartLoader::loadFromFile(
+          options.chartPath, options.assetRoot);
+      if (!microChart) throw std::runtime_error("Could not load the microbenchmark chart");
+      std::cout << "micro: separate chart; main measurement keeps first-load runtime data\n";
+      runMicroBenchmarks(options, *microChart);
+    }
 
-  if (exitCode == 0 && !scanOnly) {
-    std::cout << "profile: viewport=" << options.width << 'x' << options.height
-              << " frames=" << options.frames << " warmup=" << options.warmupFrames
-              << " start=" << options.startTimeSec << "s\n";
-    const auto samples = measure(options, *chart, options.frames, options.warmupFrames, true,
-        options.csvPath);
-    if (!options.csvPath.empty()) std::cout << "csv: " << options.csvPath.string() << '\n';
-    printStats("steady-state", summarize(samples), static_cast<int>(samples.size()));
-  }
-
-  if (exitCode == 0 && options.runAblations) {
-    // Each variant runs on the same loaded chart with a fresh renderer. The full run is
-    // measured twice, before the destructive variants, so measurement drift is visible.
-    const int frames = std::max(120, options.frames / 8);
-    const int warmup = std::max(30, options.warmupFrames / 4);
-    const auto variant = [&options, &chart, frames, warmup](const char* label, bool hudVisible,
-                                                        const std::function<void()>& mutate) {
-      mutate();
-      const auto samples = measure(options, *chart, frames, warmup, hudVisible, {});
-      printStats(label, summarize(samples), static_cast<int>(samples.size()));
-    };
-    variant("ablation full", true, []() {});
-    variant("ablation no-hud", false, []() {});
-    variant("ablation full (repeat)", true, []() {});
-    variant("ablation no-blocks", true, [&chart]() { chart->blockAreaList.clear(); });
-    variant("ablation no-effects", true, [&chart]() {
-      chart->prprEffects.clear();
-      chart->levelEffects.reset();
-    });
-    variant("ablation no-notes", true, [&chart]() {
-      for (const auto& line : chart->judgeLineList) {
-        if (line == nullptr) continue;
-        for (auto& note : line->notesAbove) note.isFake = true;
-        for (auto& note : line->notesBelow) note.isFake = true;
+    bool scanOnly = false;
+    if (exitCode == 0 && options.scanBinSec > 0.0) {
+      scanOnly = true;
+      // Census of the chart per time bin: how many zones are inside their window and how many
+      // notes are authored, so external frame-time CSVs can be correlated with content.
+      std::cout << std::fixed << std::setprecision(3) << "scan: bin,startSec,endSec,liveZones,notes\n";
+      const double step = options.scanBinSec;
+      int bin = 0;
+      for (double start = 0.0; start < chart->chartEndTimeSec + step; start += step, ++bin) {
+        const double end = start + step;
+        const double middle = start + step * 0.5;
+        std::size_t liveZones = 0;
+        for (const auto& zone : chart->blockAreaList) {
+          if (middle >= static_cast<double>(zone.appearTime)
+              && middle < static_cast<double>(zone.disappearTime)) {
+            ++liveZones;
+          }
+        }
+        std::size_t notes = 0;
+        for (const auto* note : chart->allNotesSorted) {
+          if (note != nullptr && note->sect >= start && note->sect < end) ++notes;
+        }
+        std::cout << "scan: " << bin << ',' << start << ',' << end << ',' << liveZones << ','
+                  << notes << '\n';
       }
-      chart->prepareRuntime();
-    });
+    }
+
+    if (exitCode == 0 && options.tapProfile) {
+      runTapProfile(options, *chart);
+      scanOnly = true;
+    }
+
+    if (exitCode == 0 && !scanOnly) {
+      std::cout << "profile: viewport=" << options.width << 'x' << options.height
+                << " frames=" << options.frames << " warmup=" << options.warmupFrames
+                << " start=" << options.startTimeSec << "s autoplay=1"
+                << " firstMeasuredChartTime="
+                << options.startTimeSec + options.warmupFrames * options.frameDeltaSec << "s\n";
+      const auto samples = measure(options, *chart, options.frames, options.warmupFrames, true,
+          options.csvPath);
+      if (!options.csvPath.empty()) std::cout << "csv: " << options.csvPath.string() << '\n';
+      printStats("steady-state", summarize(samples, 1000.0 / options.fpsBudget),
+          static_cast<int>(samples.size()));
+    }
+
+    if (exitCode == 0 && options.runAblations) {
+      // Reload for every variant, including the repeated full run. Never accumulate removals
+      // or reuse session/renderer state from an earlier variant.
+      const int frames = std::max(120, options.frames / 8);
+      const int warmup = std::max(30, options.warmupFrames / 4);
+      const auto variant = [&options, frames, warmup](const char* label, bool hudVisible,
+                               const std::function<void(rechigros::game::Chart&)>& mutate) {
+        auto variantChart = rechigros::chart::ChartLoader::loadFromFile(
+            options.chartPath, options.assetRoot);
+        if (!variantChart) throw std::runtime_error("Could not load ablation chart");
+        mutate(*variantChart);
+        const auto samples = measure(options, *variantChart, frames, warmup, hudVisible, {});
+        printStats(label, summarize(samples, 1000.0 / options.fpsBudget),
+            static_cast<int>(samples.size()));
+      };
+      std::cout << "ablation: independent chart loads; first-load particle rolls may vary\n";
+      variant("ablation full", true, [](auto&) {});
+      variant("ablation no-hud", false, [](auto&) {});
+      variant("ablation no-blocks", true, [](auto& value) { value.blockAreaList.clear(); });
+      variant("ablation no-effects", true, [](auto& value) {
+        value.prprEffects.clear();
+        value.levelEffects.reset();
+      });
+      variant("ablation no-notes", true, [](auto& value) {
+        // Fake notes still draw before their hit time. Clear runtime indices as well as note
+        // storage, preserving the chart duration and every unrelated scene contributor.
+        value.allNotesSorted.clear();
+        value.clickEffectsSorted.clear();
+        for (const auto& line : value.judgeLineList) {
+          if (line == nullptr) continue;
+          line->notesByType.clear();
+          line->noteVariantMasks.fill(0);
+          line->notes.clear();
+          line->notesAbove.clear();
+          line->notesBelow.clear();
+          line->maxHoldDurationSec = 0.0;
+        }
+      });
+      variant("ablation full (repeat)", true, [](auto&) {});
+    }
+  } catch (const std::exception& error) {
+    std::cerr << "frame-profile: " << error.what() << '\n';
+    exitCode = 6;
   }
 
   SDL_GL_DestroyContext(context);

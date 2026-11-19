@@ -40,6 +40,7 @@ constexpr float kPerfectAlpha = 0.882F; // 0xE1 / 255
 constexpr float kJudgeLineHeightFactor = 0.28F;
 constexpr float kJudgeLineYFactor = 0.75F;
 constexpr float kNoteWidthFactor = 0.1234375F;
+constexpr const char* kCalibrationHint = "听到节拍时点击左侧区域，调整到音符与判定线同时到达";
 
 struct Metrics {
   ui::Canvas canvas;
@@ -121,6 +122,24 @@ std::vector<std::string> wrapText(const Metrics& m, const std::string& text, flo
   }
   if (!current.empty()) lines.push_back(current);
   return lines;
+}
+
+const std::vector<std::string>& wrappedHint(const Metrics& m, float width) {
+  struct CachedHint {
+    float scale{};
+    float density{};
+    float width{};
+    std::vector<std::string> lines;
+  };
+  static std::vector<CachedHint> cache;
+  for (const auto& entry : cache) {
+    if (entry.scale == m.scale && entry.density == m.density && entry.width == width) {
+      return entry.lines;
+    }
+  }
+  if (cache.size() >= 4) cache.clear();
+  cache.push_back({m.scale, m.density, width, wrapText(m, kCalibrationHint, 13.0F, width)});
+  return cache.back().lines;
 }
 
 double wrapLoop(double value) {
@@ -233,8 +252,7 @@ PanelLayout panelLayout(const Metrics& m) {
   layout.titleHeight = std::round(titlePx * 1.2F);
   layout.hintTop = m.dp(30.0F) + m.dp(14.0F); // title start plus its top margin
   {
-    const auto lines = wrapText(m, "听到节拍时点击左侧区域，调整到音符与判定线同时到达", 13.0F,
-        m.dp(320.0F) - m.dp(40.0F));
+    const auto& lines = wrappedHint(m, m.dp(320.0F) - m.dp(40.0F));
     const float lineHeight = std::round(hintPx * 1.2F);
     layout.hintHeight = lineHeight * static_cast<float>(std::max<std::size_t>(1, lines.size()));
   }
@@ -525,8 +543,7 @@ void drawPanel(AppContext& context, const Metrics& m, const PanelLayout& panel, 
 
   // Hint, wrapped to the panel width.
   {
-    const auto lines = wrapText(m, "听到节拍时点击左侧区域，调整到音符与判定线同时到达", 13.0F,
-        panel.innerWidth);
+    const auto& lines = wrappedHint(m, panel.innerWidth);
     const float lineHeight = std::round(13.0F * m.density * 1.2F);
     for (const auto& line : lines) {
       y += lineHeight * 0.5F;
@@ -616,6 +633,74 @@ void drawPanel(AppContext& context, const Metrics& m, const PanelLayout& panel, 
 
 } // namespace
 
+void prefetchCalibrationAudio(AppContext& context) {
+  if (context.audio == nullptr) return;
+  const auto rate = context.audio->outputSampleRate();
+  if (rate == 0) return;
+  if (context.calibrationAudioLoad.valid()) {
+    if (context.calibrationAudioLoad.wait_for(std::chrono::seconds(0))
+        != std::future_status::ready) return;
+    context.calibrationAudio = context.calibrationAudioLoad.get();
+  }
+  if (context.calibrationAudioRate == rate) return;
+  context.calibrationAudio = {};
+  context.calibrationAudioRate = rate;
+  const auto root = platform::assetRoot();
+  context.calibrationAudioLoad = std::async(std::launch::async, [root, rate] {
+    const auto path = platform::AssetManager::materialize(root, "audio/calibration.wav");
+    return AppContext::CalibrationAudio{path, audio::Decoder::decodeFile(path, rate)};
+  });
+}
+
+void prepareCalibrationScreen(AppContext& context) {
+  prefetchCalibrationAudio(context);
+  context.textures.prefetch(platform::assetRoot() / "res/click.png", 512);
+  context.textures.prefetch(platform::assetRoot() / "res/hit_fx.png");
+  const Metrics m = metrics();
+  struct PreparedGlyphs {
+    float density{};
+    float framebufferScale{};
+    std::uint64_t texture{};
+    int run{};
+    std::size_t cursor{};
+  };
+  static PreparedGlyphs prepared;
+  const auto texture = ui::fontCache().textureId();
+  const float framebuffer = ImGui::GetIO().DisplayFramebufferScale.x;
+  if (texture == 0) return;
+  if (prepared.density != m.density || prepared.framebufferScale != framebuffer
+      || prepared.texture != texture) {
+    prepared = {m.density, framebuffer, texture};
+  }
+  struct GlyphRun {
+    const char* text;
+    float sizeDp;
+    bool bold;
+  };
+  static const GlyphRun runs[] = {
+      {kCalibrationHint, 13.0F, false}, {"延迟校准", 20.0F, true},
+      {"-0123456789 ms", 28.0F, true}, {"-50-5+5+50重置完成", 14.0F, true}};
+  const auto started = std::chrono::steady_clock::now();
+  int count = 0;
+  while (prepared.run < static_cast<int>(std::size(runs)) && count < 2) {
+    const auto& run = runs[prepared.run];
+    const std::string_view text(run.text);
+    if (prepared.cursor >= text.size()) {
+      ++prepared.run;
+      prepared.cursor = 0;
+      continue;
+    }
+    std::size_t length = 0;
+    const auto codepoint = ui::UiFontCache::decode(text, prepared.cursor, length);
+    if (length == 0) break;
+    prepared.cursor += length;
+    (void)ui::fontCache().glyph(codepoint, m.canvas.dp(run.sizeDp) * framebuffer, run.bold);
+    ++count;
+    if (std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started).count() >= 0.5) break;
+  }
+}
+
 void drawCalibrationScreen(AppContext& context) {
   const Metrics m = metrics();
   ui::beginFullscreenWindow("##calibration");
@@ -627,19 +712,30 @@ void drawCalibrationScreen(AppContext& context) {
   bool loadFailed = false;
   if (!context.calibration.audioLoaded) {
     bool loaded = false;
-    if (context.audio != nullptr) {
-      // The bundled assets are not files in a packaged build: they live inside the package and
-      // only the platform's asset reader can reach them. Materialising hands back a real path the
-      // decoder can open, and returns the path unchanged on a plain directory tree.
-      const auto music =
-          platform::AssetManager::materialize(platform::assetRoot(), "audio/calibration.wav");
+    if (context.audio != nullptr && context.audio->initialize()) {
+      // Repair the device before choosing PCM: the device can reopen at another sample rate.
+      const auto rate = context.audio->outputSampleRate();
+      prefetchCalibrationAudio(context);
+      if (context.calibrationAudioLoad.valid()) {
+        context.calibrationAudio = context.calibrationAudioLoad.get();
+      }
+      const auto music = context.calibrationAudio.path.empty()
+          ? platform::AssetManager::materialize(platform::assetRoot(), "audio/calibration.wav")
+          : context.calibrationAudio.path;
       context.audio->stop();
       context.audio->setVolume(1.0F);
       context.audio->setSoundEffectVolume(1.0F);
       context.audio->setPlaybackSpeed(1.0F);
       // Loading music replaces the buffer and turns looping off, so looping has to be enabled on
       // the newly installed buffer rather than on the previous one.
-      if (context.audio->loadMusic(music)) {
+      if (rate != 0 && context.calibrationAudio.buffer.sampleRate() != rate) {
+        context.calibrationAudio.buffer = audio::Decoder::decodeFile(music, rate);
+        context.calibrationAudioRate = rate;
+      }
+      const bool cached = !context.calibrationAudio.buffer.empty()
+          && context.calibrationAudio.buffer.sampleRate() == rate;
+      if (cached ? context.audio->installDecodedMusic(context.calibrationAudio.buffer, music)
+                 : context.audio->loadMusic(music)) {
         context.audio->setMusicLooping(true);
         context.audio->play();
         loaded = true;

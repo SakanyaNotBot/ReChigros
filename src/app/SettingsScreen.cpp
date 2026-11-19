@@ -247,6 +247,8 @@ struct DialogState {
   bool skinScrollDragging{};
   float skinPressY{};
   float skinScrollAtPress{};
+  std::vector<std::string> skinNames;
+  std::filesystem::path skinRoot;
 };
 
 DialogState& dialogState() {
@@ -688,7 +690,7 @@ std::vector<Block> buildReplayBlocks(const Metrics& m, AppContext& context) {
   builder.toggle("replay.enabled", "启用回放记录", &context.settings.replayEnabled);
   builder.dual("replay.files", "回放文件", "导入", ActionKind::ReplayImport, "刷新",
       ActionKind::ReplayRefresh);
-  const auto replays = context.replays.list();
+  const auto& replays = context.replays.list();
   if (replays.empty()) {
     builder.emptyNotice("暂无回放记录");
   } else {
@@ -898,6 +900,50 @@ struct DrawContext {
   bool interactionsEnabled{};
   std::vector<std::array<float, 4>>& controlRects;
 };
+
+// Keeps the diagnostic and gesture rectangles in list order while offscreen rows skip drawing.
+void registerBlockControls(const DrawContext& draw, const Block& block, float left, float top) {
+  const Metrics& m = draw.m;
+  const auto add = [&](float x, float y, float width, float height) {
+    draw.controlRects.push_back({x, y, x + width, y + height});
+  };
+  switch (block.kind) {
+    case BlockKind::Slider: {
+      const float head = std::max(m.lineBox(22.0F), m.dp(30.0F));
+      add(left, top + m.dp(14.0F) + head, draw.rowWidth, m.dp(56.0F));
+      break;
+    }
+    case BlockKind::Switch:
+      add(left, top, draw.rowWidth, block.height);
+      break;
+    case BlockKind::Edit:
+      add(left + draw.rowWidth - m.dp(120.0F), top + (block.height - m.dp(48.0F)) * 0.5F,
+          m.dp(120.0F), m.dp(48.0F));
+      break;
+    case BlockKind::Action: {
+      const float height = std::max(m.lineBox(15.0F), m.dp(48.0F));
+      add(left + draw.rowWidth - m.dp(92.0F), top + m.dp(8.0F) + m.lineBox(18.0F),
+          m.dp(92.0F), height);
+      break;
+    }
+    case BlockKind::Dual: {
+      const float width = (draw.rowWidth - m.dp(12.0F)) * 0.5F;
+      const float y = top + m.dp(8.0F) + m.lineBox(18.0F);
+      add(left, y, width, m.dp(48.0F));
+      add(left + width + m.dp(12.0F), y, width, m.dp(48.0F));
+      break;
+    }
+    case BlockKind::Replay: {
+      const float width = m.dp(76.0F);
+      const float y = top + m.dp(10.0F) + m.lineBox(17.0F);
+      const float height = std::max(m.lineBox(15.0F), m.dp(48.0F));
+      add(left + draw.rowWidth - 2.0F * width - m.dp(8.0F), y, width, height);
+      add(left + draw.rowWidth - width, y, width, height);
+      break;
+    }
+    default: break;
+  }
+}
 
 void drawHeading(const DrawContext& draw, const Block& block, float left, float top) {
   const float centerY = top + draw.m.dp(8.0F) + draw.m.lineBox(14.0F) * 0.5F;
@@ -1169,6 +1215,7 @@ void drawDual(const DrawContext& draw, const Block& block, float left, float top
         (void)importReplayFromDialog(context);
         break;
       case ActionKind::ReplayRefresh:
+        context.replays.invalidate();
         break;
       default:
         break;
@@ -1383,7 +1430,11 @@ void drawSkinSelectDialog(
     AppContext& context, const Metrics& m, ImDrawList* drawList, double nowSec) {
   DialogState& dialogs = dialogState();
   if (dialogs.skinPhase == DialogState::SkinPhase::Closed) return;
-  const std::vector<std::string> names = skinNames(context);
+  if (dialogs.skinNames.empty() || dialogs.skinRoot != context.dataRoot) {
+    dialogs.skinNames = skinNames(context);
+    dialogs.skinRoot = context.dataRoot;
+  }
+  const auto& names = dialogs.skinNames;
   const SkinDialogLayout layout =
       skinDialogLayout(m, static_cast<int>(names.size()));
   if (dialogs.skinScroll > 0.0F) {
@@ -1550,15 +1601,8 @@ void drawSkinSelectDialog(
     if (dialogs.skinPressedRow >= 0 && !dialogs.skinScrollDragging) {
       const int row = rowAtPosition(local);
       if (row == dialogs.skinPressedRow) {
-        if (row == 0) {
-          context.settings.selectedSkin.clear();
-        } else {
-          const auto skins = listSkinDirectories(context);
-          const auto index = static_cast<std::size_t>(row - 1);
-          if (index < skins.size()) {
-            context.settings.selectedSkin = platform::pathToUtf8(skins[index].filename());
-          }
-        }
+        context.settings.selectedSkin = row == 0 ? std::string{}
+            : names[static_cast<std::size_t>(row)];
         markChanged(context);
         beginSkinDialogClose(nowSec);
       }
@@ -1598,6 +1642,7 @@ void openSkinDialog(double nowSec) {
   dialogs.skinPressedRow = -1;
   dialogs.skinScrollDragging = false;
   dialogs.skinPressOutside = false;
+  dialogs.skinNames.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -1946,6 +1991,7 @@ void drawSettingsScreen(AppContext& context) {
 
   // First frame on the page: the tab plate is already at its target position.
   const int tab = std::clamp(context.settingsTab, 0, kTabCount - 1);
+  if (tab == 1) prepareCalibrationScreen(context);
   if (state.lastTab < 0 || state.tabStart < 0.0) {
     state.tabFrom = tab;
     state.tabTo = tab;
@@ -2049,6 +2095,14 @@ void drawSettingsScreen(AppContext& context) {
   for (const Block& block : blocks) {
     const float top = contentTopPx(m) + contentY - scroll;
     const float left = rowLeftPx(m, contentY, scroll);
+    const bool visible = top + block.height >= contentTopPx(m) && top <= m.height;
+    const bool captured = !block.key.empty()
+        && pointer.activeKey.find(block.key) != std::string::npos;
+    if (!visible && !captured) {
+      registerBlockControls(draw, block, left, top);
+      contentY += block.height;
+      continue;
+    }
     switch (block.kind) {
       case BlockKind::Heading: drawHeading(draw, block, left, top); break;
       case BlockKind::Slider: drawSlider(draw, block, left, top); break;

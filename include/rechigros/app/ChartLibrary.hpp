@@ -44,6 +44,7 @@ struct ChartRecord {
 class ChartLibrary final {
 public:
   ChartLibrary(std::filesystem::path packsRoot, std::filesystem::path scoreFile);
+  ~ChartLibrary();
 
   [[nodiscard]] const std::filesystem::path& packsRoot() const noexcept { return packsRoot_; }
   [[nodiscard]] const std::filesystem::path& scoreFile() const noexcept { return scoreFile_; }
@@ -71,8 +72,12 @@ public:
 
   void recordBestResult(const std::string& id, const game::PlayResult& result);
   void recordPlayTime(const std::string& id, std::int64_t timestampMs);
+  // Records one completed run with one persistence write. A score-only change updates the
+  // indexed record directly and preserves the parsed metadata of every installed pack.
+  void recordResult(const std::string& id, std::int64_t timestampMs,
+      const game::PlayResult* bestResult);
 
-  void invalidate() noexcept { loaded_ = false; }
+  void invalidate() noexcept;
 
   // Warm the index on a worker thread. The first screen does not need the pack list, and
   // the scan reads and parses every package, so running it before the first frame turns
@@ -90,7 +95,14 @@ private:
     std::int64_t lastPlayedAtMs{};
   };
 
+  struct IndexSnapshot {
+    std::vector<ChartRecord> records;
+    std::unordered_map<std::string, ScoreEntry> scores;
+  };
+
   void rebuildIndex();
+  void finishWarmUp();
+  void updateIndexedScore(const std::string& id);
   [[nodiscard]] std::optional<ChartRecord> loadRecordInternal(const std::string& id);
   [[nodiscard]] ImportResult installDirectory(const std::filesystem::path& temporary,
       const std::string& id, const std::string& fallbackName, bool requireComplete);
@@ -105,9 +117,10 @@ private:
   std::unordered_map<std::string, ScoreEntry> scores_;
   bool loaded_{};
   bool scoresLoaded_{};
-  // In-flight warm-up, joined by records() before it touches the index.
-  std::shared_ptr<std::shared_future<void>> warmUp_;
-  std::mutex indexMutex_;
+  // The worker owns an independent index. Only the caller publishes a finished snapshot.
+  std::future<IndexSnapshot> warmUp_;
+  std::uint64_t generation_{};
+  std::uint64_t warmUpGeneration_{};
 };
 
 // Formats one score with the fixed seven digit width used throughout the UI.

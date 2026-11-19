@@ -321,17 +321,8 @@ std::string plainSpaces(const std::string& value) {
 }
 
 std::uint64_t resultCover(AppContext& context, int maxSize) {
-  const auto record = context.library.find(context.play.chartId);
-  if (record) return coverTexture(context, *record, maxSize);
-  if (!context.play.bgFile.empty()) return context.textures.textureFor(context.play.bgFile, maxSize);
-  return 0;
-}
-
-// Path of the artwork to blur for the backdrop; empty when the run has no artwork.
-std::filesystem::path resultCoverPath(AppContext& context) {
-  const auto record = context.library.find(context.play.chartId);
-  if (record) return record->bgFile;
-  return context.play.bgFile;
+  return context.play.bgFile.empty() ? 0
+      : context.textures.textureFor(context.play.bgFile, maxSize);
 }
 
 // The settlement shows the chart artwork as a heavily blurred backdrop. The backdrop texture
@@ -339,7 +330,7 @@ std::filesystem::path resultCoverPath(AppContext& context) {
 // passes of radius ~5% of the artwork width, bilinear upscale on draw), so it is a single
 // filtered image instead of a stack of shifted copies.
 void drawBlurredBackdrop(AppContext& context, ImDrawList* drawList, ImVec2 viewport) {
-  const std::filesystem::path path = resultCoverPath(context);
+  const std::filesystem::path& path = context.play.bgFile;
   if (path.empty()) return;
   const std::uint64_t texture = context.textures.blurredBackdropFor(path);
   if (texture == 0) return;

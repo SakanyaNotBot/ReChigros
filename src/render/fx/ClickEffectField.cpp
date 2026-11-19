@@ -11,7 +11,9 @@
 #include "rechigros/render/gl/Texture.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <optional>
 
 namespace rechigros::render::fx {
 namespace {
@@ -139,12 +141,16 @@ void ClickEffectField::draw(game::Chart& chart, batch::SpriteBatch& out,
     out.addQuad(item.cachedScreenX, item.cachedScreenY, effectSize, effectSize, rotation, tintR,
         tintG, tintB, alpha, mirrorU ? u1 : u0, v0, mirrorU ? u0 : u1, v1);
   }
-  if (!out.empty()) out.flush(projection, sheet, nullptr);
+  if (!out.empty()) out.flushSheet(projection, sheet);
 
   if (!style.showParticles) return;
   const float worldPx = noteWidth * kHitEffectPrefabToNoteWidth;
   const float baseSize = noteWidth * kHitEffectParticleSize * style.sizeScale;
   out.begin();
+  std::optional<ParticleTravelFrame> travelFrame;
+  std::uint32_t travelProgressBits{};
+  float cachedParticleSize{};
+  float cachedParticleAlpha{};
   for (int index = cursor_; index < static_cast<int>(effects.size()); ++index) {
     const game::ClickEffectItem& item = effects[static_cast<std::size_t>(index)];
     if (item.timeSec > chartTimeSec) break;
@@ -155,8 +161,15 @@ void ClickEffectField::draw(game::Chart& chart, batch::SpriteBatch& out,
     if (item.note == nullptr) continue;
 
     const float progress = hitEffectProgress(static_cast<float>(elapsed / duration));
-    const float alpha = 1.0F - progress;
-    const float size = baseSize * particleSize(progress);
+    const auto progressBits = std::bit_cast<std::uint32_t>(progress);
+    if (!travelFrame || travelProgressBits != progressBits) {
+      travelFrame.emplace(progress);
+      travelProgressBits = progressBits;
+      cachedParticleAlpha = 1.0F - progress;
+      cachedParticleSize = baseSize * particleSize(progress);
+    }
+    const float alpha = cachedParticleAlpha;
+    const float size = cachedParticleSize;
     const bool perfectPalette = !item.note->isHold || item.note->holdPerfect;
     const bool forceTint = item.note->hasHitEffectTint;
     const bool customPalette = perfectPalette ? skin.perfectFromSkin : skin.goodFromSkin;
@@ -168,16 +181,17 @@ void ClickEffectField::draw(game::Chart& chart, batch::SpriteBatch& out,
     const float green = palette[1];
     const float blue = palette[2];
 
+    const auto travelDistances = travelFrame->travelFour(item.effectSpeed);
     for (int part = 0; part < item.numOfParts; ++part) {
       const auto slot = static_cast<std::size_t>(part);
-      const float travel = particleTravel(item.effectSpeed[slot], progress);
+      const float travel = travelDistances[slot];
       const float radius = (item.effectR0[slot] + travel) * worldPx * style.sizeScale;
       out.addQuad(item.cachedScreenX + radius * item.effectDirX[slot],
           item.cachedScreenY + radius * item.effectDirY[slot], size, size, 0.0F, red, green, blue,
           alpha, 0.0F, 0.0F, 1.0F, 1.0F);
     }
   }
-  if (!out.empty()) out.flush(projection, whiteTexture, nullptr);
+  if (!out.empty()) out.flushWhite(projection, whiteTexture);
 }
 
 } // namespace rechigros::render::fx

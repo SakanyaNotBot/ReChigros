@@ -39,13 +39,15 @@ public:
   // multi-stage bloom chain. A chart whose only effect is bloom has no single pass.
   [[nodiscard]] bool empty() const noexcept { return programs_.empty() && !bloom_.ready(); }
 
-  // Runs every effect in `effects` over `input`, ping-ponging between `ping` and
-  // `pong`. Returns the texture that holds the final result.
+  // Runs every selected effect over `input`, ping-ponging between `ping` and `pong`.
+  // globalOnly filters the chart's original list without copying effect tracks.
+  // Returns the texture that holds the final result.
   [[nodiscard]] gl::Texture* apply(const std::vector<game::PrprEffect>& effects,
-      gl::Texture* input, gl::Framebuffer& ping, gl::Framebuffer& pong, double chartTimeSec);
+      gl::Texture* input, gl::Framebuffer& ping, gl::Framebuffer& pong, double chartTimeSec,
+      bool globalOnly = false);
 
-  // Runs the chain restricted to a sub-rectangle of the output, copying the rest
-  // of the input through unchanged.
+  // Runs the non-global effects restricted to a sub-rectangle of the output, copying
+  // the rest of the input through unchanged.
   [[nodiscard]] gl::Texture* applyStageViewport(const std::vector<game::PrprEffect>& effects,
       gl::Texture* input, gl::Framebuffer& ping, gl::Framebuffer& pong,
       const struct StageRect& rect, double chartTimeSec);

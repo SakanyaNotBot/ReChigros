@@ -6,6 +6,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -135,45 +136,83 @@ void normalizeLine(std::vector<LineEvent>& events, double fallback) {
   }
 }
 
-// The visibleTime encoding is sampled on a fixed 4-tick grid across the alpha event, not
-// per note: at each sample the interpolated alpha decides the visible-beat value, and every
-// note sitting exactly on that sample receives it. Sampling matters because an alpha ramp
-// can cross the -100 boundary partway through the event.
-bool assignVisibleTime(const LineEvent& event, std::vector<Note*>& notes, const BpmConverter& bpm) {
+// Visible-time values use the event's 4-tick sample grid and its linear alpha interpolation.
+// Notes within the sample epsilon receive the sampled value at their own BPM.
+bool assignVisibleTime(const LineEvent& event, std::vector<Note*>& notes, const BpmConverter& bpm,
+    bool finiteNotes) {
   if (notes.empty()) return false;
   const auto start = event.startTime;
   const auto end = event.endTime;
   if (!std::isfinite(start) || !std::isfinite(end) || end <= start) return false;
 
-  bool any = false;
   const auto alphaStart = event.start;
   const auto alphaEnd = event.end;
   const auto duration = end - start;
-  auto time = start;
-  std::size_t noteIndex = 0;
-
-  while (time <= end + 1e-9) {
+  const auto visibleBeatAt = [&](double time) -> std::optional<double> {
     auto progress = (time - start) / duration;
     progress = std::clamp(progress, 0.0, 1.0);
     const auto currentAlpha = alphaStart + (alphaEnd - alphaStart) * progress;
+    if (!(currentAlpha < -100.0 && currentAlpha >= -1000.0)) return std::nullopt;
 
-    if (currentAlpha < -100.0 && currentAlpha >= -1000.0) {
-      auto visibleBeat = ((currentAlpha + 100.0) * -1.0) / 10.0;
-      if (visibleBeat < 0.0) visibleBeat = 0.0;
+    auto visibleBeat = ((currentAlpha + 100.0) * -1.0) / 10.0;
+    if (visibleBeat < 0.0) visibleBeat = 0.0;
+    return visibleBeat;
+  };
+  const auto assign = [&](double visibleBeat, Note& note) {
+    auto beatBpm = bpm.bpmAtBeat(note.time);
+    if (!std::isfinite(beatBpm) || beatBpm <= 0.0) beatBpm = bpm.baseBpm();
+    note.visibleTime = static_cast<float>(visibleBeat * (60.0 / beatBpm));
+  };
 
+  const auto noteEnd = finiteNotes
+      ? std::nextafter(notes.back()->time + 1e-6, std::numeric_limits<double>::infinity()) : end + 1e-9;
+  const auto sampleEnd = std::min(end + 1e-9, noteEnd);
+  if (sampleEnd < start) return false;
+
+  // The first few additions establish the grid after any initial fractional rounding.
+  // Direct lookup is used where additions are exact and the step index fits in 53 bits.
+  const auto magnitude = std::max(std::abs(start), std::abs(sampleEnd)) + VISIBLE_STEP_TICK;
+  const auto spacing = std::nextafter(magnitude, std::numeric_limits<double>::infinity()) - magnitude;
+  bool any = false;
+  auto time = start;
+  const auto assignGrid = [&](double gridStart) -> std::optional<bool> {
+    if (!finiteNotes || !std::isfinite(magnitude) || magnitude > 0x1p52 || !(spacing > 0.0)
+        || spacing > VISIBLE_STEP_TICK || std::fmod(gridStart, spacing) != 0.0
+        || std::fmod(VISIBLE_STEP_TICK, spacing) != 0.0) return std::nullopt;
+
+    bool assigned = false;
+    auto candidate = std::lower_bound(notes.begin(), notes.end(), gridStart - 1e-6,
+        [](const auto* note, double noteTime) { return note->time < noteTime; });
+    for (; candidate != notes.end(); ++candidate) {
+      auto& note = **candidate;
+      if (note.time > sampleEnd + 1e-6) break;
+      const auto step = std::max(0.0, std::round((note.time - gridStart) / VISIBLE_STEP_TICK));
+      const auto sample = gridStart + step * VISIBLE_STEP_TICK;
+      if (sample <= sampleEnd && note.time >= sample - 1e-6
+          && std::abs(note.time - sample) < 1e-6) {
+        if (const auto visibleBeat = visibleBeatAt(sample)) {
+          assign(*visibleBeat, note);
+          assigned = true;
+        }
+      }
+    }
+    return assigned;
+  };
+
+  std::size_t noteIndex = 0;
+  for (std::size_t samples = 0; time <= sampleEnd; ++samples) {
+    if (samples <= 16) {
+      if (const auto assigned = assignGrid(time)) return *assigned || any;
+    }
+    if (const auto visibleBeat = visibleBeatAt(time)) {
       while (noteIndex < notes.size() && notes[noteIndex]->time < time - 1e-6) ++noteIndex;
       auto index = noteIndex;
       while (index < notes.size()) {
-        auto* note = notes[index];
-        if (std::abs(note->time - time) < 1e-6) {
-          auto beatBpm = bpm.bpmAtBeat(note->time);
-          if (!std::isfinite(beatBpm) || beatBpm <= 0.0) beatBpm = bpm.baseBpm();
-          note->visibleTime = static_cast<float>(visibleBeat * (60.0 / beatBpm));
+        auto& note = *notes[index];
+        if (std::abs(note.time - time) < 1e-6) {
+          assign(*visibleBeat, note);
           any = true;
-          ++index;
-          continue;
-        }
-        if (note->time > time + 1e-6) break;
+        } else if (note.time > time + 1e-6) break;
         ++index;
       }
     }
@@ -188,11 +227,18 @@ void applyAlphaSpecials(std::vector<LineEvent>& events, LineBuilder& builder, co
   for (auto& note : builder.notesAbove) notes.push_back(&note);
   for (auto& note : builder.notesBelow) notes.push_back(&note);
   std::stable_sort(notes.begin(), notes.end(), [](const auto* a, const auto* b) { return a->time < b->time; });
+  const bool finiteNotes = std::all_of(notes.begin(), notes.end(),
+      [](const auto* note) { return std::isfinite(note->time); });
   for (auto& event : events) {
     auto start = event.start == -1.0 ? -255.0 : event.start == -2.0 ? -510.0 : event.start;
     auto end = event.end == -1.0 ? -255.0 : event.end == -2.0 ? -510.0 : event.end;
-    if (start < -100.0 && start >= -1000.0) start = assignVisibleTime(event, notes, bpm) ? 0.0 : -255.0;
-    if (end < -100.0 && end >= -1000.0) end = assignVisibleTime(event, notes, bpm) ? 0.0 : -255.0;
+    const bool specialStart = start < -100.0 && start >= -1000.0;
+    const bool specialEnd = end < -100.0 && end >= -1000.0;
+    if (specialStart || specialEnd) {
+      const auto alpha = assignVisibleTime(event, notes, bpm, finiteNotes) ? 0.0 : -255.0;
+      if (specialStart) start = alpha;
+      if (specialEnd) end = alpha;
+    }
     event.start = start / 255.0;
     event.end = end / 255.0;
   }

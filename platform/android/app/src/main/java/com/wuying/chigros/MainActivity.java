@@ -92,7 +92,7 @@ public final class MainActivity extends SDLActivity {
     protected String[] getArguments() {
         final Intent intent = getIntent();
         final String arguments = intent != null ? intent.getStringExtra("args") : null;
-        if (arguments == null || arguments.isBlank()) return new String[0];
+        if (arguments == null || arguments.trim().isEmpty()) return new String[0];
         return arguments.trim().split("\\s+");
     }
 
@@ -164,31 +164,26 @@ public final class MainActivity extends SDLActivity {
         final String lower = incoming.getName().toLowerCase(Locale.ROOT);
         if (lower.endsWith(".cgrp")) return "replay|" + incoming.getAbsolutePath();
         if (!isZip(incoming)) return incoming.getAbsolutePath();
-        if (zipContainsAny(incoming, "replay.json")) return "replay|" + incoming.getAbsolutePath();
-        if (zipContainsAny(incoming, "respack.json", "skin.json")) {
-            return "skin|" + incoming.getAbsolutePath();
-        }
-        if (zipContainsAny(incoming, "info.yml", "info.yaml")
-                && zipContainsAny(incoming, "click.png", "hit_fx.png", "drag.png",
-                        "flick.png", "hold.png")) {
-            return "skin|" + incoming.getAbsolutePath();
-        }
-        return "chartzip|" + incoming.getAbsolutePath();
-    }
-
-    private static boolean zipContainsAny(File archive, String... names) {
+        boolean skinConfig = false;
+        boolean skinInfo = false;
+        boolean skinTexture = false;
         try (ZipInputStream zip = new ZipInputStream(
-                new BufferedInputStream(new FileInputStream(archive)))) {
+                new BufferedInputStream(new FileInputStream(incoming)))) {
             ZipEntry entry;
             while ((entry = zip.getNextEntry()) != null) {
-                final String entryName = entry.getName().toLowerCase(Locale.ROOT);
-                for (String name : names) {
-                    if (entryName.equals(name) || entryName.endsWith("/" + name)) return true;
-                }
+                final String path = entry.getName().toLowerCase(Locale.ROOT);
+                final String name = path.substring(path.lastIndexOf('/') + 1);
+                if (name.equals("replay.json")) return "replay|" + incoming.getAbsolutePath();
+                skinConfig |= name.equals("respack.json") || name.equals("skin.json");
+                skinInfo |= name.equals("info.yml") || name.equals("info.yaml");
+                skinTexture |= name.equals("click.png") || name.equals("hit_fx.png")
+                        || name.equals("drag.png") || name.equals("flick.png")
+                        || name.equals("hold.png");
             }
         } catch (IOException ignored) {
         }
-        return false;
+        return (skinConfig || (skinInfo && skinTexture) ? "skin|" : "chartzip|")
+                + incoming.getAbsolutePath();
     }
 
     private File copyContentUri(Uri uri) throws IOException {

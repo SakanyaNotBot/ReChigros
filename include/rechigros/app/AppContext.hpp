@@ -259,6 +259,14 @@ struct AppContext {
   PlaySetup play;
   GameRuntime game;
   CalibrationRuntime calibration;
+  // The calibration loop is decoded for the current device rate before the page installs it.
+  struct CalibrationAudio {
+    std::filesystem::path path;
+    audio::AudioBuffer buffer;
+  };
+  std::future<CalibrationAudio> calibrationAudioLoad;
+  CalibrationAudio calibrationAudio;
+  std::uint32_t calibrationAudioRate{};
   game::PlayResult lastResult;
   ReplayMeta lastReplayMeta;
   bool lastRunHasReplay{};

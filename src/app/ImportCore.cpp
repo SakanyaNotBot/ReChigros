@@ -389,7 +389,8 @@ SkinImportOutcome importSkinPackage(const std::filesystem::path& archive,
     return {false, "导入皮肤失败：文件不存在", {}};
   }
   try {
-    const auto entries = platform::listArchive(archive);
+    platform::ArchiveReader reader(archive);
+    const auto& entries = reader.entries();
     if (entries.empty()) {
       return {false, "导入皮肤失败：压缩包为空或无法解析", {}};
     }
@@ -399,7 +400,7 @@ SkinImportOutcome importSkinPackage(const std::filesystem::path& archive,
     for (const auto& entry : entries) {
       const std::string name = lowerFileName(platform::pathFromUtf8(entry.name));
       if (name != "skin.json" && name != "info.yml" && name != "info.yaml") continue;
-      const auto bytes = platform::readArchiveEntry(archive, entry.name);
+      const auto bytes = reader.readEntry(entry.name);
       if (bytes.empty()) continue;
       // Skin metadata may carry the legacy code page; decode it like every other metadata
       // document so the display name is not mojibake.
@@ -425,7 +426,7 @@ SkinImportOutcome importSkinPackage(const std::filesystem::path& archive,
       const auto leaf = platform::sanitiseFileName(platform::pathToUtf8(
           platform::pathFromUtf8(entry.name).filename()));
       if (leaf.empty()) continue;
-      const auto bytes = platform::readArchiveEntry(archive, entry.name);
+      const auto bytes = reader.readEntry(entry.name);
       if (bytes.empty()) continue;
       if (!platform::writeBinaryFile(destination / platform::pathFromUtf8(leaf), bytes)) {
         platform::removeRecursively(destination);

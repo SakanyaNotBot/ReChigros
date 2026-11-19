@@ -304,6 +304,8 @@ std::string ReplayStore::save(const ReplayData& data, bool* duplicate) {
   // few seconds of an existing entry describe the same play, so saving again from a later
   // settlement must not add a second copy. The reference applies exactly this test, and the
   // caller turns the empty id into its "already saved" message.
+  // A save validates duplicates against the current files, including another store's writes.
+  invalidate();
   for (const auto& existing : list()) {
     if (existing.meta.songName != data.meta.songName) continue;
     if (existing.meta.score != data.meta.score) continue;
@@ -329,11 +331,15 @@ std::string ReplayStore::save(const ReplayData& data, bool* duplicate) {
     platform::removeRecursively(directory);
     return {};
   }
+  invalidate();
   return id;
 }
 
-std::vector<ReplayInfo> ReplayStore::list() const {
-  std::vector<ReplayInfo> replays;
+const std::vector<ReplayInfo>& ReplayStore::list() const {
+  if (listed_) return listedReplays_;
+  auto& replays = listedReplays_;
+  replays.clear();
+  listed_ = true;
   std::error_code error;
   if (!std::filesystem::is_directory(root_, error)) return replays;
   for (const auto& entry : std::filesystem::directory_iterator(root_, error)) {
@@ -375,7 +381,9 @@ std::optional<ReplayInfo> ReplayStore::find(const std::string& id) const {
 
 bool ReplayStore::remove(const std::string& id) {
   if (id.empty()) return false;
-  return platform::removeRecursively(root_ / platform::sanitiseFileName(id));
+  const bool removed = platform::removeRecursively(root_ / platform::sanitiseFileName(id));
+  if (removed) invalidate();
+  return removed;
 }
 
 } // namespace rechigros::app
