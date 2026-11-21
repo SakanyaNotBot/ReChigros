@@ -71,8 +71,11 @@ rechigros_download("miniaudio/miniaudio.h" "${JSDELIVR}/mackron/miniaudio@0.11.2
 add_library(miniaudio_headers INTERFACE)
 target_include_directories(miniaudio_headers INTERFACE "${RECHIGROS_DOWNLOAD_DIR}/miniaudio")
 
-rechigros_download("stb/stb_image.h" "${JSDELIVR}/nothings/stb@master/stb_image.h" "594C2FE35D49488B4382DBFAEC8F98366DEFCA819D916AC95BECF3E75F4200B3")
-rechigros_download("stb/stb_image_write.h" "${JSDELIVR}/nothings/stb@master/stb_image_write.h" "CBD5F0AD7A9CF4468AFFB36354A1D2338034F2C12473CF1A8E32053CB6914A05")
+# stb is pinned to the exact commit that produces the hashes below: a branch ref would let an
+# upstream push change the bytes under a fixed hash and break every fresh configure.
+set(STB_REF "013ac3beddff3dbffafd5177e7972067cd2b5083")
+rechigros_download("stb/stb_image.h" "${JSDELIVR}/nothings/stb@${STB_REF}/stb_image.h" "594C2FE35D49488B4382DBFAEC8F98366DEFCA819D916AC95BECF3E75F4200B3")
+rechigros_download("stb/stb_image_write.h" "${JSDELIVR}/nothings/stb@${STB_REF}/stb_image_write.h" "CBD5F0AD7A9CF4468AFFB36354A1D2338034F2C12473CF1A8E32053CB6914A05")
 add_library(stb_headers INTERFACE)
 target_include_directories(stb_headers INTERFACE "${RECHIGROS_DOWNLOAD_DIR}/stb")
 
