@@ -270,15 +270,23 @@ CMAudioFormatDescriptionRef makePcmFormat(int sampleRate) {
   return format;
 }
 
-// Wraps `frames` interleaved int16 samples (starting at `data`) into a sample buffer timed at
-// `startFrame` of the stream. The caller owns the memory until the buffer is released.
+// Copies `frames` interleaved int16 samples into a sample buffer timed at `startFrame` of the
+// stream. The block owns its memory: the writer may encode a buffer after the feed call returns,
+// so the samples must not point into the caller's PCM or silence storage.
 CMSampleBufferRef makeAudioBuffer(const std::int16_t* data, int frames, std::int64_t startFrame,
     int sampleRate, CMAudioFormatDescriptionRef format) {
   const std::size_t bytes = static_cast<std::size_t>(frames) * 4;
   CMBlockBufferRef block = nullptr;
-  if (CMBlockBufferCreateWithMemoryBlock(kCFAllocatorDefault, const_cast<std::int16_t*>(data),
-          bytes, kCFAllocatorNull, nullptr, 0, bytes, 0, &block) != kCMBlockBufferNoErr) {
+  // A null memory block makes CoreMedia allocate and own the storage; the samples are copied in
+  // so the buffer stays valid after the caller's PCM or silence storage is gone.
+  if (CMBlockBufferCreateWithMemoryBlock(kCFAllocatorDefault, nullptr, bytes, kCFAllocatorDefault,
+          nullptr, 0, bytes, 0, &block) != kCMBlockBufferNoErr) {
     return nullptr;
+  }
+  char* storage = nullptr;
+  if (CMBlockBufferGetDataPointer(block, 0, nullptr, nullptr, &storage) == kCMBlockBufferNoErr
+      && storage != nullptr) {
+    std::memcpy(storage, data, bytes);
   }
   CMSampleBufferRef buffer = nullptr;
   const CMSampleTimingInfo timing{

@@ -83,6 +83,11 @@ GpuTimerApi& gpuTimerApi() {
 
 } // namespace
 
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+// Defined below; registered as an SDL event watcher during initialization.
+static bool SDLCALL iosLifecycleWatch(void* userdata, SDL_Event* event);
+#endif
+
 Application::Application(int argc, char** argv) {
   for (int index = 1; index < argc; ++index) {
     const std::string argument = argv[index] != nullptr ? argv[index] : "";
