@@ -45,6 +45,13 @@ void setAssetRootOverride(const std::filesystem::path& root);
 [[nodiscard]] std::filesystem::path publishMedia(const std::filesystem::path& file,
     const char* category);
 
+#if defined(__APPLE__)
+// iOS: copies a finished recording into the system photo library so it appears in the Photos
+// app. The source file is kept. Returns true when the library accepted it; a denied permission
+// or a failed copy returns false and leaves the file at its original (Files-visible) location.
+bool saveVideoToPhotos(const std::filesystem::path& file);
+#endif
+
 // Absolute path of the running executable; empty when it cannot be determined.
 [[nodiscard]] std::filesystem::path executablePath();
 

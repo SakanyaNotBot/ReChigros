@@ -23,6 +23,10 @@
 #include <backends/imgui_impl_opengl3.h>
 #include <backends/imgui_impl_sdl3.h>
 
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -248,11 +252,21 @@ bool Application::initialize() {
   // orientations from this hint; the bundle declares the same two, and the intersection is
   // what the system enforces.
   SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+  // The interface pointer is fed straight from the finger events (feedTouchToImGui). SDL's own
+  // touch-to-mouse synthesis is turned off so the two cannot double-feed ImGui: that synthetic
+  // path depends on a process-wide finger latch and the mouse focus, and a tap whose release it
+  // misses leaves every immediate-mode button dead while gameplay keeps working.
+  SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
 #endif
   if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
     std::cerr << "SDL_Init: " << SDL_GetError() << '\n';
     return false;
   }
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+  // The app-level lifecycle events reach watchers only, never the polled queue, so this is what
+  // runs suspend/resume and the graphics recovery on iOS.
+  SDL_AddEventWatch(iosLifecycleWatch, this);
+#endif
   reportLaunchStage("SDL_Init", launchStart, launchFrequency);
   std::uint64_t launchStage = launchMark();
   // The menu backdrop's artwork is decoded on a worker from here on, so the first frame
@@ -1591,9 +1605,21 @@ void Application::processEvents(bool& running) {
 }
 
 void Application::ensureRenderer() {
-  if (renderer_ != nullptr) return;
-  renderer_ = std::make_unique<render::GameRenderer>();
-  if (!renderer_->initialize(platform::assetRoot())) {
+  if (renderer_ == nullptr) {
+    renderer_ = std::make_unique<render::GameRenderer>();
+    const std::filesystem::path skinDirectory =
+        app_ != nullptr ? installedSkinDirectory(*app_) : std::filesystem::path{};
+    const auto background = app_ != nullptr ? app_->play.bgFile : std::filesystem::path{};
+    if (!renderer_->initializeBegin(platform::assetRoot(), skinDirectory, background)) {
+      std::cerr << "Renderer initialization failed\n";
+    }
+  }
+  // The launch warm-up only begins the staged initialization and stops at the first frame
+  // whose decode is still running; the loading panel is what advances it from there. A
+  // synchronous entry (the render page, an ad-hoc chart) has no panel, so the finish happens
+  // here: it waits for the decode workers and uploads what they produced. Without this the
+  // renderer stays half-initialized and the offscreen capture refuses to allocate.
+  if (renderer_->initializeBegun() && !renderer_->initializeFinish()) {
     std::cerr << "Renderer initialization failed\n";
   }
   if (app_ != nullptr) {
@@ -1680,6 +1706,84 @@ void Application::handleRenderDeviceReset() {
   frameClockReset_ = true;
 }
 
+void Application::onEnterBackground() {
+  if (suspended_) return;
+  suspended_ = true;
+  if (app_ != nullptr && app_->screen == Screen::Game) gameFocusLost(*app_);
+  if (audio_ != nullptr) audio_->suspend();
+}
+
+void Application::onEnterForeground() {
+  if (suspended_) {
+    if (audio_ != nullptr) audio_->resume();
+    suspended_ = false;
+    frameClockReset_ = true;
+  }
+  // Returning from a native picker or another activity can leave the surface rebuilt without a
+  // device-reset event. Making the context current here is what lets the next frame present
+  // instead of leaving the window frozen until the user backgrounds it again.
+  if (window_ != nullptr && context_ != nullptr && !SDL_GL_MakeCurrent(window_, context_)) {
+    handleRenderDeviceReset();
+  }
+}
+
+void Application::onTerminating() {
+  if (app_ != nullptr && app_->screen == Screen::Game) gameFocusLost(*app_);
+  if (audio_ != nullptr) audio_->suspend();
+}
+
+void Application::feedTouchToImGui(const SDL_Event& event) {
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+  ImGuiIO& io = ImGui::GetIO();
+  int width = 0;
+  int height = 0;
+  SDL_GetWindowSize(window_, &width, &height);
+  const float x = event.tfinger.x * static_cast<float>(width);
+  const float y = event.tfinger.y * static_cast<float>(height);
+  const std::uint64_t finger = static_cast<std::uint64_t>(event.tfinger.fingerID);
+  if (event.type == SDL_EVENT_FINGER_DOWN) {
+    // The first finger down owns the interface pointer; extra fingers belong to the gameplay
+    // session and must not steal the click the first one is making.
+    if (!uiTouchActive_) {
+      uiTouchActive_ = true;
+      uiTouchFinger_ = finger;
+      io.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
+      io.AddMousePosEvent(x, y);
+      io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    }
+  } else if (event.type == SDL_EVENT_FINGER_MOTION) {
+    if (uiTouchActive_ && finger == uiTouchFinger_) {
+      io.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
+      io.AddMousePosEvent(x, y);
+    }
+  } else {
+    if (uiTouchActive_ && finger == uiTouchFinger_) {
+      io.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
+      io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+      uiTouchActive_ = false;
+    }
+  }
+#else
+  (void)event;
+#endif
+}
+
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+// SDL hands the app-level lifecycle events to watchers synchronously rather than queueing them
+// (SDL_SendAppEvent), so the polled handleEvent never sees them on this SDL version. This watcher
+// is what actually runs the suspend/resume and graphics-recovery logic on iOS.
+static bool SDLCALL iosLifecycleWatch(void* userdata, SDL_Event* event) {
+  auto* application = static_cast<Application*>(userdata);
+  switch (event->type) {
+    case SDL_EVENT_WILL_ENTER_BACKGROUND: application->onEnterBackground(); break;
+    case SDL_EVENT_DID_ENTER_FOREGROUND: application->onEnterForeground(); break;
+    case SDL_EVENT_TERMINATING: application->onTerminating(); break;
+    default: break;
+  }
+  return true;
+}
+#endif
+
 void Application::handleEvent(const SDL_Event& event, bool& running) {
   switch (event.type) {
     case SDL_EVENT_RENDER_DEVICE_RESET:
@@ -1734,6 +1838,9 @@ void Application::handleEvent(const SDL_Event& event, bool& running) {
       SDL_GetWindowSize(window_, &width, &height);
       const float x = event.tfinger.x * static_cast<float>(width);
       const float y = event.tfinger.y * static_cast<float>(height);
+      // The interface pointer is fed from the finger on every screen, not just gameplay: the
+      // settlement, library and settings controls are immediate-mode buttons that need it.
+      feedTouchToImGui(event);
       if (app_->screen == Screen::Game) {
         if (event.type == SDL_EVENT_FINGER_DOWN) {
           gamePointerDown(*app_, event.tfinger.fingerID, x, y);
@@ -1755,30 +1862,27 @@ void Application::handleEvent(const SDL_Event& event, bool& running) {
       if (!batchMode_ && app_->screen == Screen::Game) gameFocusLost(*app_);
       return;
     case SDL_EVENT_WILL_ENTER_BACKGROUND:
-      if (!suspended_) {
-        suspended_ = true;
-        if (app_->screen == Screen::Game) gameFocusLost(*app_);
-        audio_->suspend();
-      }
+      onEnterBackground();
       return;
     case SDL_EVENT_DID_ENTER_FOREGROUND:
-      if (suspended_) {
-        audio_->resume();
-        suspended_ = false;
-        frameClockReset_ = true;
-      }
-      // Returning from a native picker or another activity can leave the surface rebuilt
-      // without a device-reset event. Making the context current here is what lets the next
-      // frame present instead of leaving the window black until the user backgrounds it.
-      if (window_ != nullptr && context_ != nullptr
-          && !SDL_GL_MakeCurrent(window_, context_)) {
-        handleRenderDeviceReset();
-      }
+      onEnterForeground();
       return;
     case SDL_EVENT_TERMINATING:
-      if (app_->screen == Screen::Game) gameFocusLost(*app_);
-      audio_->suspend();
+      onTerminating();
       return;
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    // The queued window events mirror the watcher-only app events: SDL marks the window
+    // minimized on resign-active and restored on become-active. Driving the same hooks from
+    // them keeps the interface from staying suspended (or the ImGui viewport at zero size)
+    // if one of the two delivery paths misses a transition, as Guided Access toggles can.
+    case SDL_EVENT_WINDOW_MINIMIZED:
+      onEnterBackground();
+      return;
+    case SDL_EVENT_WINDOW_RESTORED:
+    case SDL_EVENT_WINDOW_FOCUS_GAINED:
+      onEnterForeground();
+      return;
+#endif
     default: break;
   }
 }
@@ -1847,6 +1951,9 @@ void Application::updateAudioFromSettings() {
 }
 
 void Application::shutdown() noexcept {
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+  SDL_RemoveEventWatch(iosLifecycleWatch, this);
+#endif
   ui::fontCache().shutdown();
   if (context_ != nullptr) shutdownGpuTimer();
   if (app_ != nullptr) {

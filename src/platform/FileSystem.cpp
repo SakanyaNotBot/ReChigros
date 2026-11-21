@@ -144,6 +144,13 @@ std::filesystem::path sharedMediaDirectory(const char* category, bool displayOnl
   }
   env->DeleteLocalRef(cls);
   return result;
+#elif defined(__APPLE__) && TARGET_OS_IPHONE
+  // The sandbox's Movies folder is invisible to both Photos and Files. The Documents folder is
+  // what the Files app and Finder sharing expose (UIFileSharingEnabled), so a recording written
+  // there can be found without any permission; publishMedia additionally copies it into Photos.
+  (void)category;
+  if (const char* known = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS)) return pathFromUtf8(known);
+  return {};
 #else
   const SDL_Folder folder = std::string_view(category) == "Movies" ? SDL_FOLDER_VIDEOS
       : std::string_view(category) == "Download"                    ? SDL_FOLDER_DOWNLOADS
@@ -244,6 +251,13 @@ std::filesystem::path publishMedia(const std::filesystem::path& file, const char
   }
   env->DeleteLocalRef(cls);
   return published;
+#elif defined(__APPLE__) && TARGET_OS_IPHONE
+  // The recording already sits in the Files-visible Documents folder; handing a copy to the
+  // photo library is what makes it appear in the Photos app like a native recording. The file
+  // itself stays where it was written, so the reported path remains valid either way.
+  (void)category;
+  (void)saveVideoToPhotos(file);
+  return file;
 #else
   // The desktop writes the shared folder directly, so there is nothing to hand over.
   (void)category;

@@ -79,6 +79,21 @@ if(IOS)
   # through a static archive, so name it on the executable as well.
   find_library(RECHIGROS_OBJC_LIBRARY objc REQUIRED)
   target_link_libraries(ReChigros PRIVATE "${RECHIGROS_OBJC_LIBRARY}")
+  # The video export bridge compresses with VideoToolbox and muxes through AVFoundation. It is
+  # Objective-C++ with ARC, matching the iOS document picker's lifetime handling.
+  target_sources(ReChigros PRIVATE VideoEncoderIOS.mm)
+  set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/VideoEncoderIOS.mm"
+    PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+  set_target_properties(ReChigros PROPERTIES XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC "YES")
+  find_library(RECHIGROS_VIDEOTOOLBOX_FRAMEWORK VideoToolbox REQUIRED)
+  find_library(RECHIGROS_AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
+  find_library(RECHIGROS_COREMEDIA_FRAMEWORK CoreMedia REQUIRED)
+  find_library(RECHIGROS_COREVIDEO_FRAMEWORK CoreVideo REQUIRED)
+  target_link_libraries(ReChigros PRIVATE
+    "${RECHIGROS_VIDEOTOOLBOX_FRAMEWORK}"
+    "${RECHIGROS_AVFOUNDATION_FRAMEWORK}"
+    "${RECHIGROS_COREMEDIA_FRAMEWORK}"
+    "${RECHIGROS_COREVIDEO_FRAMEWORK}")
 endif()
 
 if(APPLE AND NOT IOS)

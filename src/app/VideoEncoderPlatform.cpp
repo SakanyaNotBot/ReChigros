@@ -1,5 +1,9 @@
 #include "rechigros/app/VideoEncoderPlatform.hpp"
 
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
 #if defined(__ANDROID__)
 
 #include <SDL3/SDL_system.h>
@@ -248,10 +252,11 @@ int audioTrackProgressPermille() {
 
 } // namespace rechigros::app::platformenc
 
-#else
+#elif !(defined(__APPLE__) && TARGET_OS_IPHONE)
 
 // Desktop and console builds encode through the external tool, so this bridge has nothing to do.
-// Defining the same symbols keeps one call site in VideoEncoder.cpp for every platform.
+// Defining the same symbols keeps one call site in VideoEncoder.cpp for every platform. iOS
+// provides them in VideoEncoderIOS.mm instead, so the stub stays out of that build.
 
 namespace rechigros::app::platformenc {
 

@@ -36,6 +36,13 @@ public:
 
   int run();
 
+  // App lifecycle hooks. SDL delivers the app-level lifecycle events to event watchers only,
+  // never to the polled queue, so on iOS a watcher drives these; the queued window events call
+  // them as well. Each is idempotent so the two delivery paths cannot double-apply a transition.
+  void onEnterBackground();
+  void onEnterForeground();
+  void onTerminating();
+
 private:
   bool initialize();
   // Publishes the framebuffer the window presents from to the GL layer. Desktop GL and EGL
@@ -51,6 +58,9 @@ private:
   void shutdown() noexcept;
   void processEvents(bool& running);
   void handleEvent(const SDL_Event& event, bool& running);
+  // iOS drives the immediate-mode pointer straight from SDL finger events instead of SDL's
+  // synthetic touch-mouse, whose delivery depends on a process-wide latch and the mouse focus.
+  void feedTouchToImGui(const SDL_Event& event);
   void handleRenderDeviceReset();
   void ensureRenderer();
   // Two-stage gameplay renderer startup used by the loading screen: true once usable.
@@ -153,6 +163,11 @@ private:
   bool imguiReady_{};
   bool suspended_{};
   bool frameClockReset_{};
+  // The single finger the immediate-mode pointer follows on iOS. Gameplay keeps its own
+  // multi-touch session; the interface only ever needs one pointer, so the first finger down
+  // owns it until it lifts.
+  bool uiTouchActive_{};
+  std::uint64_t uiTouchFinger_{};
   int lastDrawableWidth_{};
   int lastDrawableHeight_{};
   float displayDpi_{380.0F};
